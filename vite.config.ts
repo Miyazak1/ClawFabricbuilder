@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ command }) => {
   const connectSource = command === 'serve'
@@ -8,6 +9,7 @@ export default defineConfig(({ command }) => {
   return {
     base: './',
     plugins: [
+      tailwindcss(),
       react(),
       {
         name: 'builder-content-security-policy',

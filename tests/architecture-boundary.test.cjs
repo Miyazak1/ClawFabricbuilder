@@ -12,7 +12,10 @@ function sourceFiles(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const target = path.join(directory, entry.name);
     if (entry.isDirectory()) return sourceFiles(target);
-    return /\.(?:cjs|js|ts|tsx)$/u.test(entry.name) ? [target] : [];
+    return /\.(?:cjs|js|ts|tsx)$/u.test(entry.name)
+      && !/\.test\.(?:cjs|js|ts|tsx)$/u.test(entry.name)
+      ? [target]
+      : [];
   });
 }
 
@@ -39,5 +42,28 @@ test('package identity and dependencies remain Builder-only', () => {
   for (const [packagePath, metadata] of Object.entries(lock.packages || {})) {
     assert.doesNotMatch(packagePath, /ClawFabric v5|\.\.\//iu);
     assert.notEqual(metadata && metadata.link, true);
+  }
+});
+
+test('frontend extraction provenance is pinned without creating an old-repository dependency', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(root, 'provenance', 'extraction-manifest.json'), 'utf8'),
+  );
+  assert.equal(manifest.manifest_version, 'clawfabric-builder-extraction.v1');
+  assert.equal(manifest.source_commit, '87a948102e6f67aa628fe23944e65d2f5993ab69');
+  assert.equal(manifest.target_repository, 'clawfabric-builder');
+  assert.equal(manifest.extraction_policy, 'copied_then_independently_maintained');
+  assert.deepEqual(
+    manifest.entries.map((entry) => [entry.group, entry.file_count]),
+    [
+      ['builder_frontend_core', 22],
+      ['builder_react_hooks', 4],
+      ['builder_renderer_ports', 6],
+    ],
+  );
+  for (const entry of manifest.entries) {
+    assert.match(entry.source_inventory_sha256, /^[0-9a-f]{64}$/u);
+    assert.match(entry.target_inventory_sha256_at_extraction, /^[0-9a-f]{64}$/u);
+    assert.equal(fs.statSync(path.join(root, entry.target_root)).isDirectory(), true);
   }
 });

@@ -2,5 +2,41 @@
   "manifest_version": "clawfabric-builder-extraction.v1",
   "source_repository": "ClawFabric v5",
   "source_commit": "87a948102e6f67aa628fe23944e65d2f5993ab69",
-  "entries": []
+  "target_repository": "clawfabric-builder",
+  "extraction_policy": "copied_then_independently_maintained",
+  "inventory_digest_format": "sha256(newline-joined sorted relative-path:sha256 entries)",
+  "entries": [
+    {
+      "group": "builder_frontend_core",
+      "source_root": "frontend/src/features/builder",
+      "target_root": "src/features/builder",
+      "excluded_target_subdirectories": [
+        "hooks",
+        "infrastructure"
+      ],
+      "file_count": 22,
+      "source_inventory_sha256": "d33177c2bf2eb93d6a57f55d846e05e0755910f47d6d12627660587c88bdb3f0",
+      "target_inventory_sha256_at_extraction": "da6fffd6c0d8eb4da32fa890596be4f2285b7007e766c1e63b016e0765065cd3",
+      "transformation": "verbatim_except_standalone_architecture_boundary"
+    },
+    {
+      "group": "builder_react_hooks",
+      "source_root": "frontend/src/hooks",
+      "source_file_prefix": "useBuilderProject",
+      "target_root": "src/features/builder/hooks",
+      "file_count": 4,
+      "source_inventory_sha256": "5bf78efa51b00a0fa7b96d9a4477c492d1c8e20b0c6b62a43bd11dd5822730d9",
+      "target_inventory_sha256_at_extraction": "4619c7aa12c5afd94df3c0a92dd09a1d70cdabf7b848e7dc6ff2459a538bbe72",
+      "transformation": "standalone_relative_import_and_test_path_rebase"
+    },
+    {
+      "group": "builder_renderer_ports",
+      "source_root": "frontend/src/infrastructure/builder",
+      "target_root": "src/features/builder/infrastructure",
+      "file_count": 6,
+      "source_inventory_sha256": "bc1fe7e4511fb8447177935463e02c0ea4e3a06ca12b7c5d1e7f7a52edd7decd",
+      "target_inventory_sha256_at_extraction": "249805986716dbcbab2087c7d7361e02bc62ce4c6739e268b28af182f3b92afd",
+      "transformation": "standalone_relative_import_and_test_path_rebase"
+    }
+  ]
 }

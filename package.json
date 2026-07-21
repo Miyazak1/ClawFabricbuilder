@@ -21,10 +21,10 @@
     "pack": "npm run build && electron-builder --dir && npm run verify:package",
     "dist": "npm run build && electron-builder --win nsis && npm run verify:package"
   },
-  "dependencies": {},
   "devDependencies": {
     "@electron/asar": "^3.4.1",
     "@eslint/js": "^9.39.4",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -39,6 +39,7 @@
     "lucide-react": "^1.6.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.0",
