@@ -53,6 +53,8 @@ for (const expected of [
   '/electron/builder-provider-config.cjs',
   '/electron/builder-provider-config-repository.cjs',
   '/electron/builder-provider-secret-store.cjs',
+  '/electron/builder-provider-settings-ipc-adapter.cjs',
+  '/electron/builder-provider-settings-ipc-runtime.cjs',
   '/electron/builder-openai-compatible-transport.cjs',
   '/electron/builder-generation-kernel.cjs',
   '/electron/builder-generation-host-adapter.cjs',
@@ -66,6 +68,8 @@ assert.equal(packagedFiles.some((entry) => /\.test\.(?:cjs|js|ts|tsx)$/u.test(en
 for (const forbiddenTest of [
   '/tests/builder-generation-ipc-adapter.test.cjs',
   '/tests/builder-generation-main-service.test.cjs',
+  '/tests/builder-provider-settings-ipc-adapter.test.cjs',
+  '/tests/builder-provider-settings-ipc-runtime.test.cjs',
 ]) {
   assert.equal(packagedFiles.includes(forbiddenTest), false, forbiddenTest);
 }
@@ -99,6 +103,8 @@ const packagedRevisionAdapter = packagedSource('electron/builder-project-revisio
 const packagedCatalogAdapter = packagedSource('electron/builder-project-catalog-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
+const packagedProviderSettingsIpcAdapter = packagedSource('electron/builder-provider-settings-ipc-adapter.cjs');
+const packagedProviderSettingsIpcRuntime = packagedSource('electron/builder-provider-settings-ipc-runtime.cjs');
 const packagedGenerationHost = packagedSource('electron/builder-generation-host-adapter.cjs');
 const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
@@ -217,6 +223,7 @@ assert.match(packagedMain, /require\(['"]\.\/builder-project-ipc-runtime\.cjs['"
 assert.match(packagedMain, /projectIpcRuntime\.register\(\)/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
 assert.doesNotMatch(packagedMain, /generation|codeGenerator|builder-generation-main-service|builder-generation-ipc-adapter/iu);
+assert.doesNotMatch(packagedMain, /provider-settings|providerSettings|builder-provider-settings-ipc-runtime/iu);
 assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
 assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
 assert.doesNotMatch(packagedRuntime, /provider|secret|safeStorage/iu);
@@ -232,6 +239,25 @@ assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.c
 assert.doesNotMatch(packagedProviderConfigRepository, /safeStorage|ipcMain|ipcRenderer|contextBridge|fetch\s*\(/u);
 assert.match(packagedProviderSecretStore, /safeStorage/u);
 assert.doesNotMatch(packagedProviderSecretStore, /ipcMain|ipcRenderer|contextBridge|fetch\s*\(/u);
+assert.match(packagedProviderSettingsIpcAdapter, /createBuilderProviderSettingsIpcAdapter/u);
+assert.match(packagedProviderSettingsIpcAdapter, /active_renderer_required:\s*true/u);
+assert.match(packagedProviderSettingsIpcAdapter, /direct_electron_registration:\s*false/u);
+assert.match(packagedProviderSettingsIpcAdapter, /direct_preload_exposure:\s*false/u);
+assert.match(packagedProviderSettingsIpcAdapter, /credential_readback:\s*false/u);
+assert.match(packagedProviderSettingsIpcAdapter, /secret_binding_readback:\s*false/u);
+assert.doesNotMatch(
+  packagedProviderSettingsIpcAdapter,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider-secret-store|builder-provider-config-repository|local-provider-executor/iu,
+);
+assert.match(packagedProviderSettingsIpcRuntime, /createBuilderProviderSettingsIpcAdapter/u);
+assert.match(packagedProviderSettingsIpcRuntime, /createBuilderProviderConfigRepository/u);
+assert.match(packagedProviderSettingsIpcRuntime, /READ_CURRENT_CHANNEL/u);
+assert.match(packagedProviderSettingsIpcRuntime, /REPLACE_CURRENT_CHANNEL/u);
+assert.match(packagedProviderSettingsIpcRuntime, /STATUS_CHANNEL/u);
+assert.doesNotMatch(
+  packagedProviderSettingsIpcRuntime,
+  /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|generic.*(?:config|secret)/iu,
+);
 assert.doesNotMatch(packagedGenerationHost, /safeStorage|builder-provider-secret-store|builder-provider-config-repository/u);
 assert.match(packagedGenerationIpcAdapter, /createBuilderGenerationIpcAdapter/u);
 assert.match(packagedGenerationIpcAdapter, /active_renderer_required:\s*true/u);

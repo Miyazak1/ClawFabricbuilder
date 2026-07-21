@@ -52,6 +52,26 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 3);
 });
 
+test('provider settings IPC runtime remains main-only and is not wired to main or preload yet', () => {
+  const runtime = fs.readFileSync(
+    path.join(root, 'electron', 'builder-provider-settings-ipc-runtime.cjs'),
+    'utf8',
+  );
+  assert.match(runtime, /createBuilderProviderSettingsIpcAdapter/u);
+  assert.match(runtime, /createBuilderProviderConfigRepository/u);
+  assert.doesNotMatch(
+    runtime,
+    /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|generic.*(?:config|secret)/iu,
+  );
+
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
+  for (const source of [main, preload]) {
+    assert.doesNotMatch(source, /builder-provider-settings-ipc-runtime|provider-settings|providerSettings/iu);
+    assert.doesNotMatch(source, /clawfabric-builder:provider-settings:/u);
+  }
+});
+
 test('package identity and dependencies remain Builder-only', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(packageJson.name, 'clawfabric-builder');
