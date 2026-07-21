@@ -29,6 +29,7 @@ const UTF8_DECODER = new NodeTextDecoder('utf-8', { fatal: true, ignoreBOM: true
 
 const ERROR_MESSAGES = Object.freeze({
   builder_provider_config_repository_invalid: 'AI provider settings could not verify the request.',
+  builder_provider_config_repository_not_found: 'AI provider settings are not configured.',
   builder_provider_config_repository_unavailable: 'AI provider settings are unavailable.',
   builder_provider_config_repository_integrity_failed: 'AI provider settings could not be verified.',
   builder_provider_config_repository_persistence_failed: 'AI provider settings could not be saved.',
@@ -319,10 +320,10 @@ function publishCurrent(context, envelope) {
   }
 }
 
-function readVerifiedCurrent(context, secretStore) {
+function readVerifiedCurrent(context, secretStore, notFoundCode = 'builder_provider_config_repository_unavailable') {
   assertDirectoryIdentity(context.root_identity);
   assertDirectoryIdentity(context.config_identity);
-  const current = readCurrentFile(context.current_path);
+  const current = readCurrentFile(context.current_path, notFoundCode);
   secretStore.verify_binding(current.secret_binding);
   return current;
 }
@@ -440,7 +441,11 @@ function createBuilderProviderConfigRepository(rootPath, options = {}) {
     read_current(...rawArguments) {
       try {
         if (rawArguments.length !== 0) fail('builder_provider_config_repository_invalid');
-        const current = readVerifiedCurrent(context, secretStore);
+        const current = readVerifiedCurrent(
+          context,
+          secretStore,
+          'builder_provider_config_repository_not_found',
+        );
         return resultEnvelope('current_loaded', current, {
           secret_file_fsync: 'not_performed',
           secret_publish: 'not_performed',

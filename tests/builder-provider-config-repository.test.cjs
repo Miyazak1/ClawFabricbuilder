@@ -45,11 +45,12 @@ function config(overrides = {}) {
   };
 }
 
-function fakeSafeStorage() {
+function fakeSafeStorage(options = {}) {
   return {
     isEncryptionAvailable() { return true; },
     encryptString(value) { return Buffer.from(`encrypted:${value}`, 'utf8'); },
     decryptString(value) {
+      if (options.decryptThrows) throw new Error(PRIVATE_MARKER);
       const text = Buffer.from(value).toString('utf8');
       if (!text.startsWith('encrypted:')) throw new Error(PRIVATE_MARKER);
       return text.slice('encrypted:'.length);
@@ -133,6 +134,36 @@ test('restores current config after restart and exposes a bound exact4 authority
   assert.throws(
     () => authority.resolveSecret({ ...secretRef(), secret_id: 'builder-provider-secret:other' }),
     assertRepositoryError('builder_provider_config_repository_integrity_failed'),
+  );
+});
+
+test('reports only read_current missing current as not found while bound authority stays unavailable', (t) => {
+  const root = temporaryRoot(t);
+  const repository = repositoryWithFakeSecretStore(root);
+
+  assert.throws(
+    () => repository.read_current(),
+    assertRepositoryError('builder_provider_config_repository_not_found'),
+  );
+  assert.throws(
+    () => repository.bind_current_authority(),
+    assertRepositoryError('builder_provider_config_repository_unavailable'),
+  );
+});
+
+test('keeps decrypt or safeStorage unavailability distinct from missing current config', (t) => {
+  const root = temporaryRoot(t);
+  const first = repositoryWithFakeSecretStore(root);
+  first.write_current({ config: config(), credential: 'real-key-value' });
+  const restarted = createBuilderProviderConfigRepository(root, {
+    secretStore: createBuilderProviderSecretStore(root, {
+      safeStorage: fakeSafeStorage({ decryptThrows: true }),
+    }),
+  });
+
+  assert.throws(
+    () => restarted.read_current(),
+    assertRepositoryError('builder_provider_config_repository_unavailable'),
   );
 });
 
