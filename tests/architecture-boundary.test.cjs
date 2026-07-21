@@ -59,11 +59,18 @@ test('frontend extraction provenance is pinned without creating an old-repositor
       ['builder_frontend_core', 22],
       ['builder_react_hooks', 4],
       ['builder_renderer_ports', 6],
+      ['builder_revision_repository', 4],
     ],
   );
   for (const entry of manifest.entries) {
     assert.match(entry.source_inventory_sha256, /^[0-9a-f]{64}$/u);
     assert.match(entry.target_inventory_sha256_at_extraction, /^[0-9a-f]{64}$/u);
-    assert.equal(fs.statSync(path.join(root, entry.target_root)).isDirectory(), true);
+    const targetRoots = entry.target_roots || [entry.target_root];
+    for (const targetRoot of targetRoots) {
+      assert.equal(fs.statSync(path.join(root, targetRoot)).isDirectory(), true);
+    }
+    for (const targetFile of entry.target_files || []) {
+      assert.equal(fs.statSync(path.join(root, targetFile)).isFile(), true);
+    }
   }
 });
