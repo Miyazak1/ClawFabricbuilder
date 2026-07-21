@@ -36,11 +36,6 @@ function readWindowsIdentity(executablePath) {
 assert.equal(process.platform, 'win32', 'Builder package verification currently targets Windows.');
 for (const target of [executable, archive, builtIndex]) assert.equal(fs.existsSync(target), true, target);
 
-const html = fs.readFileSync(builtIndex, 'utf8');
-assert.match(html, /connect-src 'none'/u);
-assert.doesNotMatch(html, /127\.0\.0\.1|localhost|ws:\/\//u);
-assert.doesNotMatch(html, /__BUILDER_CONNECT_SRC__/u);
-
 const packagedEntries = asar.listPackage(archive).map((archivePath) => ({
   archivePath,
   normalizedPath: archivePath.replaceAll('\\', '/'),
@@ -81,6 +76,13 @@ for (const entry of packagedEntries.filter(
 function packagedSource(archivePath) {
   return asar.extractFile(archive, archivePath).toString('utf8');
 }
+
+const workspaceHtml = fs.readFileSync(builtIndex, 'utf8');
+const packagedHtml = packagedSource('dist/index.html');
+assert.equal(packagedHtml, workspaceHtml);
+assert.match(packagedHtml, /connect-src 'none'/u);
+assert.doesNotMatch(packagedHtml, /127\.0\.0\.1|localhost|ws:\/\//u);
+assert.doesNotMatch(packagedHtml, /__BUILDER_CONNECT_SRC__/u);
 
 const packagedMain = packagedSource('electron/main.cjs');
 const packagedPreload = packagedSource('electron/preload.cjs');

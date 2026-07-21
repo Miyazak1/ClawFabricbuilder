@@ -457,9 +457,25 @@ function createBinding(blob) {
 }
 
 function normalizeError(error) {
-  return error instanceof BuilderProviderSecretStoreError
-    ? error
-    : new BuilderProviderSecretStoreError();
+  let code = 'builder_provider_secret_store_unavailable';
+  try {
+    if (
+      error !== null
+      && (typeof error === 'object' || typeof error === 'function')
+      && !utilTypes.isProxy(error)
+    ) {
+      const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+      if (
+        descriptor
+        && Object.hasOwn(descriptor, 'value')
+        && typeof descriptor.value === 'string'
+        && Object.hasOwn(ERROR_MESSAGES, descriptor.value)
+      ) code = descriptor.value;
+    }
+  } catch {
+    code = 'builder_provider_secret_store_unavailable';
+  }
+  return new BuilderProviderSecretStoreError(code);
 }
 
 function createBuilderProviderSecretStore(rootPath, options = {}) {

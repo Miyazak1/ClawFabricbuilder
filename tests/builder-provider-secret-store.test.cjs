@@ -146,6 +146,52 @@ test('fails closed on malformed refs, accessors, proxies, missing blobs, and dec
   );
 });
 
+test('normalizes storage failures into fresh fixed errors without leaking mutated details or proxy traps', (t) => {
+  const root = temporaryRoot(t);
+  const mutated = new BuilderProviderSecretStoreError('builder_provider_secret_store_persistence_failed');
+  mutated.message = PRIVATE_MARKER;
+  mutated.stack = PRIVATE_MARKER;
+  const store = createBuilderProviderSecretStore(root, { safeStorage: fakeSafeStorage() });
+  const originalOpenSync = fs.openSync;
+  fs.openSync = () => {
+    throw mutated;
+  };
+  try {
+    assert.throws(
+      () => store.publish({ secret_ref: secretRef(), credential: 'real-key-value' }),
+      (error) => error instanceof BuilderProviderSecretStoreError
+        && error !== mutated
+        && error.code === 'builder_provider_secret_store_persistence_failed'
+        && error.stack === `${error.name}: ${error.message}`
+        && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+    );
+  } finally {
+    fs.openSync = originalOpenSync;
+  }
+
+  let trapCalls = 0;
+  const hostile = new Proxy(new Error(PRIVATE_MARKER), {
+    getPrototypeOf() {
+      trapCalls += 1;
+      throw new Error(PRIVATE_MARKER);
+    },
+  });
+  const hostileStore = createBuilderProviderSecretStore(root, {
+    safeStorage: {
+      isEncryptionAvailable() { return true; },
+      encryptString() { throw hostile; },
+      decryptString() { throw hostile; },
+    },
+  });
+  assert.throws(
+    () => hostileStore.publish({ secret_ref: secretRef(), credential: 'real-key-value' }),
+    (error) => error instanceof BuilderProviderSecretStoreError
+      && error.code === 'builder_provider_secret_store_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.equal(trapCalls, 0);
+});
+
 test('detects encrypted blob corruption and directory authority replacement', (t) => {
   const root = temporaryRoot(t);
   const store = createBuilderProviderSecretStore(root, { safeStorage: fakeSafeStorage() });

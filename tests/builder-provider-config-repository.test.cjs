@@ -205,6 +205,55 @@ test('fails closed on corruption, missing secret binding, malformed input, and a
   );
 });
 
+test('normalizes repository failures into fresh fixed errors without leaking mutated details or proxy traps', (t) => {
+  const root = temporaryRoot(t);
+  const mutated = new BuilderProviderConfigRepositoryError('builder_provider_config_repository_persistence_failed');
+  mutated.message = PRIVATE_MARKER;
+  mutated.stack = PRIVATE_MARKER;
+  const repository = repositoryWithFakeSecretStore(root);
+  const originalRenameSync = fs.renameSync;
+  fs.renameSync = function failCurrentPublish(source, target) {
+    if (path.basename(String(source)).startsWith('.current-') && path.basename(String(target)) === CURRENT_FILE_NAME) {
+      throw mutated;
+    }
+    return originalRenameSync.apply(fs, arguments);
+  };
+  try {
+    assert.throws(
+      () => repository.write_current({ config: config(), credential: 'real-key-value' }),
+      (error) => error instanceof BuilderProviderConfigRepositoryError
+        && error !== mutated
+        && error.code === 'builder_provider_config_repository_persistence_failed'
+        && error.stack === `${error.name}: ${error.message}`
+        && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+    );
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  let trapCalls = 0;
+  const hostile = new Proxy(new Error(PRIVATE_MARKER), {
+    getPrototypeOf() {
+      trapCalls += 1;
+      throw new Error(PRIVATE_MARKER);
+    },
+  });
+  const hostileRepository = createBuilderProviderConfigRepository(root, {
+    secretStore: {
+      publish() { throw hostile; },
+      resolve() { throw hostile; },
+      verify_binding() { throw hostile; },
+    },
+  });
+  assert.throws(
+    () => hostileRepository.write_current({ config: config(), credential: 'real-key-value' }),
+    (error) => error instanceof BuilderProviderConfigRepositoryError
+      && error.code === 'builder_provider_config_repository_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.equal(trapCalls, 0);
+});
+
 test('source stays main-only and isolated from IPC, renderer, host adapter, transport, and legacy authorities', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'electron', 'builder-provider-config-repository.cjs'),

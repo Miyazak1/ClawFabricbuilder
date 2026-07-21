@@ -353,9 +353,25 @@ function resultEnvelope(operation, current, evidence) {
 }
 
 function normalizeError(error) {
-  return error instanceof BuilderProviderConfigRepositoryError
-    ? error
-    : new BuilderProviderConfigRepositoryError();
+  let code = 'builder_provider_config_repository_unavailable';
+  try {
+    if (
+      error !== null
+      && (typeof error === 'object' || typeof error === 'function')
+      && !utilTypes.isProxy(error)
+    ) {
+      const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+      if (
+        descriptor
+        && Object.hasOwn(descriptor, 'value')
+        && typeof descriptor.value === 'string'
+        && Object.hasOwn(ERROR_MESSAGES, descriptor.value)
+      ) code = descriptor.value;
+    }
+  } catch {
+    code = 'builder_provider_config_repository_unavailable';
+  }
+  return new BuilderProviderConfigRepositoryError(code);
 }
 
 function createBuilderProviderConfigRepository(rootPath, options = {}) {
