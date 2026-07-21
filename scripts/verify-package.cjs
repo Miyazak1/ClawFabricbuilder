@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const asar = require('@electron/asar');
+const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..');
 const unpacked = path.join(root, 'release', 'win-unpacked');
@@ -44,7 +45,16 @@ const packagedEntries = asar.listPackage(archive).map((archivePath) => ({
   normalizedPath: archivePath.replaceAll('\\', '/'),
 }));
 const packagedFiles = packagedEntries.map((entry) => entry.normalizedPath);
-for (const expected of ['/electron/main.cjs', '/electron/preload.cjs', '/electron/runtime-options.cjs']) {
+for (const expected of [
+  '/electron/main.cjs',
+  '/electron/preload.cjs',
+  '/electron/runtime-options.cjs',
+  '/electron/builder-project-revision-record.cjs',
+  '/electron/builder-project-revision-repository.cjs',
+  '/electron/builder-project-revision-ipc-adapter.cjs',
+  '/electron/builder-project-catalog-ipc-adapter.cjs',
+  '/electron/builder-project-ipc-runtime.cjs',
+]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
 }
 assert.equal(packagedFiles.some((entry) => forbidden.test(entry)), false);
@@ -54,6 +64,146 @@ for (const entry of packagedEntries.filter(
 )) {
   const source = asar.extractFile(archive, entry.archivePath.slice(1)).toString('utf8');
   assert.doesNotMatch(source, forbidden, entry.normalizedPath);
+}
+
+function packagedSource(archivePath) {
+  return asar.extractFile(archive, archivePath).toString('utf8');
+}
+
+const packagedMain = packagedSource('electron/main.cjs');
+const packagedPreload = packagedSource('electron/preload.cjs');
+const packagedRuntime = packagedSource('electron/builder-project-ipc-runtime.cjs');
+const packagedRevisionAdapter = packagedSource('electron/builder-project-revision-ipc-adapter.cjs');
+const packagedCatalogAdapter = packagedSource('electron/builder-project-catalog-ipc-adapter.cjs');
+const channels = [
+  'clawfabric-builder:project-revisions:commit',
+  'clawfabric-builder:project-revisions:load-current',
+  'clawfabric-builder:project-catalog:list-current',
+];
+
+function frozenObjectLiteral(node) {
+  assert.equal(ts.isCallExpression(node), true);
+  assert.equal(ts.isPropertyAccessExpression(node.expression), true);
+  assert.equal(node.expression.expression.getText(), 'Object');
+  assert.equal(node.expression.name.text, 'freeze');
+  assert.equal(node.arguments.length, 1);
+  assert.equal(ts.isObjectLiteralExpression(node.arguments[0]), true);
+  return node.arguments[0];
+}
+
+function exactObjectKeys(object, expected) {
+  const keys = object.properties.map((property) => {
+    assert.equal(property.name !== undefined, true);
+    assert.equal(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name), true);
+    return property.name.text;
+  });
+  assert.deepEqual(keys, expected);
+}
+
+const preloadAst = ts.createSourceFile(
+  'preload.cjs',
+  packagedPreload,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.JS,
+);
+const exposeCalls = [];
+const rendererPropertyAccesses = [];
+const forbiddenRendererReferences = [];
+const preloadConstants = new Map();
+function inspectPreload(node) {
+  if (
+    ts.isCallExpression(node)
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.expression.getText(preloadAst) === 'contextBridge'
+    && node.expression.name.text === 'exposeInMainWorld'
+  ) exposeCalls.push(node);
+  if (
+    ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === 'ipcRenderer'
+  ) rendererPropertyAccesses.push(node.name.text);
+  if (ts.isElementAccessExpression(node) && node.expression.getText(preloadAst) === 'ipcRenderer') {
+    forbiddenRendererReferences.push('element_access');
+  }
+  if (ts.isIdentifier(node) && node.text === 'ipcRenderer') {
+    const parent = node.parent;
+    const declaration = ts.isBindingElement(parent) && parent.name === node;
+    const receiver = ts.isPropertyAccessExpression(parent) && parent.expression === node;
+    if (!declaration && !receiver) forbiddenRendererReferences.push(parent.kind);
+  }
+  if (
+    ts.isVariableDeclaration(node)
+    && ts.isIdentifier(node.name)
+    && node.initializer
+    && ts.isStringLiteral(node.initializer)
+  ) preloadConstants.set(node.name.text, node.initializer.text);
+  ts.forEachChild(node, inspectPreload);
+}
+inspectPreload(preloadAst);
+assert.equal(exposeCalls.length, 1);
+assert.equal(exposeCalls[0].arguments.length, 2);
+assert.equal(exposeCalls[0].arguments[0].text, 'clawfabricBuilder');
+const preloadRoot = frozenObjectLiteral(exposeCalls[0].arguments[1]);
+exactObjectKeys(preloadRoot, ['bridgeVersion', 'projectRevisions', 'projectCatalog']);
+const revisionProperty = preloadRoot.properties.find((property) => property.name.text === 'projectRevisions');
+const catalogProperty = preloadRoot.properties.find((property) => property.name.text === 'projectCatalog');
+assert.equal(ts.isPropertyAssignment(revisionProperty), true);
+assert.equal(ts.isPropertyAssignment(catalogProperty), true);
+const revisionBridge = frozenObjectLiteral(revisionProperty.initializer);
+const catalogBridge = frozenObjectLiteral(catalogProperty.initializer);
+exactObjectKeys(revisionBridge, ['commit', 'loadCurrent']);
+exactObjectKeys(catalogBridge, ['listCurrent']);
+assert.deepEqual(rendererPropertyAccesses, ['invoke', 'invoke', 'invoke']);
+assert.deepEqual(forbiddenRendererReferences, []);
+
+function exactInvokeMethod(object, methodName, channelName, expectedParameters) {
+  const method = object.properties.find((property) => property.name.text === methodName);
+  assert.equal(ts.isMethodDeclaration(method), true);
+  assert.equal(method.parameters.length, expectedParameters.length);
+  assert.deepEqual(method.parameters.map((parameter) => parameter.name.text), expectedParameters);
+  assert.equal(method.body.statements.length, 1);
+  const statement = method.body.statements[0];
+  assert.equal(ts.isReturnStatement(statement), true);
+  assert.equal(ts.isCallExpression(statement.expression), true);
+  const call = statement.expression;
+  assert.equal(ts.isPropertyAccessExpression(call.expression), true);
+  assert.equal(call.expression.expression.getText(preloadAst), 'ipcRenderer');
+  assert.equal(call.expression.name.text, 'invoke');
+  assert.equal(call.arguments.length, expectedParameters.length + 1);
+  assert.equal(call.arguments[0].getText(preloadAst), channelName);
+  assert.deepEqual(
+    call.arguments.slice(1).map((argument) => argument.getText(preloadAst)),
+    expectedParameters,
+  );
+}
+
+assert.equal(preloadConstants.get('COMMIT_CHANNEL'), channels[0]);
+assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[1]);
+assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[2]);
+exactInvokeMethod(revisionBridge, 'commit', 'COMMIT_CHANNEL', ['request']);
+exactInvokeMethod(revisionBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
+exactInvokeMethod(catalogBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
+
+assert.match(packagedMain, /require\(['"]\.\/builder-project-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /projectIpcRuntime\.register\(\)/u);
+assert.match(packagedMain, /requestSingleInstanceLock/u);
+assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
+assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
+assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*COMMIT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.commit\.invoke,?\s*\}\)/u);
+assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LOAD_CURRENT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.loadCurrent\.invoke,?\s*\}\)/u);
+assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LIST_CURRENT_CHANNEL,\s*invoke:\s*catalogAdapter\.channels\.listCurrent\.invoke,?\s*\}\)/u);
+assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
+assert.match(packagedPreload, /projectRevisions/u);
+assert.match(packagedPreload, /projectCatalog/u);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 3);
+for (const channel of channels) {
+  assert.equal(packagedPreload.includes(channel), true, channel);
+  assert.equal(
+    packagedRevisionAdapter.includes(channel) || packagedCatalogAdapter.includes(channel),
+    true,
+    channel,
+  );
 }
 
 const packageJson = asar.extractFile(archive, 'package.json').toString('utf8');

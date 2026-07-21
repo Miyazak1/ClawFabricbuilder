@@ -7,7 +7,7 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 
-test('Electron shell is isolated and exposes no product authority in N0', () => {
+test('Electron shell exposes only sender-bound Builder project authorities', () => {
   const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
   assert.match(main, /contextIsolation:\s*true/u);
@@ -17,9 +17,17 @@ test('Electron shell is isolated and exposes no product authority in N0', () => 
   assert.match(main, /app\.isPackaged/u);
   assert.match(main, /setPermissionRequestHandler/u);
   assert.match(main, /setPermissionCheckHandler/u);
-  assert.doesNotMatch(main, /ipcMain|webSecurity:\s*false|enableRemoteModule/u);
+  assert.match(main, /createBuilderProjectIpcRuntime/u);
+  assert.match(main, /app\.getPath\(['"]userData['"]\)/u);
+  assert.match(main, /requestSingleInstanceLock/u);
+  assert.match(main, /app\.on\(['"]second-instance['"]/u);
+  assert.match(main, /\.catch\(\(\) => \{[\s\S]*projectIpcRuntime\?\.dispose\(\)[\s\S]*app\.quit\(\)/u);
+  assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
   assert.match(preload, /builder-preload\.v1/u);
-  assert.doesNotMatch(preload, /ipcRenderer|require\(['"]node:/u);
+  assert.match(preload, /projectRevisions/u);
+  assert.match(preload, /projectCatalog/u);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 3);
+  assert.doesNotMatch(preload, /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder/u);
 });
 
 test('build and package scripts require production artifact verification', () => {
@@ -31,4 +39,7 @@ test('build and package scripts require production artifact verification', () =>
   assert.match(verifier, /CompanyName:\s*'ClawFabric'/u);
   assert.match(verifier, /asar\.listPackage/u);
   assert.match(verifier, /asar\.extractFile/u);
+  assert.match(verifier, /ts\.createSourceFile/u);
+  assert.match(verifier, /exactObjectKeys/u);
+  assert.match(verifier, /forbiddenRendererReferences/u);
 });
