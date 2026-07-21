@@ -11,7 +11,7 @@ const unpacked = path.join(root, 'release', 'win-unpacked');
 const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
 const builtIndex = path.join(root, 'dist', 'index.html');
-const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|ClawFabric v5/iu;
+const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
 
 function readWindowsIdentity(executablePath) {
   const script = [

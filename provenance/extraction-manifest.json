@@ -61,6 +61,30 @@
       "source_inventory_sha256": "3dc78392642554718efc4f65f2a0522a85169b05e159fda47559b6309c11b512",
       "target_inventory_sha256_at_extraction": "3dadde6819e3b2766f91a3d6a3b99e2f6756ce8ea550372ddace81655e0206bb",
       "transformation": "standalone_test_path_rebase_and_node_builtin_aliases"
+    },
+    {
+      "group": "builder_revision_catalog_ipc_adapters",
+      "source_root": "desktop",
+      "source_files": [
+        "builder-project-revision-ipc-adapter.cjs",
+        "builder-project-catalog-ipc-adapter.cjs",
+        "tests/builder-project-revision-ipc-adapter.test.cjs",
+        "tests/builder-project-catalog-ipc-adapter.test.cjs"
+      ],
+      "target_roots": [
+        "electron",
+        "tests"
+      ],
+      "target_files": [
+        "electron/builder-project-revision-ipc-adapter.cjs",
+        "electron/builder-project-catalog-ipc-adapter.cjs",
+        "tests/builder-project-revision-ipc-adapter.test.cjs",
+        "tests/builder-project-catalog-ipc-adapter.test.cjs"
+      ],
+      "file_count": 4,
+      "source_inventory_sha256": "ec9b19850c144bdf4fe9a1246ae728da2acde6daaac5c64867e8993c2bc3a1fb",
+      "target_inventory_sha256_at_extraction": "fd9736dbf38dd897bdfab1d4427bccee8c9cb078ff3ef6202541205b978a106b",
+      "transformation": "standalone_product_namespace_channel_and_test_path_rebase"
     }
   ]
 }

@@ -6,7 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
-const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|localProviderExecutor|ClawFabric v5|\.\.\/\.\.\/ClawFabric/iu;
+const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|localProviderExecutor|clawfabricDesktop|desktop:builder|ClawFabric v5|\.\.\/\.\.\/ClawFabric/iu;
 
 function sourceFiles(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -60,6 +60,7 @@ test('frontend extraction provenance is pinned without creating an old-repositor
       ['builder_react_hooks', 4],
       ['builder_renderer_ports', 6],
       ['builder_revision_repository', 4],
+      ['builder_revision_catalog_ipc_adapters', 4],
     ],
   );
   for (const entry of manifest.entries) {
