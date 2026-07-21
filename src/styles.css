@@ -1,0 +1,103 @@
+:root {
+  color: #18212b;
+  background: #f4f5f7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, textarea { font: inherit; }
+button { letter-spacing: 0; }
+
+.builder-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.project-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+  color: #eef4f8;
+  background: #202932;
+  border-right: 1px solid #141b21;
+}
+
+.brand-row, .new-project-button, .composer-actions, .empty-projects {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #14211b;
+  background: #7dd7a8;
+  border-radius: 6px;
+}
+
+.new-project-button, .composer-actions button {
+  min-height: 38px;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #10251a;
+  background: #7dd7a8;
+  font-weight: 700;
+}
+
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+.empty-projects { color: #aebbc5; font-size: 13px; }
+
+.workspace {
+  min-width: 0;
+  padding: clamp(24px, 5vw, 64px);
+  background: #f4f5f7;
+}
+
+.workspace-header { max-width: 780px; margin: 0 auto 26px; }
+.eyebrow { margin: 0 0 8px; color: #52705f; font-size: 13px; font-weight: 700; }
+h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); line-height: 1.1; letter-spacing: 0; }
+
+.idea-composer {
+  display: grid;
+  gap: 12px;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgb(35 47 58 / 7%);
+}
+
+.idea-composer label { font-size: 14px; font-weight: 700; }
+.idea-composer textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 13px;
+  color: #18212b;
+  background: #fbfcfd;
+  border: 1px solid #bdc8d1;
+  border-radius: 6px;
+  line-height: 1.55;
+}
+
+.composer-actions { justify-content: space-between; }
+.composer-actions span { color: #687783; font-size: 13px; }
+
+@media (max-width: 720px) {
+  .builder-shell { grid-template-columns: 1fr; }
+  .project-rail { min-height: auto; }
+  .empty-projects { display: none; }
+  .workspace { padding: 24px 16px; }
+  .composer-actions { align-items: stretch; flex-direction: column; }
+}

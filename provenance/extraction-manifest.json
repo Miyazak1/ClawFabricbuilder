@@ -1,0 +1,6 @@
+{
+  "manifest_version": "clawfabric-builder-extraction.v1",
+  "source_repository": "ClawFabric v5",
+  "source_commit": "87a948102e6f67aa628fe23944e65d2f5993ab69",
+  "entries": []
+}

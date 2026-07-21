@@ -1,0 +1,69 @@
+{
+  "name": "clawfabric-builder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A focused desktop AI builder for small tools and projects.",
+  "author": {
+    "name": "ClawFabric"
+  },
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "desktop:dev": "set BUILDER_RENDERER_URL=http://127.0.0.1:5173&& electron .",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint .",
+    "test:unit": "vitest run",
+    "test:boundaries": "node --test tests/*.test.cjs",
+    "test": "npm run test:unit && npm run test:boundaries",
+    "build": "npm run typecheck && vite build",
+    "verify:package": "node scripts/verify-package.cjs",
+    "pack": "npm run build && electron-builder --dir && npm run verify:package",
+    "dist": "npm run build && electron-builder --win nsis && npm run verify:package"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@electron/asar": "^3.4.1",
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.0",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "jsdom": "^27.0.1",
+    "lucide-react": "^1.6.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.56.1",
+    "vite": "^8.0.0",
+    "vitest": "^3.2.4"
+  },
+  "build": {
+    "appId": "com.clawfabric.builder",
+    "productName": "ClawFabric Builder",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
