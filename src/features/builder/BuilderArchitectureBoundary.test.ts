@@ -15,6 +15,7 @@ const PURE_BUILDER_FILES = new Set([
   'domain/builderProject.ts',
   'domain/builderProjectCatalog.ts',
   'presentation/BuilderPage.tsx',
+  'presentation/BuilderProviderSettingsPanel.tsx',
   'presentation/BuilderProjectCatalog.tsx',
   'preview/builderStaticPreview.ts',
 ]);
@@ -23,6 +24,7 @@ const INTEGRATION_FILES = new Set([
   'hooks/useBuilderProjectController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
   'infrastructure/builderDesktopProjectCatalogPort.ts',
+  'infrastructure/builderDesktopProviderSettingsPort.ts',
   'infrastructure/builderDesktopRepositoryPort.ts',
 ]);
 
@@ -141,6 +143,7 @@ describe('Builder architecture boundary', () => {
     expect(moduleBoundary('builderDesktopProjectCatalogPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProjectCatalogPort.ts')!.source).staticImports).toEqual([
       '../application/builderProjectCatalogController',
     ]);
+    expect(moduleBoundary('builderDesktopProviderSettingsPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProviderSettingsPort.ts')!.source).staticImports).toEqual([]);
     expect(moduleBoundary('builderDesktopRepositoryPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopRepositoryPort.ts')!.source).staticImports).toEqual([
       '../application/builderPorts',
     ]);
@@ -172,6 +175,10 @@ describe('Builder architecture boundary', () => {
       'utf8',
     );
     const page = readFileSync(join(BUILDER_ROOT, 'presentation', 'BuilderPage.tsx'), 'utf8');
+    const providerSettingsPanel = readFileSync(
+      join(BUILDER_ROOT, 'presentation', 'BuilderProviderSettingsPanel.tsx'),
+      'utf8',
+    );
     const catalog = readFileSync(
       join(BUILDER_ROOT, 'presentation', 'BuilderProjectCatalog.tsx'),
       'utf8',
@@ -212,6 +219,8 @@ describe('Builder architecture boundary', () => {
       'lucide-react',
       'react',
     ]);
+    expect(moduleBoundary('BuilderProviderSettingsPanel.tsx', providerSettingsPanel).staticImports)
+      .toEqual(['lucide-react']);
     expect(moduleBoundary('BuilderProjectCatalog.tsx', catalog).staticImports.sort()).toEqual([
       '../application/builderProjectCatalogController',
       'lucide-react',
