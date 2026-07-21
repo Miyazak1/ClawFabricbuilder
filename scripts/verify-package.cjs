@@ -56,11 +56,19 @@ for (const expected of [
   '/electron/builder-openai-compatible-transport.cjs',
   '/electron/builder-generation-kernel.cjs',
   '/electron/builder-generation-host-adapter.cjs',
+  '/electron/builder-generation-ipc-adapter.cjs',
+  '/electron/builder-generation-main-service.cjs',
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
 }
 assert.equal(packagedFiles.some((entry) => forbidden.test(entry)), false);
 assert.equal(packagedFiles.some((entry) => /\.test\.(?:cjs|js|ts|tsx)$/u.test(entry)), false);
+for (const forbiddenTest of [
+  '/tests/builder-generation-ipc-adapter.test.cjs',
+  '/tests/builder-generation-main-service.test.cjs',
+]) {
+  assert.equal(packagedFiles.includes(forbiddenTest), false, forbiddenTest);
+}
 assert.equal(packagedFiles.some((entry) => entry.startsWith('/node_modules/')), false);
 for (const entry of packagedEntries.filter(
   (value) => /\.(?:cjs|css|html|js|json)$/u.test(value.normalizedPath),
@@ -92,6 +100,8 @@ const packagedCatalogAdapter = packagedSource('electron/builder-project-catalog-
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
 const packagedGenerationHost = packagedSource('electron/builder-generation-host-adapter.cjs');
+const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
+const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const channels = [
   'clawfabric-builder:project-revisions:commit',
   'clawfabric-builder:project-revisions:load-current',
@@ -173,7 +183,7 @@ exactObjectKeys(revisionBridge, ['commit', 'loadCurrent']);
 exactObjectKeys(catalogBridge, ['listCurrent']);
 assert.deepEqual(rendererPropertyAccesses, ['invoke', 'invoke', 'invoke']);
 assert.deepEqual(forbiddenRendererReferences, []);
-assert.doesNotMatch(packagedPreload, /provider|secret|settings|safeStorage/iu);
+assert.doesNotMatch(packagedPreload, /provider|secret|settings|safeStorage|generation|codeGenerator/iu);
 
 function exactInvokeMethod(object, methodName, channelName, expectedParameters) {
   const method = object.properties.find((property) => property.name.text === methodName);
@@ -206,6 +216,7 @@ exactInvokeMethod(catalogBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
 assert.match(packagedMain, /require\(['"]\.\/builder-project-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /projectIpcRuntime\.register\(\)/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
+assert.doesNotMatch(packagedMain, /generation|codeGenerator|builder-generation-main-service|builder-generation-ipc-adapter/iu);
 assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
 assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
 assert.doesNotMatch(packagedRuntime, /provider|secret|safeStorage/iu);
@@ -222,6 +233,25 @@ assert.doesNotMatch(packagedProviderConfigRepository, /safeStorage|ipcMain|ipcRe
 assert.match(packagedProviderSecretStore, /safeStorage/u);
 assert.doesNotMatch(packagedProviderSecretStore, /ipcMain|ipcRenderer|contextBridge|fetch\s*\(/u);
 assert.doesNotMatch(packagedGenerationHost, /safeStorage|builder-provider-secret-store|builder-provider-config-repository/u);
+assert.match(packagedGenerationIpcAdapter, /createBuilderGenerationIpcAdapter/u);
+assert.match(packagedGenerationIpcAdapter, /active_renderer_required:\s*true/u);
+assert.match(packagedGenerationIpcAdapter, /direct_electron_registration:\s*false/u);
+assert.match(packagedGenerationIpcAdapter, /direct_preload_exposure:\s*false/u);
+assert.match(packagedGenerationIpcAdapter, /provider_settings_exposed:\s*false/u);
+assert.match(packagedGenerationIpcAdapter, /credential_readback:\s*false/u);
+assert.doesNotMatch(
+  packagedGenerationIpcAdapter,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider|local-provider-executor/iu,
+);
+assert.match(packagedGenerationMainService, /createBuilderGenerationHostAdapter/u);
+assert.match(packagedGenerationMainService, /bind_current_authority/u);
+assert.match(packagedGenerationMainService, /credential_exposed_to_renderer:\s*false/u);
+assert.match(packagedGenerationMainService, /electron_registration:\s*false/u);
+assert.match(packagedGenerationMainService, /preload_exposure:\s*false/u);
+assert.doesNotMatch(
+  packagedGenerationMainService,
+  /ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider-secret-store|builder-provider-config-repository|local-provider-executor/iu,
+);
 for (const channel of channels) {
   assert.equal(packagedPreload.includes(channel), true, channel);
   assert.equal(
