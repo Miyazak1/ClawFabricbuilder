@@ -7,6 +7,7 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|localProviderExecutor|clawfabricDesktop|desktop:builder|ClawFabric v5|\.\.\/\.\.\/ClawFabric/iu;
+const safeStorageAllowed = path.join(root, 'electron', 'builder-provider-secret-store.cjs');
 
 function sourceFiles(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -27,6 +28,28 @@ test('standalone sources do not import legacy product authorities or the old rep
   for (const file of files) {
     assert.doesNotMatch(fs.readFileSync(file, 'utf8'), forbidden, path.relative(root, file));
   }
+});
+
+test('provider settings storage is main-only and safeStorage is isolated to the secret store', () => {
+  const files = [
+    ...sourceFiles(path.join(root, 'electron')),
+    ...sourceFiles(path.join(root, 'src')),
+  ];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    if (file === safeStorageAllowed) {
+      assert.match(source, /safeStorage/u);
+    } else {
+      assert.doesNotMatch(source, /safeStorage/u, path.relative(root, file));
+    }
+    assert.doesNotMatch(source, /generic.*(?:config|secret)|secure-provider|local-provider-executor/iu);
+  }
+
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
+  assert.match(preload, /projectRevisions/u);
+  assert.match(preload, /projectCatalog/u);
+  assert.doesNotMatch(preload, /provider|secret|settings|safeStorage/iu);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 3);
 });
 
 test('package identity and dependencies remain Builder-only', () => {

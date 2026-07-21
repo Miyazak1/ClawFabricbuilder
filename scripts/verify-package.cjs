@@ -13,6 +13,7 @@ const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
 const builtIndex = path.join(root, 'dist', 'index.html');
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
+const secretMaterial = /(?:real-key-value|private-settings-marker|private-secret-marker|Authorization:\s*Bearer|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|sk-[A-Za-z0-9_-]{16,}|api[_-]?key\s*[:=])/iu;
 
 function readWindowsIdentity(executablePath) {
   const script = [
@@ -54,16 +55,27 @@ for (const expected of [
   '/electron/builder-project-revision-ipc-adapter.cjs',
   '/electron/builder-project-catalog-ipc-adapter.cjs',
   '/electron/builder-project-ipc-runtime.cjs',
+  '/electron/builder-provider-config.cjs',
+  '/electron/builder-provider-config-repository.cjs',
+  '/electron/builder-provider-secret-store.cjs',
+  '/electron/builder-openai-compatible-transport.cjs',
+  '/electron/builder-generation-kernel.cjs',
+  '/electron/builder-generation-host-adapter.cjs',
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
 }
 assert.equal(packagedFiles.some((entry) => forbidden.test(entry)), false);
+assert.equal(packagedFiles.some((entry) => /\.test\.(?:cjs|js|ts|tsx)$/u.test(entry)), false);
 assert.equal(packagedFiles.some((entry) => entry.startsWith('/node_modules/')), false);
 for (const entry of packagedEntries.filter(
   (value) => /\.(?:cjs|css|html|js|json)$/u.test(value.normalizedPath),
 )) {
   const source = asar.extractFile(archive, entry.archivePath.slice(1)).toString('utf8');
   assert.doesNotMatch(source, forbidden, entry.normalizedPath);
+  assert.doesNotMatch(source, secretMaterial, entry.normalizedPath);
+  if (source.includes('safeStorage')) {
+    assert.equal(entry.normalizedPath, '/electron/builder-provider-secret-store.cjs');
+  }
 }
 
 function packagedSource(archivePath) {
@@ -75,6 +87,9 @@ const packagedPreload = packagedSource('electron/preload.cjs');
 const packagedRuntime = packagedSource('electron/builder-project-ipc-runtime.cjs');
 const packagedRevisionAdapter = packagedSource('electron/builder-project-revision-ipc-adapter.cjs');
 const packagedCatalogAdapter = packagedSource('electron/builder-project-catalog-ipc-adapter.cjs');
+const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
+const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
+const packagedGenerationHost = packagedSource('electron/builder-generation-host-adapter.cjs');
 const channels = [
   'clawfabric-builder:project-revisions:commit',
   'clawfabric-builder:project-revisions:load-current',
@@ -156,6 +171,7 @@ exactObjectKeys(revisionBridge, ['commit', 'loadCurrent']);
 exactObjectKeys(catalogBridge, ['listCurrent']);
 assert.deepEqual(rendererPropertyAccesses, ['invoke', 'invoke', 'invoke']);
 assert.deepEqual(forbiddenRendererReferences, []);
+assert.doesNotMatch(packagedPreload, /provider|secret|settings|safeStorage/iu);
 
 function exactInvokeMethod(object, methodName, channelName, expectedParameters) {
   const method = object.properties.find((property) => property.name.text === methodName);
@@ -190,6 +206,7 @@ assert.match(packagedMain, /projectIpcRuntime\.register\(\)/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
 assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
 assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
+assert.doesNotMatch(packagedRuntime, /provider|secret|safeStorage/iu);
 assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*COMMIT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.commit\.invoke,?\s*\}\)/u);
 assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LOAD_CURRENT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.loadCurrent\.invoke,?\s*\}\)/u);
 assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LIST_CURRENT_CHANNEL,\s*invoke:\s*catalogAdapter\.channels\.listCurrent\.invoke,?\s*\}\)/u);
@@ -197,6 +214,12 @@ assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectRevisions/u);
 assert.match(packagedPreload, /projectCatalog/u);
 assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 3);
+assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
+assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
+assert.doesNotMatch(packagedProviderConfigRepository, /safeStorage|ipcMain|ipcRenderer|contextBridge|fetch\s*\(/u);
+assert.match(packagedProviderSecretStore, /safeStorage/u);
+assert.doesNotMatch(packagedProviderSecretStore, /ipcMain|ipcRenderer|contextBridge|fetch\s*\(/u);
+assert.doesNotMatch(packagedGenerationHost, /safeStorage|builder-provider-secret-store|builder-provider-config-repository/u);
 for (const channel of channels) {
   assert.equal(packagedPreload.includes(channel), true, channel);
   assert.equal(
