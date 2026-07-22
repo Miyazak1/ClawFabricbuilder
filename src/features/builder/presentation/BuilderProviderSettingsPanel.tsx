@@ -163,7 +163,7 @@ export function BuilderProviderSettingsPanel({
               id="builder-provider-base-url"
               inputMode="url"
               onChange={(event) => change('baseUrl', event.currentTarget.value)}
-              placeholder="https://api.openai.com/v1"
+              placeholder="https://api.example.com/v1"
               value={values.baseUrl}
             />
             {baseUrlError.message === null ? null : (
@@ -184,7 +184,7 @@ export function BuilderProviderSettingsPanel({
                 disabled={disabled}
                 id="builder-provider-model"
                 onChange={(event) => change('model', event.currentTarget.value)}
-                placeholder="gpt-5.4"
+                placeholder="model-name"
                 value={values.model}
               />
               {modelError.message === null ? null : (

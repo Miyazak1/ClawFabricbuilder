@@ -110,8 +110,10 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(container.querySelector('h2')?.textContent).toBe('AI provider');
     expect(container.textContent).toContain('Connect an AI provider before making projects.');
     expect(input(container, 'builder-provider-base-url').value).toBe('https://provider.example/v1');
+    expect(input(container, 'builder-provider-base-url').placeholder).toBe('https://api.example.com/v1');
     expect(input(container, 'builder-provider-base-url').className).toContain('cf-builder-input');
     expect(input(container, 'builder-provider-model').value).toBe('builder-model');
+    expect(input(container, 'builder-provider-model').placeholder).toBe('model-name');
     expect(input(container, 'builder-provider-api-key').type).toBe('password');
     expect(input(container, 'builder-provider-api-key').value).toBe('real-key-value');
     expect(input(container, 'builder-provider-timeout').value).toBe('30000');

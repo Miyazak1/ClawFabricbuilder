@@ -30,7 +30,7 @@ const MAX_VALUE_BYTES = 64 * 1024;
 const UTF8_ENCODER = new TextEncoder();
 
 const DEFAULT_VALUES: BuilderProviderSettingsPanelValues = Object.freeze({
-  baseUrl: 'https://api.openai.com/v1',
+  baseUrl: '',
   model: '',
   apiKey: '',
   timeoutMs: '30000',
@@ -258,6 +258,7 @@ export function useBuilderProviderSettingsController(
   }, [port]);
 
   const onValuesChange = useCallback((nextValues: BuilderProviderSettingsPanelValues) => {
+    operationRef.current += 1;
     try {
       setValues(exactValues(nextValues));
       setStatus((currentStatus) => (currentStatus === 'unavailable' ? 'unavailable' : 'unconfigured'));

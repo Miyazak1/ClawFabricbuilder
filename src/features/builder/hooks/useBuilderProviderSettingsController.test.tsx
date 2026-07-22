@@ -34,6 +34,16 @@ function flush(): Promise<void> {
   });
 }
 
+function deferred<T>() {
+  let reject!: (reason?: unknown) => void;
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next, fail) => {
+    resolve = next;
+    reject = fail;
+  });
+  return { promise, reject, resolve };
+}
+
 function current(overrides = {}): BuilderProviderSettingsCurrent {
   return Object.freeze({
     configured: true,
@@ -148,7 +158,82 @@ describe('useBuilderProviderSettingsController', () => {
 
     expect(result.current.status).toBe('unconfigured');
     expect(result.current.values.apiKey).toBe('');
-    expect(result.current.values.baseUrl).toBe('https://api.openai.com/v1');
+    expect(result.current.values.baseUrl).toBe('');
+    expect(result.current.values.model).toBe('');
+  });
+
+  it('keeps user edits when the initial settings read settles later', async () => {
+    const initialRead = deferred<BuilderProviderSettingsCurrent>();
+    const replaceCurrent = vi.fn(async (request: BuilderProviderSettingsWriteRequest) => current({
+      config: Object.freeze({
+        provider_id: 'builder-default',
+        base_url: request.config.base_url,
+        model: request.config.model,
+        timeout_ms: request.config.timeout_ms,
+        temperature: request.config.temperature,
+        max_tokens: request.config.max_tokens,
+        config_digest: CONFIG_DIGEST,
+      }),
+    }));
+    const port: BuilderProviderSettingsPort = {
+      readCurrent: vi.fn(() => initialRead.promise),
+      replaceCurrent,
+      status: vi.fn(async () => providerStatus()),
+    };
+    const result = harness(port);
+    const edited = values({
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      apiKey: 'deepseek-key-value',
+    });
+
+    act(() => result.current.onValuesChange(edited));
+    await act(async () => {
+      initialRead.resolve(current());
+      await initialRead.promise;
+    });
+
+    expect(result.current.status).toBe('unconfigured');
+    expect(result.current.canSave).toBe(true);
+    expect(result.current.values).toEqual(edited);
+    expect(result.current.values.model).not.toBe('builder-model');
+
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(replaceCurrent).toHaveBeenCalledWith({
+      config: {
+        base_url: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        timeout_ms: 60000,
+        temperature: null,
+        max_tokens: null,
+      },
+      credential: 'deepseek-key-value',
+    });
+    expect(result.current.status).toBe('saved');
+    expect(result.current.values.apiKey).toBe('');
+  });
+
+  it('ignores a late initial read failure after the user begins editing', async () => {
+    const initialRead = deferred<BuilderProviderSettingsCurrent>();
+    const port: BuilderProviderSettingsPort = {
+      readCurrent: vi.fn(() => initialRead.promise),
+      replaceCurrent: vi.fn(async () => current()),
+      status: vi.fn(async () => providerStatus()),
+    };
+    const result = harness(port);
+    const edited = values({ baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' });
+
+    act(() => result.current.onValuesChange(edited));
+    await act(async () => {
+      initialRead.reject(new Error('private read marker'));
+      await initialRead.promise.catch(() => undefined);
+    });
+
+    expect(result.current.status).toBe('unconfigured');
+    expect(result.current.values).toEqual(edited);
+    expect(JSON.stringify(result.current)).not.toContain('private read marker');
   });
 
   it('writes credentials only through replaceCurrent and clears them after save', async () => {
