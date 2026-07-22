@@ -43,6 +43,24 @@ function revision(): BuilderProjectRevision {
   };
 }
 
+function childRevision(parentRevision = revision()): BuilderProjectRevision {
+  const parent = {
+    revision: parentRevision.revision,
+    revision_digest: parentRevision.revision_digest,
+  };
+  return {
+    ...revision(),
+    revision: 2,
+    revision_digest: `sha256:${'d'.repeat(64)}`,
+    parent_revision: parent,
+    proposal_evidence: {
+      ...revision().proposal_evidence,
+      target_revision: 2,
+      parent_revision: { ...parent },
+    },
+  };
+}
+
 function expectPortError(promise: Promise<unknown>) {
   return expect(promise).rejects.toMatchObject({
     code: 'builder_repository_unavailable',
@@ -125,6 +143,95 @@ describe('Builder desktop repository port', () => {
     await expect(port.commit({ revision: revision(), expected_previous: null })).rejects.not.toThrow(privateMarker);
   });
 
+  it('sends legal typed commit aliases as independent wire objects', async () => {
+    const commit = vi.fn(async (request: unknown) => {
+      void request;
+      return {};
+    });
+    const port = createBuilderDesktopRepositoryPort({
+      commit,
+      loadCurrent: vi.fn(async () => ({})),
+    });
+    const candidate = childRevision();
+    const commitRequest = {
+      revision: candidate,
+      expected_previous: candidate.parent_revision,
+    };
+
+    await port.commit(commitRequest);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const wireRequest = commit.mock.calls[0][0] as typeof commitRequest;
+    expect(wireRequest).toEqual(commitRequest);
+    expect(wireRequest).not.toBe(commitRequest);
+    expect(wireRequest.revision).not.toBe(candidate);
+    expect(wireRequest.expected_previous).not.toBe(candidate.parent_revision);
+    expect(wireRequest.revision.parent_revision).not.toBe(candidate.parent_revision);
+    expect(wireRequest.expected_previous).not.toBe(wireRequest.revision.parent_revision);
+    expect(Object.isFrozen(wireRequest)).toBe(true);
+    expect(Object.isFrozen(wireRequest.revision)).toBe(true);
+    expect(Object.isFrozen(wireRequest.expected_previous)).toBe(true);
+  });
+
+  it('rejects malformed commit requests before calling the bridge', async () => {
+    const commit = vi.fn(async () => ({}));
+    const port = createBuilderDesktopRepositoryPort({
+      commit,
+      loadCurrent: vi.fn(async () => ({})),
+    });
+    const candidate = childRevision();
+    const extra = { revision: candidate, expected_previous: candidate.parent_revision, extra: true };
+    const symbolic = { revision: candidate, expected_previous: candidate.parent_revision } as Record<PropertyKey, unknown>;
+    symbolic[Symbol('private')] = true;
+    let accessorReads = 0;
+    const accessor = { revision: candidate } as Record<string, unknown>;
+    Object.defineProperty(accessor, 'expected_previous', {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        return candidate.parent_revision;
+      },
+    });
+    const aliasedParent = { revision: 1, revision_digest: `sha256:${'a'.repeat(64)}` };
+    const internallyAliased = {
+      ...candidate,
+      parent_revision: aliasedParent,
+      proposal_evidence: {
+        ...candidate.proposal_evidence,
+        parent_revision: aliasedParent,
+      },
+    };
+
+    await expectPortError(port.commit(extra as never));
+    await expectPortError(port.commit(symbolic as never));
+    await expectPortError(port.commit(accessor as never));
+    await expectPortError(port.commit({
+      revision: internallyAliased,
+      expected_previous: internallyAliased.parent_revision,
+    } as never));
+
+    expect(accessorReads).toBe(0);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('applies the commit request graph budget to the assembled wire object', async () => {
+    const commit = vi.fn(async (request: unknown) => {
+      void request;
+      return {};
+    });
+    const port = createBuilderDesktopRepositoryPort({
+      commit,
+      loadCurrent: vi.fn(async () => ({})),
+    });
+
+    await expectPortError(port.commit({
+      revision: { values: new Array(10_000).fill(0) },
+      expected_previous: { values: new Array(10_000).fill(0) },
+    } as never));
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it('rejects accessor requests and responses without invoking their getters', async () => {
     let requestReads = 0;
     let responseReads = 0;
@@ -162,6 +269,17 @@ describe('Builder desktop repository port', () => {
 
     await expectPortError(port.loadCurrent({ project_id: PROJECT_ID }));
     expect(responseReads).toBe(0);
+  });
+
+  it('rejects aliased bridge responses', async () => {
+    const shared = { value: 'alias' };
+    const port = createBuilderDesktopRepositoryPort({
+      commit: vi.fn(async () => ({ left: shared, right: shared })),
+      loadCurrent: vi.fn(async () => ({ left: shared, right: shared })),
+    });
+
+    await expectPortError(port.commit({ revision: revision(), expected_previous: null }));
+    await expectPortError(port.loadCurrent({ project_id: PROJECT_ID }));
   });
 
   it('bounds wide and oversized data before calling the bridge', async () => {

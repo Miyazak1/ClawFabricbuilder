@@ -13,7 +13,13 @@ const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
 const builtIndex = path.join(root, 'dist', 'index.html');
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
-const secretMaterial = /(?:real-key-value|private-settings-marker|private-secret-marker|Authorization:\s*Bearer|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|sk-[A-Za-z0-9_-]{16,}|api[_-]?key\s*[:=])/iu;
+const secretMaterial = /(?:real-key-value|private-settings-marker|private-secret-marker|Authorization:\s*Bearer|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|sk-[A-Za-z0-9_-]{16,})/iu;
+const apiKeyLiteralAssignment = /["'`]?api(?:[_-]?key|Key)["'`]?\s*[:=]\s*(["'])(?=[^"'`\r\n]{16,}\1)[^"'`\r\n]+\1/iu;
+
+assert.equal(apiKeyLiteralAssignment.test('apiKey:'), false);
+assert.equal(apiKeyLiteralAssignment.test('apiKey: value'), false);
+assert.equal(apiKeyLiteralAssignment.test("apiKey: 'abcdefghijklmnopqrstuvwx'"), true);
+assert.equal(apiKeyLiteralAssignment.test('api_key="abcdefghijklmnopqrstuvwx"'), true);
 
 function readWindowsIdentity(executablePath) {
   const script = [
@@ -82,6 +88,7 @@ for (const entry of packagedEntries.filter(
   const source = asar.extractFile(archive, entry.archivePath.slice(1)).toString('utf8');
   assert.doesNotMatch(source, forbidden, entry.normalizedPath);
   assert.doesNotMatch(source, secretMaterial, entry.normalizedPath);
+  assert.doesNotMatch(source, apiKeyLiteralAssignment, entry.normalizedPath);
   if (source.includes('safeStorage')) {
     assert.equal(entry.normalizedPath, '/electron/builder-provider-secret-store.cjs');
   }

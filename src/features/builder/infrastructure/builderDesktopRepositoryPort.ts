@@ -9,6 +9,7 @@ type CommitRequest = Parameters<BuilderProjectRepositoryPort['commit']>[0];
 type LoadCurrentRequest = Parameters<BuilderProjectRepositoryPort['loadCurrent']>[0];
 
 const BRIDGE_KEYS = new Set(['commit', 'loadCurrent']);
+const COMMIT_REQUEST_KEYS = new Set(['revision', 'expected_previous']);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
 const MAX_DATA_GRAPH_UTF8_BYTES = 1024 * 1024;
@@ -150,6 +151,42 @@ function clonePlainData(value: unknown): unknown {
   }
 }
 
+function cloneCommitRequest(value: unknown): CommitRequest {
+  try {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw portError();
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw portError();
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length !== COMMIT_REQUEST_KEYS.size
+      || keys.some((key) => typeof key !== 'string' || !COMMIT_REQUEST_KEYS.has(key))
+    ) {
+      throw portError();
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const revision = descriptors.revision;
+    const expectedPrevious = descriptors.expected_previous;
+    if (
+      !revision
+      || !expectedPrevious
+      || !revision.enumerable
+      || !expectedPrevious.enumerable
+      || 'get' in revision
+      || 'set' in revision
+      || 'get' in expectedPrevious
+      || 'set' in expectedPrevious
+    ) {
+      throw portError();
+    }
+    return clonePlainData({
+      revision: clonePlainData(revision.value),
+      expected_previous: clonePlainData(expectedPrevious.value),
+    }) as CommitRequest;
+  } catch {
+    throw portError();
+  }
+}
+
 async function callBridge(
   receiver: BuilderProjectRevisionBridge,
   method: (request: unknown) => Promise<unknown>,
@@ -163,13 +200,26 @@ async function callBridge(
   }
 }
 
+async function callCommitBridge(
+  receiver: BuilderProjectRevisionBridge,
+  method: (request: unknown) => Promise<unknown>,
+  request: unknown,
+): Promise<unknown> {
+  try {
+    const result = await Reflect.apply(method, receiver, [cloneCommitRequest(request)]);
+    return clonePlainData(result);
+  } catch {
+    throw portError();
+  }
+}
+
 export function createBuilderDesktopRepositoryPort(
   value: unknown,
 ): BuilderProjectRepositoryPort {
   const bridge = sanitizeBridge(value);
   return Object.freeze({
     commit(request: CommitRequest) {
-      return callBridge(bridge, bridge.commit, request);
+      return callCommitBridge(bridge, bridge.commit, request);
     },
     loadCurrent(request: LoadCurrentRequest) {
       return callBridge(bridge, bridge.loadCurrent, request);
