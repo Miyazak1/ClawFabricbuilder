@@ -51,6 +51,7 @@
   "build": {
     "appId": "com.clawfabric.builder",
     "productName": "ClawFabric Builder",
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
     },

@@ -81,6 +81,11 @@ test('package identity and dependencies remain Builder-only', () => {
   assert.equal(packageJson.name, 'clawfabric-builder');
   assert.equal(packageJson.build.appId, 'com.clawfabric.builder');
   assert.equal(packageJson.build.productName, 'ClawFabric Builder');
+  assert.equal(packageJson.build.electronDist, 'node_modules/electron/dist');
+  assert.equal(path.isAbsolute(packageJson.build.electronDist), false);
+  assert.equal(packageJson.build.electronDist.includes('..'), false);
+  assert.equal(packageJson.dependencies?.electron, undefined);
+  assert.equal(typeof packageJson.devDependencies?.electron, 'string');
   for (const dependency of ['axios', '@xyflow/react', 'electron-updater', 'ajv']) {
     assert.equal(packageJson.dependencies?.[dependency], undefined);
     assert.equal(packageJson.devDependencies?.[dependency], undefined);
