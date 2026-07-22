@@ -97,6 +97,54 @@ test('posts one fixed non-streaming Builder request and returns only bounded gen
   });
 });
 
+test('disables thinking only for official DeepSeek V4 endpoints and models', async () => {
+  const bodies = [];
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async (_url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return response(providerPayload());
+    },
+  });
+
+  for (const [base_url, model] of [
+    ['https://api.deepseek.com', 'deepseek-v4-flash'],
+    ['https://api.deepseek.com/v1', 'deepseek-v4-pro'],
+    ['https://api.deepseek.com/beta', 'deepseek-v4-flash'],
+    ['https://api.deepseek.com:443', 'deepseek-v4-pro'],
+  ]) {
+    await transport(request({ base_url, model, temperature: 0.2 }));
+  }
+  await transport(request({
+    base_url: 'https://proxy.example/v1',
+    model: 'deepseek-v4-flash',
+  }));
+  await transport(request({
+    base_url: 'https://api.deepseek.com',
+    model: 'other-model',
+  }));
+  await transport(request({
+    base_url: 'https://api.deepseek.com:8443',
+    model: 'deepseek-v4-flash',
+  }));
+  await transport(request({
+    base_url: 'https://api.deepseek.com.example/v1',
+    model: 'deepseek-v4-flash',
+  }));
+
+  for (const body of bodies.slice(0, 4)) {
+    assert.deepEqual(body.thinking, { type: 'disabled' });
+  }
+  for (const body of bodies.slice(4)) {
+    assert.equal(Object.hasOwn(body, 'thinking'), false);
+  }
+  assert.deepEqual(bodies[4], {
+    model: 'deepseek-v4-flash',
+    messages: request().messages,
+    response_format: { type: 'json_object' },
+    stream: false,
+  });
+});
+
 test('allows HTTPS and exact loopback HTTP but rejects credentialed or remote cleartext endpoints', async () => {
   const endpoints = [];
   const transport = createBuilderOpenAICompatibleTransport({

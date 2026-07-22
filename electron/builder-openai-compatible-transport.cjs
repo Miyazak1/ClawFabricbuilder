@@ -18,6 +18,7 @@ const REQUEST_KEYS = Object.freeze([
 ]);
 const OPTIONAL_REQUEST_KEYS = Object.freeze(['temperature', 'max_tokens']);
 const MESSAGE_KEYS = Object.freeze(['role', 'content']);
+const DEEPSEEK_V4_MODELS = Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']);
 const ERROR_MESSAGES = Object.freeze({
   builder_provider_request_invalid: 'AI provider settings are invalid.',
   builder_provider_unavailable: 'AI generation is unavailable.',
@@ -201,6 +202,23 @@ function sanitizeRequest(value) {
   return Object.freeze(request);
 }
 
+function providerDialectFields(request) {
+  try {
+    const endpoint = new URL(request.endpoint);
+    if (
+      endpoint.protocol === 'https:'
+      && endpoint.hostname.toLowerCase() === 'api.deepseek.com'
+      && (endpoint.port === '' || endpoint.port === '443')
+      && DEEPSEEK_V4_MODELS.includes(request.model)
+    ) {
+      return { thinking: { type: 'disabled' } };
+    }
+  } catch {
+    // The sanitized request owns endpoint validation; unknown dialects add no fields.
+  }
+  return {};
+}
+
 function responseHeader(response, name) {
   if (!response || !response.headers || typeof response.headers.get !== 'function') return '';
   const value = response.headers.get(name);
@@ -370,6 +388,7 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
           messages: request.messages,
           response_format: { type: 'json_object' },
           stream: false,
+          ...providerDialectFields(request),
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
           ...(request.max_tokens === undefined ? {} : { max_tokens: request.max_tokens }),
         }),
