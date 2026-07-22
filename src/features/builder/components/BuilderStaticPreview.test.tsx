@@ -74,7 +74,14 @@ describe('BuilderStaticPreview', () => {
 
     expect(container.querySelector('h2')?.textContent).toBe('Color picker');
     expect(container.textContent).toContain('Version 1');
+    expect(container.textContent).not.toMatch(/runtime|schema|IPC/i);
+    expect(container.textContent).not.toMatch(/HTML|CSS|app\.js|does not run/i);
+    expect(container.querySelector('[data-builder-preview-safety-note="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-static-preview="true"]')?.className).toContain(
+      'cf-builder-panel',
+    );
     const frame = container.querySelector<HTMLIFrameElement>('iframe[title="Color picker preview"]');
+    expect(frame?.className).toContain('cf-builder-preview-frame');
     expect(frame?.getAttribute('sandbox')).toBe('');
     expect(frame?.hasAttribute('allow')).toBe(false);
     expect(frame?.getAttribute('referrerpolicy')).toBe('no-referrer');

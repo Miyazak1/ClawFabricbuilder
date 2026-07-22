@@ -9,13 +9,13 @@ export type BuilderStaticPreviewProps = {
 
 export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
   if (!isTrustedBuilderStaticPreviewProjection(projection)) {
-    return <p role="alert">Preview unavailable.</p>;
+    return <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">Preview unavailable.</p>;
   }
 
   return (
     <section
       aria-label="Project preview"
-      className="flex min-h-0 flex-col gap-2"
+      className="cf-builder-panel flex min-h-0 flex-col gap-2 border p-3"
       data-builder-static-preview="true"
     >
       <header className="flex items-center justify-between gap-3">
@@ -23,7 +23,7 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
         <span className="text-xs text-muted-foreground">Version {projection.revision}</span>
       </header>
       <iframe
-        className="min-h-80 w-full border bg-white"
+        className="cf-builder-preview-frame min-h-80 w-full"
         referrerPolicy="no-referrer"
         sandbox=""
         srcDoc={projection.src_doc}

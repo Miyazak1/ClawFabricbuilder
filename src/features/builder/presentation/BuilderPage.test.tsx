@@ -144,14 +144,22 @@ function buttonWithText(container: HTMLElement, text: string): HTMLButtonElement
     .find((button) => button.textContent?.includes(text));
 }
 
+function previewSafetyNotes(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-builder-preview-safety-note="true"]'));
+}
+
 describe('BuilderPage', () => {
   it('renders the standalone Builder workspace without pretending a draft exists', () => {
     const container = render(<BuilderPage {...props()} />);
 
     expect(container.querySelector('[data-builder-page="true"]')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-header')).not.toBeNull();
     expect(container.querySelector('h1')?.textContent).toBe('New project');
     expect(buttonWithText(container, 'Make it')?.disabled).toBe(true);
     expect(container.textContent).toContain('Your preview will appear here.');
+    expect(previewSafetyNotes(container)).toHaveLength(1);
+    expect(previewSafetyNotes(container)[0].textContent).toBe('Preview is isolated for safety.');
+    expect(previewSafetyNotes(container)[0].textContent).not.toMatch(/HTML|CSS|app\.js|does not run|runtime|schema|IPC/i);
     expect(container.textContent).not.toContain('Version 1');
   });
 
@@ -168,6 +176,7 @@ describe('BuilderPage', () => {
     })} />);
 
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea?.className).toContain('cf-builder-input');
     act(() => {
       if (!textarea) throw new Error('Missing idea field');
       const valueSetter = Object.getOwnPropertyDescriptor(
@@ -189,6 +198,9 @@ describe('BuilderPage', () => {
     expect(container.textContent).toContain('Version 1');
     expect(container.querySelector('code')?.textContent).toBe('<main>Timer</main>');
     expect(container.querySelector('[data-builder-static-preview="true"]')).not.toBeNull();
+    expect(container.querySelector('[role="tab"]')?.className).toContain('cf-builder-tab');
+    expect(previewSafetyNotes(container)).toHaveLength(1);
+    expect(previewSafetyNotes(container)[0].textContent).toBe('Preview is isolated for safety.');
   });
 
   it.each([

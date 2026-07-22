@@ -80,9 +80,13 @@ describe('BuilderProviderSettingsPanel', () => {
     const container = render(<BuilderProviderSettingsPanel {...props({ onSave })} />);
 
     expect(container.querySelector('[data-builder-provider-settings-panel="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-provider-settings-panel="true"]')?.className).toContain(
+      'cf-builder-panel',
+    );
     expect(container.querySelector('h2')?.textContent).toBe('AI provider');
     expect(container.textContent).toContain('Connect an AI provider before making projects.');
     expect(input(container, 'builder-provider-base-url').value).toBe('https://provider.example/v1');
+    expect(input(container, 'builder-provider-base-url').className).toContain('cf-builder-input');
     expect(input(container, 'builder-provider-model').value).toBe('builder-model');
     expect(input(container, 'builder-provider-api-key').type).toBe('password');
     expect(input(container, 'builder-provider-api-key').value).toBe('real-key-value');
@@ -90,6 +94,7 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(input(container, 'builder-provider-temperature').value).toBe('0.2');
     expect(input(container, 'builder-provider-max-tokens').value).toBe('8192');
     expect(buttonWithText(container, 'Save provider')?.disabled).toBe(false);
+    expect(buttonWithText(container, 'Save provider')?.className).toContain('cf-builder-primary-button');
     act(() => buttonWithText(container, 'Save provider')?.click());
     expect(onSave).toHaveBeenCalledTimes(1);
   });

@@ -91,16 +91,25 @@ export function BuilderProviderSettingsPanel({
   return (
     <section
       aria-labelledby="builder-provider-settings-title"
-      className="flex flex-col gap-4 border-b p-4 lg:border-b-0 lg:border-r"
+      className="cf-builder-panel m-4 flex flex-col gap-4 border p-4 lg:max-w-3xl"
       data-builder-provider-settings-panel="true"
     >
       <header className="flex items-start gap-3">
-        <span className="inline-flex size-9 shrink-0 items-center justify-center border bg-background">
+        <span className="cf-builder-brand-mark inline-flex size-9 shrink-0 items-center justify-center">
           <KeyRound aria-hidden="true" className="size-4" />
         </span>
         <div className="min-w-0">
           <h2 className="text-sm font-semibold" id="builder-provider-settings-title">AI provider</h2>
-          <p className={`text-sm ${statusTone}`} role={normalizedStatus === 'error' || normalizedStatus === 'unavailable' ? 'alert' : 'status'}>
+          <p
+            className={`cf-builder-alert mt-2 text-sm ${
+              normalizedStatus === 'saved'
+                ? 'cf-builder-alert-success'
+                : normalizedStatus === 'error' || normalizedStatus === 'unavailable'
+                  ? 'cf-builder-alert-danger'
+                  : 'cf-builder-alert-info'
+            } ${statusTone}`}
+            role={normalizedStatus === 'error' || normalizedStatus === 'unavailable' ? 'alert' : 'status'}
+          >
             {normalizedStatus === 'saved' ? <CheckCircle2 aria-hidden="true" className="mr-1 inline size-4" /> : null}
             {normalizedStatus === 'saving' ? <Loader2 aria-hidden="true" className="mr-1 inline size-4 animate-spin" /> : null}
             {normalizedStatus === 'error' || normalizedStatus === 'unavailable' ? (
@@ -116,7 +125,7 @@ export function BuilderProviderSettingsPanel({
           Base URL
           <input
             autoComplete="off"
-            className="min-h-10 border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             disabled={disabled}
             id="builder-provider-base-url"
             inputMode="url"
@@ -130,7 +139,7 @@ export function BuilderProviderSettingsPanel({
           Model
           <input
             autoComplete="off"
-            className="min-h-10 border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             disabled={disabled}
             id="builder-provider-model"
             onChange={(event) => change('model', event.currentTarget.value)}
@@ -143,7 +152,7 @@ export function BuilderProviderSettingsPanel({
           API key
           <input
             autoComplete="new-password"
-            className="min-h-10 border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             disabled={disabled}
             id="builder-provider-api-key"
             onChange={(event) => change('apiKey', event.currentTarget.value)}
@@ -157,7 +166,7 @@ export function BuilderProviderSettingsPanel({
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-timeout">
             Timeout
             <input
-              className="min-h-10 border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
               id="builder-provider-timeout"
               inputMode="numeric"
@@ -169,7 +178,7 @@ export function BuilderProviderSettingsPanel({
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-temperature">
             Temperature
             <input
-              className="min-h-10 border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
               id="builder-provider-temperature"
               inputMode="decimal"
@@ -182,7 +191,7 @@ export function BuilderProviderSettingsPanel({
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-max-tokens">
             Max tokens
             <input
-              className="min-h-10 border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
               id="builder-provider-max-tokens"
               inputMode="numeric"
@@ -195,7 +204,7 @@ export function BuilderProviderSettingsPanel({
       </div>
 
       <button
-        className="inline-flex min-h-10 items-center justify-center gap-2 bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        className="cf-builder-primary-button inline-flex min-h-10 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
         disabled={!saveEnabled}
         onClick={onSave}
         type="button"

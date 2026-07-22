@@ -190,7 +190,7 @@ export function BuilderPage({
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground" data-builder-page="true">
-      <header className="flex min-h-14 items-center justify-between gap-4 border-b px-4">
+      <header className="cf-builder-header flex min-h-14 items-center justify-between gap-4 border-b px-4">
         <div className="min-w-0">
           <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
           <h1 className="truncate text-base font-semibold">{projectTitle}</h1>
@@ -200,11 +200,11 @@ export function BuilderPage({
         )}
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[20rem_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)]">
         <section aria-label="Build request" className="flex flex-col gap-3 border-b p-4 lg:border-b-0 lg:border-r">
           <label className="text-sm font-medium" htmlFor="builder-idea">What would you like to make?</label>
           <textarea
-            className="min-h-36 w-full resize-y border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="cf-builder-input min-h-36 w-full resize-y p-3 text-sm"
             disabled={busy}
             id="builder-idea"
             maxLength={4000}
@@ -214,7 +214,7 @@ export function BuilderPage({
             value={idea}
           />
           <button
-            className="inline-flex min-h-10 items-center justify-center gap-2 bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            className="cf-builder-primary-button inline-flex min-h-10 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!canGenerate}
             onClick={onGenerate}
             type="button"
@@ -223,23 +223,23 @@ export function BuilderPage({
             {busy ? busyLabel(currentStatus) : hasDraft ? 'Update it' : 'Make it'}
           </button>
           {currentStatus === 'opening' ? (
-            <p className="text-sm text-muted-foreground" role="status">Opening your project...</p>
+            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Opening your project...</p>
           ) : null}
           {currentStatus === 'generating' ? (
-            <p className="text-sm text-muted-foreground" role="status">Making your draft...</p>
+            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Making your draft...</p>
           ) : null}
           {currentStatus === 'committing' ? (
-            <p className="text-sm text-muted-foreground" role="status">Saving your project...</p>
+            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Saving your project...</p>
           ) : null}
           {currentStatus === 'reopening' ? (
-            <p className="text-sm text-muted-foreground" role="status">Checking the saved version...</p>
+            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Checking the saved version...</p>
           ) : null}
           {currentStatus === 'generation_failed' ? (
-            <div className="flex flex-col gap-2" role="alert">
-              <p className="text-sm text-destructive">The draft could not be made. Try again.</p>
+            <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
+              <p>The draft could not be made. Try again.</p>
               {canOpenSettings ? (
                 <button
-                  className="inline-flex min-h-9 items-center justify-center border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={onOpenSettings}
                   type="button"
                 >
@@ -249,10 +249,10 @@ export function BuilderPage({
             </div>
           ) : null}
           {currentStatus === 'save_unverified' ? (
-            <div className="flex flex-col gap-2" role="alert">
-              <p className="text-sm text-destructive">We could not verify that your project was saved.</p>
+            <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
+              <p>We could not verify that your project was saved.</p>
               <button
-                className="inline-flex min-h-9 items-center justify-center gap-2 border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={!canRetrySave}
                 onClick={onRetrySave}
                 type="button"
@@ -263,27 +263,27 @@ export function BuilderPage({
             </div>
           ) : null}
           {currentStatus === 'preview_unavailable' ? (
-            <p className="text-sm text-destructive" role="alert">
+            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
               Your project was saved, but its preview is unavailable.
             </p>
           ) : null}
           {currentStatus === 'conflict' ? (
-            <p className="text-sm text-destructive" role="alert">
+            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
               This project changed elsewhere. Reopen it before making more changes.
             </p>
           ) : null}
           {currentStatus === 'unavailable' ? (
-            <p className="text-sm text-destructive" role="alert">This project is unavailable.</p>
+            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">This project is unavailable.</p>
           ) : null}
         </section>
 
         <section aria-label="Project area" className="grid min-h-0 grid-rows-[auto_minmax(18rem,1fr)]">
-          <div className="flex min-h-11 items-center gap-1 overflow-x-auto border-b px-2" role="tablist">
+          <div className="cf-builder-header flex min-h-11 items-center gap-1 overflow-x-auto border-b px-2" role="tablist">
             {FILES.map(({ file, label }) => (
               <button
                 aria-controls="builder-code-panel"
                 aria-selected={safeActiveFile === file}
-                className="inline-flex min-h-9 shrink-0 items-center gap-2 border-b-2 px-3 text-sm data-[active=true]:border-primary data-[active=false]:border-transparent"
+                className="cf-builder-tab inline-flex min-h-9 shrink-0 items-center gap-2 px-3 text-sm"
                 data-active={safeActiveFile === file}
                 disabled={typeof onSelectFile !== 'function'}
                 id={tabId(file)}
@@ -324,11 +324,11 @@ export function BuilderPage({
               id="builder-code-panel"
               role="tabpanel"
             >
-              <div className="flex min-h-10 items-center gap-2 border-b px-3 text-xs font-medium text-muted-foreground">
+              <div className="cf-builder-header flex min-h-10 items-center gap-2 border-b px-3 text-xs font-medium text-muted-foreground">
                 <Code2 aria-hidden="true" className="size-4" />
                 {safeActiveFile}
               </div>
-              <pre className="min-h-72 overflow-auto p-4 text-xs leading-5"><code>{code}</code></pre>
+              <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5"><code>{code}</code></pre>
             </section>
 
             <section aria-label="Preview" className="min-h-0 p-3">
@@ -336,8 +336,14 @@ export function BuilderPage({
                 <Eye aria-hidden="true" className="size-4" />
                 Preview
               </div>
+              <p
+                className="mb-3 text-xs leading-5 text-muted-foreground"
+                data-builder-preview-safety-note="true"
+              >
+                Preview is isolated for safety.
+              </p>
               {preview === null ? (
-                <div className="flex min-h-72 items-center justify-center border border-dashed text-sm text-muted-foreground">
+                <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
                   Your preview will appear here.
                 </div>
               ) : (

@@ -71,6 +71,9 @@ describe('BuilderProjectCatalog', () => {
     act(() => button(container, 'Tiny timer')?.click());
 
     expect(container.textContent).toContain('Your projects');
+    expect(container.querySelector('[data-builder-project-catalog="true"]')?.className).toContain(
+      'text-[var(--cf-text-soft)]',
+    );
     expect(container.textContent).toContain('Tiny timer');
     expect(container.textContent).toContain('A small focus timer.');
     expect(container.textContent).toContain('Version 2');
@@ -93,6 +96,10 @@ describe('BuilderProjectCatalog', () => {
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="Refresh projects"]')?.click());
 
     expect(container.textContent).toContain('No saved projects yet.');
+    expect(button(container, 'New project')?.className).toContain('cf-builder-primary-button');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Refresh projects"]')?.className).toContain(
+      'cf-builder-secondary-button',
+    );
     expect(onCreateProject).toHaveBeenCalledTimes(1);
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });

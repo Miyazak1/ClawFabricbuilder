@@ -169,10 +169,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [catalog, project]);
 
   return (
-    <main className="grid min-h-screen grid-cols-1 bg-background text-foreground lg:grid-cols-[20rem_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col border-b bg-card lg:border-b-0 lg:border-r" aria-label="Builder navigation">
-        <header className="flex min-h-14 items-center gap-3 border-b px-4">
-          <span className="inline-flex size-8 items-center justify-center bg-primary text-primary-foreground">
+    <main className="cf-builder-workbench grid min-h-screen grid-cols-1 text-foreground lg:grid-cols-[19rem_minmax(0,1fr)]">
+      <aside className="cf-builder-context flex min-h-0 flex-col border-b lg:border-b-0 lg:border-r" aria-label="Builder navigation">
+        <header className="cf-builder-header flex min-h-14 items-center gap-3 border-b px-4">
+          <span className="cf-builder-brand-mark inline-flex size-8 items-center justify-center">
             <Code2 aria-hidden="true" className="size-4" />
           </span>
           <strong className="text-sm">ClawFabric Builder</strong>
@@ -180,7 +180,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         <div className="flex gap-2 border-b p-3">
           <button
             aria-pressed={view === 'settings'}
-            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="cf-builder-nav-button inline-flex min-h-10 flex-1 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setView('settings')}
             type="button"
           >
@@ -198,16 +198,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         </div>
       </aside>
 
-      <section className="min-w-0" aria-label="Builder workspace">
+      <section className="cf-builder-main-frame min-w-0 lg:border-l" aria-label="Builder workspace">
         {view === 'settings' ? (
           <div className="flex min-h-screen flex-col bg-background text-foreground">
-            <header className="flex min-h-14 items-center justify-between gap-4 border-b px-4">
+            <header className="cf-builder-header flex min-h-14 items-center justify-between gap-4 border-b px-4">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
                 <h1 className="truncate text-base font-semibold">AI provider settings</h1>
               </div>
               <button
-                className="inline-flex min-h-9 shrink-0 items-center justify-center border px-3 text-sm font-medium"
+                className="cf-builder-secondary-button inline-flex min-h-9 shrink-0 items-center justify-center px-3 text-sm font-medium"
                 onClick={() => setView('project')}
                 type="button"
               >
