@@ -306,6 +306,20 @@ test('rejects unreadable bodies, malformed lengths, media types, UTF-8, JSON, an
   }
 });
 
+test('does not fall back when the provider rejects fixed JSON object mode', async () => {
+  const calls = [];
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return response(PRIVATE_MARKER, { ok: false, status: 400 });
+    },
+  });
+
+  await expectCode(transport(request()), 'builder_provider_failed');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(JSON.parse(calls[0][1].body).response_format, { type: 'json_object' });
+});
+
 test('rejects provider choice drift and never returns provider metadata or usage', async () => {
   const cases = [
     {},
