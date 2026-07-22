@@ -156,11 +156,19 @@ describe('BuilderPage', () => {
     expect(container.querySelector('.cf-builder-surface-toolbar')).not.toBeNull();
     expect(container.querySelector('.cf-builder-surface-body')).not.toBeNull();
     expect(container.querySelector('.cf-builder-composer-card')).not.toBeNull();
+    expect(container.querySelector('[data-builder-composer="true"]')).not.toBeNull();
     expect(container.querySelector('.cf-builder-output-panel')).not.toBeNull();
     expect(container.querySelector('.cf-builder-output-toolbar')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-stage-grid')).not.toBeNull();
     expect(container.querySelector('.cf-builder-tab-strip')).not.toBeNull();
     expect(container.querySelector('.cf-builder-code-panel')).not.toBeNull();
     expect(container.querySelector('.cf-builder-preview-panel')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-preview-panel')?.compareDocumentPosition(
+      container.querySelector('.cf-builder-code-panel') as Element,
+    )).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(container.querySelector('.cf-builder-output-panel')?.compareDocumentPosition(
+      container.querySelector('.cf-builder-composer-card') as Element,
+    )).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(container.querySelector('h1')?.textContent).toBe('New project');
     expect(buttonWithText(container, 'Make it')?.disabled).toBe(true);
     expect(container.textContent).toContain('Your preview will appear here.');

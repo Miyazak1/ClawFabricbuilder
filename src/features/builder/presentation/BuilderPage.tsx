@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Code2, Eye, FileCode2, RefreshCw, Sparkles } from 'lucide-react';
+import { Eye, FileCode2, RefreshCw, Sparkles } from 'lucide-react';
 
 import type {
   BuilderProjectControllerSnapshot,
@@ -201,32 +201,124 @@ export function BuilderPage({
       </header>
 
       <div className="cf-builder-surface-body">
-        <section aria-label="Build request" className="cf-builder-panel cf-builder-composer-card border">
-          <header className="cf-builder-card-header">
+        <section aria-label="Project area" className="cf-builder-panel cf-builder-output-panel border">
+          <header className="cf-builder-output-toolbar">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">Project</p>
+              <h2 className="text-sm font-semibold">Preview and project files</h2>
+            </div>
+            {!hasDraft ? (
+              <span className="cf-builder-status-pill">Draft not made yet</span>
+            ) : (
+              <span className="cf-builder-status-pill">Version {revision}</span>
+            )}
+          </header>
+
+          <div className="cf-builder-stage-grid">
+            <section aria-label="Preview" className="cf-builder-preview-panel cf-builder-preview-primary">
+              <div className="cf-builder-panel-toolbar">
+                <Eye aria-hidden="true" className="size-4" />
+                Preview
+              </div>
+              <p
+                className="mb-3 text-xs leading-5 text-muted-foreground"
+                data-builder-preview-safety-note="true"
+              >
+                Preview is isolated for safety.
+              </p>
+              {preview === null ? (
+                <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
+                  Your preview will appear here.
+                </div>
+              ) : (
+                <BuilderStaticPreview projection={preview} />
+              )}
+            </section>
+
+            <section
+              aria-labelledby={tabId(safeActiveFile)}
+              className="cf-builder-code-panel"
+              id="builder-code-panel"
+              role="tabpanel"
+            >
+              <header className="cf-builder-code-header">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Code</p>
+                  <h3 className="truncate text-sm font-semibold">{safeActiveFile}</h3>
+                </div>
+                <div className="cf-builder-tab-strip" role="tablist">
+                  {FILES.map(({ file, label }) => (
+                    <button
+                      aria-controls="builder-code-panel"
+                      aria-selected={safeActiveFile === file}
+                      className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
+                      data-active={safeActiveFile === file}
+                      disabled={typeof onSelectFile !== 'function'}
+                      id={tabId(file)}
+                      key={file}
+                      onClick={() => selectFile(file)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'ArrowRight') {
+                          event.preventDefault();
+                          selectRelativeFile(1);
+                        } else if (event.key === 'ArrowLeft') {
+                          event.preventDefault();
+                          selectRelativeFile(-1);
+                        } else if (event.key === 'Home') {
+                          event.preventDefault();
+                          selectFile(FILES[0].file);
+                        } else if (event.key === 'End') {
+                          event.preventDefault();
+                          selectFile(FILES[FILES.length - 1].file);
+                        }
+                      }}
+                      ref={(element) => {
+                        tabRefs.current[file] = element;
+                      }}
+                      role="tab"
+                      tabIndex={safeActiveFile === file ? 0 : -1}
+                      type="button"
+                    >
+                      <FileCode2 aria-hidden="true" className="size-3.5" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </header>
+              <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5"><code>{code}</code></pre>
+            </section>
+          </div>
+        </section>
+
+        <section aria-label="Build request" className="cf-builder-panel cf-builder-composer-card border" data-builder-composer="true">
+          <header className="cf-builder-composer-header">
             <div className="min-w-0">
               <p className="text-xs font-medium text-muted-foreground">Prompt</p>
               <label className="text-sm font-semibold" htmlFor="builder-idea">What would you like to make?</label>
             </div>
+            <span className="cf-builder-status-pill">{hasDraft ? 'Continue this project' : 'Start from an idea'}</span>
           </header>
-          <textarea
-            className="cf-builder-input min-h-36 w-full resize-y p-3 text-sm"
-            disabled={busy}
-            id="builder-idea"
-            maxLength={4000}
-            onChange={(event) => onIdeaChange?.(event.currentTarget.value)}
-            placeholder="A tiny habit tracker with a cheerful weekly view"
-            readOnly={!canEditIdea}
-            value={idea}
-          />
-          <button
-            className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!canGenerate}
-            onClick={onGenerate}
-            type="button"
-          >
-            <Sparkles aria-hidden="true" className="size-4" />
-            {busy ? busyLabel(currentStatus) : hasDraft ? 'Update it' : 'Make it'}
-          </button>
+          <div className="cf-builder-composer-row">
+            <textarea
+              className="cf-builder-input min-h-20 w-full resize-none p-3 text-sm"
+              disabled={busy}
+              id="builder-idea"
+              maxLength={4000}
+              onChange={(event) => onIdeaChange?.(event.currentTarget.value)}
+              placeholder="A tiny habit tracker with a cheerful weekly view"
+              readOnly={!canEditIdea}
+              value={idea}
+            />
+            <button
+              className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-11 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!canGenerate}
+              onClick={onGenerate}
+              type="button"
+            >
+              <Sparkles aria-hidden="true" className="size-4" />
+              {busy ? busyLabel(currentStatus) : hasDraft ? 'Update it' : 'Make it'}
+            </button>
+          </div>
           {currentStatus === 'opening' ? (
             <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Opening your project...</p>
           ) : null}
@@ -280,88 +372,6 @@ export function BuilderPage({
           {currentStatus === 'unavailable' ? (
             <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">This project is unavailable.</p>
           ) : null}
-        </section>
-
-        <section aria-label="Project area" className="cf-builder-panel cf-builder-output-panel border">
-          <header className="cf-builder-output-toolbar">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">Project files</p>
-              <h2 className="text-sm font-semibold">Code and preview</h2>
-            </div>
-            <div className="cf-builder-tab-strip" role="tablist">
-              {FILES.map(({ file, label }) => (
-                <button
-                  aria-controls="builder-code-panel"
-                  aria-selected={safeActiveFile === file}
-                  className="cf-builder-tab inline-flex min-h-9 shrink-0 items-center gap-2 px-3 text-sm"
-                  data-active={safeActiveFile === file}
-                  disabled={typeof onSelectFile !== 'function'}
-                  id={tabId(file)}
-                  key={file}
-                  onClick={() => selectFile(file)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowRight') {
-                      event.preventDefault();
-                      selectRelativeFile(1);
-                    } else if (event.key === 'ArrowLeft') {
-                      event.preventDefault();
-                      selectRelativeFile(-1);
-                    } else if (event.key === 'Home') {
-                      event.preventDefault();
-                      selectFile(FILES[0].file);
-                    } else if (event.key === 'End') {
-                      event.preventDefault();
-                      selectFile(FILES[FILES.length - 1].file);
-                    }
-                  }}
-                  ref={(element) => {
-                    tabRefs.current[file] = element;
-                  }}
-                  role="tab"
-                  tabIndex={safeActiveFile === file ? 0 : -1}
-                  type="button"
-                >
-                  <FileCode2 aria-hidden="true" className="size-4" />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </header>
-
-          <div className="cf-builder-output-grid">
-            <section
-              aria-labelledby={tabId(safeActiveFile)}
-              className="cf-builder-code-panel"
-              id="builder-code-panel"
-              role="tabpanel"
-            >
-              <div className="cf-builder-panel-toolbar">
-                <Code2 aria-hidden="true" className="size-4" />
-                {safeActiveFile}
-              </div>
-              <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5"><code>{code}</code></pre>
-            </section>
-
-            <section aria-label="Preview" className="cf-builder-preview-panel">
-              <div className="cf-builder-panel-toolbar">
-                <Eye aria-hidden="true" className="size-4" />
-                Preview
-              </div>
-              <p
-                className="mb-3 text-xs leading-5 text-muted-foreground"
-                data-builder-preview-safety-note="true"
-              >
-                Preview is isolated for safety.
-              </p>
-              {preview === null ? (
-                <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
-                  Your preview will appear here.
-                </div>
-              ) : (
-                <BuilderStaticPreview projection={preview} />
-              )}
-            </section>
-          </div>
         </section>
       </div>
     </div>

@@ -15,7 +15,7 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
   return (
     <section
       aria-label="Project preview"
-      className="cf-builder-panel flex min-h-0 flex-col gap-2 border p-3"
+      className="cf-builder-static-preview flex min-h-0 flex-col gap-2"
       data-builder-static-preview="true"
     >
       <header className="flex items-center justify-between gap-3">
