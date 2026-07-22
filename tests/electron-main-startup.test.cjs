@@ -24,6 +24,7 @@ async function executeMain({
     createGenerationRuntime: 0,
     createProjectRuntime: 0,
     createSettingsRuntime: 0,
+    createWindowControlsRuntime: 0,
     dispose: 0,
     mkdir: 0,
     quit: 0,
@@ -153,6 +154,16 @@ async function executeMain({
           },
         };
       }
+      if (specifier === './builder-window-controls-ipc-runtime.cjs') {
+        return {
+          createBuilderWindowControlsIpcRuntime(options) {
+            calls.createWindowControlsRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            return runtime(3);
+          },
+        };
+      }
       throw new Error(`unexpected require: ${specifier}`);
     },
   };
@@ -175,6 +186,7 @@ test('a second application instance exits before registering Builder authorities
     createGenerationRuntime: 0,
     createProjectRuntime: 0,
     createSettingsRuntime: 0,
+    createWindowControlsRuntime: 0,
     dispose: 0,
     mkdir: 0,
     quit: 1,
@@ -194,10 +206,11 @@ test('window startup failure disposes registered handlers and quits', async () =
     createGenerationRuntime: 1,
     createProjectRuntime: 1,
     createSettingsRuntime: 1,
-    dispose: 3,
+    createWindowControlsRuntime: 1,
+    dispose: 4,
     mkdir: 0,
     quit: 1,
-    register: 3,
+    register: 4,
     setPath: [],
     whenReady: 1,
   });
@@ -207,10 +220,9 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.deepEqual(applicationMenuCalls, [null]);
   assert.equal(browserWindowOptions.length, 1);
   assert.equal(browserWindowOptions[0].autoHideMenuBar, true);
-  assert.equal(browserWindowOptions[0].titleBarStyle, 'hidden');
-  assert.equal(browserWindowOptions[0].titleBarOverlay.color, '#f7f6f2');
-  assert.equal(browserWindowOptions[0].titleBarOverlay.symbolColor, '#242522');
-  assert.equal(browserWindowOptions[0].titleBarOverlay.height, 44);
+  assert.equal(browserWindowOptions[0].frame, false);
+  assert.equal(browserWindowOptions[0].titleBarStyle, undefined);
+  assert.equal(browserWindowOptions[0].titleBarOverlay, undefined);
   assert.equal(browserWindowOptions[0].webPreferences.contextIsolation, true);
   assert.equal(browserWindowOptions[0].webPreferences.nodeIntegration, false);
   assert.equal(browserWindowOptions[0].webPreferences.sandbox, true);
@@ -226,6 +238,7 @@ test('runtime registration failure rolls back previously registered handlers and
     createGenerationRuntime: 1,
     createProjectRuntime: 1,
     createSettingsRuntime: 1,
+    createWindowControlsRuntime: 1,
     dispose: 1,
     mkdir: 0,
     quit: 1,

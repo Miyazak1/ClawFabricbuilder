@@ -14,6 +14,7 @@ function bridgeRoot(overrides = {}) {
     projectCatalog: Object.freeze({}),
     projectRevisions: Object.freeze({}),
     providerSettings: Object.freeze({}),
+    windowControls: Object.freeze({}),
     ...overrides,
   };
 }
@@ -26,6 +27,7 @@ describe('builderDesktopBridgeRoot', () => {
     expect(safe).toEqual(root);
     expect(safe).not.toBe(root);
     expect(Object.isFrozen(safe)).toBe(true);
+    expect(safe.windowControls).toBe(root.windowControls);
   });
 
   it.each([
@@ -41,7 +43,7 @@ describe('builderDesktopBridgeRoot', () => {
   it('rejects accessors without reading them', () => {
     let reads = 0;
     const root = bridgeRoot();
-    Object.defineProperty(root, 'providerSettings', {
+    Object.defineProperty(root, 'windowControls', {
       enumerable: true,
       get() {
         reads += 1;

@@ -1,15 +1,19 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   Code2,
   Compass,
+  Copy,
   FolderOpen,
   History,
   LayoutTemplate,
   MessageSquare,
+  Minus,
   Rocket,
   Settings,
+  Square,
   UsersRound,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -71,7 +75,77 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   projectCatalog: null,
   projectRevisions: null,
   providerSettings: null,
+  windowControls: null,
 });
+
+type BuilderWindowControlsBridge = Readonly<{
+  close(): Promise<unknown>;
+  minimize(): Promise<unknown>;
+  readState(): Promise<unknown>;
+  toggleMaximize(): Promise<unknown>;
+}>;
+
+const WINDOW_CONTROL_KEYS = new Set(['close', 'minimize', 'readState', 'toggleMaximize']);
+const WINDOW_CONTROL_RESULT_KEYS = new Set(['result_version', 'ok']);
+const WINDOW_STATE_KEYS = new Set(['state_version', 'maximized']);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function ownDataDescriptors(value: Record<string, unknown>, keys: Set<string>): PropertyDescriptorMap | null {
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== keys.size || ownKeys.some((key) => typeof key !== 'string' || !keys.has(key))) {
+    return null;
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (
+      !descriptor
+      || !descriptor.enumerable
+      || 'get' in descriptor
+      || 'set' in descriptor
+    ) return null;
+  }
+  return descriptors;
+}
+
+function safeWindowControls(value: unknown): BuilderWindowControlsBridge | null {
+  if (!isPlainObject(value)) return null;
+  const descriptors = ownDataDescriptors(value, WINDOW_CONTROL_KEYS);
+  if (descriptors === null) return null;
+  for (const key of WINDOW_CONTROL_KEYS) {
+    if (typeof descriptors[key].value !== 'function') return null;
+  }
+  return Object.freeze({
+    close: descriptors.close.value as BuilderWindowControlsBridge['close'],
+    minimize: descriptors.minimize.value as BuilderWindowControlsBridge['minimize'],
+    readState: descriptors.readState.value as BuilderWindowControlsBridge['readState'],
+    toggleMaximize: descriptors.toggleMaximize.value as BuilderWindowControlsBridge['toggleMaximize'],
+  });
+}
+
+function safeActionResult(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const descriptors = ownDataDescriptors(value, WINDOW_CONTROL_RESULT_KEYS);
+  return descriptors !== null
+    && descriptors.result_version.value === 'builder-window-control-result.v1'
+    && descriptors.ok.value === true;
+}
+
+function safeMaximizedState(value: unknown): boolean | null {
+  if (!isPlainObject(value)) return null;
+  const descriptors = ownDataDescriptors(value, WINDOW_STATE_KEYS);
+  if (
+    descriptors === null
+    || descriptors.state_version.value !== 'builder-window-state.v1'
+    || typeof descriptors.maximized.value !== 'boolean'
+  ) return null;
+  return descriptors.maximized.value as boolean;
+}
 
 const UNAVAILABLE_REPOSITORY: BuilderProjectRepositoryPort = Object.freeze({
   commit(request: Parameters<BuilderProjectRepositoryPort['commit']>[0]) {
@@ -140,13 +214,16 @@ function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectControlle
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
+  const windowControls = useMemo(() => safeWindowControls(root.windowControls), [root]);
   const catalog = useBuilderProjectCatalogController(ports.catalog);
   const [view, setView] = useState<BuilderAppView>('project');
   const [projectId, setProjectId] = useState<string | undefined>();
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName>('index.html');
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
+  const windowMaximizedRef = useRef(false);
   const workspacePorts = useMemo(() => {
     void workspaceEpoch;
     const generator: BuilderCodeGeneratorPort = Object.freeze({
@@ -208,6 +285,66 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       await catalog.refresh().catch(() => undefined);
     }
   }, [catalog, project]);
+  const windowControlsAvailable = windowControls !== null;
+
+  const publishWindowMaximized = useCallback((maximized: boolean) => {
+    if (windowMaximizedRef.current === maximized) return;
+    windowMaximizedRef.current = maximized;
+    setWindowMaximized(maximized);
+  }, []);
+
+  const refreshWindowState = useCallback(async () => {
+    if (windowControls === null) {
+      publishWindowMaximized(false);
+      return;
+    }
+    try {
+      const maximized = safeMaximizedState(await windowControls.readState());
+      if (maximized !== null) publishWindowMaximized(maximized);
+    } catch {
+      publishWindowMaximized(false);
+    }
+  }, [publishWindowMaximized, windowControls]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void (async () => {
+        if (windowControls === null) {
+          if (active) publishWindowMaximized(false);
+          return;
+        }
+        try {
+          const maximized = safeMaximizedState(await windowControls.readState());
+          if (active && maximized !== null) publishWindowMaximized(maximized);
+        } catch {
+          if (active) publishWindowMaximized(false);
+        }
+      })();
+    };
+    refresh();
+    window.addEventListener('resize', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      active = false;
+      window.removeEventListener('resize', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [publishWindowMaximized, windowControls]);
+
+  const invokeWindowControl = useCallback(async (
+    action: () => Promise<unknown>,
+    options: { refresh?: boolean } = {},
+  ) => {
+    if (windowControls === null) return;
+    try {
+      if (safeActionResult(await action()) && options.refresh === true) {
+        await refreshWindowState();
+      }
+    } catch {
+      if (options.refresh === true) await refreshWindowState();
+    }
+  }, [refreshWindowState, windowControls]);
 
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
@@ -220,7 +357,48 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             <strong className="block truncate text-sm">ClawFabric Builder</strong>
           </div>
         </div>
-        <div className="cf-builder-window-controls-slot" aria-hidden="true" />
+        <div className="cf-builder-window-controls-slot" aria-label="Window controls">
+          <button
+            aria-label="Minimize window"
+            className="cf-builder-window-control-button"
+            disabled={!windowControlsAvailable}
+            onClick={() => {
+              void invokeWindowControl(() => windowControls?.minimize() ?? Promise.resolve(null));
+            }}
+            type="button"
+          >
+            <Minus aria-hidden="true" className="size-4" />
+          </button>
+          <button
+            aria-label={windowMaximized ? 'Restore window' : 'Maximize window'}
+            className="cf-builder-window-control-button"
+            disabled={!windowControlsAvailable}
+            onClick={() => {
+              void invokeWindowControl(
+                () => windowControls?.toggleMaximize() ?? Promise.resolve(null),
+                { refresh: true },
+              );
+            }}
+            type="button"
+          >
+            {windowMaximized ? (
+              <Copy aria-hidden="true" className="size-4" />
+            ) : (
+              <Square aria-hidden="true" className="size-3.5" />
+            )}
+          </button>
+          <button
+            aria-label="Close window"
+            className="cf-builder-window-control-button cf-builder-window-control-close"
+            disabled={!windowControlsAvailable}
+            onClick={() => {
+              void invokeWindowControl(() => windowControls?.close() ?? Promise.resolve(null));
+            }}
+            type="button"
+          >
+            <X aria-hidden="true" className="size-4" />
+          </button>
+        </div>
       </header>
 
       <div className="cf-builder-shell">

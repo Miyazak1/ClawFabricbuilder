@@ -89,9 +89,38 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-window-controls-slot {
-  width: 148px;
+  display: grid;
+  width: 144px;
   min-height: 44px;
-  flex: 0 0 148px;
+  flex: 0 0 144px;
+  grid-template-columns: repeat(3, 48px);
+  justify-content: end;
+  -webkit-app-region: no-drag;
+}
+
+.cf-builder-window-control-button {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 48px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cf-text-muted);
+  -webkit-app-region: no-drag;
+}
+
+.cf-builder-window-control-button:hover:not(:disabled),
+.cf-builder-window-control-button:focus-visible {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+}
+
+.cf-builder-window-control-close:hover:not(:disabled),
+.cf-builder-window-control-close:focus-visible {
+  background: var(--cf-danger-soft);
+  color: var(--cf-danger-text);
 }
 
 .cf-builder-app-chrome button,
@@ -99,11 +128,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-app-chrome textarea,
 .cf-builder-app-chrome select,
 .cf-builder-app-chrome a,
+.cf-builder-app-chrome iframe,
 .cf-builder-shell button,
 .cf-builder-shell input,
 .cf-builder-shell textarea,
 .cf-builder-shell select,
-.cf-builder-shell a {
+.cf-builder-shell a,
+.cf-builder-shell iframe {
   -webkit-app-region: no-drag;
 }
 
@@ -712,6 +743,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
     flex-basis: 112px;
     width: 112px;
     min-height: 40px;
+    grid-template-columns: repeat(3, 37.333px);
+  }
+
+  .cf-builder-window-control-button {
+    min-height: 40px;
+    min-width: 37.333px;
   }
 
   .cf-builder-shell {

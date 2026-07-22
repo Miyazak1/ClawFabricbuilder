@@ -188,6 +188,7 @@ function deferred<T>(): Deferred<T> {
 
 async function createBridge(initialRecords: BuilderProjectRevision[] = []) {
   const records = new Map(initialRecords.map((record) => [record.project_id, record]));
+  let maximized = false;
   const calls = {
     commit: vi.fn(async (request: { revision: BuilderProjectRevision }) => {
       records.set(request.revision.project_id, request.revision);
@@ -206,6 +207,25 @@ async function createBridge(initialRecords: BuilderProjectRevision[] = []) {
     replaceCurrent: vi.fn(async (request: unknown) => {
       void request;
       return providerSettingsCurrent({ operation: 'current_replaced' });
+    }),
+    closeWindow: vi.fn(async () => ({
+      result_version: 'builder-window-control-result.v1',
+      ok: true,
+    })),
+    minimizeWindow: vi.fn(async () => ({
+      result_version: 'builder-window-control-result.v1',
+      ok: true,
+    })),
+    readWindowState: vi.fn(async () => ({
+      state_version: 'builder-window-state.v1',
+      maximized,
+    })),
+    toggleMaximizeWindow: vi.fn(async () => {
+      maximized = !maximized;
+      return {
+        result_version: 'builder-window-control-result.v1',
+        ok: true,
+      };
     }),
   };
   return {
@@ -231,6 +251,12 @@ async function createBridge(initialRecords: BuilderProjectRevision[] = []) {
           config_digest: CONFIG_DIGEST,
           credential_status: 'stored',
         })),
+      },
+      windowControls: {
+        close: calls.closeWindow,
+        minimize: calls.minimizeWindow,
+        readState: calls.readWindowState,
+        toggleMaximize: calls.toggleMaximizeWindow,
       },
     },
   };
@@ -289,6 +315,12 @@ function button(container: HTMLElement, text: string): HTMLButtonElement {
   return element;
 }
 
+function buttonByLabel(container: HTMLElement, label: string): HTMLButtonElement {
+  const element = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!element) throw new Error(`Missing button: ${label}`);
+  return element;
+}
+
 function buttons(container: HTMLElement, text: string): HTMLButtonElement[] {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
     .filter((candidate) => candidate.textContent?.includes(text));
@@ -300,6 +332,21 @@ function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: str
     if (!setter) throw new Error('Missing value setter');
     setter.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function clickAndSettle(element: HTMLButtonElement): Promise<void> {
+  await act(async () => {
+    element.click();
+    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    await Promise.resolve();
   });
 }
 
@@ -317,6 +364,9 @@ describe('BuilderApp', () => {
     expect(container.querySelector('[data-builder-workbench-frame="true"]')).not.toBeNull();
     expect(container.querySelector('.cf-builder-context-sidebar')).not.toBeNull();
     expect(container.querySelector('.cf-builder-workbench-frame')).not.toBeNull();
+    expect(buttonByLabel(container, 'Minimize window').disabled).toBe(true);
+    expect(buttonByLabel(container, 'Maximize window').disabled).toBe(true);
+    expect(buttonByLabel(container, 'Close window').disabled).toBe(true);
     expect(container.textContent).toContain('Saved projects are unavailable.');
     expect(container.textContent).toContain('New project');
     expect(buttons(container, 'New project')).toHaveLength(1);
@@ -359,6 +409,52 @@ describe('BuilderApp', () => {
       );
     });
     expect(calls.loadCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the dedicated window controls bridge and refreshes maximized state only on bounded events', async () => {
+    const { calls, root } = await createBridge();
+    const container = render(<BuilderApp bridgeRoot={root} />);
+    await waitFor(() => {
+      expect(calls.readWindowState).toHaveBeenCalledTimes(1);
+      expect(buttonByLabel(container, 'Maximize window').disabled).toBe(false);
+    });
+
+    await clickAndSettle(buttonByLabel(container, 'Minimize window'));
+    expect(calls.minimizeWindow).toHaveBeenCalledTimes(1);
+    expect(calls.readWindowState).toHaveBeenCalledTimes(1);
+
+    await clickAndSettle(buttonByLabel(container, 'Maximize window'));
+    await waitFor(() => {
+      expect(calls.toggleMaximizeWindow).toHaveBeenCalledTimes(1);
+      expect(calls.readWindowState).toHaveBeenCalledTimes(2);
+      expect(buttonByLabel(container, 'Restore window')).toBeInstanceOf(HTMLButtonElement);
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+      await Promise.resolve();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+    await waitFor(() => {
+      expect(calls.readWindowState).toHaveBeenCalledTimes(3);
+    });
+
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+    await waitFor(() => {
+      expect(calls.readWindowState).toHaveBeenCalledTimes(4);
+    });
+
+    await clickAndSettle(buttonByLabel(container, 'Close window'));
+    expect(calls.closeWindow).toHaveBeenCalledTimes(1);
+    expect(calls.readWindowState).toHaveBeenCalledTimes(4);
   });
 
   it('makes a first project, selects it after durable save, and refreshes catalog', async () => {

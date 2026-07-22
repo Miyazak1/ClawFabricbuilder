@@ -68,6 +68,7 @@ for (const expected of [
   '/electron/builder-generation-ipc-adapter.cjs',
   '/electron/builder-generation-ipc-runtime.cjs',
   '/electron/builder-generation-main-service.cjs',
+  '/electron/builder-window-controls-ipc-runtime.cjs',
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
 }
@@ -79,6 +80,7 @@ for (const forbiddenTest of [
   '/tests/builder-generation-main-service.test.cjs',
   '/tests/builder-provider-settings-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-runtime.test.cjs',
+  '/tests/builder-window-controls-ipc-runtime.test.cjs',
 ]) {
   assert.equal(packagedFiles.includes(forbiddenTest), false, forbiddenTest);
 }
@@ -125,6 +127,7 @@ const packagedGenerationHost = packagedSource('electron/builder-generation-host-
 const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
 const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation-ipc-runtime.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
+const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
   'clawfabric-builder:project-revisions:commit',
   'clawfabric-builder:project-revisions:load-current',
@@ -140,7 +143,13 @@ const providerSettingsChannels = [
   'clawfabric-builder:provider-settings:replace-current',
   'clawfabric-builder:provider-settings:status',
 ];
-const preloadChannels = [...channels, ...generationChannels, ...providerSettingsChannels];
+const windowControlsChannels = [
+  'clawfabric-builder:window-controls:minimize',
+  'clawfabric-builder:window-controls:toggle-maximize',
+  'clawfabric-builder:window-controls:close',
+  'clawfabric-builder:window-controls:read-state',
+];
+const preloadChannels = [...channels, ...generationChannels, ...providerSettingsChannels, ...windowControlsChannels];
 
 function frozenObjectLiteral(node) {
   assert.equal(ts.isCallExpression(node), true);
@@ -206,24 +215,39 @@ assert.equal(exposeCalls.length, 1);
 assert.equal(exposeCalls[0].arguments.length, 2);
 assert.equal(exposeCalls[0].arguments[0].text, 'clawfabricBuilder');
 const preloadRoot = frozenObjectLiteral(exposeCalls[0].arguments[1]);
-exactObjectKeys(preloadRoot, ['bridgeVersion', 'projectRevisions', 'projectCatalog', 'codeGenerator', 'providerSettings']);
+exactObjectKeys(preloadRoot, [
+  'bridgeVersion',
+  'projectRevisions',
+  'projectCatalog',
+  'codeGenerator',
+  'providerSettings',
+  'windowControls',
+]);
 const revisionProperty = preloadRoot.properties.find((property) => property.name.text === 'projectRevisions');
 const catalogProperty = preloadRoot.properties.find((property) => property.name.text === 'projectCatalog');
 const generationProperty = preloadRoot.properties.find((property) => property.name.text === 'codeGenerator');
 const providerSettingsProperty = preloadRoot.properties.find((property) => property.name.text === 'providerSettings');
+const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(revisionProperty), true);
 assert.equal(ts.isPropertyAssignment(catalogProperty), true);
 assert.equal(ts.isPropertyAssignment(generationProperty), true);
 assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
+assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 const revisionBridge = frozenObjectLiteral(revisionProperty.initializer);
 const catalogBridge = frozenObjectLiteral(catalogProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
+const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(revisionBridge, ['commit', 'loadCurrent']);
 exactObjectKeys(catalogBridge, ['listCurrent']);
 exactObjectKeys(generationBridge, ['generate', 'cancel', 'availability']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
+exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -267,6 +291,10 @@ assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[2]
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
+assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
+assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
+assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
+assert.equal(preloadConstants.get('READ_WINDOW_STATE_CHANNEL'), windowControlsChannels[3]);
 exactInvokeMethod(revisionBridge, 'commit', 'COMMIT_CHANNEL', ['request']);
 exactInvokeMethod(revisionBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
 exactInvokeMethod(catalogBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
@@ -276,13 +304,21 @@ exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
+exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
+exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDOW_CHANNEL', []);
+exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);
+exactInvokeMethod(windowControlsBridge, 'readState', 'READ_WINDOW_STATE_CHANNEL', []);
 
 assert.match(packagedMain, /require\(['"]\.\/builder-project-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-provider-settings-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /require\(['"]\.\/builder-window-controls-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /createBuilderProjectIpcRuntime/u);
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
+assert.match(packagedMain, /createBuilderWindowControlsIpcRuntime/u);
+assert.match(packagedMain, /frame:\s*false/u);
+assert.doesNotMatch(packagedMain, /titleBarStyle|titleBarOverlay/u);
 assert.match(packagedMain, /BUILDER_PACKAGED_CANARY/u);
 assert.match(packagedMain, /BUILDER_PACKAGED_CANARY_USER_DATA_PATH/u);
 assert.match(packagedMain, /clawfabric-builder-packaged-canary-/u);
@@ -312,7 +348,8 @@ assert.match(packagedPreload, /projectRevisions/u);
 assert.match(packagedPreload, /projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
 assert.match(packagedPreload, /providerSettings/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 9);
+assert.match(packagedPreload, /windowControls/u);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 13);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -364,6 +401,13 @@ assert.match(packagedGenerationMainService, /preload_exposure:\s*false/u);
 assert.doesNotMatch(
   packagedGenerationMainService,
   /ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider-secret-store|builder-provider-config-repository|local-provider-executor/iu,
+);
+assert.match(packagedWindowControlsIpcRuntime, /builder-window-controls-ipc-runtime\.v1/u);
+assert.match(packagedWindowControlsIpcRuntime, /activeWindow/u);
+assert.match(packagedWindowControlsIpcRuntime, /event\.sender !== webContents/u);
+assert.doesNotMatch(
+  packagedWindowControlsIpcRuntime,
+  /ipcRenderer|contextBridge|preload|safeStorage|providerSettings|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 for (const channel of preloadChannels) {
   assert.equal(packagedPreload.includes(channel), true, channel);

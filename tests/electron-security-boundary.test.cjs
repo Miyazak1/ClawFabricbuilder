@@ -16,8 +16,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /setWindowOpenHandler/u);
   assert.match(main, /Menu\.setApplicationMenu\(null\)/u);
   assert.match(main, /autoHideMenuBar:\s*true/u);
-  assert.match(main, /titleBarStyle:\s*['"]hidden['"]/u);
-  assert.match(main, /titleBarOverlay:\s*\{/u);
+  assert.match(main, /frame:\s*false/u);
+  assert.doesNotMatch(main, /titleBarStyle|titleBarOverlay/u);
   assert.match(main, /app\.isPackaged/u);
   assert.match(main, /setPermissionRequestHandler/u);
   assert.match(main, /setPermissionCheckHandler/u);
@@ -37,6 +37,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /createBuilderProjectIpcRuntime/u);
   assert.match(main, /createBuilderProviderSettingsIpcRuntime/u);
   assert.match(main, /createBuilderGenerationIpcRuntime/u);
+  assert.match(main, /createBuilderWindowControlsIpcRuntime/u);
+  assert.match(main, /mainWindowRef:\s*\(\)\s*=>\s*mainWindow/u);
   assert.match(main, /const userDataPath = app\.getPath\(['"]userData['"]\)/u);
   assert.match(main, /const runtimes = createIpcRuntimes\(userDataPath\)/u);
   assert.match(main, /registerIpcRuntimes\(runtimes\)/u);
@@ -48,10 +50,15 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /projectCatalog/u);
   assert.match(preload, /codeGenerator/u);
   assert.match(preload, /providerSettings/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 9);
+  assert.match(preload, /windowControls/u);
+  assert.match(preload, /clawfabric-builder:window-controls:minimize/u);
+  assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
+  assert.match(preload, /clawfabric-builder:window-controls:close/u);
+  assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 13);
   assert.doesNotMatch(
     preload,
-    /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|windowControl|minimize|maximize|closeWindow|safeStorage|Authorization|Bearer/iu,
+    /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,
   );
 });
 

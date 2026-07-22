@@ -8,6 +8,7 @@ const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const { createBuilderProjectIpcRuntime } = require('./builder-project-ipc-runtime.cjs');
 const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
 const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
+const { createBuilderWindowControlsIpcRuntime } = require('./builder-window-controls-ipc-runtime.cjs');
 
 const DEV_SERVER_URL = process.env.BUILDER_RENDERER_URL || '';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
@@ -98,13 +99,8 @@ function createMainWindow() {
     minHeight: 620,
     backgroundColor: '#f4f5f7',
     autoHideMenuBar: true,
+    frame: false,
     show: false,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#f7f6f2',
-      symbolColor: '#242522',
-      height: 44,
-    },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -168,6 +164,10 @@ function createIpcRuntimes(userDataPath) {
       ipcMain,
       mainWindowRef: () => mainWindow,
       userDataPath,
+    }),
+    createBuilderWindowControlsIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
     }),
   ]);
 }

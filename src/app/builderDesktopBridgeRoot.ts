@@ -4,6 +4,7 @@ export type BuilderDesktopBridgeRoot = Readonly<{
   projectCatalog: unknown;
   projectRevisions: unknown;
   providerSettings: unknown;
+  windowControls: unknown;
 }>;
 
 export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v1';
@@ -14,6 +15,7 @@ const ROOT_KEYS = new Set([
   'projectCatalog',
   'projectRevisions',
   'providerSettings',
+  'windowControls',
 ]);
 
 export class BuilderDesktopBridgeRootError extends Error {
@@ -63,6 +65,7 @@ export function sanitizeBuilderDesktopBridgeRoot(value: unknown): BuilderDesktop
       projectCatalog: descriptors.projectCatalog.value,
       projectRevisions: descriptors.projectRevisions.value,
       providerSettings: descriptors.providerSettings.value,
+      windowControls: descriptors.windowControls.value,
     });
   } catch {
     throw unavailable();
