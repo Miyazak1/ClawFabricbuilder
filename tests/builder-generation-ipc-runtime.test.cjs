@@ -40,6 +40,10 @@ function activeWindow() {
   return { webContents, isDestroyed: () => false };
 }
 
+async function unreachableFetch() {
+  throw new Error('unexpected network request');
+}
+
 function fakeIpcMain(failOnChannel = null, failRemoveOnChannel = null) {
   const handlers = new Map();
   const removed = [];
@@ -86,7 +90,20 @@ function runtimeWithService(service) {
         };
       }
       if (specifier === './builder-generation-main-service.cjs') {
-        return { createBuilderGenerationMainService: () => service };
+        return {
+          createBuilderGenerationMainService: (options) => {
+            assert.equal(options.transport, context.__sentinelTransport);
+            return service;
+          },
+        };
+      }
+      if (specifier === './builder-openai-compatible-transport.cjs') {
+        return {
+          createBuilderOpenAICompatibleTransport: (options) => {
+            assert.equal(options.fetchImpl, context.__fetchImpl);
+            return context.__sentinelTransport;
+          },
+        };
       }
       if (specifier === './builder-project-revision-repository.cjs') {
         return { createBuilderProjectRevisionRepository: () => ({ load_revision() {} }) };
@@ -101,9 +118,14 @@ function runtimeWithService(service) {
   return {
     createRuntime(options) {
       context.__ipcMain = options.ipcMain;
+      context.__fetchImpl = options.fetchImpl;
+      context.__sentinelTransport = async () => {
+        throw new Error('unexpected transport request');
+      };
       context.__mainWindow = options.mainWindow;
       context.__userDataPath = options.userDataPath;
       return vm.runInContext(`module.exports.createBuilderGenerationIpcRuntime({
+        fetchImpl: __fetchImpl,
         ipcMain: __ipcMain,
         mainWindowRef: () => __mainWindow,
         userDataPath: __userDataPath,
@@ -117,6 +139,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const runtime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath,
@@ -151,6 +174,7 @@ test('keeps active-renderer and request validation inside the controlled adapter
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const runtime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -177,6 +201,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain(CANCEL_CHANNEL);
   const runtime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -191,6 +216,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
 
   const removalFailure = fakeIpcMain(CANCEL_CHANNEL, GENERATE_CHANNEL);
   const cleanupRuntime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
     ipcMain: removalFailure,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -209,8 +235,15 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   for (const invalid of [
     null,
     {},
-    { ipcMain, mainWindowRef: () => mainWindow, userDataPath: 'relative' },
     {
+      fetchImpl: new Proxy(unreachableFetch, { apply() { throw new Error('private fetch trap'); } }),
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      userDataPath: temporaryUserData(t),
+    },
+    { fetchImpl: unreachableFetch, ipcMain, mainWindowRef: () => mainWindow, userDataPath: 'relative' },
+    {
+      fetchImpl: unreachableFetch,
       ipcMain,
       mainWindowRef: () => mainWindow,
       userDataPath: temporaryUserData(t),
@@ -232,6 +265,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     removeHandler: { get() { getterCalls += 1; return () => {}; } },
   });
   assert.throws(() => createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
     ipcMain: accessorIpcMain,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -261,6 +295,7 @@ test('cancels every accepted generation before removing its cancel channel', asy
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -290,11 +325,13 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
     'utf8',
   );
   for (const forbidden of [
-    /ipcRenderer|contextBridge|BrowserWindow/u,
+    /ipcRenderer|contextBridge|BrowserWindow|require\(['"]electron['"]\)|\bnet\b/u,
     /write_current|credential|safeStorage|providerSettings/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
   ]) assert.doesNotMatch(source, forbidden);
   assert.match(source, /createBuilderGenerationMainService/u);
+  assert.match(source, /createBuilderOpenAICompatibleTransport\(\{ fetchImpl: options\.fetchImpl \}\)/u);
+  assert.doesNotMatch(source, /globalThis\.fetch/u);
   assert.match(source, /createBuilderGenerationIpcAdapter/u);
   assert.match(source, /bind_current_authority/u);
 });

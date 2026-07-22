@@ -75,6 +75,11 @@ async function executeMain({
       },
     },
     ipcMain: {},
+    net: {
+      fetch() {
+        throw new Error('unexpected network request');
+      },
+    },
     session: {
       defaultSession: {
         setPermissionCheckHandler() {},
@@ -141,8 +146,9 @@ async function executeMain({
       }
       if (specifier === './builder-generation-ipc-runtime.cjs') {
         return {
-          createBuilderGenerationIpcRuntime() {
+          createBuilderGenerationIpcRuntime(options) {
             calls.createGenerationRuntime += 1;
+            assert.equal(options.fetchImpl, electron.net.fetch);
             return runtime(2);
           },
         };

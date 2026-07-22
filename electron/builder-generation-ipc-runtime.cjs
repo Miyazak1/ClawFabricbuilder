@@ -14,6 +14,9 @@ const {
   createBuilderGenerationMainService,
 } = require('./builder-generation-main-service.cjs');
 const {
+  createBuilderOpenAICompatibleTransport,
+} = require('./builder-openai-compatible-transport.cjs');
+const {
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
@@ -25,7 +28,7 @@ const {
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v1';
 const PROJECT_REPOSITORY_DIRECTORY = 'builder-project-revisions-v1';
-const OPTION_KEYS = Object.freeze(['ipcMain', 'mainWindowRef', 'userDataPath']);
+const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 
 class BuilderGenerationIpcRuntimeError extends Error {
@@ -80,11 +83,14 @@ function safeOptions(value) {
       const descriptor = descriptors[key];
       if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
     }
+    const fetchImpl = descriptors.fetchImpl.value;
     const ipcMain = descriptors.ipcMain.value;
     const mainWindowRef = descriptors.mainWindowRef.value;
     const userDataPath = descriptors.userDataPath.value;
     if (
-      ipcMain === null
+      typeof fetchImpl !== 'function'
+      || utilTypes.isProxy(fetchImpl)
+      || ipcMain === null
       || typeof ipcMain !== 'object'
       || utilTypes.isProxy(ipcMain)
       || typeof mainWindowRef !== 'function'
@@ -97,6 +103,7 @@ function safeOptions(value) {
       || path.normalize(userDataPath) !== userDataPath
     ) fail();
     return Object.freeze({
+      fetchImpl,
       ipcMain,
       handle: stableMethod(ipcMain, 'handle'),
       removeHandler: stableMethod(ipcMain, 'removeHandler'),
@@ -129,6 +136,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
       projectRevisionRepository,
+      transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
     });
     const activeRequests = new Map();
 

@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, ipcMain, session } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, net, session } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const { createBuilderProjectIpcRuntime } = require('./builder-project-ipc-runtime.cjs');
 const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
@@ -164,6 +164,7 @@ function createIpcRuntimes(userDataPath) {
       userDataPath,
     }),
     createBuilderGenerationIpcRuntime({
+      fetchImpl: net.fetch,
       ipcMain,
       mainWindowRef: () => mainWindow,
       userDataPath,
