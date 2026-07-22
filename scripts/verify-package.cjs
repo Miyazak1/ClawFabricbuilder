@@ -91,6 +91,7 @@ assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'pngjs'), true)
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'playwright-core'), false);
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'pngjs'), false);
 assert.equal(workspacePackageJson.scripts['verify:packaged-canary'], 'node scripts/verify-packaged-canary.cjs');
+assert.equal(workspacePackageJson.build.nsis.deleteAppDataOnUninstall, false);
 for (const entry of packagedEntries.filter(
   (value) => /\.(?:cjs|css|html|js|json)$/u.test(value.normalizedPath),
 )) {
