@@ -153,6 +153,10 @@ test('builds a deterministic create prompt without exposing host project identit
     exact_file_keys: ['index.html', 'styles.css', 'app.js'],
     format: 'json_object_only',
   });
+  assert.match(first.system_instruction, /stores and assembles these three files separately/iu);
+  assert.match(first.system_instruction, /index\.html must not reference styles\.css or app\.js/iu);
+  assert.match(first.system_instruction, /all optional interaction logic in app\.js/iu);
+  assert.match(first.system_instruction, /Do not include script, link, style, form, iframe, meta/iu);
   assert.deepEqual(JSON.parse(first.user_instruction), {
     current_project: null,
     idea: 'Make a calm focus timer.',
