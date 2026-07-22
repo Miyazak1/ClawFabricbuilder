@@ -41,6 +41,17 @@ function repositoryConfig(overrides = {}) {
   });
 }
 
+function rendererConfig(overrides = {}) {
+  return {
+    base_url: 'https://provider.example/v1',
+    model: 'builder-model',
+    timeout_ms: 30000,
+    temperature: 0.2,
+    max_tokens: 8192,
+    ...overrides,
+  };
+}
+
 const DEFAULT_CONFIG_DIGEST = repositoryConfig().config_digest;
 
 function repositoryEnvelope(overrides = {}) {
@@ -156,7 +167,6 @@ test('replaces config and credential without returning credential or secret bind
       timeout_ms: 60000,
       temperature: null,
       max_tokens: null,
-      secret_ref: secretRef(),
     },
     credential: 'real-key-value',
   });
@@ -167,7 +177,15 @@ test('replaces config and credential without returning credential or secret bind
   assert.equal(replaced.config.model, 'new-model');
   assert.equal(replaced.credential_status, 'stored');
   assertRedacted(replaced);
-  assert.deepEqual(calls, [['writeCurrent', request]]);
+  assert.deepEqual(calls, [['writeCurrent', {
+    config: {
+      ...request.config,
+      secret_ref: secretRef(),
+    },
+    credential: request.credential,
+  }]]);
+  assert.notEqual(calls[0][1], request);
+  assert.notEqual(calls[0][1].config, request.config);
 });
 
 test('reports missing current config as redacted unconfigured status', () => {
@@ -236,7 +254,18 @@ test('rejects inactive renderers, exact payload drift, and malformed write reque
   assert.throws(
     () => value.channels.replaceCurrent.invoke(
       { sender: windowRef.webContents },
-      { config: repositoryConfig(), credential: marker, extra: true },
+      { config: rendererConfig(), credential: marker, extra: true },
+    ),
+    (error) => error.code === 'builder_provider_settings_request_invalid'
+      && !error.message.includes(marker),
+  );
+  assert.throws(
+    () => value.channels.replaceCurrent.invoke(
+      { sender: windowRef.webContents },
+      {
+        config: { ...rendererConfig(), secret_ref: secretRef() },
+        credential: marker,
+      },
     ),
     (error) => error.code === 'builder_provider_settings_request_invalid'
       && !error.message.includes(marker),
@@ -310,7 +339,7 @@ test('rejects forged repository config values before redacting for the renderer'
     assert.throws(
       () => value.channels.replaceCurrent.invoke(
         { sender: windowRef.webContents },
-        { config: repositoryConfig({ model: 'replacement-model' }), credential: 'real-key-value' },
+        { config: rendererConfig({ model: 'replacement-model' }), credential: 'real-key-value' },
       ),
       (error) => error.code === 'builder_provider_settings_integrity_failed'
         && !`${error.message}:${error.stack}`.includes('real-key-value'),
@@ -368,7 +397,7 @@ test('rejects forged repository envelopes without invoking accessors or proxy tr
     assert.throws(
       () => value.channels.replaceCurrent.invoke(
         { sender: windowRef.webContents },
-        { config: repositoryConfig({ model: 'replacement-model' }), credential: 'real-key-value' },
+        { config: rendererConfig({ model: 'replacement-model' }), credential: 'real-key-value' },
       ),
       (error) => error.code === 'builder_provider_settings_integrity_failed'
         && !`${error.message}:${error.stack}`.includes('real-key-value'),
@@ -431,7 +460,7 @@ test('rejects hostile options, proxy failures, and accessor payloads without lea
       && !`${error.message}:${error.stack}`.includes('private-proxy-marker'),
   );
 
-  const hostilePayload = { config: repositoryConfig() };
+  const hostilePayload = { config: rendererConfig() };
   Object.defineProperty(hostilePayload, 'credential', {
     enumerable: true,
     get() {

@@ -3,6 +3,9 @@
 const { types: utilTypes } = require('node:util');
 
 const {
+  BUILDER_PROVIDER_ID,
+  BUILDER_PROVIDER_SECRET_ID,
+  BUILDER_PROVIDER_SECRET_REF_VERSION,
   sanitizeBuilderProviderConfig,
 } = require('./builder-provider-config.cjs');
 
@@ -15,6 +18,13 @@ const OPTION_KEYS = Object.freeze([
   'mainWindowRef',
 ]);
 const WRITE_KEYS = Object.freeze(['config', 'credential']);
+const WRITE_CONFIG_KEYS = Object.freeze([
+  'base_url',
+  'model',
+  'timeout_ms',
+  'temperature',
+  'max_tokens',
+]);
 const CONFIG_KEYS = Object.freeze([
   'provider_id',
   'base_url',
@@ -224,8 +234,24 @@ function unconfiguredEnvelope(operation) {
 
 function safeWriteRequest(value) {
   const descriptors = exactObject(value, WRITE_KEYS, 'builder_provider_settings_request_invalid');
-  return Object.freeze({
-    config: descriptors.config.value,
+  const configDescriptors = exactObject(
+    descriptors.config.value,
+    WRITE_CONFIG_KEYS,
+    'builder_provider_settings_request_invalid',
+  );
+  return freezeDeep({
+    config: {
+      base_url: configDescriptors.base_url.value,
+      model: configDescriptors.model.value,
+      timeout_ms: configDescriptors.timeout_ms.value,
+      temperature: configDescriptors.temperature.value,
+      max_tokens: configDescriptors.max_tokens.value,
+      secret_ref: {
+        ref_version: BUILDER_PROVIDER_SECRET_REF_VERSION,
+        provider_id: BUILDER_PROVIDER_ID,
+        secret_id: BUILDER_PROVIDER_SECRET_ID,
+      },
+    },
     credential: descriptors.credential.value,
   });
 }

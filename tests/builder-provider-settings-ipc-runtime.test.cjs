@@ -210,7 +210,6 @@ test('forwards read and replace through lazy main-only repository authority with
       timeout_ms: 45000,
       temperature: null,
       max_tokens: null,
-      secret_ref: secretRef(),
     },
     credential: 'real-key-value',
   };
@@ -226,7 +225,13 @@ test('forwards read and replace through lazy main-only repository authority with
   assert.deepEqual(calls, [
     ['createRepository', userDataPath],
     ['read_current'],
-    ['write_current', request],
+    ['write_current', {
+      config: {
+        ...request.config,
+        secret_ref: secretRef(),
+      },
+      credential: request.credential,
+    }],
   ]);
 });
 
