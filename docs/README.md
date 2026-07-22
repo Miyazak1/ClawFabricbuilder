@@ -8,11 +8,12 @@ ClawFabric Builder application.
 1. [Product Vision and Roadmap](PRODUCT_VISION_AND_ROADMAP.md)
 2. [Trusted Work and Collaboration Architecture](TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md)
 3. [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
-4. [Implementation Plan](IMPLEMENTATION_PLAN.md)
-5. [Builder Architecture](ARCHITECTURE.md)
-6. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
-7. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
-8. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
+4. [Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md)
+5. [Implementation Plan](IMPLEMENTATION_PLAN.md)
+6. [Builder Architecture](ARCHITECTURE.md)
+7. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
+8. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
+9. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
 
 ## Authority
 

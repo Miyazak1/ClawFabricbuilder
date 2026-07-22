@@ -15,9 +15,16 @@ of project truth.
 
 ## Reference Calibration
 
-The interaction model is informed by official public material from Codex,
-Claude Code, and DotCraft. These are references for product behavior and
-information architecture, not runtime dependencies or designs to copy.
+The interaction model is informed by source-level audits of Codex and DotCraft,
+and by the readable plugin, hook, SDK, distribution, and behavior evidence
+available for Claude Code. The evidence levels, pinned commits, source paths,
+and inaccessible implementation boundaries are recorded in
+[Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md).
+
+These projects are references for product behavior, protocol structure, and
+information architecture. They are not runtime dependencies or designs to
+copy. Where implementation source is private or incomplete, this contract does
+not infer missing behavior.
 
 ### Codex
 
@@ -30,7 +37,8 @@ ClawFabric adopts the continuing composer, inspectable attempt, and explicit
 review principles. It does not adopt Codex's repository, worktree, or developer-
 only assumptions as the ordinary user's product model.
 
-Official reference: [Codex app](https://developers.openai.com/codex/app/).
+Source reference:
+[openai/codex](https://github.com/openai/codex/tree/9fc715c0861c956c894a91890b78dc05b304ba29).
 
 ### Claude Code
 
@@ -44,9 +52,14 @@ ClawFabric adopts separate plan, approval, attempt, result, and review states.
 It does not expose a terminal-first interface or grant arbitrary shell and file
 authority in the Builder MVP.
 
-Official references:
-[Claude Code repository](https://github.com/anthropics/claude-code) and
-[Claude Code CLI/session controls](https://docs.anthropic.com/en/docs/claude-code/cli-usage).
+The Claude Code core CLI is not present in the public repository. The source
+audit therefore distinguishes readable plugin and hook implementations,
+published SDK contracts, official behavior documentation, and unknown private
+implementation.
+
+Evidence references:
+[Claude Code repository](https://github.com/anthropics/claude-code/tree/ac062f33ab0ca7c62b9df648d0f2027fa9b969f0) and
+[Claude Agent SDK TypeScript](https://github.com/anthropics/claude-agent-sdk-typescript/tree/2997b3d35a729ef823d4edf6cf3c690f86d888e3).
 
 ### DotCraft
 
@@ -62,10 +75,8 @@ system, or assumption that the project directory itself owns every authority.
 ClawFabric Project Revision, Run, Artifact, Permission, and later Workflow facts
 remain independently governed.
 
-Official references:
-[DotCraft repository](https://github.com/DotHarness/dotcraft),
-[Project Workspace](https://www.dotcraft.net/features/project-first), and
-[Unified Session Core](https://www.dotcraft.net/developing/architecture/session-core).
+Source reference:
+[DotHarness/dotcraft](https://github.com/DotHarness/dotcraft/tree/ffac645929d97150474d09fb004f16d220543182).
 
 ### Resulting ClawFabric Model
 
