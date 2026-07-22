@@ -11,7 +11,7 @@ const {
 
 const BUILDER_PROJECT_PROPOSAL_KIND = 'builder_code_project';
 const BUILDER_CODE_GENERATOR_AUTHORITY = 'builder_code_project_generator';
-const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v1';
+const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v2';
 const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v1';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v1';
 const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-descriptor.v1';
@@ -45,18 +45,34 @@ const RESULT_INPUT_KEYS = Object.freeze(['request', 'parent_revision_record', 'g
 const PROPOSAL_KEYS = Object.freeze(['kind', 'title', 'summary', 'files']);
 const FILE_KEYS = Object.freeze(['index.html', 'styles.css', 'app.js']);
 
+const JSON_OUTPUT_EXAMPLE = JSON.stringify({
+  kind: BUILDER_PROJECT_PROPOSAL_KIND,
+  title: 'Focus timer',
+  summary: 'A calm timer with one clear action.',
+  files: {
+    'index.html': '<main id="app"><h1>Focus timer</h1><button id="start">Start</button></main>',
+    'styles.css': '#app { max-width: 32rem; margin: 2rem auto; }',
+    'app.js': 'const start = document.querySelector("#start");\nstart?.addEventListener("click", () => {});',
+  },
+});
+
 const SYSTEM_INSTRUCTION = [
   'Create or revise one small web project.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
   'Use exactly the keys kind, title, summary, and files.',
   'Set kind to builder_code_project.',
   'Use exactly index.html, styles.css, and app.js inside files.',
+  `Example JSON object: ${JSON_OUTPUT_EXAMPLE}`,
   'The host stores and assembles these three files separately; index.html must not reference styles.css or app.js.',
-  'Put all styling in styles.css and all optional interaction logic in app.js.',
+  'Give index.html the complete semantic structure, visible initial state, and stable ids or data attributes used by the other files.',
+  'Put layout, visual states, and responsive styling in styles.css.',
+  'Put state, rendering, event binding, and input validation in small named functions in app.js.',
+  'Keep selectors and ids consistent across index.html, styles.css, and app.js.',
+  'For a complex request, complete one coherent core flow and simplify optional features instead of adding files, dependencies, or unsafe capabilities.',
   'Keep index.html static: no scripts, active embeds, forms, navigation, event handlers, or URL-bearing attributes.',
   'Do not include script, link, style, form, iframe, meta, or other active tags in index.html.',
   'Keep styles.css self-contained: no imports, fonts, URLs, images, or executable CSS.',
-  'Keep app.js self-contained and do not use import, export, or dynamic module loading.',
+  'Keep app.js self-contained and do not use import, export, dynamic module loading, network access, filesystem access, process access, eval, or Function constructors.',
   'Do not add fields for host identities, evidence, admissions, or runtime claims.',
   'Do not include credentials or local filesystem paths.',
 ].join('\n');

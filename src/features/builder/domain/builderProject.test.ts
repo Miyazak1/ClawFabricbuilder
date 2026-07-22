@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BUILDER_CODE_PROJECT_PROMPT_VERSION,
+  BUILDER_CODE_PROJECT_PROMPT_VERSION_V1,
   BUILDER_PROJECT_CSS_MAX_UTF8_BYTES,
   BUILDER_PROJECT_HTML_MAX_UTF8_BYTES,
   BUILDER_PROJECT_JS_MAX_UTF8_BYTES,
@@ -10,6 +12,7 @@ import {
   isTrustedBuilderProjectRevision,
   sanitizeBuilderProjectProposal,
   verifyBuilderProjectRevision,
+  type BuilderCodeProjectPromptVersion,
   type BuilderProjectProposal,
 } from './builderProject';
 
@@ -36,10 +39,11 @@ async function evidenceFor(
   targetRevision = 1,
   parentRevision: { revision: number; revision_digest: string } | null = null,
   projectId = PROJECT_ID,
+  promptVersion: BuilderCodeProjectPromptVersion = BUILDER_CODE_PROJECT_PROMPT_VERSION_V1,
 ) {
   return {
     authority: 'builder_code_project_generator' as const,
-    prompt_version: 'builder-code-project.v1' as const,
+    prompt_version: promptVersion,
     request_version: 'builder-generation-request.v1' as const,
     result_version: 'builder-generation-result.v1' as const,
     request_digest: requestDigest,
@@ -227,6 +231,41 @@ describe('builderProject', () => {
     expect(isTrustedBuilderProjectRevision({ ...first })).toBe(false);
   });
 
+  it('preserves legacy v1 revisions while accepting current v2 evidence', async () => {
+    const value = proposal();
+    const legacy = await createBuilderProjectRevision({
+      projectId: PROJECT_ID,
+      proposal: value,
+      proposalEvidence: await evidenceFor(value),
+      requestDigest: REQUEST_DIGEST,
+    });
+    const reopenedLegacy = await verifyBuilderProjectRevision(structuredClone(legacy));
+    expect(reopenedLegacy.proposal_evidence.prompt_version).toBe(BUILDER_CODE_PROJECT_PROMPT_VERSION_V1);
+    expect(reopenedLegacy.revision_digest).toBe(legacy.revision_digest);
+
+    const currentEvidence = await evidenceFor(
+      value,
+      REQUEST_DIGEST,
+      1,
+      null,
+      PROJECT_ID,
+      BUILDER_CODE_PROJECT_PROMPT_VERSION,
+    );
+    const current = await createBuilderProjectRevision({
+      projectId: PROJECT_ID,
+      proposal: value,
+      proposalEvidence: currentEvidence,
+      requestDigest: REQUEST_DIGEST,
+    });
+    expect(current.proposal_evidence.prompt_version).toBe(BUILDER_CODE_PROJECT_PROMPT_VERSION);
+
+    const relabeledLegacy = structuredClone(legacy);
+    relabeledLegacy.proposal_evidence.prompt_version = BUILDER_CODE_PROJECT_PROMPT_VERSION;
+    await expect(verifyBuilderProjectRevision(relabeledLegacy)).rejects.toMatchObject({
+      code: 'invalid_project_version',
+    });
+  });
+
   it('creates revision two only from an exact verified parent', async () => {
     const firstProposal = proposal();
     const first = await createBuilderProjectRevision({
@@ -247,6 +286,8 @@ describe('builderProject', () => {
         REQUEST_DIGEST,
         2,
         { revision: first.revision, revision_digest: first.revision_digest },
+        PROJECT_ID,
+        BUILDER_CODE_PROJECT_PROMPT_VERSION,
       ),
       requestDigest: REQUEST_DIGEST,
       parent: first,
@@ -257,6 +298,8 @@ describe('builderProject', () => {
       revision: first.revision,
       revision_digest: first.revision_digest,
     });
+    expect(first.proposal_evidence.prompt_version).toBe(BUILDER_CODE_PROJECT_PROMPT_VERSION_V1);
+    expect(second.proposal_evidence.prompt_version).toBe(BUILDER_CODE_PROJECT_PROMPT_VERSION);
     expect(second.revision_digest).not.toBe(first.revision_digest);
     const verified = await verifyBuilderProjectRevision(second);
     expect(verified).toEqual(second);
@@ -283,6 +326,7 @@ describe('builderProject', () => {
       [evidence, `sha256:${'3'.repeat(64)}`],
       [{ ...evidence, request_version: 'other.v1' }, REQUEST_DIGEST],
       [{ ...evidence, result_version: 'other.v1' }, REQUEST_DIGEST],
+      [{ ...evidence, prompt_version: 'builder-code-project.v3' }, REQUEST_DIGEST],
       [{ ...evidence, project_id: 'builder-project:22222222-2222-4222-8222-222222222222' }, REQUEST_DIGEST],
       [{ ...evidence, target_revision: 2 }, REQUEST_DIGEST],
       [{ ...evidence, parent_revision: { revision: 1, revision_digest: REQUEST_DIGEST } }, REQUEST_DIGEST],

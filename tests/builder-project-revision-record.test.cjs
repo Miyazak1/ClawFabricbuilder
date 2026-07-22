@@ -35,7 +35,7 @@ function fixture(overrides = {}) {
     },
     proposal_evidence: {
       authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
+      prompt_version: overrides.prompt_version ?? 'builder-code-project.v1',
       request_version: 'builder-generation-request.v1',
       result_version: 'builder-generation-result.v1',
       request_digest: REQUEST_DIGEST,
@@ -79,6 +79,28 @@ test('sanitizes the C0 BuilderProjectRevision wire into a fresh deeply frozen re
 
   input.files['index.html'] = '<main>changed</main>';
   assert.match(result.files['index.html'], /Today/u);
+});
+
+test('preserves legacy v1 evidence, accepts v2 evidence, and rejects unknown prompt versions', () => {
+  const legacy = fixture();
+  const legacySerialized = serializeBuilderProjectRevisionRecord(legacy);
+  const safeLegacy = sanitizeBuilderProjectRevisionRecord(structuredClone(legacy));
+  assert.equal(safeLegacy.proposal_evidence.prompt_version, 'builder-code-project.v1');
+  assert.equal(safeLegacy.revision_digest, legacy.revision_digest);
+  assert.equal(serializeBuilderProjectRevisionRecord(safeLegacy), legacySerialized);
+
+  const current = fixture({ prompt_version: 'builder-code-project.v2' });
+  const safeCurrent = sanitizeBuilderProjectRevisionRecord(current);
+  assert.equal(safeCurrent.proposal_evidence.prompt_version, 'builder-code-project.v2');
+  assert.equal(safeCurrent.revision_digest, current.revision_digest);
+
+  const relabeledLegacy = structuredClone(legacy);
+  relabeledLegacy.proposal_evidence.prompt_version = 'builder-code-project.v2';
+  expectInvalid(relabeledLegacy);
+
+  const unknown = structuredClone(current);
+  unknown.proposal_evidence.prompt_version = 'builder-code-project.v3';
+  expectInvalid(unknown);
 });
 
 test('binds proposal and revision digests to the complete canonical revision evidence', () => {

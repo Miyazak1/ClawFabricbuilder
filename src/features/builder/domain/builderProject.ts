@@ -1,6 +1,7 @@
 export const BUILDER_PROJECT_PROPOSAL_KIND = 'builder_code_project' as const;
 export const BUILDER_CODE_GENERATOR_AUTHORITY = 'builder_code_project_generator' as const;
-export const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v1' as const;
+export const BUILDER_CODE_PROJECT_PROMPT_VERSION_V1 = 'builder-code-project.v1' as const;
+export const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v2' as const;
 export const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v1' as const;
 export const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v1' as const;
 export const BUILDER_PROJECT_RECORD_KIND = 'builder_project_revision' as const;
@@ -31,9 +32,13 @@ export type BuilderProjectParentRevision = {
   revision_digest: string;
 };
 
+export type BuilderCodeProjectPromptVersion =
+  | typeof BUILDER_CODE_PROJECT_PROMPT_VERSION_V1
+  | typeof BUILDER_CODE_PROJECT_PROMPT_VERSION;
+
 export type BuilderProjectProposalEvidence = {
   authority: typeof BUILDER_CODE_GENERATOR_AUTHORITY;
-  prompt_version: typeof BUILDER_CODE_PROJECT_PROMPT_VERSION;
+  prompt_version: BuilderCodeProjectPromptVersion;
   request_version: typeof BUILDER_GENERATION_REQUEST_PROTOCOL;
   result_version: typeof BUILDER_GENERATION_RESULT_PROTOCOL;
   request_digest: string;
@@ -417,9 +422,11 @@ function canonicalDigest(value: unknown, code: BuilderProjectErrorCode): string 
 
 function sanitizeProposalEvidence(value: unknown): BuilderProjectProposalEvidence {
   const source = asExactRecord(value, EVIDENCE_KEYS, 'invalid_generated_project');
+  const promptVersion = source.prompt_version;
   if (
     source.authority !== BUILDER_CODE_GENERATOR_AUTHORITY
-    || source.prompt_version !== BUILDER_CODE_PROJECT_PROMPT_VERSION
+    || (promptVersion !== BUILDER_CODE_PROJECT_PROMPT_VERSION_V1
+      && promptVersion !== BUILDER_CODE_PROJECT_PROMPT_VERSION)
     || source.request_version !== BUILDER_GENERATION_REQUEST_PROTOCOL
     || source.result_version !== BUILDER_GENERATION_RESULT_PROTOCOL
     || !Number.isSafeInteger(source.target_revision)
@@ -429,7 +436,7 @@ function sanitizeProposalEvidence(value: unknown): BuilderProjectProposalEvidenc
   }
   return {
     authority: BUILDER_CODE_GENERATOR_AUTHORITY,
-    prompt_version: BUILDER_CODE_PROJECT_PROMPT_VERSION,
+    prompt_version: promptVersion,
     request_version: BUILDER_GENERATION_REQUEST_PROTOCOL,
     result_version: BUILDER_GENERATION_RESULT_PROTOCOL,
     request_digest: canonicalDigest(source.request_digest, 'invalid_generated_project'),

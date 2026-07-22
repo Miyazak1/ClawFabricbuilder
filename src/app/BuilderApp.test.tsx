@@ -56,7 +56,7 @@ async function resultFor(
     proposal: value,
     evidence: {
       authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
+      prompt_version: 'builder-code-project.v2',
       request_version: request.version,
       result_version: 'builder-generation-result.v1',
       request_digest: request.request_digest,

@@ -145,7 +145,7 @@ test('builds a deterministic create prompt without exposing host project identit
   assert.deepEqual(first, second);
   assert.equal(first.version, BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION);
   assert.equal(first.request_id, rawRequest.request_digest);
-  assert.equal(first.prompt_version, 'builder-code-project.v1');
+  assert.equal(first.prompt_version, 'builder-code-project.v2');
   assert.equal(first.max_generated_text_bytes, MAX_GENERATED_TEXT_BYTES);
   assert.deepEqual(first.output_contract, {
     kind: 'builder_code_project',
@@ -155,8 +155,23 @@ test('builds a deterministic create prompt without exposing host project identit
   });
   assert.match(first.system_instruction, /stores and assembles these three files separately/iu);
   assert.match(first.system_instruction, /index\.html must not reference styles\.css or app\.js/iu);
-  assert.match(first.system_instruction, /all optional interaction logic in app\.js/iu);
+  assert.match(first.system_instruction, /complete semantic structure, visible initial state/iu);
+  assert.match(first.system_instruction, /state, rendering, event binding, and input validation/iu);
+  assert.match(first.system_instruction, /selectors and ids consistent/iu);
+  assert.match(first.system_instruction, /complete one coherent core flow and simplify optional features/iu);
   assert.match(first.system_instruction, /Do not include script, link, style, form, iframe, meta/iu);
+  const examplePrefix = 'Example JSON object: ';
+  const exampleLine = first.system_instruction.split('\n').find((line) => line.startsWith(examplePrefix));
+  assert.ok(exampleLine);
+  const example = JSON.parse(exampleLine.slice(examplePrefix.length));
+  assert.deepEqual(Object.keys(example), ['kind', 'title', 'summary', 'files']);
+  assert.equal(example.kind, 'builder_code_project');
+  assert.deepEqual(Object.keys(example.files), ['index.html', 'styles.css', 'app.js']);
+  assert.deepEqual(projectBuilderGenerationResult({
+    request: rawRequest,
+    parent_revision_record: null,
+    generated_text: JSON.stringify(example),
+  }).proposal, example);
   assert.deepEqual(JSON.parse(first.user_instruction), {
     current_project: null,
     idea: 'Make a calm focus timer.',
@@ -214,7 +229,7 @@ test('projects generated JSON into the exact host-owned C0 result evidence', () 
     proposal: sourceProposal,
     evidence: {
       authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
+      prompt_version: 'builder-code-project.v2',
       request_version: 'builder-generation-request.v1',
       result_version: 'builder-generation-result.v1',
       request_digest: rawRequest.request_digest,
@@ -440,7 +455,7 @@ test('stays aligned with the committed C0 protocol and avoids product authority 
     'builder-generation-request.v1',
     'builder-generation-result.v1',
     'builder_code_project_generator',
-    'builder-code-project.v1',
+    'builder-code-project.v2',
     'request_digest',
     'proposal_digest',
     "execution: 'not_evaluated'",
@@ -449,5 +464,6 @@ test('stays aligned with the committed C0 protocol and avoids product authority 
     assert.match(contractSource, new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
     assert.match(source, new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   }
+  assert.match(contractSource, /builder-code-project\.v1/u);
   assert.doesNotMatch(source, /(?:fetch\s*\(|node:https|node:http|electron|ipcMain|ipcRenderer|local-provider|chat_planner|ChatCreatePage|Canvas|JobMeta|secure-provider|repository\.commit|localStorage|sessionStorage|indexedDB|child_process|worker_threads|\beval\s*\(|new Function)/u);
 });

@@ -41,7 +41,7 @@ async function resultFor(
     proposal: value,
     evidence: {
       authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
+      prompt_version: 'builder-code-project.v2',
       request_version: request.version,
       result_version: 'builder-generation-result.v1',
       request_digest: request.request_digest,
@@ -172,7 +172,7 @@ describe('builderGeneration', () => {
     expect(revision.files['index.html']).not.toMatch(/<script/i);
     expect(revision.proposal_evidence).toEqual({
       authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
+      prompt_version: 'builder-code-project.v2',
       request_version: 'builder-generation-request.v1',
       result_version: 'builder-generation-result.v1',
       request_digest: request.request_digest,
@@ -381,6 +381,7 @@ describe('builderGeneration', () => {
     for (const invalid of [
       { ...result, proposal: unsafeProposal },
       { ...result, evidence: { ...result.evidence, authority: 'other' } },
+      { ...result, evidence: { ...result.evidence, prompt_version: 'builder-code-project.v1' } },
       { ...result, evidence: { ...result.evidence, prompt_version: 'other.v1' } },
       { ...result, evidence: { ...result.evidence, request_version: 'other.v1' } },
       { ...result, evidence: { ...result.evidence, result_version: 'other.v1' } },

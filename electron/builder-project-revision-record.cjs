@@ -5,7 +5,8 @@ const { types: utilTypes } = require('node:util');
 
 const BUILDER_PROJECT_PROPOSAL_KIND = 'builder_code_project';
 const BUILDER_CODE_GENERATOR_AUTHORITY = 'builder_code_project_generator';
-const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v1';
+const BUILDER_CODE_PROJECT_PROMPT_VERSION_V1 = 'builder-code-project.v1';
+const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v2';
 const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v1';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v1';
 const BUILDER_PROJECT_RECORD_KIND = 'builder_project_revision';
@@ -374,9 +375,11 @@ function sanitizeFiles(value) {
 function sanitizeEvidence(value) {
   assertExactObject(value, EVIDENCE_KEYS);
   const targetRevision = valueAt(value, 'target_revision');
+  const promptVersion = valueAt(value, 'prompt_version');
   if (
     valueAt(value, 'authority') !== BUILDER_CODE_GENERATOR_AUTHORITY
-    || valueAt(value, 'prompt_version') !== BUILDER_CODE_PROJECT_PROMPT_VERSION
+    || (promptVersion !== BUILDER_CODE_PROJECT_PROMPT_VERSION_V1
+      && promptVersion !== BUILDER_CODE_PROJECT_PROMPT_VERSION)
     || valueAt(value, 'request_version') !== BUILDER_GENERATION_REQUEST_PROTOCOL
     || valueAt(value, 'result_version') !== BUILDER_GENERATION_RESULT_PROTOCOL
     || !Number.isSafeInteger(targetRevision)
@@ -384,7 +387,7 @@ function sanitizeEvidence(value) {
   ) fail();
   return {
     authority: BUILDER_CODE_GENERATOR_AUTHORITY,
-    prompt_version: BUILDER_CODE_PROJECT_PROMPT_VERSION,
+    prompt_version: promptVersion,
     request_version: BUILDER_GENERATION_REQUEST_PROTOCOL,
     result_version: BUILDER_GENERATION_RESULT_PROTOCOL,
     request_digest: safeDigest(valueAt(value, 'request_digest')),
