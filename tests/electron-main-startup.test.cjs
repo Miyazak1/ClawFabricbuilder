@@ -9,16 +9,29 @@ const vm = require('node:vm');
 const mainPath = path.join(__dirname, '..', 'electron', 'main.cjs');
 const mainSource = fs.readFileSync(mainPath, 'utf8');
 
-async function executeMain({ singleInstanceLock, windowConstructionFails, failRegisterIndex = -1 }) {
+async function executeMain({
+  env = {},
+  failRegisterIndex = -1,
+  isPackaged = true,
+  realpathMap = {},
+  returnOnThrow = false,
+  sessionDataExists = false,
+  symlinkPaths = [],
+  singleInstanceLock,
+  windowConstructionFails,
+}) {
   const calls = {
     createGenerationRuntime: 0,
     createProjectRuntime: 0,
     createSettingsRuntime: 0,
     dispose: 0,
+    mkdir: 0,
     quit: 0,
     register: 0,
+    setPath: [],
     whenReady: 0,
   };
+  let sessionCreated = sessionDataExists;
   const events = new Map();
   function runtime(index) {
     return {
@@ -32,11 +45,12 @@ async function executeMain({ singleInstanceLock, windowConstructionFails, failRe
   }
   const app = {
     getPath() { return path.join(process.cwd(), 'test-user-data'); },
-    isPackaged: true,
+    isPackaged,
     on(name, handler) { events.set(name, handler); },
     quit() { calls.quit += 1; },
     requestSingleInstanceLock() { return singleInstanceLock; },
     setAppUserModelId() {},
+    setPath(name, value) { calls.setPath.push([name, value]); },
     whenReady() {
       calls.whenReady += 1;
       return Promise.resolve();
@@ -64,8 +78,38 @@ async function executeMain({ singleInstanceLock, windowConstructionFails, failRe
     __dirname: path.dirname(mainPath),
     exports: {},
     module: { exports: {} },
-    process,
+    process: Object.freeze({
+      env,
+      platform: process.platform,
+    }),
     require(specifier) {
+      if (specifier === 'node:fs') {
+        return {
+          lstatSync(target) {
+            if (target.endsWith(`${path.sep}session-data`) && !sessionCreated) {
+              const error = new Error('missing session');
+              error.code = 'ENOENT';
+              throw error;
+            }
+            return {
+              isDirectory: () => true,
+              isSymbolicLink: () => symlinkPaths.includes(target),
+            };
+          },
+          mkdirSync(target) {
+            calls.mkdir += 1;
+            if (target.endsWith(`${path.sep}session-data`)) sessionCreated = true;
+          },
+          realpathSync: {
+            native(target) {
+              return realpathMap[target] ?? target;
+            },
+          },
+        };
+      }
+      if (specifier === 'node:os') {
+        return { tmpdir: () => path.join(process.cwd(), 'tmp') };
+      }
       if (specifier === 'node:path') return path;
       if (specifier === 'electron') return electron;
       if (specifier === './runtime-options.cjs') {
@@ -98,7 +142,12 @@ async function executeMain({ singleInstanceLock, windowConstructionFails, failRe
       throw new Error(`unexpected require: ${specifier}`);
     },
   };
-  vm.runInNewContext(mainSource, context, { filename: mainPath });
+  try {
+    vm.runInNewContext(mainSource, context, { filename: mainPath });
+  } catch (error) {
+    if (returnOnThrow) return { calls, error, events };
+    throw error;
+  }
   await new Promise((resolve) => setImmediate(resolve));
   return { calls, events };
 }
@@ -113,8 +162,10 @@ test('a second application instance exits before registering Builder authorities
     createProjectRuntime: 0,
     createSettingsRuntime: 0,
     dispose: 0,
+    mkdir: 0,
     quit: 1,
     register: 0,
+    setPath: [],
     whenReady: 0,
   });
   assert.deepEqual([...events.keys()], []);
@@ -130,8 +181,10 @@ test('window startup failure disposes registered handlers and quits', async () =
     createProjectRuntime: 1,
     createSettingsRuntime: 1,
     dispose: 3,
+    mkdir: 0,
     quit: 1,
     register: 3,
+    setPath: [],
     whenReady: 1,
   });
   assert.equal(events.has('second-instance'), true);
@@ -150,8 +203,127 @@ test('runtime registration failure rolls back previously registered handlers and
     createProjectRuntime: 1,
     createSettingsRuntime: 1,
     dispose: 1,
+    mkdir: 0,
     quit: 1,
     register: 2,
+    setPath: [],
     whenReady: 1,
   });
+});
+
+test('packaged canary sentinel overrides userData and sessionData before ready', async () => {
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  const { calls } = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    sessionDataExists: false,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.deepEqual(calls.setPath, [
+    ['userData', userData],
+    ['sessionData', path.join(userData, 'session-data')],
+  ]);
+  assert.equal(calls.mkdir, 1);
+  assert.equal(calls.whenReady, 1);
+});
+
+test('packaged canary path guard rejects non-temp and unpackaged overrides', async () => {
+  await assert.rejects(
+    executeMain({
+      env: {
+        BUILDER_PACKAGED_CANARY: '1',
+        BUILDER_PACKAGED_CANARY_USER_DATA_PATH: path.join(
+          process.cwd(),
+          'outside',
+          'clawfabric-builder-packaged-canary-main',
+        ),
+      },
+      singleInstanceLock: true,
+      windowConstructionFails: true,
+    }),
+    /invalid packaged canary user data path/u,
+  );
+
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  const { calls } = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    isPackaged: false,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.deepEqual(calls.setPath, []);
+});
+
+test('packaged canary rejects nested paths, prefix drift, and root reparse before setPath', async () => {
+  for (const requested of [
+    path.join(process.cwd(), 'tmp', 'nested', 'clawfabric-builder-packaged-canary-main'),
+    path.join(process.cwd(), 'tmp', 'clawfabric-builder-canary-main'),
+  ]) {
+    const { calls, error } = await executeMain({
+      env: {
+        BUILDER_PACKAGED_CANARY: '1',
+        BUILDER_PACKAGED_CANARY_USER_DATA_PATH: requested,
+      },
+      returnOnThrow: true,
+      singleInstanceLock: true,
+      windowConstructionFails: true,
+    });
+    assert.match(error.message, /^invalid packaged canary user data path$/u);
+    assert.deepEqual(calls.setPath, []);
+  }
+
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  const rootJunction = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    returnOnThrow: true,
+    singleInstanceLock: true,
+    symlinkPaths: [userData],
+    windowConstructionFails: true,
+  });
+  assert.match(rootJunction.error.message, /^invalid packaged canary user data path$/u);
+  assert.deepEqual(rootJunction.calls.setPath, []);
+});
+
+test('packaged canary rejects realpath escapes and session-data replacement before setPath', async () => {
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  const escapedRoot = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    realpathMap: {
+      [userData]: path.join(process.cwd(), 'outside', 'clawfabric-builder-packaged-canary-main'),
+    },
+    returnOnThrow: true,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.match(escapedRoot.error.message, /^invalid packaged canary user data path$/u);
+  assert.deepEqual(escapedRoot.calls.setPath, []);
+
+  const sessionData = path.join(userData, 'session-data');
+  const replacedSession = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    realpathMap: {
+      [sessionData]: path.join(process.cwd(), 'outside', 'session-data'),
+    },
+    returnOnThrow: true,
+    sessionDataExists: true,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.match(replacedSession.error.message, /^invalid packaged canary user data path$/u);
+  assert.deepEqual(replacedSession.calls.setPath, []);
 });

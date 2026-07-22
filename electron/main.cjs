@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, session } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
@@ -8,8 +10,84 @@ const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-
 const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
 
 const DEV_SERVER_URL = process.env.BUILDER_RENDERER_URL || '';
+const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
+const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
+const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
 let mainWindow = null;
 let ipcRuntimes = Object.freeze([]);
+
+function invalidPackagedCanaryPath() {
+  throw new Error('invalid packaged canary user data path');
+}
+
+function samePath(left, right) {
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+function checkedRealDirectory(directoryPath) {
+  let stat;
+  let realPath;
+  try {
+    stat = fs.lstatSync(directoryPath);
+    realPath = path.resolve(fs.realpathSync.native(directoryPath));
+  } catch {
+    invalidPackagedCanaryPath();
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) invalidPackagedCanaryPath();
+  return realPath;
+}
+
+function assertDirectChild(realPath, expectedParentRealPath, expectedBasename) {
+  if (
+    !samePath(path.dirname(realPath), expectedParentRealPath)
+    || path.basename(realPath) !== expectedBasename
+  ) invalidPackagedCanaryPath();
+}
+
+function resolvePackagedCanaryUserDataPath() {
+  if (!app.isPackaged || process.env[PACKAGED_CANARY_SENTINEL] !== '1') return null;
+  const requested = process.env[PACKAGED_CANARY_USER_DATA_PATH];
+  if (
+    typeof requested !== 'string'
+    || requested.length === 0
+    || requested.length > 1_024
+    || requested.trim() !== requested
+    || requested.includes('\0')
+  ) throw new Error('invalid packaged canary user data path');
+
+  const resolved = path.resolve(requested);
+  const tempRoot = path.resolve(os.tmpdir());
+  const basename = path.basename(resolved);
+  if (
+    resolved !== requested
+    || path.normalize(resolved) !== resolved
+    || path.dirname(resolved) !== tempRoot
+    || !basename.startsWith(PACKAGED_CANARY_USER_DATA_PREFIX)
+  ) invalidPackagedCanaryPath();
+
+  const tempRootRealPath = checkedRealDirectory(tempRoot);
+  const userDataRealPath = checkedRealDirectory(resolved);
+  assertDirectChild(userDataRealPath, tempRootRealPath, basename);
+  return resolved;
+}
+
+function configurePackagedCanaryPaths() {
+  const userDataPath = resolvePackagedCanaryUserDataPath();
+  if (userDataPath === null) return;
+  const sessionDataPath = path.join(userDataPath, 'session-data');
+  try {
+    fs.mkdirSync(sessionDataPath);
+  } catch (error) {
+    if (error === null || error.code !== 'EEXIST') invalidPackagedCanaryPath();
+  }
+  const userDataRealPath = path.resolve(fs.realpathSync.native(userDataPath));
+  const sessionDataRealPath = checkedRealDirectory(sessionDataPath);
+  assertDirectChild(sessionDataRealPath, userDataRealPath, 'session-data');
+  app.setPath('userData', userDataPath);
+  app.setPath('sessionData', sessionDataPath);
+}
 
 function createMainWindow() {
   const window = new BrowserWindow({
@@ -105,6 +183,7 @@ function registerIpcRuntimes(runtimes) {
 }
 
 app.setAppUserModelId('com.clawfabric.builder');
+configurePackagedCanaryPaths();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -118,7 +197,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     denyRendererPermissions();
-    const runtimes = createIpcRuntimes(app.getPath('userData'));
+    const userDataPath = app.getPath('userData');
+    const runtimes = createIpcRuntimes(userDataPath);
     registerIpcRuntimes(runtimes);
     ipcRuntimes = runtimes;
     createMainWindow();

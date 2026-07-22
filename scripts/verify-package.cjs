@@ -12,6 +12,7 @@ const unpacked = path.join(root, 'release', 'win-unpacked');
 const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
 const builtIndex = path.join(root, 'dist', 'index.html');
+const workspacePackageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
 const secretMaterial = /(?:real-key-value|private-settings-marker|private-secret-marker|Authorization:\s*Bearer|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|sk-[A-Za-z0-9_-]{16,})/iu;
 const apiKeyLiteralAssignment = /["'`]?api(?:[_-]?key|Key)["'`]?\s*[:=]\s*(["'])(?=[^"'`\r\n]{16,}\1)[^"'`\r\n]+\1/iu;
@@ -81,7 +82,13 @@ for (const forbiddenTest of [
 ]) {
   assert.equal(packagedFiles.includes(forbiddenTest), false, forbiddenTest);
 }
+assert.equal(packagedFiles.includes('/scripts/verify-packaged-canary.cjs'), false);
 assert.equal(packagedFiles.some((entry) => entry.startsWith('/node_modules/')), false);
+assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'playwright-core'), true);
+assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'pngjs'), true);
+assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'playwright-core'), false);
+assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'pngjs'), false);
+assert.equal(workspacePackageJson.scripts['verify:packaged-canary'], 'node scripts/verify-packaged-canary.cjs');
 for (const entry of packagedEntries.filter(
   (value) => /\.(?:cjs|css|html|js|json)$/u.test(value.normalizedPath),
 )) {
@@ -276,7 +283,19 @@ assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs
 assert.match(packagedMain, /createBuilderProjectIpcRuntime/u);
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
-assert.match(packagedMain, /const runtimes = createIpcRuntimes\(app\.getPath\(['"]userData['"]\)\)/u);
+assert.match(packagedMain, /BUILDER_PACKAGED_CANARY/u);
+assert.match(packagedMain, /BUILDER_PACKAGED_CANARY_USER_DATA_PATH/u);
+assert.match(packagedMain, /clawfabric-builder-packaged-canary-/u);
+assert.match(packagedMain, /app\.isPackaged/u);
+assert.match(packagedMain, /fs\.lstatSync/u);
+assert.match(packagedMain, /fs\.realpathSync\.native/u);
+assert.match(packagedMain, /app\.setPath\(['"]userData['"]/u);
+assert.match(packagedMain, /app\.setPath\(['"]sessionData['"]/u);
+assert.match(packagedMain, /path\.dirname\(resolved\) !== tempRoot/u);
+assert.match(packagedMain, /path\.basename\(realPath\) !== expectedBasename/u);
+assert.match(packagedMain, /stat\.isSymbolicLink\(\)/u);
+assert.match(packagedMain, /const userDataPath = app\.getPath\(['"]userData['"]\)/u);
+assert.match(packagedMain, /const runtimes = createIpcRuntimes\(userDataPath\)/u);
 assert.match(packagedMain, /registerIpcRuntimes\(runtimes\)/u);
 assert.match(packagedMain, /ipcRuntimes = runtimes/u);
 assert.match(packagedMain, /disposeIpcRuntimes/u);
