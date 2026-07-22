@@ -19,6 +19,7 @@ const {
   fillProviderSettingsViaUi,
   generateProjectViaUi,
   networkRecorder,
+  openProjectFromCatalogById,
   parseCanaryInput,
   readStdin,
   readOnlyBridgeEvidence,
@@ -88,6 +89,11 @@ class FakeLocator {
     return new FakeRole(this.page, role, options.name);
   }
 
+  getByText(text, options) {
+    this.page.events.push(['scopedText', this.selector, text, options]);
+    return new FakeText(this.page, text);
+  }
+
   async inputValue() {
     return this.page.values.get(this.selector) ?? '';
   }
@@ -99,6 +105,11 @@ class FakeLocator {
 
   async waitFor(options) {
     this.page.events.push(['waitFor', this.selector, options?.state ?? null]);
+  }
+
+  locator(selector) {
+    this.page.events.push(['scopedLocator', this.selector, selector]);
+    return new FakeLocator(this.page, `${this.selector} ${selector}`);
   }
 }
 
@@ -546,11 +557,46 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     assert.equal(Object.hasOwn(launch.env, 'PROVIDER_API_KEY'), false);
     assert.equal(Object.hasOwn(launch.env, 'PATH'), true);
   }
-  const scopedClicks = page.events.filter((event) => event[0] === 'scopedRole');
-  assert.equal(scopedClicks.length, 1);
-  assert.equal(scopedClicks[0][1], SELECTORS.projectCatalog);
-  assert.deepEqual(scopedClicks[0][3], { name: 'Focus timer', exact: true });
+  const scopedLocators = page.events.filter((event) => event[0] === 'scopedLocator');
+  assert.equal(scopedLocators.length, 1);
+  assert.equal(scopedLocators[0][1], SELECTORS.projectCatalog);
+  assert.equal(
+    scopedLocators[0][2],
+    'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
+  );
+  const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
+  assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
+    ['Focus timer', { exact: true }],
+    ['A timer.', { exact: true }],
+    ['Version 1', { exact: true }],
+  ]);
   assert.deepEqual(removed, [userDataPath]);
+});
+
+test('opens restart project with escaped project id selector and visible catalog facts', async () => {
+  const page = new FakePage();
+  await openProjectFromCatalogById(page, {
+    project_id: 'builder-project:quote"slash\\line\nid',
+    revision: 3,
+    summary: 'Escaped selector summary.',
+    title: 'Escaped selector title',
+  });
+
+  const scopedLocators = page.events.filter((event) => event[0] === 'scopedLocator');
+  assert.equal(scopedLocators.length, 1);
+  assert.equal(
+    scopedLocators[0][2],
+    'button[data-builder-project-id="builder-project:quote\\"slash\\\\line\\a id"]',
+  );
+  const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
+  assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
+    ['Escaped selector title', { exact: true }],
+    ['Escaped selector summary.', { exact: true }],
+    ['Version 3', { exact: true }],
+  ]);
+  assert.deepEqual(page.events.filter((event) => event[0] === 'click').map((event) => event[1]), [
+    `${SELECTORS.projectCatalog} button[data-builder-project-id="builder-project:quote\\"slash\\\\line\\a id"]`,
+  ]);
 });
 
 test('normalizes setup failures before launch without leaking raw markers or proxy traps', async () => {

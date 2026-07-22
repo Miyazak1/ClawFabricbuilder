@@ -90,6 +90,7 @@ export function BuilderProjectCatalog({
             <li key={project.project_id}>
               <button
                 className="cf-builder-project-row grid min-h-20 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                data-builder-project-id={project.project_id}
                 disabled={busy || typeof onOpenProject !== 'function'}
                 onClick={() => onOpenProject?.(project.project_id)}
                 type="button"

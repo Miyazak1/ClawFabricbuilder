@@ -40,6 +40,7 @@ const SELECTORS = Object.freeze({
   timeout: '#builder-provider-timeout',
 });
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const CSS_IDENTIFIER_PATTERN = /^[a-z][a-z0-9_-]*$/u;
 
 const ERROR_MESSAGES = Object.freeze({
   canary_input_invalid: 'Packaged canary input is invalid.',
@@ -276,6 +277,23 @@ function redactInput(input) {
 
 function digestText(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function cssString(value) {
+  return String(value).replace(/["\\\n\r\f]/gu, (character) => {
+    if (character === '"') return '\\"';
+    if (character === '\\') return '\\\\';
+    if (character === '\n') return '\\a ';
+    if (character === '\r') return '\\d ';
+    return '\\c ';
+  });
+}
+
+function attributeEqualsSelector(attributeName, value) {
+  if (typeof attributeName !== 'string' || !CSS_IDENTIFIER_PATTERN.test(attributeName)) {
+    fail('canary_evidence_failed');
+  }
+  return `[${attributeName}="${cssString(value)}"]`;
 }
 
 function createArtifactGate() {
@@ -759,6 +777,22 @@ async function capturePreviewEvidence(page, gate) {
   });
 }
 
+async function openProjectFromCatalogById(page, project) {
+  try {
+    const catalog = page.locator(SELECTORS.projectCatalog);
+    await catalog.waitFor({ state: 'visible' });
+    const projectButton = catalog.locator(`button${attributeEqualsSelector('data-builder-project-id', project.project_id)}`);
+    await projectButton.waitFor({ state: 'visible' });
+    await projectButton.getByText(project.title, { exact: true }).waitFor({ state: 'visible' });
+    await projectButton.getByText(project.summary, { exact: true }).waitFor({ state: 'visible' });
+    await projectButton.getByText(`Version ${project.revision}`, { exact: true }).waitFor({ state: 'visible' });
+    await projectButton.click();
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_evidence_failed');
+  }
+}
+
 function makeTempUserData(fsModule = fs, osModule = os) {
   return fsModule.mkdtempSync(path.join(osModule.tmpdir(), PACKAGED_CANARY_USER_DATA_PREFIX));
 }
@@ -834,9 +868,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
     const restartedPage = await app.firstWindow();
     recorder.attach(restartedPage);
-    const catalog = restartedPage.locator(SELECTORS.projectCatalog);
-    await catalog.waitFor({ state: 'visible' });
-    await catalog.getByRole('button', { name: revision.title, exact: true }).click();
+    await openProjectFromCatalogById(restartedPage, revision);
     await restartedPage.locator(SELECTORS.preview).waitFor({ state: 'visible' });
     await restartedPage.getByText('Version 1').waitFor({ state: 'visible' });
     const restartEvidence = assertReadEvidence(await readOnlyBridgeEvidence(restartedPage, project.project_id));
@@ -967,6 +999,7 @@ module.exports = {
   fillProviderSettingsViaUi,
   generateProjectViaUi,
   networkRecorder,
+  openProjectFromCatalogById,
   parseCanaryInput,
   readStdin,
   readOnlyBridgeEvidence,

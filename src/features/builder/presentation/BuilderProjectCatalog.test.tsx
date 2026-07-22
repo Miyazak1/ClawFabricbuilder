@@ -69,6 +69,9 @@ describe('BuilderProjectCatalog', () => {
       <BuilderProjectCatalog snapshot={current} onOpenProject={onOpenProject} />,
     );
     act(() => button(container, 'Tiny timer')?.click());
+    const projectButton = container.querySelector<HTMLButtonElement>(
+      `[data-builder-project-id="${PROJECT_ID}"]`,
+    );
 
     expect(container.textContent).toContain('Your projects');
     expect(container.querySelector('[data-builder-project-catalog="true"]')?.className).toContain(
@@ -79,6 +82,10 @@ describe('BuilderProjectCatalog', () => {
     expect(container.textContent).toContain('Tiny timer');
     expect(container.textContent).toContain('A small focus timer.');
     expect(container.textContent).toContain('Version 2');
+    expect(projectButton).not.toBeNull();
+    expect(projectButton?.textContent).toContain('Tiny timer');
+    expect(projectButton?.textContent).toContain('A small focus timer.');
+    expect(projectButton?.textContent).toContain('Version 2');
     expect(container.textContent).not.toContain('sha256:');
     expect(container.textContent).not.toContain('verified_project_head');
     expect(onOpenProject).toHaveBeenCalledWith(PROJECT_ID);
