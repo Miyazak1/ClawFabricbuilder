@@ -179,15 +179,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         </header>
         <div className="flex gap-2 border-b p-3">
           <button
-            className="inline-flex min-h-10 flex-1 items-center justify-center bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={newProject}
-            type="button"
-          >
-            New project
-          </button>
-          <button
             aria-pressed={view === 'settings'}
-            className="inline-flex min-h-10 items-center gap-2 border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setView('settings')}
             type="button"
           >
@@ -207,13 +200,29 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
       <section className="min-w-0" aria-label="Builder workspace">
         {view === 'settings' ? (
-          <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
+          <div className="flex min-h-screen flex-col bg-background text-foreground">
+            <header className="flex min-h-14 items-center justify-between gap-4 border-b px-4">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
+                <h1 className="truncate text-base font-semibold">AI provider settings</h1>
+              </div>
+              <button
+                className="inline-flex min-h-9 shrink-0 items-center justify-center border px-3 text-sm font-medium"
+                onClick={() => setView('project')}
+                type="button"
+              >
+                Back to project
+              </button>
+            </header>
+            <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
+          </div>
         ) : (
           <BuilderPage
             activeFile={activeFile}
             idea={idea}
             onGenerate={generate}
             onIdeaChange={setIdea}
+            onOpenSettings={() => setView('settings')}
             onRetrySave={retrySave}
             onSelectFile={setActiveFile}
             snapshot={project.snapshot}

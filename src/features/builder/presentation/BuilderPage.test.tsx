@@ -206,11 +206,12 @@ describe('BuilderPage', () => {
 
     expect(buttonWithText(container, button)?.disabled).toBe(true);
     expect(container.querySelector('[role="status"]')?.textContent).toBe(message);
+    expect(buttonWithText(container, 'Check AI settings')).toBeUndefined();
     act(() => buttonWithText(container, button)?.click());
     expect(onGenerate).not.toHaveBeenCalled();
   });
 
-  it('allows an explicit generation retry only after generation failure', () => {
+  it('allows an explicit generation retry only after generation failure without inventing settings', () => {
     const onGenerate = vi.fn();
     const container = render(<BuilderPage {...props({
       idea: 'Make a clock',
@@ -221,9 +222,25 @@ describe('BuilderPage', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'The draft could not be made. Try again.',
     );
+    expect(buttonWithText(container, 'Check AI settings')).toBeUndefined();
     expect(buttonWithText(container, 'Make it')?.disabled).toBe(false);
     act(() => buttonWithText(container, 'Make it')?.click());
     expect(onGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers an explicit settings command after generation failure when wired', () => {
+    const onOpenSettings = vi.fn();
+    const container = render(<BuilderPage {...props({
+      idea: 'Make a clock',
+      onOpenSettings,
+      snapshot: snapshot('generation_failed'),
+    })} />);
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'The draft could not be made. Try again.',
+    );
+    act(() => buttonWithText(container, 'Check AI settings')?.click());
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it('offers only the safe save retry for an unverified save', () => {
@@ -285,6 +302,7 @@ describe('BuilderPage', () => {
     })} />);
     expect(noCallbacks.querySelector<HTMLTextAreaElement>('#builder-idea')?.readOnly).toBe(true);
     expect(buttonWithText(noCallbacks, 'Make it')?.disabled).toBe(true);
+    expect(buttonWithText(noCallbacks, 'Check AI settings')).toBeUndefined();
     expect(Array.from(noCallbacks.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .every((tab) => tab.disabled)).toBe(true);
 

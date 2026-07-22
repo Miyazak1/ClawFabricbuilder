@@ -289,6 +289,11 @@ function button(container: HTMLElement, text: string): HTMLButtonElement {
   return element;
 }
 
+function buttons(container: HTMLElement, text: string): HTMLButtonElement[] {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+    .filter((candidate) => candidate.textContent?.includes(text));
+}
+
 function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   act(() => {
     const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set;
@@ -303,8 +308,10 @@ describe('BuilderApp', () => {
     const container = render(<BuilderApp bridgeRoot={{ bridgeVersion: 'legacy.v0' }} />);
     await flush();
 
+    expect(container.querySelectorAll('main')).toHaveLength(1);
     expect(container.textContent).toContain('Saved projects are unavailable.');
     expect(container.textContent).toContain('New project');
+    expect(buttons(container, 'New project')).toHaveLength(1);
     expect(container.textContent).not.toMatch(/chat|canvas|AppLayout|generic provider|localStorage/iu);
   });
 
@@ -322,6 +329,21 @@ describe('BuilderApp', () => {
     expect(calls.loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ONE });
     expect(container.textContent).toContain('Version 1');
     expect(container.querySelector('code')?.textContent).toContain('Known timer');
+
+    changeValue(textBox(container), 'Update the known timer.');
+    act(() => button(container, 'CSS').click());
+    act(() => button(container, 'Settings').click());
+    await flush();
+    expect(container.textContent).toContain('AI provider settings');
+    act(() => button(container, 'Back to project').click());
+    await waitFor(() => {
+      expect(container.querySelector('h1')?.textContent).toBe('Known timer');
+      expect(textBox(container).value).toBe('Update the known timer.');
+      expect(container.querySelector<HTMLElement>('#builder-code-panel')?.getAttribute('aria-labelledby')).toBe(
+        'builder-file-tab-css',
+      );
+    });
+    expect(calls.loadCurrent).toHaveBeenCalledTimes(1);
   });
 
   it('makes a first project, selects it after durable save, and refreshes catalog', async () => {
@@ -439,6 +461,25 @@ describe('BuilderApp', () => {
     expect(calls.loadCurrent).not.toHaveBeenCalled();
     expect(calls.listCurrent).toHaveBeenCalledTimes(1);
     expect(container.querySelector('h1')?.textContent).toBe('New project');
+
+    act(() => button(container, 'Check AI settings').click());
+    await flush();
+    expect(container.textContent).toContain('AI provider settings');
+    act(() => button(container, 'Back to project').click());
+    await waitFor(() => {
+      expect(container.querySelector('h1')?.textContent).toBe('New project');
+      expect(textBox(container).value).toBe('Make a focus timer.');
+      expect(button(container, 'Make it').disabled).toBe(false);
+    });
+    await act(async () => {
+      button(container, 'Make it').click();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(calls.generate).toHaveBeenCalledTimes(2);
+      expect(calls.commit).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('h1')?.textContent).toBe('Focus timer');
+    });
   });
 
   it('does not refresh the catalog or select a project after save verification failure', async () => {
@@ -511,6 +552,8 @@ describe('BuilderApp', () => {
 
     act(() => button(container, 'Settings').click());
     await flush();
+    expect(container.querySelectorAll('main')).toHaveLength(1);
+    expect(container.textContent).toContain('Back to project');
     expect(container.textContent).toContain('AI provider');
     expect(input(container, 'builder-provider-api-key').value).toBe('');
 

@@ -21,6 +21,7 @@ export type BuilderPageProps = {
   idea: string;
   onIdeaChange?: (value: string) => void;
   onGenerate?: () => void;
+  onOpenSettings?: () => void;
   onRetrySave?: () => void;
   snapshot: BuilderProjectControllerSnapshot;
   activeFile: BuilderFileName;
@@ -144,6 +145,7 @@ export function BuilderPage({
   idea,
   onIdeaChange,
   onGenerate,
+  onOpenSettings,
   onRetrySave,
   snapshot,
   activeFile,
@@ -168,6 +170,8 @@ export function BuilderPage({
     && idea.trim().length > 0;
   const canRetrySave = currentStatus === 'save_unverified'
     && typeof onRetrySave === 'function';
+  const canOpenSettings = currentStatus === 'generation_failed'
+    && typeof onOpenSettings === 'function';
   const hasDraft = savedRevision !== null;
   const code = files?.[safeActiveFile] ?? '';
 
@@ -185,7 +189,7 @@ export function BuilderPage({
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-background text-foreground" data-builder-page="true">
+    <div className="flex min-h-screen flex-col bg-background text-foreground" data-builder-page="true">
       <header className="flex min-h-14 items-center justify-between gap-4 border-b px-4">
         <div className="min-w-0">
           <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
@@ -231,7 +235,18 @@ export function BuilderPage({
             <p className="text-sm text-muted-foreground" role="status">Checking the saved version...</p>
           ) : null}
           {currentStatus === 'generation_failed' ? (
-            <p className="text-sm text-destructive" role="alert">The draft could not be made. Try again.</p>
+            <div className="flex flex-col gap-2" role="alert">
+              <p className="text-sm text-destructive">The draft could not be made. Try again.</p>
+              {canOpenSettings ? (
+                <button
+                  className="inline-flex min-h-9 items-center justify-center border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={onOpenSettings}
+                  type="button"
+                >
+                  Check AI settings
+                </button>
+              ) : null}
+            </div>
           ) : null}
           {currentStatus === 'save_unverified' ? (
             <div className="flex flex-col gap-2" role="alert">
@@ -332,6 +347,6 @@ export function BuilderPage({
           </div>
         </section>
       </div>
-    </main>
+    </div>
   );
 }
