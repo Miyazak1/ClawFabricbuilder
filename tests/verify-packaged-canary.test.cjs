@@ -16,6 +16,7 @@ const {
   assertReadEvidence,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
+  copySavedProviderProfile,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
@@ -982,8 +983,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   );
   const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
+    ['Version 1', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
+    ['Version 1', { exact: true }],
     ['Version 1', { exact: true }],
   ]);
   assert.deepEqual(removed, [userDataPath]);
@@ -1044,10 +1047,11 @@ test('copies only saved provider profile files and runs without provider input o
     path.relative(userDataPath, target),
   ]), [
     ['Local State', 'Local State'],
+    ['Local State', path.join('session-data', 'Local State')],
     [path.join('builder-provider-config-v1', 'current.json'), path.join('builder-provider-config-v1', 'current.json')],
     [path.join('builder-provider-secrets-v1', secretName), path.join('builder-provider-secrets-v1', secretName)],
   ]);
-  assert.deepEqual(copied.map(([source]) => source), [localState, current, secret]);
+  assert.deepEqual(copied.map(([source]) => source), [localState, localState, current, secret]);
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
   assert.deepEqual(roleClicks, ['New project', 'Make it']);
   assert.equal(roleClicks.includes('Settings'), false);
@@ -1077,6 +1081,28 @@ test('copies only saved provider profile files and runs without provider input o
   ]) {
     assert.equal(packet.includes(forbidden), false, forbidden);
   }
+});
+
+test('copies saved provider files through the guarded canonical target path', () => {
+  const parsed = parseCanaryInput(savedProfileInput({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+  const fixture = savedProfileFixture();
+  const canonicalTempRoot = `${fixture.tempRoot}-canonical`;
+  const canonicalUserDataPath = path.join(canonicalTempRoot, path.basename(fixture.userDataPath));
+  fixture.state.realpath.set(fixture.tempRoot, canonicalTempRoot);
+  fixture.state.realpath.set(fixture.userDataPath, canonicalUserDataPath);
+  fixture.state.realpath.set(canonicalUserDataPath, canonicalUserDataPath);
+  fixture.state.stats.set(canonicalUserDataPath, fixture.state.stats.get(fixture.userDataPath));
+
+  const guardedRoot = captureGuardedUserDataRoot(fixture.userDataPath, fixture.fsModule, fixture.osModule);
+  const savedProfile = copySavedProviderProfile(parsed, guardedRoot, fixture.fsModule);
+
+  assert.equal(savedProfile.sourceRoot.path, parsed.source_user_data_path);
+  assert.deepEqual(fixture.copied.map(([, target]) => path.relative(canonicalUserDataPath, target)), [
+    'Local State',
+    path.join('session-data', 'Local State'),
+    path.join('builder-provider-config-v1', 'current.json'),
+    path.join('builder-provider-secrets-v1', fixture.secretName),
+  ]);
 });
 
 test('rejects saved profile target directory replacement before descriptor writes', async (t) => {
@@ -1111,6 +1137,19 @@ test('rejects saved profile target directory replacement before descriptor write
           path.join(fixture.userDataPath, 'builder-provider-config-v1', 'current.json'),
           path.join(fixture.userDataPath, 'builder-provider-secrets-v1', fixture.secretName),
         ];
+      },
+    },
+    {
+      name: 'target session data symlink',
+      pathFor(fixture) {
+        return path.join(fixture.userDataPath, 'session-data');
+      },
+      driftAt: 2,
+      drift(stat) {
+        return fakeDirectoryStat(stat.dev, stat.ino, true);
+      },
+      forbiddenTargets(fixture) {
+        return [path.join(fixture.userDataPath, 'session-data', 'Local State')];
       },
     },
     {

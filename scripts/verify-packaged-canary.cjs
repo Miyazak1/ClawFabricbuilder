@@ -17,6 +17,7 @@ const LOCAL_STATE_FILE_NAME = 'Local State';
 const PROVIDER_CONFIG_DIRECTORY_NAME = 'builder-provider-config-v1';
 const PROVIDER_CONFIG_CURRENT_FILE_NAME = 'current.json';
 const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
+const SESSION_DATA_DIRECTORY_NAME = 'session-data';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const STDIN_MAX_BYTES = 128 * 1024;
 const LOCAL_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -36,6 +37,7 @@ const WINDOWS_ENV_ALLOWLIST = Object.freeze([
 const SELECTORS = Object.freeze({
   apiKey: '#builder-provider-api-key',
   baseUrl: '#builder-provider-base-url',
+  currentVersion: '[data-builder-current-version="true"]',
   idea: '#builder-idea',
   maxTokens: '#builder-provider-max-tokens',
   model: '#builder-provider-model',
@@ -610,13 +612,27 @@ function compareSourceDirectoryIdentity(left, right) {
   }
 }
 
-function captureTargetProfileDirectories(userDataRoot, configDirectory, secretsDirectory, fsModule) {
-  const root = captureSourceDirectory(fsModule, userDataRoot.path);
-  compareSourceDirectoryIdentity(userDataRoot, root);
+function captureTargetProfileDirectories(
+  userDataRoot,
+  configDirectory,
+  secretsDirectory,
+  sessionDataDirectory,
+  fsModule,
+) {
+  const root = captureSourceDirectory(fsModule, userDataRoot.realPath);
+  if (!samePath(root.realPath, userDataRoot.realPath)) savedProfileError();
+  for (const key of ['dev', 'ino']) {
+    if (
+      userDataRoot.identity[key] !== null
+      && root.identity[key] !== null
+      && userDataRoot.identity[key] !== root.identity[key]
+    ) savedProfileError();
+  }
   return Object.freeze({
     config: captureSourceDirectory(fsModule, configDirectory),
     root,
     secrets: captureSourceDirectory(fsModule, secretsDirectory),
+    sessionData: captureSourceDirectory(fsModule, sessionDataDirectory),
   });
 }
 
@@ -624,6 +640,10 @@ function assertTargetProfileDirectoriesUnchanged(snapshot, fsModule) {
   compareSourceDirectoryIdentity(snapshot.root, captureSourceDirectory(fsModule, snapshot.root.path));
   compareSourceDirectoryIdentity(snapshot.config, captureSourceDirectory(fsModule, snapshot.config.path));
   compareSourceDirectoryIdentity(snapshot.secrets, captureSourceDirectory(fsModule, snapshot.secrets.path));
+  compareSourceDirectoryIdentity(
+    snapshot.sessionData,
+    captureSourceDirectory(fsModule, snapshot.sessionData.path),
+  );
 }
 
 function assertTargetProfileWriteDirectory(snapshot, directoryKey, fsModule) {
@@ -804,23 +824,34 @@ function copySavedProviderProfile(input, userDataRoot, fsModule = fs) {
   if (input.mode !== 'saved_profile') return null;
   const sourceRoot = captureSourceUserDataRoot(input.source_user_data_path, fsModule);
   const snapshot = captureSavedProfileSnapshot(sourceRoot, fsModule);
-  const targetConfigDirectory = path.join(userDataRoot.path, PROVIDER_CONFIG_DIRECTORY_NAME);
-  const targetSecretsDirectory = path.join(userDataRoot.path, PROVIDER_SECRETS_DIRECTORY_NAME);
+  const targetConfigDirectory = path.join(userDataRoot.realPath, PROVIDER_CONFIG_DIRECTORY_NAME);
+  const targetSecretsDirectory = path.join(userDataRoot.realPath, PROVIDER_SECRETS_DIRECTORY_NAME);
+  const targetSessionDataDirectory = path.join(userDataRoot.realPath, SESSION_DATA_DIRECTORY_NAME);
   makeDirectory(fsModule, targetConfigDirectory);
   makeDirectory(fsModule, targetSecretsDirectory);
+  makeDirectory(fsModule, targetSessionDataDirectory);
   const targetDirectories = captureTargetProfileDirectories(
     userDataRoot,
     targetConfigDirectory,
     targetSecretsDirectory,
+    targetSessionDataDirectory,
     fsModule,
   );
   copyProfileFile(
     fsModule,
     path.join(sourceRoot.path, LOCAL_STATE_FILE_NAME),
-    path.join(userDataRoot.path, LOCAL_STATE_FILE_NAME),
+    path.join(userDataRoot.realPath, LOCAL_STATE_FILE_NAME),
     LOCAL_STATE_MAX_BYTES,
     targetDirectories,
     'root',
+  );
+  copyProfileFile(
+    fsModule,
+    path.join(sourceRoot.path, LOCAL_STATE_FILE_NAME),
+    path.join(targetSessionDataDirectory, LOCAL_STATE_FILE_NAME),
+    LOCAL_STATE_MAX_BYTES,
+    targetDirectories,
+    'sessionData',
   );
   copyProfileFile(
     fsModule,
@@ -967,7 +998,7 @@ async function generateProjectViaUi(page, idea) {
     fail('canary_generation_terminal_failed');
   }
   try {
-    await page.getByText('Version 1').waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.currentVersion).getByText('Version 1', { exact: true }).waitFor({ state: 'visible' });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_version_failed');
@@ -1498,7 +1529,9 @@ async function runPackagedCanary(rawInput, options = {}) {
       fail('canary_restart_failed');
     }
     try {
-      await restartedPage.getByText('Version 1').waitFor({ state: 'visible' });
+      await restartedPage.locator(SELECTORS.currentVersion)
+        .getByText('Version 1', { exact: true })
+        .waitFor({ state: 'visible' });
     } catch (error) {
       if (error instanceof BuilderPackagedCanaryError) throw error;
       fail('canary_version_failed');
