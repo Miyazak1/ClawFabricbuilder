@@ -5,6 +5,69 @@
   "target_repository": "clawfabric-builder",
   "extraction_policy": "copied_then_independently_maintained",
   "inventory_digest_format": "sha256(newline-joined sorted relative-path:sha256 entries)",
+  "documentation_migration": {
+    "policy": "rewritten_not_copied",
+    "authority": "target_repository_docs",
+    "source_commit": "87a948102e6f67aa628fe23944e65d2f5993ab69",
+    "dependency_effect": {
+      "runtime": "none",
+      "package": "none",
+      "import": "none",
+      "data": "none"
+    },
+    "rewritten_sources": [
+      {
+        "source_path": "docs/CLAWFABRIC_AGENTIC_WORKFLOW_ENGINEERING_PRODUCT_STRATEGY_2026_07_15.md",
+        "target_paths": [
+          "docs/PRODUCT_VISION_AND_ROADMAP.md",
+          "docs/TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md"
+        ]
+      },
+      {
+        "source_path": "docs/CLAWFABRIC_AGENTIC_WORKFLOW_ENGINEERING_REFACTOR_TRANSITION_ROADMAP_2026_07_15.md",
+        "target_paths": [
+          "docs/PRODUCT_VISION_AND_ROADMAP.md",
+          "docs/IMPLEMENTATION_PLAN.md"
+        ]
+      },
+      {
+        "source_path": "docs/CLAWFABRIC_AGENTIC_WORKFLOW_ENGINEERING_EXECUTION_INDEX_2026_07_15.md",
+        "target_paths": [
+          "docs/README.md",
+          "docs/IMPLEMENTATION_PLAN.md"
+        ]
+      },
+      {
+        "source_path": "docs/AI_NATIVE_COLLABORATION_AGENT_COWORKER_AUTOMATION_POLICY_P3.md",
+        "target_paths": [
+          "docs/PRODUCT_VISION_AND_ROADMAP.md",
+          "docs/TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md"
+        ]
+      },
+      {
+        "source_path": "docs/AI_NATIVE_COLLABORATION_COMMUNITY_AND_DELIVERY_NETWORK_P3.md",
+        "target_paths": [
+          "docs/PRODUCT_VISION_AND_ROADMAP.md",
+          "docs/TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md"
+        ]
+      },
+      {
+        "source_path": "docs/AI_NATIVE_COLLABORATION_DOMAIN_MODEL_P3.md",
+        "target_paths": [
+          "docs/TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md"
+        ]
+      }
+    ],
+    "historical_only_families": [
+      "legacy_chat",
+      "legacy_canvas_flow",
+      "legacy_job_dag_product_surfaces",
+      "legacy_server_collaboration",
+      "legacy_current_state_result_rail",
+      "legacy_auto_edit",
+      "media_specific_workflows"
+    ]
+  },
   "entries": [
     {
       "group": "builder_frontend_core",

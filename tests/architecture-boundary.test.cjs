@@ -106,6 +106,33 @@ test('frontend extraction provenance is pinned without creating an old-repositor
   assert.equal(manifest.source_commit, '87a948102e6f67aa628fe23944e65d2f5993ab69');
   assert.equal(manifest.target_repository, 'clawfabric-builder');
   assert.equal(manifest.extraction_policy, 'copied_then_independently_maintained');
+  assert.deepEqual(manifest.documentation_migration.dependency_effect, {
+    runtime: 'none',
+    package: 'none',
+    import: 'none',
+    data: 'none',
+  });
+  assert.equal(manifest.documentation_migration.policy, 'rewritten_not_copied');
+  assert.equal(manifest.documentation_migration.authority, 'target_repository_docs');
+  assert.equal(manifest.documentation_migration.source_commit, manifest.source_commit);
+  assert.deepEqual(
+    manifest.documentation_migration.rewritten_sources.map((entry) => entry.source_path),
+    [
+      'docs/CLAWFABRIC_AGENTIC_WORKFLOW_ENGINEERING_PRODUCT_STRATEGY_2026_07_15.md',
+      'docs/CLAWFABRIC_AGENTIC_WORKFLOW_ENGINEERING_REFACTOR_TRANSITION_ROADMAP_2026_07_15.md',
+      'docs/CLAWFABRIC_AGENTIC_WORKFLOW_ENGINEERING_EXECUTION_INDEX_2026_07_15.md',
+      'docs/AI_NATIVE_COLLABORATION_AGENT_COWORKER_AUTOMATION_POLICY_P3.md',
+      'docs/AI_NATIVE_COLLABORATION_COMMUNITY_AND_DELIVERY_NETWORK_P3.md',
+      'docs/AI_NATIVE_COLLABORATION_DOMAIN_MODEL_P3.md',
+    ],
+  );
+  for (const migration of manifest.documentation_migration.rewritten_sources) {
+    assert.equal(Array.isArray(migration.target_paths), true);
+    assert.equal(migration.target_paths.length > 0, true);
+    for (const targetPath of migration.target_paths) {
+      assert.equal(fs.statSync(path.join(root, targetPath)).isFile(), true);
+    }
+  }
   assert.deepEqual(
     manifest.entries.map((entry) => [entry.group, entry.file_count]),
     [

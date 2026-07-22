@@ -16,3 +16,13 @@ npm run pack
 ```
 
 For desktop development, run `npm run dev` and `npm run desktop:dev` in separate terminals.
+
+## Documentation
+
+- [Product vision and roadmap](docs/PRODUCT_VISION_AND_ROADMAP.md)
+- [Trusted work and collaboration architecture](docs/TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md)
+- [Builder conversation and task stream MVP](docs/BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
+- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [Implemented Builder architecture](docs/ARCHITECTURE.md)
+- [Legacy documentation migration map](docs/LEGACY_MIGRATION_MAP.md)
+- [First trial release evidence](docs/RELEASE_EVIDENCE_2026_07_22.md)
