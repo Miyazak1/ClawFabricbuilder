@@ -13,6 +13,7 @@ const {
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
   assertReadEvidence,
+  capturePreviewEvidence,
   captureGuardedUserDataRoot,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,
@@ -23,6 +24,7 @@ const {
   parseCanaryInput,
   readStdin,
   readOnlyBridgeEvidence,
+  readSanitizedBridgeEvidence,
   runCli,
   runPackagedCanary,
   sanitizeLaunchEnvironment,
@@ -56,10 +58,12 @@ class FakeLocator {
 
   async click() {
     this.page.events.push(['click', this.selector]);
+    if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
   }
 
   async fill(value) {
     this.page.events.push(['fill', this.selector, value]);
+    if (this.page.failFills.has(this.selector)) throw new Error('secret-marker');
     this.page.values.set(this.selector, value);
   }
 
@@ -78,6 +82,7 @@ class FakeLocator {
   async getAttribute(name) {
     this.page.events.push(['getAttribute', this.selector, name]);
     if (this.selector === SELECTORS.previewFrame && name === 'sandbox') return '';
+    if (this.page.failPreviewAttributes) return 'unsafe';
     if (this.selector === SELECTORS.previewFrame && name === 'srcdoc') {
       return '<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src \'none\'"><body><main>Focus timer preview</main></body>';
     }
@@ -86,7 +91,7 @@ class FakeLocator {
 
   getByRole(role, options) {
     this.page.events.push(['scopedRole', this.selector, role, options]);
-    return new FakeRole(this.page, role, options.name);
+    return new FakeRole(this.page, role, options?.name ?? null);
   }
 
   getByText(text, options) {
@@ -95,6 +100,7 @@ class FakeLocator {
   }
 
   async inputValue() {
+    if (this.page.keepPasswordValue && this.selector === SELECTORS.apiKey) return 'secret-marker';
     return this.page.values.get(this.selector) ?? '';
   }
 
@@ -105,6 +111,10 @@ class FakeLocator {
 
   async waitFor(options) {
     this.page.events.push(['waitFor', this.selector, options?.state ?? null]);
+    if (this.page.failWaitFor.has(this.selector)) throw new Error('secret-marker');
+    if (this.selector === SELECTORS.preview && this.page.previewVisible === false) {
+      return new Promise(() => {});
+    }
   }
 
   locator(selector) {
@@ -122,7 +132,15 @@ class FakeRole {
 
   async click() {
     this.page.events.push(['roleClick', this.role, this.name]);
+    if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
+  }
+
+  async waitFor(options) {
+    this.page.events.push(['roleWaitFor', this.role, this.name, options?.state ?? null]);
+    if (this.role === 'alert' && this.page.alertVisible === true) return;
+    if (this.role === 'alert' && this.page.failAlertWait === true) throw new Error('secret-marker');
+    return new Promise(() => {});
   }
 
   first() {
@@ -139,13 +157,24 @@ class FakeText {
 
   async waitFor(options) {
     this.page.events.push(['textWaitFor', this.text, options?.state ?? null]);
+    if (this.page.failTextWaitFor.has(this.text)) throw new Error('secret-marker');
   }
 }
 
 class FakePage {
   constructor() {
     this.artifactsAllowed = false;
+    this.alertVisible = false;
     this.events = [];
+    this.failAlertWait = false;
+    this.failClicks = new Set();
+    this.failFills = new Set();
+    this.failPreviewAttributes = false;
+    this.failRoleClicks = new Set();
+    this.failTextWaitFor = new Set();
+    this.failWaitFor = new Set();
+    this.keepPasswordValue = false;
+    this.previewVisible = true;
     this.values = new Map();
     this.listeners = new Map();
   }
@@ -155,7 +184,7 @@ class FakePage {
   }
 
   getByRole(role, options) {
-    return new FakeRole(this, role, options.name);
+    return new FakeRole(this, role, options?.name ?? null);
   }
 
   getByText(text) {
@@ -328,6 +357,17 @@ function guardedFixture() {
   };
 }
 
+function assertFixedCanaryError(error, code, stage) {
+  assert.equal(error instanceof BuilderPackagedCanaryError, true);
+  assert.equal(error.code, code);
+  assert.equal(error.stage, stage);
+  assert.equal(error.stack, `BuilderPackagedCanaryError: ${error.message}`);
+  assert.equal(error.message.includes('secret-marker'), false);
+  assert.equal(error.message.includes('provider.example'), false);
+  assert.equal(error.message.includes('builder-model'), false);
+  assert.equal(error.message.includes('real-key-value-secret'), false);
+}
+
 test('parses exact stdin input and rejects credential in argv or env', () => {
   const parsed = parseCanaryInput(input());
   assert.equal(parsed.schema_version, CANARY_INPUT_VERSION);
@@ -400,6 +440,118 @@ test('generates only through real Make UI and reads bridge evidence without writ
   assert.match(source, /projectRevisions\.loadCurrent/u);
   assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.generate|projectRevisions\.commit|cancel/u);
   delete globalThis.clawfabricBuilder;
+});
+
+test('reports fixed redacted UI stages without raw provider, prompt, or DOM details', async () => {
+  const provider = parseCanaryInput(input()).provider;
+  const stages = [
+    {
+      code: 'canary_settings_navigation_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failRoleClicks.add('button:Settings');
+        await fillProviderSettingsViaUi(page, provider, createArtifactGate());
+      },
+      stage: 'settings_navigation',
+    },
+    {
+      code: 'canary_settings_panel_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failWaitFor.add(SELECTORS.providerPanel);
+        await fillProviderSettingsViaUi(page, provider, createArtifactGate());
+      },
+      stage: 'settings_panel',
+    },
+    {
+      code: 'canary_settings_save_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.keepPasswordValue = true;
+        await fillProviderSettingsViaUi(page, provider, createArtifactGate());
+      },
+      stage: 'settings_save',
+    },
+    {
+      code: 'canary_new_project_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failWaitFor.add(SELECTORS.projectPage);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'new_project',
+    },
+    {
+      code: 'canary_generation_terminal_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.alertVisible = true;
+        page.previewVisible = false;
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'generation_terminal',
+    },
+    {
+      code: 'canary_preview_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failAlertWait = true;
+        page.failWaitFor.add(SELECTORS.preview);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'preview',
+    },
+    {
+      code: 'canary_version_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failTextWaitFor.add('Version 1');
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'version',
+    },
+    {
+      code: 'canary_preview_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failPreviewAttributes = true;
+        const gate = createArtifactGate();
+        gate.allow();
+        await capturePreviewEvidence(page, gate);
+      },
+      stage: 'preview',
+    },
+    {
+      code: 'canary_read_evidence_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.evaluate = async () => { throw new Error('secret-marker'); };
+        await readSanitizedBridgeEvidence(page);
+      },
+      stage: 'read_evidence',
+    },
+    {
+      code: 'canary_restart_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failWaitFor.add(SELECTORS.projectCatalog);
+        await openProjectFromCatalogById(page, {
+          project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
+          revision: 1,
+          summary: 'A timer.',
+          title: 'Focus timer',
+        });
+      },
+      stage: 'restart',
+    },
+  ];
+
+  for (const item of stages) {
+    await assert.rejects(item.run(), (error) => {
+      assertFixedCanaryError(error, item.code, item.stage);
+      return true;
+    });
+  }
 });
 
 test('sanitizes read evidence before dereferencing renderer-returned shapes', () => {

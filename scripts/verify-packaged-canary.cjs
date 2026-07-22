@@ -47,8 +47,34 @@ const ERROR_MESSAGES = Object.freeze({
   canary_secret_source_invalid: 'Packaged canary credential source is invalid.',
   canary_launch_failed: 'Packaged canary could not launch.',
   canary_ui_failed: 'Packaged canary UI flow failed.',
+  canary_settings_navigation_failed: 'Packaged canary settings navigation failed.',
+  canary_settings_panel_failed: 'Packaged canary settings panel failed.',
+  canary_settings_save_failed: 'Packaged canary settings save failed.',
+  canary_new_project_failed: 'Packaged canary new project failed.',
+  canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
+  canary_preview_failed: 'Packaged canary preview evidence failed.',
+  canary_version_failed: 'Packaged canary revision version evidence failed.',
+  canary_read_evidence_failed: 'Packaged canary read evidence failed.',
+  canary_restart_failed: 'Packaged canary restart restore failed.',
   canary_evidence_failed: 'Packaged canary evidence could not be verified.',
   canary_cleanup_failed: 'Packaged canary cleanup failed.',
+});
+const ERROR_STAGES = Object.freeze({
+  canary_input_invalid: 'input',
+  canary_secret_source_invalid: 'secret_source',
+  canary_launch_failed: 'launch',
+  canary_ui_failed: 'ui',
+  canary_settings_navigation_failed: 'settings_navigation',
+  canary_settings_panel_failed: 'settings_panel',
+  canary_settings_save_failed: 'settings_save',
+  canary_new_project_failed: 'new_project',
+  canary_generation_terminal_failed: 'generation_terminal',
+  canary_preview_failed: 'preview',
+  canary_version_failed: 'version',
+  canary_read_evidence_failed: 'read_evidence',
+  canary_restart_failed: 'restart',
+  canary_evidence_failed: 'evidence',
+  canary_cleanup_failed: 'cleanup',
 });
 
 const CATALOG_RESULT_KEYS = Object.freeze(['catalog_evidence', 'projects', 'result_version']);
@@ -97,6 +123,7 @@ class BuilderPackagedCanaryError extends Error {
     super(ERROR_MESSAGES[selected]);
     this.name = 'BuilderPackagedCanaryError';
     this.code = selected;
+    this.stage = ERROR_STAGES[selected];
     this.stack = `${this.name}: ${this.message}`;
   }
 }
@@ -452,9 +479,25 @@ async function clickByRole(page, role, name) {
   await locator.click();
 }
 
+async function waitForGenerationTerminal(page) {
+  const preview = page.locator(SELECTORS.preview).waitFor({ state: 'visible' })
+    .then(() => 'preview', () => 'preview_timeout');
+  const alert = page.getByRole('alert').waitFor({ state: 'visible' })
+    .then(() => 'alert', () => 'alert_unavailable');
+  const outcome = await Promise.race([alert, preview]);
+  if (outcome === 'preview') return;
+  if (outcome === 'alert') fail('canary_generation_terminal_failed');
+  fail('canary_preview_failed');
+}
+
 async function fillProviderSettingsViaUi(page, provider, gate) {
   try {
     await clickByRole(page, 'button', 'Settings');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_settings_navigation_failed');
+  }
+  try {
     await page.locator(SELECTORS.providerPanel).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.baseUrl).fill(provider.base_url);
     await page.locator(SELECTORS.model).fill(provider.model);
@@ -462,15 +505,20 @@ async function fillProviderSettingsViaUi(page, provider, gate) {
     await page.locator(SELECTORS.timeout).fill(String(provider.timeout_ms));
     await page.locator(SELECTORS.temperature).fill(provider.temperature === null ? '' : String(provider.temperature));
     await page.locator(SELECTORS.maxTokens).fill(provider.max_tokens === null ? '' : String(provider.max_tokens));
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_settings_panel_failed');
+  }
+  try {
     await clickByRole(page, 'button', 'Save provider');
     await page.getByText('Provider settings saved.').waitFor({ state: 'visible' });
     await page.locator(SELECTORS.apiKey).waitFor({ state: 'visible' });
     const passwordValue = await page.locator(SELECTORS.apiKey).inputValue();
-    if (passwordValue !== '') fail('canary_ui_failed');
+    if (passwordValue !== '') fail('canary_settings_save_failed');
     gate.allow();
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_ui_failed');
+    fail('canary_settings_save_failed');
   }
 }
 
@@ -479,12 +527,22 @@ async function generateProjectViaUi(page, idea) {
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.idea).fill(idea);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_new_project_failed');
+  }
+  try {
     await clickByRole(page, 'button', 'Make it');
-    await page.locator(SELECTORS.preview).waitFor({ state: 'visible' });
+    await waitForGenerationTerminal(page);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_generation_terminal_failed');
+  }
+  try {
     await page.getByText('Version 1').waitFor({ state: 'visible' });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_ui_failed');
+    fail('canary_version_failed');
   }
 }
 
@@ -500,7 +558,18 @@ async function readOnlyBridgeEvidence(page, projectId = null) {
       return { catalog, current, status };
     }, { projectId });
   } catch {
-    fail('canary_evidence_failed');
+    fail('canary_read_evidence_failed');
+  }
+}
+
+async function readSanitizedBridgeEvidence(page, projectId = null) {
+  try {
+    return assertReadEvidence(await readOnlyBridgeEvidence(page, projectId));
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError && error.code === 'canary_read_evidence_failed') {
+      throw error;
+    }
+    fail('canary_read_evidence_failed');
   }
 }
 
@@ -692,6 +761,15 @@ function projectFromCatalog(evidence) {
   return project;
 }
 
+function projectFromReadEvidence(evidence) {
+  try {
+    return projectFromCatalog(evidence);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) fail('canary_read_evidence_failed');
+    throw error;
+  }
+}
+
 function assertExactRevision(evidence, expectedProject) {
   const sanitized = assertReadEvidence(evidence);
   const current = sanitized.current;
@@ -702,6 +780,15 @@ function assertExactRevision(evidence, expectedProject) {
     || current.record.revision_digest !== expectedProject.revision_digest
   ) fail('canary_evidence_failed');
   return current.record;
+}
+
+function exactRevisionFromReadEvidence(evidence, expectedProject) {
+  try {
+    return assertExactRevision(evidence, expectedProject);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) fail('canary_read_evidence_failed');
+    throw error;
+  }
 }
 
 function networkRecorder() {
@@ -751,30 +838,36 @@ function summarizePng(buffer, pngModule = PNG) {
 }
 
 async function capturePreviewEvidence(page, gate) {
-  gate.assertAllowed();
-  const section = page.locator(SELECTORS.preview);
-  await section.waitFor({ state: 'visible' });
-  const frame = page.locator(SELECTORS.previewFrame);
-  await frame.waitFor({ state: 'visible' });
-  const sandbox = await frame.getAttribute('sandbox');
-  const srcdoc = await frame.getAttribute('srcdoc');
-  if (
-    sandbox !== ''
-    || typeof srcdoc !== 'string'
-    || !/Content-Security-Policy/iu.test(srcdoc)
-    || !/script-src 'none'/iu.test(srcdoc)
-  ) fail('canary_evidence_failed');
-  const body = frame.contentFrame().locator('body');
-  const bodyText = await body.innerText();
-  if (typeof bodyText !== 'string' || bodyText.trim().length === 0) fail('canary_evidence_failed');
-  const screenshot = await frame.screenshot();
-  return Object.freeze({
-    ...summarizePng(screenshot),
-    frame_body_nonempty: true,
-    sandbox: 'empty',
-    script_src: 'none',
-    srcdoc_digest: digestText(srcdoc),
-  });
+  try {
+    gate.assertAllowed();
+    const section = page.locator(SELECTORS.preview);
+    await section.waitFor({ state: 'visible' });
+    const frame = page.locator(SELECTORS.previewFrame);
+    await frame.waitFor({ state: 'visible' });
+    const sandbox = await frame.getAttribute('sandbox');
+    const srcdoc = await frame.getAttribute('srcdoc');
+    if (
+      sandbox !== ''
+      || typeof srcdoc !== 'string'
+      || !/Content-Security-Policy/iu.test(srcdoc)
+      || !/script-src 'none'/iu.test(srcdoc)
+    ) fail('canary_preview_failed');
+    const body = frame.contentFrame().locator('body');
+    const bodyText = await body.innerText();
+    if (typeof bodyText !== 'string' || bodyText.trim().length === 0) fail('canary_preview_failed');
+    const screenshot = await frame.screenshot();
+    return Object.freeze({
+      ...summarizePng(screenshot),
+      frame_body_nonempty: true,
+      sandbox: 'empty',
+      script_src: 'none',
+      srcdoc_digest: digestText(srcdoc),
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError
+      && error.code === 'canary_secret_source_invalid') throw error;
+    fail('canary_preview_failed');
+  }
 }
 
 async function openProjectFromCatalogById(page, project) {
@@ -789,7 +882,7 @@ async function openProjectFromCatalogById(page, project) {
     await projectButton.click();
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_evidence_failed');
+    fail('canary_restart_failed');
   }
 }
 
@@ -857,10 +950,10 @@ async function runPackagedCanary(rawInput, options = {}) {
     recorder.attach(page);
     await fillProviderSettingsViaUi(page, input.provider, gate);
     await generateProjectViaUi(page, input.idea);
-    const firstEvidence = assertReadEvidence(await readOnlyBridgeEvidence(page));
-    const project = projectFromCatalog(firstEvidence);
-    const currentEvidence = assertReadEvidence(await readOnlyBridgeEvidence(page, project.project_id));
-    const revision = assertExactRevision(currentEvidence, project);
+    const firstEvidence = await readSanitizedBridgeEvidence(page);
+    const project = projectFromReadEvidence(firstEvidence);
+    const currentEvidence = await readSanitizedBridgeEvidence(page, project.project_id);
+    const revision = exactRevisionFromReadEvidence(currentEvidence, project);
     const firstPreviewEvidence = await capturePreviewEvidence(page, gate);
     await closeApp(app);
     app = null;
@@ -869,11 +962,26 @@ async function runPackagedCanary(rawInput, options = {}) {
     const restartedPage = await app.firstWindow();
     recorder.attach(restartedPage);
     await openProjectFromCatalogById(restartedPage, revision);
-    await restartedPage.locator(SELECTORS.preview).waitFor({ state: 'visible' });
-    await restartedPage.getByText('Version 1').waitFor({ state: 'visible' });
-    const restartEvidence = assertReadEvidence(await readOnlyBridgeEvidence(restartedPage, project.project_id));
-    assertExactRevision(restartEvidence, project);
-    const restartProject = projectFromCatalog(restartEvidence);
+    try {
+      await restartedPage.locator(SELECTORS.preview).waitFor({ state: 'visible' });
+    } catch (error) {
+      if (error instanceof BuilderPackagedCanaryError) throw error;
+      fail('canary_restart_failed');
+    }
+    try {
+      await restartedPage.getByText('Version 1').waitFor({ state: 'visible' });
+    } catch (error) {
+      if (error instanceof BuilderPackagedCanaryError) throw error;
+      fail('canary_version_failed');
+    }
+    const restartEvidence = await readSanitizedBridgeEvidence(restartedPage, project.project_id);
+    try {
+      assertExactRevision(restartEvidence, project);
+    } catch (error) {
+      if (error instanceof BuilderPackagedCanaryError) fail('canary_restart_failed');
+      throw error;
+    }
+    const restartProject = projectFromReadEvidence(restartEvidence);
     const restartPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     const network = recorder.snapshot();
     if (network.unexpected_network_count !== 0) fail('canary_evidence_failed');
@@ -1003,11 +1111,13 @@ module.exports = {
   parseCanaryInput,
   readStdin,
   readOnlyBridgeEvidence,
+  readSanitizedBridgeEvidence,
   runCli,
   runPackagedCanary,
   sanitizeInput,
   sanitizeLaunchEnvironment,
   summarizePng,
+  waitForGenerationTerminal,
 };
 
 if (require.main === module) {
@@ -1015,12 +1125,16 @@ if (require.main === module) {
     const code = error instanceof BuilderPackagedCanaryError
       ? error.code
       : 'canary_evidence_failed';
+    const stage = Object.hasOwn(ERROR_STAGES, code)
+      ? ERROR_STAGES[code]
+      : ERROR_STAGES.canary_evidence_failed;
     process.stderr.write(`${JSON.stringify({
       ok: false,
       code,
       message: Object.hasOwn(ERROR_MESSAGES, code)
         ? ERROR_MESSAGES[code]
         : ERROR_MESSAGES.canary_evidence_failed,
+      stage,
     })}\n`);
     process.exitCode = 1;
   });
