@@ -515,8 +515,8 @@ describe('useBuilderProjectController', () => {
     let operation!: Promise<unknown>;
     await act(async () => {
       operation = hook.current.generate('Make a timer');
-      await Promise.resolve();
     });
+    await waitForCalls(generate, 1);
     const request = generate.mock.calls[0][0];
     const staleCommand = hook.current.generate;
 
