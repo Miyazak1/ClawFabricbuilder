@@ -5,12 +5,20 @@ import type {
   BuilderProviderSettingsPort,
   BuilderProviderSettingsWriteRequest,
 } from '../infrastructure/builderDesktopProviderSettingsPort';
+import {
+  canonicalizeBuilderProviderEndpoint,
+  sanitizeBuilderProviderCredential,
+  sanitizeBuilderProviderModel,
+} from '../domain/builderProviderSettings';
 import type {
+  BuilderProviderSettingsPanelFieldErrors,
   BuilderProviderSettingsPanelStatus,
   BuilderProviderSettingsPanelValues,
 } from '../presentation/BuilderProviderSettingsPanel';
 
 export type BuilderProviderSettingsControllerResult = Readonly<{
+  canSave: boolean;
+  fieldErrors: BuilderProviderSettingsPanelFieldErrors;
   onSave(): Promise<void>;
   onValuesChange(values: BuilderProviderSettingsPanelValues): void;
   status: BuilderProviderSettingsPanelStatus;
@@ -28,6 +36,22 @@ const DEFAULT_VALUES: BuilderProviderSettingsPanelValues = Object.freeze({
   timeoutMs: '30000',
   temperature: '0.2',
   maxTokens: '8192',
+});
+const EMPTY_FIELD_ERRORS: BuilderProviderSettingsPanelFieldErrors = Object.freeze({
+  baseUrl: null,
+  model: null,
+  apiKey: null,
+  timeoutMs: null,
+  temperature: null,
+  maxTokens: null,
+});
+const FIELD_ERROR_MESSAGES = Object.freeze({
+  baseUrl: 'Enter an HTTPS address or a local provider address.',
+  model: 'Enter a model name.',
+  apiKey: 'Enter an API key.',
+  timeoutMs: 'Use a whole number from 1000 to 120000.',
+  temperature: 'Use a number from 0 to 2, or leave it blank.',
+  maxTokens: 'Use a whole number from 256 to 65536, or leave it blank.',
 });
 
 function fixedValues(values: BuilderProviderSettingsPanelValues): BuilderProviderSettingsPanelValues {
@@ -78,6 +102,73 @@ function configValues(config: BuilderProviderSettingsConfig): BuilderProviderSet
   });
 }
 
+function hasFieldErrors(errors: BuilderProviderSettingsPanelFieldErrors): boolean {
+  return Object.values(errors).some((message) => message !== null);
+}
+
+function validateInteger(
+  value: string,
+  minimum: number,
+  maximum: number,
+  allowBlank: boolean,
+): boolean {
+  try {
+    integerValue(value, minimum, maximum, allowBlank as true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validateNumber(value: string, minimum: number, maximum: number): boolean {
+  try {
+    numberValue(value, minimum, maximum);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fieldErrorsFor(
+  values: BuilderProviderSettingsPanelValues,
+  status: BuilderProviderSettingsPanelStatus,
+): BuilderProviderSettingsPanelFieldErrors {
+  let baseUrlError: string | null = null;
+  try {
+    canonicalizeBuilderProviderEndpoint(values.baseUrl);
+  } catch {
+    baseUrlError = FIELD_ERROR_MESSAGES.baseUrl;
+  }
+  let modelError: string | null = null;
+  try {
+    sanitizeBuilderProviderModel(values.model);
+  } catch {
+    modelError = FIELD_ERROR_MESSAGES.model;
+  }
+  let apiKeyError: string | null = null;
+  try {
+    sanitizeBuilderProviderCredential(values.apiKey);
+  } catch {
+    apiKeyError = FIELD_ERROR_MESSAGES.apiKey;
+  }
+  return Object.freeze({
+    baseUrl: baseUrlError,
+    model: modelError,
+    apiKey: status === 'saved' && values.apiKey.length === 0
+      ? null
+      : apiKeyError,
+    timeoutMs: validateInteger(values.timeoutMs, 1_000, 120_000, false)
+      ? null
+      : FIELD_ERROR_MESSAGES.timeoutMs,
+    temperature: validateNumber(values.temperature, 0, 2)
+      ? null
+      : FIELD_ERROR_MESSAGES.temperature,
+    maxTokens: validateInteger(values.maxTokens, 256, 65_536, true)
+      ? null
+      : FIELD_ERROR_MESSAGES.maxTokens,
+  });
+}
+
 function integerValue(value: string, minimum: number, maximum: number, allowBlank: false): number;
 function integerValue(value: string, minimum: number, maximum: number, allowBlank: true): number | null;
 function integerValue(value: string, minimum: number, maximum: number, allowBlank: boolean): number | null {
@@ -102,15 +193,11 @@ function numberValue(value: string, minimum: number, maximum: number): number | 
 
 function writeRequest(values: BuilderProviderSettingsPanelValues): BuilderProviderSettingsWriteRequest {
   const safe = exactValues(values);
-  const baseUrl = safe.baseUrl.trim();
-  const model = safe.model.trim();
-  const credential = safe.apiKey.trim();
+  const baseUrl = canonicalizeBuilderProviderEndpoint(safe.baseUrl);
+  const model = sanitizeBuilderProviderModel(safe.model);
+  const credential = sanitizeBuilderProviderCredential(safe.apiKey);
   if (
-    baseUrl !== safe.baseUrl
-    || model !== safe.model
-    || credential !== safe.apiKey
-    || !/^https:\/\/[^\s/$.?#].[^\s]*$/i.test(baseUrl)
-    || model.length === 0
+    model.length === 0
     || credential.length === 0
   ) throw new Error('invalid settings');
   return Object.freeze({
@@ -140,6 +227,14 @@ export function useBuilderProviderSettingsController(
   const [status, setStatus] = useState<BuilderProviderSettingsPanelStatus>('unconfigured');
   const [values, setValues] = useState<BuilderProviderSettingsPanelValues>(DEFAULT_VALUES);
   const operationRef = useRef(0);
+  const fieldErrors = useMemo(
+    () => (status === 'unavailable' ? EMPTY_FIELD_ERRORS : fieldErrorsFor(values, status)),
+    [status, values],
+  );
+  const canSave = status !== 'saved'
+    && status !== 'saving'
+    && status !== 'unavailable'
+    && !hasFieldErrors(fieldErrors);
 
   useEffect(() => {
     const operation = operationRef.current + 1;
@@ -176,9 +271,11 @@ export function useBuilderProviderSettingsController(
     operationRef.current = operation;
     let request: BuilderProviderSettingsWriteRequest;
     try {
+      if (!canSave || hasFieldErrors(fieldErrors)) throw new Error('invalid settings');
       request = writeRequest(values);
     } catch {
       setStatus('error');
+      setValues((currentValues) => fixedValues({ ...currentValues, apiKey: '' }));
       return;
     }
     setStatus('saving');
@@ -193,15 +290,17 @@ export function useBuilderProviderSettingsController(
       setStatus('error');
       setValues((currentValues) => fixedValues({ ...currentValues, apiKey: '' }));
     }
-  }, [port, values]);
+  }, [canSave, fieldErrors, port, values]);
 
   return useMemo(
     () => ({
+      canSave,
+      fieldErrors,
       onSave,
       onValuesChange,
       status,
       values,
     }),
-    [onSave, onValuesChange, status, values],
+    [canSave, fieldErrors, onSave, onValuesChange, status, values],
   );
 }

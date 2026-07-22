@@ -108,6 +108,15 @@ describe('useBuilderProviderSettingsController', () => {
     await flush();
 
     expect(result.current.status).toBe('saved');
+    expect(result.current.canSave).toBe(false);
+    expect(result.current.fieldErrors).toEqual({
+      baseUrl: null,
+      model: null,
+      apiKey: null,
+      timeoutMs: null,
+      temperature: null,
+      maxTokens: null,
+    });
     expect(result.current.values).toEqual({
       baseUrl: 'https://provider.example/v1',
       model: 'builder-model',
@@ -170,14 +179,17 @@ describe('useBuilderProviderSettingsController', () => {
     const result = harness(port);
     await flush();
 
-    act(() => result.current.onValuesChange(values()));
+    act(() => result.current.onValuesChange(values({
+      baseUrl: 'http://127.0.0.1:11434/v1/',
+    })));
+    expect(result.current.canSave).toBe(true);
     await act(async () => {
       await result.current.onSave();
     });
 
     expect(replaceCurrent).toHaveBeenCalledWith({
       config: {
-        base_url: 'https://provider.example/v1',
+        base_url: 'http://127.0.0.1:11434/v1',
         model: 'new-model',
         timeout_ms: 60000,
         temperature: null,
@@ -209,11 +221,82 @@ describe('useBuilderProviderSettingsController', () => {
     await flush();
 
     act(() => result.current.onValuesChange(values({ baseUrl: 'http://provider.example/v1' })));
+    expect(result.current.fieldErrors.baseUrl).toBe('Enter an HTTPS address or a local provider address.');
     await act(async () => {
       await result.current.onSave();
     });
 
     expect(result.current.status).toBe('error');
+    expect(replaceCurrent).not.toHaveBeenCalled();
+  });
+
+  it('reports fixed field errors without reflecting invalid values', async () => {
+    const port: BuilderProviderSettingsPort = {
+      readCurrent: vi.fn(async () => current({
+        configured: false,
+        config: null,
+        credential_status: 'missing',
+      })),
+      replaceCurrent: vi.fn(async () => current()),
+      status: vi.fn(async () => providerStatus({
+        configured: false,
+        config_digest: null,
+        credential_status: 'missing',
+      })),
+    };
+    const result = harness(port);
+    await flush();
+
+    act(() => result.current.onValuesChange(values({
+      apiKey: '',
+      baseUrl: 'http://remote.example/private-marker',
+      maxTokens: '100',
+      model: ' ',
+      temperature: '3',
+      timeoutMs: '999',
+    })));
+
+    expect(result.current.fieldErrors).toEqual({
+      apiKey: 'Enter an API key.',
+      baseUrl: 'Enter an HTTPS address or a local provider address.',
+      maxTokens: 'Use a whole number from 256 to 65536, or leave it blank.',
+      model: 'Enter a model name.',
+      temperature: 'Use a number from 0 to 2, or leave it blank.',
+      timeoutMs: 'Use a whole number from 1000 to 120000.',
+    });
+    expect(JSON.stringify(result.current.fieldErrors)).not.toContain('private-marker');
+  });
+
+  it('reports fixed text boundary errors for model and API key before saving', async () => {
+    const replaceCurrent = vi.fn(async () => current());
+    const port: BuilderProviderSettingsPort = {
+      readCurrent: vi.fn(async () => current({
+        configured: false,
+        config: null,
+        credential_status: 'missing',
+      })),
+      replaceCurrent,
+      status: vi.fn(async () => providerStatus({
+        configured: false,
+        config_digest: null,
+        credential_status: 'missing',
+      })),
+    };
+    const result = harness(port);
+    await flush();
+
+    act(() => result.current.onValuesChange(values({
+      apiKey: `key${String.fromCharCode(0xd800)}`,
+      model: 'm'.repeat(201),
+    })));
+    await act(async () => {
+      await result.current.onSave();
+    });
+
+    expect(result.current.canSave).toBe(false);
+    expect(result.current.fieldErrors.model).toBe('Enter a model name.');
+    expect(result.current.fieldErrors.apiKey).toBe('Enter an API key.');
+    expect(JSON.stringify(result.current)).not.toContain(String.fromCharCode(0xd800));
     expect(replaceCurrent).not.toHaveBeenCalled();
   });
 

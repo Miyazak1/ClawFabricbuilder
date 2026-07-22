@@ -6,6 +6,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   BuilderProviderSettingsPanel,
+  type BuilderProviderSettingsPanelFieldErrors,
   type BuilderProviderSettingsPanelProps,
   type BuilderProviderSettingsPanelValues,
 } from './BuilderProviderSettingsPanel';
@@ -44,8 +45,24 @@ function values(overrides: Partial<BuilderProviderSettingsPanelValues> = {}): Bu
   };
 }
 
+function fieldErrors(
+  overrides: Partial<BuilderProviderSettingsPanelFieldErrors> = {},
+): BuilderProviderSettingsPanelFieldErrors {
+  return {
+    baseUrl: null,
+    model: null,
+    apiKey: null,
+    timeoutMs: null,
+    temperature: null,
+    maxTokens: null,
+    ...overrides,
+  };
+}
+
 function props(overrides: Partial<BuilderProviderSettingsPanelProps> = {}): BuilderProviderSettingsPanelProps {
   return {
+    canSave: true,
+    fieldErrors: fieldErrors(),
     status: 'unconfigured',
     values: values(),
     onValuesChange: vi.fn(),
@@ -154,18 +171,49 @@ describe('BuilderProviderSettingsPanel', () => {
   });
 
   it.each([
-    ['bad base URL', { baseUrl: 'http://provider.example/v1' }],
-    ['blank model', { model: ' ' }],
-    ['blank API key', { apiKey: '' }],
-    ['bad timeout', { timeoutMs: '999' }],
-    ['bad temperature', { temperature: '3' }],
-    ['bad max tokens', { maxTokens: '100' }],
-  ])('fails closed for %s', (_label, override) => {
+    ['bad base URL', { baseUrl: 'http://provider.example/v1' }, { baseUrl: 'Enter an HTTPS address or a local provider address.' }, 'builder-provider-base-url'],
+    ['blank model', { model: ' ' }, { model: 'Enter a model name.' }, 'builder-provider-model'],
+    ['blank API key', { apiKey: '' }, { apiKey: 'Enter an API key.' }, 'builder-provider-api-key'],
+    ['bad timeout', { timeoutMs: '999' }, { timeoutMs: 'Use a whole number from 1000 to 120000.' }, 'builder-provider-timeout'],
+    ['bad temperature', { temperature: '3' }, { temperature: 'Use a number from 0 to 2, or leave it blank.' }, 'builder-provider-temperature'],
+    ['bad max tokens', { maxTokens: '100' }, { maxTokens: 'Use a whole number from 256 to 65536, or leave it blank.' }, 'builder-provider-max-tokens'],
+  ])('fails closed for %s', (_label, override, errors, inputId) => {
     const onSave = vi.fn();
     const container = render(<BuilderProviderSettingsPanel {...props({
+      canSave: false,
+      fieldErrors: fieldErrors(errors),
       values: values(override),
       onSave,
     })} />);
+
+    expect(input(container, inputId).getAttribute('aria-invalid')).toBe('true');
+    expect(input(container, inputId).getAttribute('aria-describedby')).toBe(`${inputId}-error`);
+    expect(container.querySelector(`#${inputId}-error`)?.textContent).toBe(Object.values(errors)[0]);
+    expect(buttonWithText(container, 'Save provider')?.disabled).toBe(true);
+    act(() => buttonWithText(container, 'Save provider')?.click());
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('accepts a local provider address when the controller marks it valid', () => {
+    const onSave = vi.fn();
+    const container = render(<BuilderProviderSettingsPanel {...props({
+      values: values({ baseUrl: 'http://127.0.0.1:11434/v1' }),
+      onSave,
+    })} />);
+
+    expect(input(container, 'builder-provider-base-url').getAttribute('aria-invalid')).toBe('false');
+    expect(buttonWithText(container, 'Save provider')?.disabled).toBe(false);
+    act(() => buttonWithText(container, 'Save provider')?.click());
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when save authority is not provided by the controller', () => {
+    const onSave = vi.fn();
+    const container = render(<BuilderProviderSettingsPanel
+      status="unconfigured"
+      values={values()}
+      onSave={onSave}
+    />);
 
     expect(buttonWithText(container, 'Save provider')?.disabled).toBe(true);
     act(() => buttonWithText(container, 'Save provider')?.click());
@@ -220,6 +268,7 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(source).not.toMatch(
       /\bwindow\b|globalThis|electron|ipcRenderer|fetch\(|localStorage|sessionStorage|indexedDB|ChatCreatePage|chat_planner|Canvas|\bJob\b|local-provider-executor|react-router|router|safeStorage/i,
     );
+    expect(source).not.toMatch(/from ['"]\.\.\/domain\/builderProviderSettings['"]/);
     expect(source).not.toMatch(/credential|secret|encrypted/i);
   });
 });

@@ -163,6 +163,107 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
     expect(container.textContent).not.toContain('real-key-value');
   });
 
+  it('maps controller field errors into the panel without calling the bridge', async () => {
+    const replaceCurrent = vi.fn(async () => current({ operation: 'current_replaced' }));
+    const bridge = {
+      readCurrent: vi.fn(async () => current({
+        configured: false,
+        config: null,
+        credential_status: 'missing',
+      })),
+      replaceCurrent,
+      status: vi.fn(async () => status({
+        configured: false,
+        config_digest: null,
+        credential_status: 'missing',
+      })),
+    };
+    const container = render(<BuilderProviderSettingsRouteAdapter providerSettingsBridge={bridge} />);
+    await flush();
+
+    changeInput(input(container, 'builder-provider-base-url'), 'http://remote.example/private-marker');
+
+    expect(input(container, 'builder-provider-base-url').getAttribute('aria-invalid')).toBe('true');
+    expect(input(container, 'builder-provider-base-url').getAttribute('aria-describedby')).toBe(
+      'builder-provider-base-url-error',
+    );
+    expect(container.querySelector('#builder-provider-base-url-error')?.textContent).toBe(
+      'Enter an HTTPS address or a local provider address.',
+    );
+    expect(container.textContent).not.toContain('private-marker');
+    expect(buttonWithText(container, 'Save provider').disabled).toBe(true);
+    await act(async () => {
+      buttonWithText(container, 'Save provider').click();
+      await Promise.resolve();
+    });
+    expect(replaceCurrent).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-idempotent provider addresses before the bridge write path', async () => {
+    const replaceCurrent = vi.fn(async () => current({ operation: 'current_replaced' }));
+    const bridge = {
+      readCurrent: vi.fn(async () => current({
+        configured: false,
+        config: null,
+        credential_status: 'missing',
+      })),
+      replaceCurrent,
+      status: vi.fn(async () => status({
+        configured: false,
+        config_digest: null,
+        credential_status: 'missing',
+      })),
+    };
+    const container = render(<BuilderProviderSettingsRouteAdapter providerSettingsBridge={bridge} />);
+    await flush();
+
+    changeInput(input(container, 'builder-provider-base-url'), 'https://provider.example/v1//');
+    changeInput(input(container, 'builder-provider-model'), 'new-model');
+    changeInput(input(container, 'builder-provider-api-key'), 'real-key-value');
+
+    expect(container.querySelector('#builder-provider-base-url-error')?.textContent).toBe(
+      'Enter an HTTPS address or a local provider address.',
+    );
+    expect(buttonWithText(container, 'Save provider').disabled).toBe(true);
+    await act(async () => {
+      buttonWithText(container, 'Save provider').click();
+      await Promise.resolve();
+    });
+    expect(replaceCurrent).not.toHaveBeenCalled();
+  });
+
+  it('rejects model and API key text outside the main provider boundaries before bridge writes', async () => {
+    const replaceCurrent = vi.fn(async () => current({ operation: 'current_replaced' }));
+    const bridge = {
+      readCurrent: vi.fn(async () => current({
+        configured: false,
+        config: null,
+        credential_status: 'missing',
+      })),
+      replaceCurrent,
+      status: vi.fn(async () => status({
+        configured: false,
+        config_digest: null,
+        credential_status: 'missing',
+      })),
+    };
+    const container = render(<BuilderProviderSettingsRouteAdapter providerSettingsBridge={bridge} />);
+    await flush();
+
+    changeInput(input(container, 'builder-provider-base-url'), 'https://provider.example/v1');
+    changeInput(input(container, 'builder-provider-model'), 'm'.repeat(201));
+    changeInput(input(container, 'builder-provider-api-key'), 'k'.repeat((16 * 1024) + 1));
+
+    expect(container.querySelector('#builder-provider-model-error')?.textContent).toBe('Enter a model name.');
+    expect(container.querySelector('#builder-provider-api-key-error')?.textContent).toBe('Enter an API key.');
+    expect(buttonWithText(container, 'Save provider').disabled).toBe(true);
+    await act(async () => {
+      buttonWithText(container, 'Save provider').click();
+      await Promise.resolve();
+    });
+    expect(replaceCurrent).not.toHaveBeenCalled();
+  });
+
   it('fails closed for invalid bridge authority without route or legacy fallback', async () => {
     const container = render(
       <BuilderProviderSettingsRouteAdapter providerSettingsBridge={{ readCurrent: vi.fn() }} />,

@@ -1,3 +1,9 @@
+import {
+  requireCanonicalBuilderProviderEndpoint,
+  sanitizeBuilderProviderCredential,
+  sanitizeBuilderProviderModel,
+} from '../domain/builderProviderSettings';
+
 export type BuilderProviderSettingsConfig = Readonly<{
   provider_id: string;
   base_url: string;
@@ -118,8 +124,8 @@ function optionalNumber(value: unknown): number | null {
 function sanitizeConfig(value: unknown): BuilderProviderSettingsConfig {
   const descriptors = descriptorsFor(value, CONFIG_KEYS);
   const providerId = accountText(descriptors.provider_id.value);
-  const baseUrl = accountText(descriptors.base_url.value);
-  const model = accountText(descriptors.model.value);
+  const baseUrl = requireCanonicalBuilderProviderEndpoint(descriptors.base_url.value);
+  const model = sanitizeBuilderProviderModel(descriptors.model.value);
   const timeoutMs = descriptors.timeout_ms.value;
   const temperature = optionalNumber(descriptors.temperature.value);
   const maxTokens = optionalNumber(descriptors.max_tokens.value);
@@ -127,9 +133,6 @@ function sanitizeConfig(value: unknown): BuilderProviderSettingsConfig {
   if (
     typeof providerId !== 'string'
     || providerId !== 'builder-default'
-    || typeof baseUrl !== 'string'
-    || !/^https:\/\/[^\s/$.?#].[^\s]*$/i.test(baseUrl)
-    || typeof model !== 'string'
     || typeof timeoutMs !== 'number'
     || !Number.isSafeInteger(timeoutMs)
     || timeoutMs < 1_000
@@ -205,23 +208,19 @@ function sanitizeStatus(value: unknown): BuilderProviderSettingsStatus {
 function sanitizeWriteRequest(value: BuilderProviderSettingsWriteRequest): unknown {
   const descriptors = descriptorsFor(value, WRITE_KEYS);
   const configDescriptors = descriptorsFor(descriptors.config.value, WRITE_CONFIG_KEYS);
-  const baseUrl = accountText(configDescriptors.base_url.value);
-  const model = accountText(configDescriptors.model.value);
+  const baseUrl = requireCanonicalBuilderProviderEndpoint(configDescriptors.base_url.value);
+  const model = sanitizeBuilderProviderModel(configDescriptors.model.value);
   const timeoutMs = configDescriptors.timeout_ms.value;
   const temperature = optionalNumber(configDescriptors.temperature.value);
   const maxTokens = optionalNumber(configDescriptors.max_tokens.value);
-  const credential = accountText(descriptors.credential.value);
+  const credential = sanitizeBuilderProviderCredential(descriptors.credential.value);
   if (
-    typeof baseUrl !== 'string'
-    || !/^https:\/\/[^\s/$.?#].[^\s]*$/i.test(baseUrl)
-    || typeof model !== 'string'
-    || typeof timeoutMs !== 'number'
+    typeof timeoutMs !== 'number'
     || !Number.isSafeInteger(timeoutMs)
     || timeoutMs < 1_000
     || timeoutMs > 120_000
     || (temperature !== null && (temperature < 0 || temperature > 2))
     || (maxTokens !== null && (!Number.isSafeInteger(maxTokens) || maxTokens < 256 || maxTokens > 65_536))
-    || typeof credential !== 'string'
   ) throw portError();
   return Object.freeze({
     config: Object.freeze({

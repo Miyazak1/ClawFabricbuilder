@@ -16,7 +16,18 @@ export type BuilderProviderSettingsPanelValues = Readonly<{
   maxTokens: string;
 }>;
 
+export type BuilderProviderSettingsPanelFieldErrors = Readonly<{
+  baseUrl: string | null;
+  model: string | null;
+  apiKey: string | null;
+  timeoutMs: string | null;
+  temperature: string | null;
+  maxTokens: string | null;
+}>;
+
 export type BuilderProviderSettingsPanelProps = Readonly<{
+  canSave?: boolean;
+  fieldErrors?: BuilderProviderSettingsPanelFieldErrors;
   status: BuilderProviderSettingsPanelStatus;
   values: BuilderProviderSettingsPanelValues;
   onValuesChange?: (values: BuilderProviderSettingsPanelValues) => void;
@@ -30,6 +41,14 @@ const STATUS_MESSAGES: Record<BuilderProviderSettingsPanelStatus, string> = {
   saved: 'Provider settings saved.',
   error: 'Provider settings could not be saved.',
 };
+const EMPTY_FIELD_ERRORS: BuilderProviderSettingsPanelFieldErrors = Object.freeze({
+  baseUrl: null,
+  model: null,
+  apiKey: null,
+  timeoutMs: null,
+  temperature: null,
+  maxTokens: null,
+});
 
 function updateValue(
   values: BuilderProviderSettingsPanelValues,
@@ -39,34 +58,32 @@ function updateValue(
   return Object.freeze({ ...values, [key]: value });
 }
 
-function numberInRange(value: string, minimum: number, maximum: number, allowBlank: boolean): boolean {
-  if (allowBlank && value.trim() === '') return true;
-  if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value.trim())) return false;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum;
-}
-
-function integerInRange(value: string, minimum: number, maximum: number, allowBlank: boolean): boolean {
-  if (allowBlank && value.trim() === '') return true;
-  if (!/^(?:0|[1-9][0-9]*)$/.test(value.trim())) return false;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum;
-}
-
-function canSave(values: BuilderProviderSettingsPanelValues, status: BuilderProviderSettingsPanelStatus): boolean {
+function canSave(
+  fieldErrors: BuilderProviderSettingsPanelFieldErrors,
+  status: BuilderProviderSettingsPanelStatus,
+): boolean {
   if (status === 'saving' || status === 'unavailable') return false;
-  const baseUrl = values.baseUrl.trim();
-  const model = values.model.trim();
-  const apiKey = values.apiKey.trim();
-  return /^https:\/\/[^\s/$.?#].[^\s]*$/i.test(baseUrl)
-    && model.length > 0
-    && apiKey.length > 0
-    && integerInRange(values.timeoutMs, 1_000, 120_000, false)
-    && numberInRange(values.temperature, 0, 2, true)
-    && integerInRange(values.maxTokens, 256, 65_536, true);
+  return Object.values(fieldErrors).every((message) => message === null);
+}
+
+function errorId(id: string): string {
+  return `${id}-error`;
+}
+
+function fieldError(
+  id: string,
+  message: string | null,
+): { describedBy: string | undefined; invalid: boolean; message: string | null } {
+  return {
+    describedBy: message === null ? undefined : errorId(id),
+    invalid: message !== null,
+    message,
+  };
 }
 
 export function BuilderProviderSettingsPanel({
+  canSave: canSaveCommand = false,
+  fieldErrors = EMPTY_FIELD_ERRORS,
   status,
   values,
   onValuesChange,
@@ -75,7 +92,9 @@ export function BuilderProviderSettingsPanel({
   const normalizedStatus = Object.hasOwn(STATUS_MESSAGES, status) ? status : 'unavailable';
   const saving = normalizedStatus === 'saving';
   const disabled = saving || normalizedStatus === 'unavailable';
-  const saveEnabled = typeof onSave === 'function' && canSave(values, normalizedStatus);
+  const saveEnabled = typeof onSave === 'function'
+    && canSave(fieldErrors, normalizedStatus)
+    && canSaveCommand;
   const editable = typeof onValuesChange === 'function' && !disabled;
   const statusTone = normalizedStatus === 'saved'
     ? 'text-emerald-700'
@@ -87,6 +106,13 @@ export function BuilderProviderSettingsPanel({
     if (!editable) return;
     onValuesChange(updateValue(values, key, value));
   }
+
+  const baseUrlError = fieldError('builder-provider-base-url', fieldErrors.baseUrl);
+  const modelError = fieldError('builder-provider-model', fieldErrors.model);
+  const apiKeyError = fieldError('builder-provider-api-key', fieldErrors.apiKey);
+  const timeoutError = fieldError('builder-provider-timeout', fieldErrors.timeoutMs);
+  const temperatureError = fieldError('builder-provider-temperature', fieldErrors.temperature);
+  const maxTokensError = fieldError('builder-provider-max-tokens', fieldErrors.maxTokens);
 
   return (
     <section
@@ -129,6 +155,8 @@ export function BuilderProviderSettingsPanel({
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-base-url">
             Base URL
             <input
+              aria-describedby={baseUrlError.describedBy}
+              aria-invalid={baseUrlError.invalid}
               autoComplete="off"
               className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
@@ -138,12 +166,19 @@ export function BuilderProviderSettingsPanel({
               placeholder="https://api.openai.com/v1"
               value={values.baseUrl}
             />
+            {baseUrlError.message === null ? null : (
+              <span className="text-xs text-destructive" id={errorId('builder-provider-base-url')}>
+                {baseUrlError.message}
+              </span>
+            )}
           </label>
 
           <div className="cf-builder-form-grid">
             <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-model">
               Model
               <input
+                aria-describedby={modelError.describedBy}
+                aria-invalid={modelError.invalid}
                 autoComplete="off"
                 className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={disabled}
@@ -152,11 +187,18 @@ export function BuilderProviderSettingsPanel({
                 placeholder="gpt-5.4"
                 value={values.model}
               />
+              {modelError.message === null ? null : (
+                <span className="text-xs text-destructive" id={errorId('builder-provider-model')}>
+                  {modelError.message}
+                </span>
+              )}
             </label>
 
             <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-api-key">
               API key
               <input
+                aria-describedby={apiKeyError.describedBy}
+                aria-invalid={apiKeyError.invalid}
                 autoComplete="new-password"
                 className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={disabled}
@@ -166,6 +208,11 @@ export function BuilderProviderSettingsPanel({
                 type="password"
                 value={values.apiKey}
               />
+              {apiKeyError.message === null ? null : (
+                <span className="text-xs text-destructive" id={errorId('builder-provider-api-key')}>
+                  {apiKeyError.message}
+                </span>
+              )}
             </label>
           </div>
         </section>
@@ -179,6 +226,8 @@ export function BuilderProviderSettingsPanel({
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-timeout">
             Timeout
             <input
+              aria-describedby={timeoutError.describedBy}
+              aria-invalid={timeoutError.invalid}
               className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
               id="builder-provider-timeout"
@@ -186,11 +235,18 @@ export function BuilderProviderSettingsPanel({
               onChange={(event) => change('timeoutMs', event.currentTarget.value)}
               value={values.timeoutMs}
             />
+            {timeoutError.message === null ? null : (
+              <span className="text-xs text-destructive" id={errorId('builder-provider-timeout')}>
+                {timeoutError.message}
+              </span>
+            )}
           </label>
 
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-temperature">
             Temperature
             <input
+              aria-describedby={temperatureError.describedBy}
+              aria-invalid={temperatureError.invalid}
               className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
               id="builder-provider-temperature"
@@ -199,11 +255,18 @@ export function BuilderProviderSettingsPanel({
               placeholder="Optional"
               value={values.temperature}
             />
+            {temperatureError.message === null ? null : (
+              <span className="text-xs text-destructive" id={errorId('builder-provider-temperature')}>
+                {temperatureError.message}
+              </span>
+            )}
           </label>
 
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-max-tokens">
             Max tokens
             <input
+              aria-describedby={maxTokensError.describedBy}
+              aria-invalid={maxTokensError.invalid}
               className="cf-builder-input min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={disabled}
               id="builder-provider-max-tokens"
@@ -212,6 +275,11 @@ export function BuilderProviderSettingsPanel({
               placeholder="Optional"
               value={values.maxTokens}
             />
+            {maxTokensError.message === null ? null : (
+              <span className="text-xs text-destructive" id={errorId('builder-provider-max-tokens')}>
+                {maxTokensError.message}
+              </span>
+            )}
           </label>
           </div>
         </section>

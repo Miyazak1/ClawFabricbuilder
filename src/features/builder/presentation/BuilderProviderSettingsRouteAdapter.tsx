@@ -43,6 +43,8 @@ export function BuilderProviderSettingsRouteAdapter({
 
   return (
     <BuilderProviderSettingsPanel
+      canSave={controller.canSave}
+      fieldErrors={controller.fieldErrors}
       onSave={controller.onSave}
       onValuesChange={controller.onValuesChange}
       status={controller.status}

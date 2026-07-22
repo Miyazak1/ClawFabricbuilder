@@ -106,6 +106,46 @@ describe('Builder desktop provider settings port', () => {
     expect(JSON.stringify(checked)).not.toMatch(/real-key-value|secret|encrypted/i);
   });
 
+  it('accepts canonical local provider endpoints from the bridge and write request', async () => {
+    const readCurrent = vi.fn(async () => current({
+      config: {
+        provider_id: 'builder-default',
+        base_url: 'http://127.0.0.1:11434/v1',
+        model: 'builder-model',
+        timeout_ms: 30000,
+        temperature: 0.2,
+        max_tokens: 8192,
+        config_digest: CONFIG_DIGEST,
+      },
+    }));
+    const replaceCurrent = vi.fn(async (request: unknown) => {
+      void request;
+      return current({ operation: 'current_replaced' });
+    });
+    const port = createBuilderDesktopProviderSettingsPort({
+      readCurrent,
+      replaceCurrent,
+      status: vi.fn(async () => status()),
+    });
+
+    await expect(port.readCurrent()).resolves.toMatchObject({
+      config: { base_url: 'http://127.0.0.1:11434/v1' },
+    });
+    await port.replaceCurrent(writeRequest({
+      config: {
+        base_url: 'http://localhost:8080/api/v1',
+        model: 'builder-model',
+        timeout_ms: 30000,
+        temperature: 0.2,
+        max_tokens: 8192,
+      },
+    }));
+
+    expect(replaceCurrent.mock.calls[0][0]).toMatchObject({
+      config: { base_url: 'http://localhost:8080/api/v1' },
+    });
+  });
+
   it('passes the credential only to replaceCurrent and never to read or status', async () => {
     const readCurrent = vi.fn(async () => current());
     const replaceCurrent = vi.fn(async (request: unknown) => {
@@ -226,11 +266,78 @@ describe('Builder desktop provider settings port', () => {
         max_tokens: 8192,
       },
     })));
+    await expectPortError(port.replaceCurrent(writeRequest({
+      config: {
+        base_url: 'https://provider.example/v1/',
+        model: 'builder-model',
+        timeout_ms: 30000,
+        temperature: 0.2,
+        max_tokens: 8192,
+      },
+    })));
+    await expectPortError(port.replaceCurrent(writeRequest({
+      config: {
+        base_url: 'https://provider.example/v1',
+        model: 'm'.repeat(201),
+        timeout_ms: 30000,
+        temperature: 0.2,
+        max_tokens: 8192,
+      },
+    })));
+    await expectPortError(port.replaceCurrent(writeRequest({
+      credential: 'k'.repeat((16 * 1024) + 1),
+    })));
+    await expectPortError(port.replaceCurrent(writeRequest({
+      credential: '\u{1f600}'.repeat((16 * 1024 / 4) + 1),
+    })));
+    await expectPortError(port.replaceCurrent(writeRequest({
+      credential: `key${String.fromCharCode(0xd800)}`,
+    })));
     await expectPortError(port.replaceCurrent({
       ...writeRequest(),
       extra: true,
     } as never));
     expect(replaceCurrent).not.toHaveBeenCalled();
+  });
+
+  it('rejects noncanonical bridge config before exposing it to the renderer', async () => {
+    const port = createBuilderDesktopProviderSettingsPort({
+      readCurrent: vi.fn(async () => current({
+        config: {
+          provider_id: 'builder-default',
+          base_url: 'https://provider.example/v1/',
+          model: 'builder-model',
+          timeout_ms: 30000,
+          temperature: 0.2,
+          max_tokens: 8192,
+          config_digest: CONFIG_DIGEST,
+        },
+      })),
+      replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      status: vi.fn(async () => status()),
+    });
+
+    await expectPortError(port.readCurrent());
+  });
+
+  it('rejects bridge config model drift before exposing it to the renderer', async () => {
+    const port = createBuilderDesktopProviderSettingsPort({
+      readCurrent: vi.fn(async () => current({
+        config: {
+          provider_id: 'builder-default',
+          base_url: 'https://provider.example/v1',
+          model: `model${String.fromCharCode(0xd800)}`,
+          timeout_ms: 30000,
+          temperature: 0.2,
+          max_tokens: 8192,
+          config_digest: CONFIG_DIGEST,
+        },
+      })),
+      replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      status: vi.fn(async () => status()),
+    });
+
+    await expectPortError(port.readCurrent());
   });
 
   it('rejects accessor payloads without reading the API key getter', async () => {
@@ -288,7 +395,7 @@ describe('Builder desktop provider settings port', () => {
       ts.forEachChild(node, visit);
     }
     visit(sourceFile);
-    expect(imports).toEqual([]);
+    expect(imports).toEqual(['../domain/builderProviderSettings']);
     expect(forbiddenNodes).toEqual([]);
     expect(source).not.toMatch(
       /\bwindow\b|globalThis|electron|ipcRenderer|fetch\(|localStorage|sessionStorage|indexedDB|ChatCreatePage|chat_planner|Canvas|\bJob\b|local-provider-executor|generic.*provider/i,

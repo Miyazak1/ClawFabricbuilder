@@ -14,6 +14,7 @@ const PURE_BUILDER_FILES = new Set([
   'components/BuilderStaticPreview.tsx',
   'domain/builderProject.ts',
   'domain/builderProjectCatalog.ts',
+  'domain/builderProviderSettings.ts',
   'presentation/BuilderPage.tsx',
   'presentation/BuilderProviderSettingsPanel.tsx',
   'presentation/BuilderProjectCatalog.tsx',
@@ -140,6 +141,7 @@ describe('Builder architecture boundary', () => {
       'react',
     ]);
     expect(moduleBoundary('useBuilderProviderSettingsController.ts', sources.find(({ path }) => path === 'hooks/useBuilderProviderSettingsController.ts')!.source).staticImports.sort()).toEqual([
+      '../domain/builderProviderSettings',
       '../infrastructure/builderDesktopProviderSettingsPort',
       '../presentation/BuilderProviderSettingsPanel',
       'react',
@@ -150,7 +152,9 @@ describe('Builder architecture boundary', () => {
     expect(moduleBoundary('builderDesktopProjectCatalogPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProjectCatalogPort.ts')!.source).staticImports).toEqual([
       '../application/builderProjectCatalogController',
     ]);
-    expect(moduleBoundary('builderDesktopProviderSettingsPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProviderSettingsPort.ts')!.source).staticImports).toEqual([]);
+    expect(moduleBoundary('builderDesktopProviderSettingsPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProviderSettingsPort.ts')!.source).staticImports).toEqual([
+      '../domain/builderProviderSettings',
+    ]);
     expect(moduleBoundary('builderDesktopRepositoryPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopRepositoryPort.ts')!.source).staticImports).toEqual([
       '../application/builderPorts',
     ]);
@@ -172,6 +176,10 @@ describe('Builder architecture boundary', () => {
     );
     const catalogDomain = readFileSync(
       join(BUILDER_ROOT, 'domain', 'builderProjectCatalog.ts'),
+      'utf8',
+    );
+    const providerSettingsDomain = readFileSync(
+      join(BUILDER_ROOT, 'domain', 'builderProviderSettings.ts'),
       'utf8',
     );
     const catalogController = readFileSync(
@@ -199,6 +207,10 @@ describe('Builder architecture boundary', () => {
 
     expect(moduleBoundary('builderProject.ts', domain).staticImports).toEqual([]);
     expect(moduleBoundary('builderProjectCatalog.ts', catalogDomain).staticImports).toEqual([]);
+    expect(moduleBoundary('builderProviderSettings.ts', providerSettingsDomain).staticImports).toEqual([]);
+    expect(providerSettingsDomain).not.toMatch(
+      /react|electron|bridge|fetch\s*\(|\bstorage\b|ChatCreatePage|chat_planner|Canvas|\bJob\b/i,
+    );
     expect(moduleBoundary('builderGeneration.ts', generation).staticImports).toEqual([
       '../domain/builderProject',
     ]);
