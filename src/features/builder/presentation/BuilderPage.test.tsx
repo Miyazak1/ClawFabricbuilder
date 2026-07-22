@@ -111,7 +111,8 @@ function snapshot(
   overrides: Partial<BuilderProjectControllerSnapshot> = {},
 ): BuilderProjectControllerSnapshot {
   const error = status === 'generation_failed'
-    || status === 'save_unverified'
+    ? 'builder_generation_failed'
+    : status === 'save_unverified'
     || status === 'preview_unavailable'
     || status === 'conflict'
     || status === 'unavailable'
@@ -263,14 +264,47 @@ describe('BuilderPage', () => {
     const container = render(<BuilderPage {...props({
       idea: 'Make a clock',
       onOpenSettings,
-      snapshot: snapshot('generation_failed'),
+      snapshot: snapshot('generation_failed', {
+        error: 'builder_generation_provider_unavailable',
+      }),
     })} />);
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'The draft could not be made. Try again.',
+      'AI generation is not configured yet.',
     );
     act(() => buttonWithText(container, 'Check AI settings')?.click());
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      'builder_generation_timeout',
+      'Making this draft took too long. Try again.',
+    ],
+    [
+      'builder_generation_provider_http_error',
+      'The AI service could not make this draft. Try again.',
+    ],
+    [
+      'builder_generation_structured_response_invalid',
+      'The draft could not be prepared. Try again.',
+    ],
+    [
+      'builder_generation_static_preview_contract_rejected',
+      'This idea is beyond what this version can safely make. Try simplifying the features and try again.',
+    ],
+  ] as const)('shows the safe %s guidance without internal diagnostics', (error, message) => {
+    const container = render(<BuilderPage {...props({
+      idea: 'Make a complex tool',
+      onOpenSettings: vi.fn(),
+      snapshot: snapshot('generation_failed', { error }),
+    })} />);
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(message);
+    expect(buttonWithText(container, 'Check AI settings')).toBeUndefined();
+    expect(container.textContent).not.toMatch(
+      /runtime|schema|IPC|HTTP status|model|provider URL|api[_-]?key|private-marker/iu,
+    );
   });
 
   it('offers only the safe save retry for an unverified save', () => {

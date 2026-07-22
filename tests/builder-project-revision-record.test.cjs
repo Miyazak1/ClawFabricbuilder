@@ -6,6 +6,8 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  BUILDER_PROJECT_REVISION_INVALID_REASON,
+  BUILDER_PROJECT_STATIC_PREVIEW_REASON,
   BuilderProjectRevisionRecordError,
   digestBuilderProjectProposalRecord,
   digestBuilderProjectRevisionRecord,
@@ -52,11 +54,12 @@ function fixture(overrides = {}) {
   return candidate;
 }
 
-function expectInvalid(value) {
+function expectInvalid(value, reason = BUILDER_PROJECT_REVISION_INVALID_REASON) {
   assert.throws(
     () => sanitizeBuilderProjectRevisionRecord(value),
     (error) => error instanceof BuilderProjectRevisionRecordError
       && error.code === 'builder_project_revision_invalid'
+      && error.reason === reason
       && !JSON.stringify(error).includes(PROJECT_ID),
   );
 }
@@ -140,24 +143,36 @@ test('enforces exact parent, project, generator, and non-execution facts', () =>
 });
 
 test('rejects active HTML, network CSS, modules, local paths, and credential material', () => {
-  for (const files of [
-    { ...fixture().files, 'index.html': '<template><script>alert(1)</script></template>' },
-    { ...fixture().files, 'index.html': '<img srcset="https://example.test/a.png 1x">' },
-    { ...fixture().files, 'index.html': '<img/src="https://example.test/a.png">' },
-    { ...fixture().files, 'index.html': '<div/style="background:url(https://example.test/a.png)">' },
-    { ...fixture().files, 'styles.css': '.x { background: image-set("https://example.test/a.png" 1x); }' },
-    { ...fixture().files, 'app.js': 'import x from "./x.js";' },
-    { ...fixture().files, 'app.js': 'const p = "C:\\Users\\person\\private.txt";' },
-    { ...fixture().files, 'app.js': 'const api_key = "sk-abcdefghijklmnop";' },
+  for (const [files, reason] of [
+    [{ ...fixture().files, 'index.html': '<template><script>alert(1)</script></template>' }, BUILDER_PROJECT_STATIC_PREVIEW_REASON],
+    [{ ...fixture().files, 'index.html': '<img srcset="https://example.test/a.png 1x">' }, BUILDER_PROJECT_STATIC_PREVIEW_REASON],
+    [{ ...fixture().files, 'index.html': '<img/src="https://example.test/a.png">' }, BUILDER_PROJECT_STATIC_PREVIEW_REASON],
+    [{ ...fixture().files, 'index.html': '<div/style="background:url(https://example.test/a.png)">' }, BUILDER_PROJECT_STATIC_PREVIEW_REASON],
+    [{ ...fixture().files, 'styles.css': '.x { background: image-set("https://example.test/a.png" 1x); }' }, BUILDER_PROJECT_STATIC_PREVIEW_REASON],
+    [{ ...fixture().files, 'app.js': 'import x from "./x.js";' }, BUILDER_PROJECT_STATIC_PREVIEW_REASON],
+    [{ ...fixture().files, 'app.js': 'const p = "C:\\Users\\person\\private.txt";' }, BUILDER_PROJECT_REVISION_INVALID_REASON],
+    [{ ...fixture().files, 'app.js': 'const api_key = "sk-abcdefghijklmnop";' }, BUILDER_PROJECT_REVISION_INVALID_REASON],
   ]) {
     const changed = fixture();
     changed.files = files;
-    expectInvalid(changed);
+    expectInvalid(changed, reason);
     assert.throws(
       () => digestBuilderProjectProposalRecord(changed),
-      (error) => error instanceof BuilderProjectRevisionRecordError,
+      (error) => error instanceof BuilderProjectRevisionRecordError
+        && error.reason === reason,
     );
   }
+});
+
+test('keeps internal error reasons fixed and allowlisted', () => {
+  assert.equal(
+    new BuilderProjectRevisionRecordError('private-reason-marker').reason,
+    BUILDER_PROJECT_REVISION_INVALID_REASON,
+  );
+  assert.equal(
+    new BuilderProjectRevisionRecordError(BUILDER_PROJECT_STATIC_PREVIEW_REASON).reason,
+    BUILDER_PROJECT_STATIC_PREVIEW_REASON,
+  );
 });
 
 test('rejects oversized, malformed Unicode, extra, accessor, symbol, and proxy surfaces', () => {

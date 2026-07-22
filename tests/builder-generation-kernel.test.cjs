@@ -355,7 +355,7 @@ test('requires exact trusted parent evidence before preparing or projecting a re
   );
 });
 
-test('rejects malformed or decorated generated text before it can become evidence', () => {
+test('classifies malformed or decorated generated text as a structured response failure', () => {
   const rawRequest = request();
   const validText = generatedText();
   const invalidText = [
@@ -379,38 +379,39 @@ test('rejects malformed or decorated generated text before it can become evidenc
         parent_revision_record: null,
         generated_text: candidate,
       }),
-      'builder_generation_response_invalid',
+      'builder_generation_structured_response_invalid',
       ['prefix', 'suffix'],
     );
   }
 });
 
-test('rejects generated identity, evidence, admissions, extras, and unsafe project material', () => {
+test('separates structured shape drift from static preview contract rejection', () => {
   const rawRequest = request();
   const cases = [
-    { ...proposal(), project_id: OTHER_PROJECT_ID },
-    { ...proposal(), evidence: { authority: 'model' } },
-    { ...proposal(), admissions: { execution: 'authorized' } },
-    { ...proposal(), kind: 'other' },
-    { ...proposal(), title: ' padded ' },
-    { ...proposal(), summary: `Bearer ${'a'.repeat(24)}` },
-    { ...proposal(), files: { ...proposal().files, extra: 'x' } },
-    { ...proposal(), files: { ...proposal().files, 'index.html': '<script>alert(1)</script>' } },
-    { ...proposal(), files: { ...proposal().files, 'index.html': '<img src="asset.png">' } },
-    { ...proposal(), files: { ...proposal().files, 'styles.css': 'body{background:url(asset.png)}' } },
-    { ...proposal(), files: { ...proposal().files, 'styles.css': '@font-face{font-family:x}' } },
-    { ...proposal(), files: { ...proposal().files, 'app.js': 'import x from "./x.js";' } },
-    { ...proposal(), files: { ...proposal().files, 'app.js': 'const p = "C:\\\\Users\\\\Alice";' } },
-    { ...proposal(), files: { ...proposal().files, 'app.js': '\ud800' } },
+    [{ ...proposal(), project_id: OTHER_PROJECT_ID }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), evidence: { authority: 'model' } }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), admissions: { execution: 'authorized' } }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), files: { ...proposal().files, extra: 'x' } }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), kind: 'other' }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), title: ' padded ' }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), summary: `Bearer ${'a'.repeat(24)}` }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), files: { ...proposal().files, 'index.html': '<script>alert(1)</script>' } }, 'builder_generation_static_preview_contract_rejected'],
+    [{ ...proposal(), files: { ...proposal().files, 'index.html': '<img src="asset.png">' } }, 'builder_generation_static_preview_contract_rejected'],
+    [{ ...proposal(), files: { ...proposal().files, 'styles.css': 'body{background:url(asset.png)}' } }, 'builder_generation_static_preview_contract_rejected'],
+    [{ ...proposal(), files: { ...proposal().files, 'styles.css': '@font-face{font-family:x}' } }, 'builder_generation_static_preview_contract_rejected'],
+    [{ ...proposal(), files: { ...proposal().files, 'app.js': 'import x from "./x.js";' } }, 'builder_generation_static_preview_contract_rejected'],
+    [{ ...proposal(), files: { ...proposal().files, 'app.js': 'const p = "C:\\\\Users\\\\Alice";' } }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), files: { ...proposal().files, 'app.js': 'const api_key = "sk-abcdefghijklmnop";' } }, 'builder_generation_structured_response_invalid'],
+    [{ ...proposal(), files: { ...proposal().files, 'app.js': '\ud800' } }, 'builder_generation_structured_response_invalid'],
   ];
-  for (const candidate of cases) {
+  for (const [candidate, code] of cases) {
     expectKernelError(
       () => projectBuilderGenerationResult({
         request: rawRequest,
         parent_revision_record: null,
         generated_text: JSON.stringify(candidate),
       }),
-      'builder_generation_response_invalid',
+      code,
       ['Alice', 'Bearer'],
     );
   }
@@ -431,7 +432,7 @@ test('returns only fixed safe errors without reflecting untrusted request or gen
       parent_revision_record: null,
       generated_text: responseMarker,
     }),
-    'builder_generation_response_invalid',
+    'builder_generation_structured_response_invalid',
     [responseMarker, PROJECT_ID],
   );
 });

@@ -24,8 +24,9 @@ const ERROR_MESSAGES = Object.freeze({
   builder_provider_unavailable: 'AI generation is unavailable.',
   builder_provider_cancelled: 'AI generation was cancelled.',
   builder_provider_timeout: 'AI generation timed out.',
+  builder_provider_http_error: 'The AI service rejected the request.',
   builder_provider_response_too_large: 'The AI response was too large.',
-  builder_provider_response_invalid: 'The AI response could not be used.',
+  builder_provider_structured_response_invalid: 'The AI response could not be used.',
   builder_provider_failed: 'AI generation failed.',
 });
 
@@ -240,7 +241,7 @@ async function readBoundedBody(response, signal, abortCode) {
   if (contentLength) {
     if (!/^(?:0|[1-9][0-9]*)$/u.test(contentLength)) {
       cancelBody(response.body);
-      fail('builder_provider_response_invalid');
+      fail('builder_provider_structured_response_invalid');
     }
     const declared = Number(contentLength);
     if (!Number.isSafeInteger(declared) || declared > MAX_PROVIDER_RESPONSE_BYTES) {
@@ -249,7 +250,7 @@ async function readBoundedBody(response, signal, abortCode) {
     }
   }
   const body = response?.body;
-  if (!body || typeof body.getReader !== 'function') fail('builder_provider_response_invalid');
+  if (!body || typeof body.getReader !== 'function') fail('builder_provider_structured_response_invalid');
   const reader = body.getReader();
   const chunks = [];
   let total = 0;
@@ -296,19 +297,19 @@ async function readBoundedBody(response, signal, abortCode) {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    fail('builder_provider_response_invalid');
+    fail('builder_provider_structured_response_invalid');
   }
 }
 
 function generatedTextFromPayload(payload) {
   if (!isPlainObject(payload) || !Array.isArray(payload.choices) || payload.choices.length !== 1) {
-    fail('builder_provider_response_invalid');
+    fail('builder_provider_structured_response_invalid');
   }
   const choice = payload.choices[0];
   if (!isPlainObject(choice) || choice.finish_reason !== 'stop' || !isPlainObject(choice.message)) {
-    fail('builder_provider_response_invalid');
+    fail('builder_provider_structured_response_invalid');
   }
-  if (choice.message.role !== 'assistant') fail('builder_provider_response_invalid');
+  if (choice.message.role !== 'assistant') fail('builder_provider_structured_response_invalid');
   const content = choice.message.content;
   if (
     typeof content !== 'string'
@@ -316,7 +317,7 @@ function generatedTextFromPayload(payload) {
     || content.length > MAX_GENERATED_TEXT_BYTES
     || hasUnpairedSurrogate(content)
     || Buffer.byteLength(content, 'utf8') > MAX_GENERATED_TEXT_BYTES
-  ) fail('builder_provider_response_invalid');
+  ) fail('builder_provider_structured_response_invalid');
   return content;
 }
 
@@ -403,17 +404,17 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
         || response.status >= 300
       ) {
         cancelBody(response?.body);
-        fail('builder_provider_failed');
+        fail('builder_provider_http_error');
       }
       const contentType = responseHeader(response, 'content-type').toLowerCase().split(';', 1)[0].trim();
       if (contentType !== 'application/json' && !contentType.endsWith('+json')) {
         cancelBody(response.body);
-        fail('builder_provider_response_invalid');
+        fail('builder_provider_structured_response_invalid');
       }
       const text = await readBoundedBody(response, controller.signal, abortCode);
       if (controller.signal.aborted) fail(abortCode());
       let payload;
-      try { payload = JSON.parse(text); } catch { fail('builder_provider_response_invalid'); }
+      try { payload = JSON.parse(text); } catch { fail('builder_provider_structured_response_invalid'); }
       const generatedText = generatedTextFromPayload(payload);
       if (controller.signal.aborted) fail(abortCode());
       return Object.freeze({

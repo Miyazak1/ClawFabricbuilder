@@ -74,6 +74,44 @@ async function resultFor(
   };
 }
 
+type GenerationIpcEnvelope = Readonly<
+  | {
+      version: 'builder-generation-ipc-result.v1';
+      ok: true;
+      result: Awaited<ReturnType<typeof resultFor>>;
+    }
+  | {
+      version: 'builder-generation-ipc-result.v1';
+      ok: false;
+      error: Readonly<{
+        code: 'builder_generation_provider_unavailable' | 'builder_generation_failed';
+        retryable: boolean;
+      }>;
+    }
+>;
+
+async function successEnvelopeFor(
+  request: BuilderGenerationRequest,
+  value = proposal(),
+): Promise<GenerationIpcEnvelope> {
+  return {
+    version: 'builder-generation-ipc-result.v1',
+    ok: true,
+    result: await resultFor(request, value),
+  };
+}
+
+function failureEnvelope(
+  code: 'builder_generation_provider_unavailable' | 'builder_generation_failed',
+  retryable: boolean,
+): GenerationIpcEnvelope {
+  return {
+    version: 'builder-generation-ipc-result.v1',
+    ok: false,
+    error: { code, retryable },
+  };
+}
+
 async function revisionFor(projectId: string, title = 'Known timer') {
   const request = await prepareBuilderGeneration(
     { idea: `Make ${title}.` },
@@ -194,7 +232,7 @@ async function createBridge(initialRecords: BuilderProjectRevision[] = []) {
       records.set(request.revision.project_id, request.revision);
       return repositoryReceipt(request.revision, 'committed');
     }),
-    generate: vi.fn(async (request: BuilderGenerationRequest) => resultFor(
+    generate: vi.fn(async (request: BuilderGenerationRequest): Promise<GenerationIpcEnvelope> => successEnvelopeFor(
       request,
       proposal(request.target_revision === 1 ? 'Focus timer' : 'Updated focus timer'),
     )),
@@ -551,7 +589,7 @@ describe('BuilderApp', () => {
 
   it('does not refresh the catalog or select a project after generation failure', async () => {
     const { calls, root } = await createBridge();
-    calls.generate.mockRejectedValueOnce(new Error('generation failed'));
+    calls.generate.mockResolvedValueOnce(failureEnvelope('builder_generation_failed', true));
     const container = render(<BuilderApp bridgeRoot={root} />);
     await flush();
 
@@ -572,16 +610,9 @@ describe('BuilderApp', () => {
     expect(calls.loadCurrent).not.toHaveBeenCalled();
     expect(calls.listCurrent).toHaveBeenCalledTimes(1);
     expect(container.querySelector('h1')?.textContent).toBe('New project');
-
-    act(() => button(container, 'Check AI settings').click());
-    await flush();
-    expect(container.textContent).toContain('AI provider settings');
-    act(() => button(container, 'Back to project').click());
-    await waitFor(() => {
-      expect(container.querySelector('h1')?.textContent).toBe('New project');
-      expect(textBox(container).value).toBe('Make a focus timer.');
-      expect(button(container, 'Make it').disabled).toBe(false);
-    });
+    expect(container.querySelector('button[aria-label="Check AI settings"]')).toBeNull();
+    expect(textBox(container).value).toBe('Make a focus timer.');
+    expect(button(container, 'Make it').disabled).toBe(false);
     await act(async () => {
       button(container, 'Make it').click();
       await Promise.resolve();
@@ -591,6 +622,37 @@ describe('BuilderApp', () => {
       expect(calls.commit).toHaveBeenCalledTimes(1);
       expect(container.querySelector('h1')?.textContent).toBe('Focus timer');
     });
+  });
+
+  it('offers AI settings only when generation reports provider unavailable', async () => {
+    const { calls, root } = await createBridge();
+    calls.generate.mockResolvedValueOnce(failureEnvelope('builder_generation_provider_unavailable', false));
+    const container = render(<BuilderApp bridgeRoot={root} />);
+    await flush();
+
+    changeValue(textBox(container), 'Make a focus timer.');
+    await waitFor(() => {
+      expect(button(container, 'Make it').disabled).toBe(false);
+    });
+    await act(async () => {
+      button(container, 'Make it').click();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain('AI generation is not configured yet.');
+      expect(button(container, 'Check AI settings')).toBeInstanceOf(HTMLButtonElement);
+    });
+
+    act(() => button(container, 'Check AI settings').click());
+    await flush();
+    expect(container.textContent).toContain('AI provider settings');
+    act(() => button(container, 'Back to project').click());
+    await waitFor(() => {
+      expect(container.querySelector('h1')?.textContent).toBe('New project');
+      expect(textBox(container).value).toBe('Make a focus timer.');
+    });
+    expect(calls.commit).not.toHaveBeenCalled();
+    expect(calls.listCurrent).toHaveBeenCalledTimes(1);
   });
 
   it('does not refresh the catalog or select a project after save verification failure', async () => {
@@ -620,7 +682,7 @@ describe('BuilderApp', () => {
 
   it('does not adopt a stale generation result after starting a new project', async () => {
     const { calls, root } = await createBridge();
-    const pending = deferred<Awaited<ReturnType<typeof resultFor>>>();
+    const pending = deferred<GenerationIpcEnvelope>();
     calls.generate.mockImplementationOnce((request) => {
       void request;
       return pending.promise;
@@ -647,7 +709,7 @@ describe('BuilderApp', () => {
       expect(button(container, 'Make it')).toBeInstanceOf(HTMLButtonElement);
     });
 
-    pending.resolve(await resultFor(calls.generate.mock.calls[0][0]));
+    pending.resolve(await successEnvelopeFor(calls.generate.mock.calls[0][0]));
     await flush(10);
 
     expect(calls.commit).not.toHaveBeenCalled();

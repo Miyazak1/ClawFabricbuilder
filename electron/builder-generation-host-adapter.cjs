@@ -33,7 +33,9 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_cancelled: 'AI project generation was cancelled.',
   builder_generation_timeout: 'AI project generation timed out.',
-  builder_generation_response_invalid: 'The generated project could not be used.',
+  builder_generation_provider_http_error: 'The AI service could not make this project.',
+  builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
+  builder_generation_static_preview_contract_rejected: 'The generated project is not supported by the static preview.',
   builder_generation_failed: 'The project draft could not be generated.',
 });
 
@@ -46,7 +48,9 @@ class BuilderGenerationHostAdapterError extends Error {
     this.retryable = [
       'builder_generation_provider_unavailable',
       'builder_generation_timeout',
-      'builder_generation_response_invalid',
+      'builder_generation_provider_http_error',
+      'builder_generation_structured_response_invalid',
+      'builder_generation_static_preview_contract_rejected',
       'builder_generation_failed',
     ].includes(selected);
     this.stack = `${this.name}: ${this.message}`;
@@ -187,12 +191,12 @@ function sanitizeTransportResult(value) {
   const source = exactObject(
     value,
     ['transport_version', 'generated_text'],
-    'builder_generation_response_invalid',
+    'builder_generation_structured_response_invalid',
   );
-  if (ownValue(source, 'transport_version', 'builder_generation_response_invalid')
-    !== 'builder-openai-compatible-transport.v1') fail('builder_generation_response_invalid');
-  const generatedText = ownValue(source, 'generated_text', 'builder_generation_response_invalid');
-  if (typeof generatedText !== 'string') fail('builder_generation_response_invalid');
+  if (ownValue(source, 'transport_version', 'builder_generation_structured_response_invalid')
+    !== 'builder-openai-compatible-transport.v1') fail('builder_generation_structured_response_invalid');
+  const generatedText = ownValue(source, 'generated_text', 'builder_generation_structured_response_invalid');
+  if (typeof generatedText !== 'string') fail('builder_generation_structured_response_invalid');
   return generatedText;
 }
 
@@ -213,10 +217,28 @@ function mapTransportError(error, signal) {
   }
   if (signal.aborted || code === 'builder_provider_cancelled') fail('builder_generation_cancelled');
   if (code === 'builder_provider_timeout') fail('builder_generation_timeout');
-  if (code === 'builder_provider_response_invalid'
-    || code === 'builder_provider_response_too_large') fail('builder_generation_response_invalid');
+  if (code === 'builder_provider_http_error') fail('builder_generation_provider_http_error');
+  if (code === 'builder_provider_structured_response_invalid'
+    || code === 'builder_provider_response_too_large') fail('builder_generation_structured_response_invalid');
   if (code === 'builder_provider_unavailable'
     || code === 'builder_provider_request_invalid') fail('builder_generation_provider_unavailable');
+  fail('builder_generation_failed');
+}
+
+function mapKernelError(error) {
+  let code = '';
+  if (error !== null && (typeof error === 'object' || typeof error === 'function') && !utilTypes.isProxy(error)) {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string') {
+      code = descriptor.value;
+    }
+  }
+  if (code === 'builder_generation_static_preview_contract_rejected') {
+    fail('builder_generation_static_preview_contract_rejected');
+  }
+  if (code === 'builder_generation_structured_response_invalid') {
+    fail('builder_generation_structured_response_invalid');
+  }
   fail('builder_generation_failed');
 }
 
@@ -307,8 +329,8 @@ function createBuilderGenerationHostAdapter(options = {}) {
         parent_revision_record: parent,
         generated_text: generatedText,
       });
-    } catch {
-      fail('builder_generation_response_invalid');
+    } catch (error) {
+      mapKernelError(error);
     }
   }
 

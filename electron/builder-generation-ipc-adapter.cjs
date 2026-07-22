@@ -5,6 +5,11 @@ const { types: utilTypes } = require('node:util');
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
+const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
+const MAX_PLAIN_DATA_NODES = 20_000;
+const MAX_PLAIN_DATA_ENTRIES = 20_000;
+const MAX_PLAIN_DATA_UTF8_BYTES = 1024 * 1024;
+const MAX_PLAIN_DATA_DEPTH = 64;
 const OPTION_KEYS = Object.freeze([
   'generate',
   'cancel',
@@ -18,13 +23,31 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_cancelled: 'AI project generation was cancelled.',
   builder_generation_timeout: 'AI project generation timed out.',
-  builder_generation_response_invalid: 'The generated project could not be used.',
+  builder_generation_provider_http_error: 'The AI service could not make this project.',
+  builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
+  builder_generation_static_preview_contract_rejected: 'The generated project is not supported by the static preview.',
   builder_generation_failed: 'The project draft could not be generated.',
 });
-const RETRYABLE_CODES = new Set([
+const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
+  builder_generation_provider_unavailable: false,
+  builder_generation_timeout: true,
+  builder_generation_provider_http_error: true,
+  builder_generation_structured_response_invalid: true,
+  builder_generation_static_preview_contract_rejected: true,
+  builder_generation_failed: true,
+});
+const RETRYABLE_CODES = new Set(
+  Object.entries(PUBLIC_FAILURE_RETRYABILITY)
+    .filter(([, retryable]) => retryable)
+    .map(([code]) => code),
+);
+const CONTROL_ERROR_CODES = new Set([
+  'builder_generation_forbidden',
+  'builder_generation_request_invalid',
+  'builder_generation_parent_unavailable',
   'builder_generation_provider_unavailable',
+  'builder_generation_cancelled',
   'builder_generation_timeout',
-  'builder_generation_response_invalid',
   'builder_generation_failed',
 ]);
 
@@ -63,7 +86,82 @@ function safeErrorCode(error) {
 }
 
 function normalizeError(error) {
-  return ipcError(safeErrorCode(error) ?? 'builder_generation_failed');
+  const code = safeErrorCode(error);
+  return ipcError(code !== null && CONTROL_ERROR_CODES.has(code) ? code : 'builder_generation_failed');
+}
+
+function accountUtf8(value, state) {
+  if (value.length > MAX_PLAIN_DATA_UTF8_BYTES - state.utf8Bytes) throw ipcError();
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes > MAX_PLAIN_DATA_UTF8_BYTES - state.utf8Bytes) throw ipcError();
+  state.utf8Bytes += bytes;
+}
+
+function clonePlainData(value, state = {
+  entries: 0,
+  nodes: 0,
+  seen: new WeakSet(),
+  utf8Bytes: 0,
+}, depth = 0) {
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    accountUtf8(value, state);
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (
+    typeof value !== 'object'
+    || utilTypes.isProxy(value)
+    || state.seen.has(value)
+    || depth > MAX_PLAIN_DATA_DEPTH
+    || state.nodes >= MAX_PLAIN_DATA_NODES
+  ) throw ipcError();
+  state.seen.add(value);
+  state.nodes += 1;
+  const isArray = Array.isArray(value);
+  if (isArray && value.length > MAX_PLAIN_DATA_ENTRIES - state.entries) throw ipcError();
+  const prototype = Object.getPrototypeOf(value);
+  if ((isArray && prototype !== Array.prototype)
+    || (!isArray && prototype !== Object.prototype && prototype !== null)) throw ipcError();
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string')) throw ipcError();
+  const entryCount = keys.length - (isArray ? 1 : 0);
+  if (entryCount > MAX_PLAIN_DATA_ENTRIES - state.entries) throw ipcError();
+  for (const key of keys) accountUtf8(key, state);
+  state.entries += entryCount;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).length !== keys.length) throw ipcError();
+  if (isArray && (keys.length !== value.length + 1 || !Object.hasOwn(descriptors, 'length'))) {
+    throw ipcError();
+  }
+  const output = isArray ? [] : {};
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw ipcError();
+    if (isArray && key === 'length') continue;
+    if (!descriptor.enumerable || (isArray && !/^(?:0|[1-9][0-9]*)$/u.test(key))) throw ipcError();
+    if (!isArray && ['__proto__', 'prototype', 'constructor'].includes(key)) throw ipcError();
+    output[key] = clonePlainData(descriptor.value, state, depth + 1);
+  }
+  return Object.freeze(output);
+}
+
+function publicFailureCode(error) {
+  const code = safeErrorCode(error);
+  return code !== null && Object.hasOwn(PUBLIC_FAILURE_RETRYABILITY, code)
+    ? code
+    : null;
+}
+
+function failureEnvelope(code) {
+  return Object.freeze({
+    version: GENERATE_RESULT_VERSION,
+    ok: false,
+    error: Object.freeze({
+      code,
+      retryable: PUBLIC_FAILURE_RETRYABILITY[code],
+    }),
+  });
 }
 
 function safeOptions(value) {
@@ -137,6 +235,27 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
     }
   }
 
+  async function invokeGenerate(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_generation_request_invalid');
+    } catch (error) {
+      throw normalizeError(error);
+    }
+    try {
+      const result = await Reflect.apply(options.generate, undefined, rawArguments);
+      return Object.freeze({
+        version: GENERATE_RESULT_VERSION,
+        ok: true,
+        result: clonePlainData(result),
+      });
+    } catch (error) {
+      const code = publicFailureCode(error);
+      if (code !== null) return failureEnvelope(code);
+      throw normalizeError(error);
+    }
+  }
+
   return Object.freeze({
     adapter_id: 'builder_code_generation.controlled_ipc_adapter.v1',
     namespace: 'builderCodeGenerator',
@@ -146,7 +265,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
         channel: GENERATE_CHANNEL,
         method: 'generate',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.generate, 1);
+          return invokeGenerate(event, rawArguments);
         },
       }),
       cancel: Object.freeze({
@@ -181,6 +300,7 @@ module.exports = Object.freeze({
   GENERATE_CHANNEL,
   CANCEL_CHANNEL,
   AVAILABILITY_CHANNEL,
+  GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
   createBuilderGenerationIpcAdapter,
 });

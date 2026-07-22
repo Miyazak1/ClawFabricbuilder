@@ -337,16 +337,16 @@ test('cancels a streamed body as soon as accumulated bytes exceed the fixed resp
   assert.equal(cancelled, true);
 });
 
-test('rejects unreadable bodies, malformed lengths, media types, UTF-8, JSON, and HTTP failures', async () => {
+test('separates structured response failures from provider HTTP failures', async () => {
   const invalidUtf8 = Uint8Array.from([0xc3, 0x28]);
   const cases = [
-    { value: { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), body: null }, code: 'builder_provider_response_invalid' },
-    { value: response(providerPayload(), { headers: new Headers({ 'content-type': 'application/json', 'content-length': '01' }) }), code: 'builder_provider_response_invalid' },
-    { value: response(providerPayload(), { headers: new Headers({ 'content-type': 'text/plain' }) }), code: 'builder_provider_response_invalid' },
-    { value: response(invalidUtf8), code: 'builder_provider_response_invalid' },
-    { value: response('{not-json'), code: 'builder_provider_response_invalid' },
-    { value: response(PRIVATE_MARKER, { ok: false, status: 400 }), code: 'builder_provider_failed' },
-    { value: response(providerPayload(), { ok: false, status: 500 }), code: 'builder_provider_failed' },
+    { value: { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), body: null }, code: 'builder_provider_structured_response_invalid' },
+    { value: response(providerPayload(), { headers: new Headers({ 'content-type': 'application/json', 'content-length': '01' }) }), code: 'builder_provider_structured_response_invalid' },
+    { value: response(providerPayload(), { headers: new Headers({ 'content-type': 'text/plain' }) }), code: 'builder_provider_structured_response_invalid' },
+    { value: response(invalidUtf8), code: 'builder_provider_structured_response_invalid' },
+    { value: response('{not-json'), code: 'builder_provider_structured_response_invalid' },
+    { value: response(PRIVATE_MARKER, { ok: false, status: 400 }), code: 'builder_provider_http_error' },
+    { value: response(providerPayload(), { ok: false, status: 500 }), code: 'builder_provider_http_error' },
   ];
   for (const candidate of cases) {
     const transport = createBuilderOpenAICompatibleTransport({ fetchImpl: async () => candidate.value });
@@ -363,7 +363,7 @@ test('does not fall back when the provider rejects fixed JSON object mode', asyn
     },
   });
 
-  await expectCode(transport(request()), 'builder_provider_failed');
+  await expectCode(transport(request()), 'builder_provider_http_error');
   assert.equal(calls.length, 1);
   assert.deepEqual(JSON.parse(calls[0][1].body).response_format, { type: 'json_object' });
 });
@@ -378,7 +378,7 @@ test('rejects provider choice drift and never returns provider metadata or usage
   ];
   for (const payload of cases) {
     const transport = createBuilderOpenAICompatibleTransport({ fetchImpl: async () => response(payload) });
-    await expectCode(transport(request()), 'builder_provider_response_invalid');
+    await expectCode(transport(request()), 'builder_provider_structured_response_invalid');
   }
   const transport = createBuilderOpenAICompatibleTransport({
     fetchImpl: async () => response({
@@ -389,6 +389,32 @@ test('rejects provider choice drift and never returns provider metadata or usage
     }),
   });
   assert.deepEqual(Reflect.ownKeys(await transport(request())), ['transport_version', 'generated_text']);
+});
+
+test('does not read or expose a non-success provider response body', async () => {
+  let readerCalls = 0;
+  let cancelCalls = 0;
+  const body = {
+    getReader() {
+      readerCalls += 1;
+      throw new Error(PRIVATE_MARKER);
+    },
+    cancel() {
+      cancelCalls += 1;
+      return Promise.resolve();
+    },
+  };
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async () => ({
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      body,
+    }),
+  });
+  await expectCode(transport(request()), 'builder_provider_http_error');
+  assert.equal(readerCalls, 0);
+  assert.equal(cancelCalls, 1);
 });
 
 test('returns fixed redacted failures for thrown fetch and missing transport', async () => {

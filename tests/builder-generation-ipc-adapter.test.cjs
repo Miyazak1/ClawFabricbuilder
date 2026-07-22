@@ -9,6 +9,7 @@ const {
   GENERATE_CHANNEL,
   CANCEL_CHANNEL,
   AVAILABILITY_CHANNEL,
+  GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
   createBuilderGenerationIpcAdapter,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
@@ -55,7 +56,11 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   );
   assert.deepEqual(
     await value.channels.generate.invoke({ sender: windowRef.webContents }, request),
-    { result: 'generated' },
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'generated' },
+    },
   );
   assert.deepEqual(
     await value.channels.cancel.invoke({ sender: windowRef.webContents }, cancellation),
@@ -112,14 +117,42 @@ test('rejects inactive renderers and argument-count drift before invoking host a
   assert.deepEqual(calls, []);
 });
 
-test('preserves known safe host codes and redacts unknown or hostile failures', async () => {
+test('returns only fixed plain-data diagnostics for known and unknown generate failures', async () => {
   const windowRef = activeWindow();
-  const modified = new BuilderGenerationIpcError('builder_generation_timeout');
-  modified.message = 'modified-private-marker';
-  modified.stack = 'modified-private-stack';
-  const known = createBuilderGenerationIpcAdapter({
+  for (const [code, retryable] of [
+    ['builder_generation_provider_unavailable', false],
+    ['builder_generation_timeout', true],
+    ['builder_generation_provider_http_error', true],
+    ['builder_generation_structured_response_invalid', true],
+    ['builder_generation_static_preview_contract_rejected', true],
+    ['builder_generation_failed', true],
+  ]) {
+    const modified = new Error('modified-private-marker');
+    modified.code = code;
+    modified.stack = 'modified-private-stack';
+    const known = createBuilderGenerationIpcAdapter({
+      generate: () => { throw modified; },
+      cancel: () => ({}),
+      availability: () => ({}),
+      mainWindowRef: () => windowRef,
+    });
+    const result = await known.channels.generate.invoke({ sender: windowRef.webContents }, {});
+    assert.deepEqual(result, {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code, retryable },
+    });
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.error), true);
+    assert.doesNotMatch(JSON.stringify(result), /modified-private-marker|modified-private-stack/u);
+  }
+
+  const hostile = createBuilderGenerationIpcAdapter({
     generate: () => {
-      throw modified;
+      const error = new Error('unknown-private-marker');
+      error.code = 'unknown_private_code';
+      error.raw_body = 'raw-private-body';
+      throw error;
     },
     cancel: () => {
       throw new Proxy(new Error('proxy-private-marker'), {
@@ -135,26 +168,155 @@ test('preserves known safe host codes and redacts unknown or hostile failures', 
     },
     mainWindowRef: () => windowRef,
   });
-
   await assert.rejects(
-    known.channels.generate.invoke({ sender: windowRef.webContents }, {}),
-    (error) => error.code === 'builder_generation_timeout'
-      && error.retryable === true
-      && error.stack === `${error.name}: ${error.message}`
-      && error !== modified
-      && !error.message.includes('modified-private-marker')
-      && !error.stack.includes('modified-private-stack'),
+    hostile.channels.generate.invoke({ sender: windowRef.webContents }, {}),
+    (error) => error.code === 'builder_generation_failed'
+      && !error.message.includes('unknown-private-marker'),
   );
   await assert.rejects(
-    known.channels.cancel.invoke({ sender: windowRef.webContents }, {}),
+    hostile.channels.cancel.invoke({ sender: windowRef.webContents }, {}),
     (error) => error.code === 'builder_generation_failed'
       && !error.message.includes('proxy-private-marker'),
   );
   await assert.rejects(
-    known.channels.availability.invoke({ sender: windowRef.webContents }),
+    hostile.channels.availability.invoke({ sender: windowRef.webContents }),
     (error) => error.code === 'builder_generation_failed'
       && !error.message.includes('getter-private-marker'),
   );
+
+  const generateOnlyCode = createBuilderGenerationIpcAdapter({
+    generate: async () => ({}),
+    cancel: () => {
+      const error = new Error('control-private-marker');
+      error.code = 'builder_generation_provider_http_error';
+      throw error;
+    },
+    availability: () => {
+      const error = new Error('control-private-marker');
+      error.code = 'builder_generation_static_preview_contract_rejected';
+      throw error;
+    },
+    mainWindowRef: () => windowRef,
+  });
+  await assert.rejects(
+    generateOnlyCode.channels.cancel.invoke({ sender: windowRef.webContents }, {}),
+    (error) => error.code === 'builder_generation_failed',
+  );
+  await assert.rejects(
+    generateOnlyCode.channels.availability.invoke({ sender: windowRef.webContents }),
+    (error) => error.code === 'builder_generation_failed',
+  );
+});
+
+test('keeps cancellation and other control failures as rejected generate invocations', async () => {
+  const windowRef = activeWindow();
+  let rejectGenerate;
+  const pending = new Promise((_resolve, reject) => {
+    rejectGenerate = reject;
+  });
+  const paired = createBuilderGenerationIpcAdapter({
+    generate: () => pending,
+    cancel: () => {
+      const error = new Error('cancel-private-marker');
+      error.code = 'builder_generation_cancelled';
+      rejectGenerate(error);
+      return { cancelled: true };
+    },
+    availability: () => ({}),
+    mainWindowRef: () => windowRef,
+  });
+  const generationRejection = assert.rejects(
+    paired.channels.generate.invoke({ sender: windowRef.webContents }, {}),
+    (error) => error.code === 'builder_generation_cancelled'
+      && !error.message.includes('cancel-private-marker'),
+  );
+  assert.deepEqual(
+    await paired.channels.cancel.invoke({ sender: windowRef.webContents }, {}),
+    { cancelled: true },
+  );
+  await generationRejection;
+
+  for (const code of [
+    'builder_generation_request_invalid',
+    'builder_generation_forbidden',
+    'builder_generation_parent_unavailable',
+  ]) {
+    const controlled = createBuilderGenerationIpcAdapter({
+      generate: () => {
+        const error = new Error('control-private-marker');
+        error.code = code;
+        throw error;
+      },
+      cancel: () => ({}),
+      availability: () => ({}),
+      mainWindowRef: () => windowRef,
+    });
+    await assert.rejects(
+      controlled.channels.generate.invoke({ sender: windowRef.webContents }, {}),
+      (error) => error.code === code && !error.message.includes('control-private-marker'),
+    );
+  }
+});
+
+test('fails hostile generated result graphs into a generic plain-data envelope', async () => {
+  const windowRef = activeWindow();
+  const accessor = {};
+  Object.defineProperty(accessor, 'result', {
+    enumerable: true,
+    get() { throw new Error('accessor-private-marker'); },
+  });
+  const polluted = { result: 'safe' };
+  Object.defineProperty(polluted, '__proto__', {
+    enumerable: true,
+    value: { hidden: 'prototype-private-marker' },
+  });
+  const symbolic = { result: 'safe', [Symbol('hidden')]: 'symbol-private-marker' };
+  for (const result of [new Proxy({ result: 'proxy-private-marker' }, {}), accessor, symbolic, polluted]) {
+    const value = createBuilderGenerationIpcAdapter({
+      generate: async () => result,
+      cancel: () => ({}),
+      availability: () => ({}),
+      mainWindowRef: () => windowRef,
+    });
+    const envelope = await value.channels.generate.invoke({ sender: windowRef.webContents }, {});
+    assert.deepEqual(envelope, {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code: 'builder_generation_failed', retryable: true },
+    });
+    assert.doesNotMatch(JSON.stringify(envelope), /private-marker/u);
+  }
+});
+
+test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy result graphs', async () => {
+  const windowRef = activeWindow();
+  const sparse = new Array(3);
+  sparse[2] = 'safe';
+  const cyclic = {};
+  cyclic.self = cyclic;
+  let deep = { leaf: true };
+  for (let index = 0; index < 70; index += 1) deep = { nested: deep };
+  const nodeHeavy = Array.from({ length: 20_000 }, () => ({}));
+  const entryHeavy = {};
+  for (let index = 0; index < 20_001; index += 1) entryHeavy[`key_${index}`] = true;
+  const byteHeavy = { value: 'x'.repeat(1024 * 1024 + 1) };
+
+  for (const result of [sparse, cyclic, deep, nodeHeavy, entryHeavy, byteHeavy]) {
+    const value = createBuilderGenerationIpcAdapter({
+      generate: async () => result,
+      cancel: () => ({}),
+      availability: () => ({}),
+      mainWindowRef: () => windowRef,
+    });
+    assert.deepEqual(
+      await value.channels.generate.invoke({ sender: windowRef.webContents }, {}),
+      {
+        version: GENERATE_RESULT_VERSION,
+        ok: false,
+        error: { code: 'builder_generation_failed', retryable: true },
+      },
+    );
+  }
 });
 
 test('rejects malformed dependency authority without invoking getters or proxy traps', () => {

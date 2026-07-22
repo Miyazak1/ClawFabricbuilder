@@ -6,6 +6,10 @@ import {
 } from '../domain/builderProject';
 import { isTrustedBuilderStaticPreviewProjection } from '../preview/builderStaticPreview';
 import {
+  BuilderDesktopCodeGeneratorPortError,
+  type BuilderGenerationDiagnosticCode,
+} from '../infrastructure/builderDesktopCodeGeneratorPort';
+import {
   prepareBuilderGeneration,
   projectBuilderGeneration,
   type BuilderGenerationRequest,
@@ -452,9 +456,91 @@ describe('Builder project controller', () => {
 
     const failed = await controller.generate('Break privately');
     expect(failed.status).toBe('generation_failed');
+    expect(failed.error).toBe('builder_generation_failed');
     expect(failed.savedRevision).toBe(ready.savedRevision);
     expect(failed.preview).toBe(ready.preview);
     expect(JSON.stringify(failed)).not.toContain('private provider detail');
+  });
+
+  it.each([
+    'builder_generation_provider_unavailable',
+    'builder_generation_timeout',
+    'builder_generation_provider_http_error',
+    'builder_generation_structured_response_invalid',
+    'builder_generation_static_preview_contract_rejected',
+    'builder_generation_failed',
+  ] as const)('maps the typed %s diagnostic while preserving the verified project', async (code) => {
+    const order: string[] = [];
+    const repository = repositoryHarness(order);
+    const generator = generatorHarness(order);
+    const controller = createBuilderProjectController({
+      generator,
+      repository: repository.repository,
+      createProjectId: () => PROJECT_ID,
+    });
+    const ready = await controller.generate('Make a timer');
+    generator.generate.mockRejectedValueOnce(new BuilderDesktopCodeGeneratorPortError(code));
+
+    const failed = await controller.generate('Make it more complex');
+    expect(failed).toMatchObject({ status: 'generation_failed', error: code });
+    expect(failed.savedRevision).toBe(ready.savedRevision);
+    expect(failed.preview).toBe(ready.preview);
+    expect(JSON.stringify(failed)).not.toMatch(/stack|message|private|provider\.example/iu);
+  });
+
+  it('maps hostile, extra, accessor, proxy, and unknown diagnostics to generic failure', async () => {
+    const diagnostics: unknown[] = [];
+    const forged = new Error('private-forged-marker') as Error & {
+      code?: string;
+      retryable?: boolean;
+    };
+    forged.name = 'BuilderDesktopCodeGeneratorPortError';
+    forged.code = 'builder_generation_timeout';
+    forged.retryable = true;
+    diagnostics.push(forged);
+    const extra = new Error('private-extra-marker') as Error & {
+      code?: string;
+      retryable?: boolean;
+      private_marker?: string;
+    };
+    extra.name = 'BuilderDesktopCodeGeneratorPortError';
+    extra.code = 'builder_generation_timeout';
+    extra.retryable = true;
+    extra.private_marker = 'private-extra-marker';
+    diagnostics.push(extra);
+    const unknown = new Error('private-unknown-marker') as Error & {
+      code?: string;
+      retryable?: boolean;
+    };
+    unknown.name = 'BuilderDesktopCodeGeneratorPortError';
+    unknown.code = 'builder_generation_unknown';
+    unknown.retryable = true;
+    diagnostics.push(unknown);
+    const accessor = new Error('private-accessor-marker');
+    accessor.name = 'BuilderDesktopCodeGeneratorPortError';
+    Object.defineProperty(accessor, 'code', {
+      enumerable: true,
+      get() { throw new Error('private-code-marker'); },
+    });
+    Object.defineProperty(accessor, 'retryable', { enumerable: true, value: true });
+    diagnostics.push(accessor);
+    diagnostics.push(new Proxy(new BuilderDesktopCodeGeneratorPortError('builder_generation_timeout'), {
+      ownKeys() { throw new Error('private-proxy-marker'); },
+    }));
+
+    for (const diagnostic of diagnostics) {
+      const controller = createBuilderProjectController({
+        generator: { generate: vi.fn().mockRejectedValue(diagnostic) },
+        repository: repositoryHarness([]).repository,
+        createProjectId: () => PROJECT_ID,
+      });
+      const failed = await controller.generate('Make a timer');
+      expect(failed).toMatchObject({
+        status: 'generation_failed',
+        error: 'builder_generation_failed' satisfies BuilderGenerationDiagnosticCode,
+      });
+      expect(JSON.stringify(failed)).not.toMatch(/private|unknown|accessor|proxy/iu);
+    }
   });
 
   it('deduplicates concurrent generation and rejects invalid open identity before repository access', async () => {

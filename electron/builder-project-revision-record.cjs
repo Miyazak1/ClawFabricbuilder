@@ -11,6 +11,12 @@ const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v1';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v1';
 const BUILDER_PROJECT_RECORD_KIND = 'builder_project_revision';
 const BUILDER_PROJECT_SCHEMA_VERSION = 1;
+const BUILDER_PROJECT_REVISION_INVALID_REASON = 'record_invalid';
+const BUILDER_PROJECT_STATIC_PREVIEW_REASON = 'static_preview_contract_rejected';
+const BUILDER_PROJECT_REVISION_ERROR_REASONS = new Set([
+  BUILDER_PROJECT_REVISION_INVALID_REASON,
+  BUILDER_PROJECT_STATIC_PREVIEW_REASON,
+]);
 
 const BUILDER_PROJECT_TOTAL_MAX_UTF8_BYTES = 512 * 1024;
 const BUILDER_PROJECT_HTML_MAX_UTF8_BYTES = 256 * 1024;
@@ -67,16 +73,19 @@ const REVISION_KEYS = Object.freeze([
 ]);
 
 class BuilderProjectRevisionRecordError extends Error {
-  constructor() {
+  constructor(reason = BUILDER_PROJECT_REVISION_INVALID_REASON) {
     super('The local project version could not be verified.');
     this.name = 'BuilderProjectRevisionRecordError';
     this.code = 'builder_project_revision_invalid';
+    this.reason = BUILDER_PROJECT_REVISION_ERROR_REASONS.has(reason)
+      ? reason
+      : BUILDER_PROJECT_REVISION_INVALID_REASON;
     this.stack = `${this.name}: ${this.message}`;
   }
 }
 
-function fail() {
-  throw new BuilderProjectRevisionRecordError();
+function fail(reason) {
+  throw new BuilderProjectRevisionRecordError(reason);
 }
 
 function isPlainObject(value) {
@@ -266,7 +275,7 @@ function readHtmlTag(value, start) {
   while (index < value.length && isHtmlNameCharacter(value[index])) index += 1;
   if (index === nameStart) fail();
   const name = value.slice(nameStart, index).toLowerCase();
-  if (ACTIVE_HTML_ELEMENTS.has(name)) fail();
+  if (ACTIVE_HTML_ELEMENTS.has(name)) fail(BUILDER_PROJECT_STATIC_PREVIEW_REASON);
 
   if (closing) {
     index = skipHtmlSpace(value, index);
@@ -290,7 +299,9 @@ function readHtmlTag(value, start) {
     if (attributeName.startsWith('on')
       || attributeName === 'srcdoc'
       || attributeName.endsWith(':href')
-      || URL_OR_NAVIGATION_ATTRIBUTES.has(attributeName)) fail();
+      || URL_OR_NAVIGATION_ATTRIBUTES.has(attributeName)) {
+      fail(BUILDER_PROJECT_STATIC_PREVIEW_REASON);
+    }
     index = skipHtmlSpace(value, index);
     let attributeValue = '';
     if (value[index] === '=') {
@@ -299,7 +310,9 @@ function readHtmlTag(value, start) {
       attributeValue = parsed.value;
       index = parsed.end;
     }
-    if (attributeName === 'style' && unsafeCss(attributeValue)) fail();
+    if (attributeName === 'style' && unsafeCss(attributeValue)) {
+      fail(BUILDER_PROJECT_STATIC_PREVIEW_REASON);
+    }
   }
   fail();
 }
@@ -334,7 +347,9 @@ function assertStaticHtml(value) {
       closingPattern.lastIndex = tag.end;
       const closing = closingPattern.exec(value);
       if (!closing || closing.index < tag.end) fail();
-      if (unsafeCss(value.slice(tag.end, closing.index))) fail();
+      if (unsafeCss(value.slice(tag.end, closing.index))) {
+        fail(BUILDER_PROJECT_STATIC_PREVIEW_REASON);
+      }
       index = closingPattern.lastIndex;
       continue;
     }
@@ -368,7 +383,9 @@ function sanitizeFiles(value) {
   const css = safeFileText(valueAt(value, 'styles.css'), BUILDER_PROJECT_CSS_MAX_UTF8_BYTES, false);
   const javascript = safeFileText(valueAt(value, 'app.js'), BUILDER_PROJECT_JS_MAX_UTF8_BYTES, true);
   assertStaticHtml(html);
-  if (unsafeCss(css) || FORBIDDEN_JAVASCRIPT_MODULE_PATTERN.test(javascript)) fail();
+  if (unsafeCss(css) || FORBIDDEN_JAVASCRIPT_MODULE_PATTERN.test(javascript)) {
+    fail(BUILDER_PROJECT_STATIC_PREVIEW_REASON);
+  }
   return { 'index.html': html, 'styles.css': css, 'app.js': javascript };
 }
 
@@ -559,6 +576,8 @@ function safeBoundary(fn) {
 module.exports = Object.freeze({
   BUILDER_PROJECT_RECORD_KIND,
   BUILDER_PROJECT_SCHEMA_VERSION,
+  BUILDER_PROJECT_REVISION_INVALID_REASON,
+  BUILDER_PROJECT_STATIC_PREVIEW_REASON,
   MAX_RECORD_BYTES,
   BuilderProjectRevisionRecordError,
   digestBuilderProjectProposalRecord: safeBoundary(digestBuilderProjectProposalRecord),

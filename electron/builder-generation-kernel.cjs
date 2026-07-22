@@ -5,6 +5,8 @@ const { types: utilTypes } = require('node:util');
 
 const {
   MAX_RECORD_BYTES,
+  BUILDER_PROJECT_STATIC_PREVIEW_REASON,
+  BuilderProjectRevisionRecordError,
   digestBuilderProjectProposalRecord,
   sanitizeBuilderProjectRevisionRecord,
 } = require('./builder-project-revision-record.cjs');
@@ -87,14 +89,15 @@ const OUTPUT_CONTRACT = Object.freeze({
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_parent_invalid: 'The current project version could not be verified.',
-  builder_generation_response_invalid: 'The generated project could not be used.',
+  builder_generation_structured_response_invalid: 'The generated response could not be used.',
+  builder_generation_static_preview_contract_rejected: 'The generated project is not supported by the static preview.',
 });
 
 class BuilderGenerationKernelError extends Error {
   constructor(code) {
-    super(ERROR_MESSAGES[code] || ERROR_MESSAGES.builder_generation_response_invalid);
+    super(ERROR_MESSAGES[code] || ERROR_MESSAGES.builder_generation_structured_response_invalid);
     this.name = 'BuilderGenerationKernelError';
-    this.code = Object.hasOwn(ERROR_MESSAGES, code) ? code : 'builder_generation_response_invalid';
+    this.code = Object.hasOwn(ERROR_MESSAGES, code) ? code : 'builder_generation_structured_response_invalid';
     this.stack = `${this.name}: ${this.message}`;
   }
 }
@@ -344,24 +347,30 @@ function createBuilderGenerationPromptDescriptor(value) {
 }
 
 function sanitizeGeneratedProposal(value) {
-  assertExactObject(value, PROPOSAL_KEYS, 'builder_generation_response_invalid');
-  const files = valueAt(value, 'files', 'builder_generation_response_invalid');
-  assertExactObject(files, FILE_KEYS, 'builder_generation_response_invalid');
+  assertExactObject(value, PROPOSAL_KEYS, 'builder_generation_structured_response_invalid');
+  const files = valueAt(value, 'files', 'builder_generation_structured_response_invalid');
+  assertExactObject(files, FILE_KEYS, 'builder_generation_structured_response_invalid');
   const proposal = {
-    kind: valueAt(value, 'kind', 'builder_generation_response_invalid'),
-    title: valueAt(value, 'title', 'builder_generation_response_invalid'),
-    summary: valueAt(value, 'summary', 'builder_generation_response_invalid'),
+    kind: valueAt(value, 'kind', 'builder_generation_structured_response_invalid'),
+    title: valueAt(value, 'title', 'builder_generation_structured_response_invalid'),
+    summary: valueAt(value, 'summary', 'builder_generation_structured_response_invalid'),
     files: {
-      'index.html': valueAt(files, 'index.html', 'builder_generation_response_invalid'),
-      'styles.css': valueAt(files, 'styles.css', 'builder_generation_response_invalid'),
-      'app.js': valueAt(files, 'app.js', 'builder_generation_response_invalid'),
+      'index.html': valueAt(files, 'index.html', 'builder_generation_structured_response_invalid'),
+      'styles.css': valueAt(files, 'styles.css', 'builder_generation_structured_response_invalid'),
+      'app.js': valueAt(files, 'app.js', 'builder_generation_structured_response_invalid'),
     },
   };
   let proposalDigest;
   try {
     proposalDigest = digestBuilderProjectProposalRecord(proposal);
-  } catch {
-    fail('builder_generation_response_invalid');
+  } catch (error) {
+    if (
+      error instanceof BuilderProjectRevisionRecordError
+      && error.reason === BUILDER_PROJECT_STATIC_PREVIEW_REASON
+    ) {
+      fail('builder_generation_static_preview_contract_rejected');
+    }
+    fail('builder_generation_structured_response_invalid');
   }
   return { proposal: freezeDeep(proposal), proposalDigest };
 }
@@ -375,12 +384,12 @@ function parseGeneratedText(value) {
     || Buffer.byteLength(value, 'utf8') > MAX_GENERATED_TEXT_BYTES
     || hasUnpairedSurrogate(value)
     || value.startsWith('```')
-  ) fail('builder_generation_response_invalid');
+  ) fail('builder_generation_structured_response_invalid');
   let parsed;
   try {
     parsed = JSON.parse(value);
   } catch {
-    fail('builder_generation_response_invalid');
+    fail('builder_generation_structured_response_invalid');
   }
   return sanitizeGeneratedProposal(parsed);
 }
@@ -396,7 +405,7 @@ function projectBuilderGenerationResult(value) {
       request,
     );
     const { proposal, proposalDigest } = parseGeneratedText(
-      valueAt(value, 'generated_text', 'builder_generation_response_invalid'),
+      valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
     );
     return freezeDeep({
       version: BUILDER_GENERATION_RESULT_PROTOCOL,
@@ -420,7 +429,7 @@ function projectBuilderGenerationResult(value) {
     });
   } catch (error) {
     if (error instanceof BuilderGenerationKernelError) throw error;
-    fail('builder_generation_response_invalid');
+    fail('builder_generation_structured_response_invalid');
   }
 }
 

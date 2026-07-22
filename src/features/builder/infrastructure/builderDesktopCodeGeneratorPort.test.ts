@@ -25,7 +25,11 @@ function request(): BuilderGenerationRequest {
 
 function bridge(overrides: Record<string, unknown> = {}) {
   return {
-    generate: vi.fn(async (value: unknown) => ({ value })),
+    generate: vi.fn(async (value: unknown) => ({
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: { value },
+    })),
     cancel: vi.fn(async (value: { request_id: string }) => ({
       request_id: value.request_id,
       cancelled: true,
@@ -40,11 +44,13 @@ function bridge(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function expectPortError(value: Promise<unknown>): Promise<void> {
+async function expectPortError(
+  value: Promise<unknown>,
+  code = 'builder_generation_failed',
+): Promise<void> {
   await expect(value).rejects.toMatchObject({
     name: 'BuilderDesktopCodeGeneratorPortError',
-    code: 'builder_generation_unavailable',
-    message: 'AI project generation is unavailable.',
+    code,
   });
 }
 
@@ -77,7 +83,11 @@ describe('Builder desktop code generator port', () => {
     const target = {
       marker: 'bridge',
       async generate(this: { generate: unknown }) {
-        return { receiver_preserved: typeof this.generate === 'function' };
+        return {
+          version: 'builder-generation-ipc-result.v1',
+          ok: true,
+          result: { receiver_preserved: typeof this.generate === 'function' },
+        };
       },
       async cancel() { throw new Error(PRIVATE_MARKER); },
       async availability() { throw new Error(PRIVATE_MARKER); },
@@ -122,11 +132,33 @@ describe('Builder desktop code generator port', () => {
   it('bounds request and result graphs before crossing the bridge', async () => {
     const target = bridge();
     const port = createBuilderDesktopCodeGeneratorPort(target);
-    await expectPortError(port.generate({ value: 'x'.repeat(1024 * 1024 + 1) } as never));
+    const sparse = new Array(3) as unknown[];
+    sparse[2] = 'safe';
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    let deep: unknown = { leaf: true };
+    for (let index = 0; index < 70; index += 1) deep = { nested: deep };
+    const nodeHeavy = Array.from({ length: 20_000 }, () => ({}));
+    const entryHeavy: Record<string, unknown> = {};
+    for (let index = 0; index < 20_001; index += 1) entryHeavy[`key_${index}`] = true;
+    for (const invalid of [
+      sparse,
+      cyclic,
+      deep,
+      nodeHeavy,
+      entryHeavy,
+      { value: 'x'.repeat(1024 * 1024 + 1) },
+    ]) {
+      await expectPortError(port.generate(invalid as never));
+    }
     expect(target.generate).not.toHaveBeenCalled();
 
     const oversizedResult = createBuilderDesktopCodeGeneratorPort(bridge({
-      generate: vi.fn(async () => ({ value: 'x'.repeat(1024 * 1024 + 1) })),
+      generate: vi.fn(async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: { value: 'x'.repeat(1024 * 1024 + 1) },
+      })),
     }));
     await expectPortError(oversizedResult.generate(request()));
   });
@@ -137,6 +169,56 @@ describe('Builder desktop code generator port', () => {
     }));
     await expectPortError(port.generate(request()));
     await expect(port.generate(request())).rejects.not.toThrow(PRIVATE_MARKER);
+  });
+
+  it.each([
+    ['builder_generation_provider_unavailable', false],
+    ['builder_generation_timeout', true],
+    ['builder_generation_provider_http_error', true],
+    ['builder_generation_structured_response_invalid', true],
+    ['builder_generation_static_preview_contract_rejected', true],
+    ['builder_generation_failed', true],
+  ] as const)('throws a fresh typed %s error from an exact failure envelope', async (code, retryable) => {
+    const error = await createBuilderDesktopCodeGeneratorPort(bridge({
+      generate: vi.fn(async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: { code, retryable },
+      })),
+    })).generate(request()).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(BuilderDesktopCodeGeneratorPortError);
+    expect(error).toMatchObject({
+      name: 'BuilderDesktopCodeGeneratorPortError',
+      code,
+      retryable,
+    });
+    expect(Object.isFrozen(error)).toBe(true);
+    expect(String(error)).not.toMatch(/runtime|schema|IPC|provider\.example|private-provider-secret/iu);
+  });
+
+  it('rejects malformed, extra, hostile, and unknown failure envelopes as generic', async () => {
+    const accessor = {
+      version: 'builder-generation-ipc-result.v1',
+      ok: false,
+    } as Record<string, unknown>;
+    Object.defineProperty(accessor, 'error', {
+      enumerable: true,
+      get() { throw new Error(PRIVATE_MARKER); },
+    });
+    for (const envelope of [
+      { version: 'builder-generation-ipc-result.v1', ok: false, error: { code: 'unknown', retryable: true } },
+      { version: 'builder-generation-ipc-result.v1', ok: false, error: { code: 'builder_generation_timeout', retryable: false } },
+      { version: 'builder-generation-ipc-result.v1', ok: false, error: { code: 'builder_generation_timeout', retryable: true, raw: PRIVATE_MARKER } },
+      { version: 'other.v1', ok: true, result: {} },
+      new Proxy({ version: 'builder-generation-ipc-result.v1', ok: true, result: {} }, {}),
+      accessor,
+    ]) {
+      const port = createBuilderDesktopCodeGeneratorPort(bridge({
+        generate: vi.fn(async () => envelope),
+      }));
+      await expectPortError(port.generate(request()));
+      await expect(port.generate(request())).rejects.not.toThrow(PRIVATE_MARKER);
+    }
   });
 
   it('contains no global bridge lookup or legacy product authority', () => {

@@ -61,6 +61,14 @@ const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'ready',
   'generation_failed',
 ]);
+const GENERATION_FAILURE_ERRORS = new Set<BuilderProjectControllerSnapshot['error']>([
+  'builder_generation_provider_unavailable',
+  'builder_generation_timeout',
+  'builder_generation_provider_http_error',
+  'builder_generation_structured_response_invalid',
+  'builder_generation_static_preview_contract_rejected',
+  'builder_generation_failed',
+]);
 const SNAPSHOT_KEYS = new Set(['status', 'busy', 'savedRevision', 'preview', 'error']);
 
 function safeStatus(value: unknown): BuilderProjectControllerStatus {
@@ -86,8 +94,7 @@ function hasExactEnumerableDataKeys(value: object, allowedKeys: ReadonlySet<stri
 }
 
 function expectedError(status: BuilderProjectControllerStatus) {
-  return status === 'generation_failed'
-    || status === 'save_unverified'
+  return status === 'save_unverified'
     || status === 'preview_unavailable'
     || status === 'conflict'
     || status === 'unavailable'
@@ -107,7 +114,9 @@ function isTrustedSnapshot(value: BuilderProjectControllerSnapshot): boolean {
     if (
       status !== value.status
       || value.busy !== BUSY_STATUSES.has(status)
-      || value.error !== expectedError(status)
+      || (status === 'generation_failed'
+        ? !GENERATION_FAILURE_ERRORS.has(value.error)
+        : value.error !== expectedError(status))
     ) return false;
     const revision = value.savedRevision;
     const preview = value.preview;
@@ -176,6 +185,7 @@ export function BuilderPage({
   const canRetrySave = currentStatus === 'save_unverified'
     && typeof onRetrySave === 'function';
   const canOpenSettings = currentStatus === 'generation_failed'
+    && snapshot.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
   const hasDraft = savedRevision !== null;
   const code = files?.[safeActiveFile] ?? '';
@@ -370,7 +380,17 @@ export function BuilderPage({
           ) : null}
           {currentStatus === 'generation_failed' ? (
             <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
-              <p>The draft could not be made. Try again.</p>
+              <p>{snapshot.error === 'builder_generation_static_preview_contract_rejected'
+                ? 'This idea is beyond what this version can safely make. Try simplifying the features and try again.'
+                : snapshot.error === 'builder_generation_provider_unavailable'
+                  ? 'AI generation is not configured yet.'
+                  : snapshot.error === 'builder_generation_timeout'
+                    ? 'Making this draft took too long. Try again.'
+                    : snapshot.error === 'builder_generation_provider_http_error'
+                      ? 'The AI service could not make this draft. Try again.'
+                      : snapshot.error === 'builder_generation_structured_response_invalid'
+                        ? 'The draft could not be prepared. Try again.'
+                        : 'The draft could not be made. Try again.'}</p>
               {canOpenSettings ? (
                 <button
                   className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"

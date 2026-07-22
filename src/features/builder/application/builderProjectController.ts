@@ -8,10 +8,13 @@ import {
   prepareBuilderGeneration,
   projectBuilderGeneration,
 } from './builderGeneration';
-import type {
-  BuilderCodeGeneratorPort,
-  BuilderProjectRepositoryPort,
+import {
+  sanitizeTrustedBuilderGenerationDiagnostic,
+  type BuilderCodeGeneratorPort,
+  type BuilderGenerationDiagnosticCode,
+  type BuilderProjectRepositoryPort,
 } from './builderPorts';
+
 import {
   sanitizeBuilderRepositoryCommitEvidence,
   sanitizeBuilderRepositoryCurrentEvidence,
@@ -31,7 +34,7 @@ export type BuilderProjectControllerStatus =
   | 'unavailable';
 
 export type BuilderProjectControllerError =
-  | 'generation_failed'
+  | BuilderGenerationDiagnosticCode
   | 'save_unverified'
   | 'preview_unavailable'
   | 'conflict'
@@ -68,7 +71,6 @@ const BUSY_STATUSES = new Set<BuilderProjectControllerStatus>([
   'committing',
   'reopening',
 ]);
-
 function freezeSnapshot(
   status: BuilderProjectControllerStatus,
   savedRevision: BuilderProjectRevision | null,
@@ -290,9 +292,14 @@ export function createBuilderProjectController(
             result,
             ...(baseRevision === null ? {} : { currentProject: baseRevision }),
           });
-        } catch {
+        } catch (error) {
           if (!isCurrent(generation)) return snapshot;
-          return publish('generation_failed', undefined, undefined, 'generation_failed');
+          return publish(
+            'generation_failed',
+            undefined,
+            undefined,
+            sanitizeTrustedBuilderGenerationDiagnostic(error),
+          );
         }
         return persistCandidate(candidate, generation);
       });

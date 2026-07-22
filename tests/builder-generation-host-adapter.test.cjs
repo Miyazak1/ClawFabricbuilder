@@ -303,8 +303,8 @@ test('fails closed on parent, config, secret, transport, and generated response 
         },
       }),
     }), request(2, parentRef), 'builder_generation_parent_unavailable'],
-    [dependencies({ transport: async () => ({ generated_text: '{}' }) }), request(), 'builder_generation_response_invalid'],
-    [dependencies({ transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: '{}' }) }), request(), 'builder_generation_response_invalid'],
+    [dependencies({ transport: async () => ({ generated_text: '{}' }) }), request(), 'builder_generation_structured_response_invalid'],
+    [dependencies({ transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: '{}' }) }), request(), 'builder_generation_structured_response_invalid'],
   ];
   for (const [deps, raw, code] of cases) {
     const adapter = createBuilderGenerationHostAdapter(deps);
@@ -319,7 +319,9 @@ test('fails closed on parent, config, secret, transport, and generated response 
 test('maps timeout and provider failures without reflecting raw errors', async () => {
   for (const [transportCode, expected] of [
     ['builder_provider_timeout', 'builder_generation_timeout'],
-    ['builder_provider_response_too_large', 'builder_generation_response_invalid'],
+    ['builder_provider_http_error', 'builder_generation_provider_http_error'],
+    ['builder_provider_structured_response_invalid', 'builder_generation_structured_response_invalid'],
+    ['builder_provider_response_too_large', 'builder_generation_structured_response_invalid'],
     ['builder_provider_failed', 'builder_generation_failed'],
   ]) {
     const adapter = createBuilderGenerationHostAdapter(dependencies({
@@ -345,6 +347,23 @@ test('maps timeout and provider failures without reflecting raw errors', async (
   await assert.rejects(adapter.generate(request()), (error) => {
     assert.equal(error.code, 'builder_generation_failed');
     assert.doesNotMatch(`${error.message}:${error.stack}`, /private/iu);
+    return true;
+  });
+});
+
+test('preserves static preview contract rejection separately from structured provider output', async () => {
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify({
+        ...proposal(),
+        files: { ...proposal().files, 'index.html': '<script>private-marker</script>' },
+      }),
+    }),
+  }));
+  await assert.rejects(adapter.generate(request()), (error) => {
+    assert.equal(error.code, 'builder_generation_static_preview_contract_rejected');
+    assert.doesNotMatch(`${error.message}:${error.stack}`, /private-marker|script/iu);
     return true;
   });
 });
