@@ -22,10 +22,12 @@ const PURE_BUILDER_FILES = new Set([
 const INTEGRATION_FILES = new Set([
   'hooks/useBuilderProjectCatalogController.ts',
   'hooks/useBuilderProjectController.ts',
+  'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
   'infrastructure/builderDesktopProjectCatalogPort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
   'infrastructure/builderDesktopRepositoryPort.ts',
+  'presentation/BuilderProviderSettingsRouteAdapter.tsx',
 ]);
 
 function productionFiles(directory: string): string[] {
@@ -137,6 +139,11 @@ describe('Builder architecture boundary', () => {
       '../application/builderProjectCatalogController',
       'react',
     ]);
+    expect(moduleBoundary('useBuilderProviderSettingsController.ts', sources.find(({ path }) => path === 'hooks/useBuilderProviderSettingsController.ts')!.source).staticImports.sort()).toEqual([
+      '../infrastructure/builderDesktopProviderSettingsPort',
+      '../presentation/BuilderProviderSettingsPanel',
+      'react',
+    ]);
     expect(moduleBoundary('builderDesktopCodeGeneratorPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopCodeGeneratorPort.ts')!.source).staticImports).toEqual([
       '../application/builderPorts',
     ]);
@@ -146,6 +153,12 @@ describe('Builder architecture boundary', () => {
     expect(moduleBoundary('builderDesktopProviderSettingsPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProviderSettingsPort.ts')!.source).staticImports).toEqual([]);
     expect(moduleBoundary('builderDesktopRepositoryPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopRepositoryPort.ts')!.source).staticImports).toEqual([
       '../application/builderPorts',
+    ]);
+    expect(moduleBoundary('BuilderProviderSettingsRouteAdapter.tsx', sources.find(({ path }) => path === 'presentation/BuilderProviderSettingsRouteAdapter.tsx')!.source).staticImports.sort()).toEqual([
+      '../hooks/useBuilderProviderSettingsController',
+      '../infrastructure/builderDesktopProviderSettingsPort',
+      './BuilderProviderSettingsPanel',
+      'react',
     ]);
   });
 
