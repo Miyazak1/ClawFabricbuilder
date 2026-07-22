@@ -211,6 +211,9 @@ describe('BuilderPage', () => {
     expect(onSelectFile).toHaveBeenCalledWith('styles.css');
     expect(container.querySelector('h1')?.textContent).toBe('Focus timer');
     expect(container.textContent).toContain('Version 1');
+    const currentVersions = container.querySelectorAll('[data-builder-current-version="true"]');
+    expect(currentVersions).toHaveLength(1);
+    expect(currentVersions[0].textContent?.trim()).toBe('Version 1');
     expect(container.querySelector('code')?.textContent).toBe('<main>Timer</main>');
     expect(container.querySelector('[data-builder-static-preview="true"]')).not.toBeNull();
     expect(container.querySelector('[role="tab"]')?.className).toContain('cf-builder-tab');

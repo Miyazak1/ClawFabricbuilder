@@ -74,7 +74,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--cf-border);
   background: var(--cf-surface);
   color: var(--cf-text);
   padding: 0 0 0 12px;
@@ -314,9 +313,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  padding: 10px;
-  background: var(--cf-surface);
-  box-shadow: var(--cf-shadow-sm);
+  padding: 0;
+  background: transparent;
 }
 
 .cf-builder-composer-header,
@@ -328,16 +326,62 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   gap: 12px;
 }
 
-.cf-builder-composer-row {
+.cf-builder-composer-shell {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: end;
+  grid-template-rows: minmax(72px, auto) auto;
+  overflow: hidden;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-sm);
+}
+
+.cf-builder-composer-textarea {
+  min-height: 76px;
+  max-height: 180px;
+  border: 0;
+  background: transparent;
+  color: var(--cf-text);
+  line-height: 1.5;
+  outline: none;
+  padding: 16px 18px 8px;
+}
+
+.cf-builder-composer-textarea::placeholder {
+  color: var(--cf-text-subtle);
+}
+
+.cf-builder-composer-footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px 10px 14px;
+}
+
+.cf-builder-composer-tools {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--cf-text-muted);
+}
+
+.cf-builder-composer-tool {
+  display: inline-flex;
+  min-height: 28px;
+  min-width: 28px;
+  align-items: center;
+  justify-content: center;
+  color: var(--cf-text-muted);
+  font-size: 20px;
+  line-height: 1;
 }
 
 .cf-builder-command-button {
-  min-width: 132px;
+  min-width: 112px;
 }
 
 .cf-builder-output-panel {
@@ -548,6 +592,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-input:focus-visible {
   border-color: var(--cf-primary-border);
   box-shadow: 0 0 0 2px var(--cf-primary-soft);
+}
+
+.cf-builder-composer-textarea.cf-builder-input {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.cf-builder-composer-textarea.cf-builder-input:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .cf-builder-tab {
@@ -833,12 +888,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
     position: relative;
   }
 
-  .cf-builder-composer-row {
-    grid-template-columns: 1fr;
+  .cf-builder-command-button {
+    min-width: 104px;
   }
 
-  .cf-builder-command-button {
-    width: 100%;
+  .cf-builder-composer-footer {
+    align-items: flex-end;
+  }
+
+  .cf-builder-composer-tools .cf-builder-status-pill {
+    max-width: 150px;
+    white-space: normal;
   }
 
   .cf-builder-output-toolbar {

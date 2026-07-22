@@ -202,7 +202,9 @@ export function BuilderPage({
           <h1 className="truncate text-base font-semibold">{projectTitle}</h1>
         </div>
         {!hasDraft ? null : (
-          <span className="text-xs text-muted-foreground">Version {revision}</span>
+          <span className="text-xs text-muted-foreground" data-builder-current-version="true">
+            Version {revision}
+          </span>
         )}
       </header>
 
@@ -325,17 +327,11 @@ export function BuilderPage({
           </div>
         </section>
 
-        <section aria-label="Build request" className="cf-builder-panel cf-builder-composer-card border" data-builder-composer="true">
-          <header className="cf-builder-composer-header">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">Prompt</p>
-              <label className="text-sm font-semibold" htmlFor="builder-idea">What do you want to build?</label>
-            </div>
-            <span className="cf-builder-status-pill">{hasDraft ? 'Continue this project' : 'Start from an idea'}</span>
-          </header>
-          <div className="cf-builder-composer-row">
+        <section aria-label="Build request" className="cf-builder-composer-card" data-builder-composer="true">
+          <div className="cf-builder-composer-shell">
             <textarea
-              className="cf-builder-input min-h-20 w-full resize-none p-3 text-sm"
+              aria-label="What do you want to build?"
+              className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
               disabled={busy}
               id="builder-idea"
               maxLength={4000}
@@ -344,15 +340,21 @@ export function BuilderPage({
               readOnly={!canEditIdea}
               value={idea}
             />
-            <button
-              className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-11 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!canGenerate}
-              onClick={onGenerate}
-              type="button"
-            >
-              <Sparkles aria-hidden="true" className="size-4" />
-              {busy ? busyLabel(currentStatus) : hasDraft ? 'Update it' : 'Make it'}
-            </button>
+            <footer className="cf-builder-composer-footer">
+              <div className="cf-builder-composer-tools" aria-hidden="true">
+                <span className="cf-builder-composer-tool">+</span>
+                <span className="cf-builder-status-pill">{hasDraft ? 'Continue this project' : 'Start from an idea'}</span>
+              </div>
+              <button
+                className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canGenerate}
+                onClick={onGenerate}
+                type="button"
+              >
+                <Sparkles aria-hidden="true" className="size-4" />
+                {busy ? busyLabel(currentStatus) : hasDraft ? 'Update it' : 'Make it'}
+              </button>
+            </footer>
           </div>
           {currentStatus === 'opening' ? (
             <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Opening your project...</p>
