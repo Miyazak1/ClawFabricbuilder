@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, session } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const { createBuilderProjectIpcRuntime } = require('./builder-project-ipc-runtime.cjs');
 const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
@@ -90,13 +90,21 @@ function configurePackagedCanaryPaths() {
 }
 
 function createMainWindow() {
+  Menu.setApplicationMenu(null);
   const window = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 840,
     minHeight: 620,
     backgroundColor: '#f4f5f7',
+    autoHideMenuBar: true,
     show: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#f7f6f2',
+      symbolColor: '#242522',
+      height: 44,
+    },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

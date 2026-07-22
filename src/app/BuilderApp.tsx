@@ -168,77 +168,97 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [catalog, project]);
 
-  return (
-    <main className="cf-builder-workbench cf-builder-shell min-h-screen text-foreground" data-builder-workbench="true">
-      <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
-        <div className="cf-builder-rail-brand" aria-hidden="true">
-          <span className="cf-builder-brand-mark inline-flex size-8 items-center justify-center">
-            <Code2 aria-hidden="true" className="size-4" />
-          </span>
-        </div>
-        <nav className="cf-builder-rail-nav" aria-label="Builder views">
-          <button
-            aria-pressed={view === 'settings'}
-            className="cf-builder-nav-button cf-builder-rail-button inline-flex items-center justify-center gap-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => setView('settings')}
-            type="button"
-          >
-            <Settings aria-hidden="true" className="size-4" />
-            Settings
-          </button>
-        </nav>
-      </aside>
+  const chromeContext = view === 'settings'
+    ? 'AI provider settings'
+    : project.snapshot.status === 'ready' || project.snapshot.status === 'preview_unavailable'
+      ? project.snapshot.savedRevision?.title ?? 'New project'
+      : 'New project';
 
-      <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
-        <header className="cf-builder-context-header">
+  return (
+    <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
+      <header className="cf-builder-app-chrome" aria-label="ClawFabric Builder window" data-builder-app-chrome="true">
+        <div className="cf-builder-app-chrome-title min-w-0">
+          <span className="cf-builder-brand-mark inline-flex size-7 items-center justify-center" aria-hidden="true">
+            <Code2 className="size-4" />
+          </span>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground">ClawFabric</p>
-            <strong className="block truncate text-sm">Builder</strong>
+            <p className="truncate text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
+            <strong className="block truncate text-sm">{chromeContext}</strong>
           </div>
-        </header>
-        <div className="cf-builder-context-body">
-          <BuilderProjectCatalog
-            onCreateProject={newProject}
-            onOpenProject={openProject}
-            onRefresh={refreshCatalog}
-            snapshot={catalog.snapshot}
-          />
         </div>
-      </aside>
+      </header>
+
+      <div className="cf-builder-shell">
+        <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
+          <div className="cf-builder-rail-brand" aria-hidden="true">
+            <span className="cf-builder-brand-mark inline-flex size-8 items-center justify-center">
+              <Code2 aria-hidden="true" className="size-4" />
+            </span>
+          </div>
+          <nav className="cf-builder-rail-nav" aria-label="Builder views">
+            <button
+              aria-pressed={view === 'settings'}
+              className="cf-builder-nav-button cf-builder-rail-button inline-flex items-center justify-center gap-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setView('settings')}
+              type="button"
+            >
+              <Settings aria-hidden="true" className="size-4" />
+              Settings
+            </button>
+          </nav>
+        </aside>
+
+        <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
+          <header className="cf-builder-context-header">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">ClawFabric</p>
+              <strong className="block truncate text-sm">Builder</strong>
+            </div>
+          </header>
+          <div className="cf-builder-context-body">
+            <BuilderProjectCatalog
+              onCreateProject={newProject}
+              onOpenProject={openProject}
+              onRefresh={refreshCatalog}
+              snapshot={catalog.snapshot}
+            />
+          </div>
+        </aside>
 
         <section className="cf-builder-main-frame cf-builder-workbench-frame" aria-label="Builder workbench" data-builder-workbench-frame="true">
-        {view === 'settings' ? (
+          {view === 'settings' ? (
             <div className="cf-builder-settings-surface bg-background text-foreground">
               <header className="cf-builder-surface-toolbar">
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
-                <h1 className="truncate text-base font-semibold">AI provider settings</h1>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
+                  <h1 className="truncate text-base font-semibold">AI provider settings</h1>
+                </div>
+                <button
+                  className="cf-builder-secondary-button inline-flex min-h-9 shrink-0 items-center justify-center px-3 text-sm font-medium"
+                  onClick={() => setView('project')}
+                  type="button"
+                >
+                  Back to project
+                </button>
+              </header>
+              <div className="cf-builder-settings-body">
+                <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
               </div>
-              <button
-                className="cf-builder-secondary-button inline-flex min-h-9 shrink-0 items-center justify-center px-3 text-sm font-medium"
-                onClick={() => setView('project')}
-                type="button"
-              >
-                Back to project
-              </button>
-            </header>
-            <div className="cf-builder-settings-body">
-              <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
             </div>
-          </div>
-        ) : (
-          <BuilderPage
-            activeFile={activeFile}
-            idea={idea}
-            onGenerate={generate}
-            onIdeaChange={setIdea}
-            onOpenSettings={() => setView('settings')}
-            onRetrySave={retrySave}
-            onSelectFile={setActiveFile}
-            snapshot={project.snapshot}
-          />
-        )}
-      </section>
+          ) : (
+            <BuilderPage
+              activeFile={activeFile}
+              idea={idea}
+              onGenerate={generate}
+              onIdeaChange={setIdea}
+              onOpenSettings={() => setView('settings')}
+              onRetrySave={retrySave}
+              onSelectFile={setActiveFile}
+              snapshot={project.snapshot}
+            />
+          )}
+        </section>
+      </div>
     </main>
   );
 }

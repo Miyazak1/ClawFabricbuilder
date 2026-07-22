@@ -31,6 +31,8 @@ async function executeMain({
     setPath: [],
     whenReady: 0,
   };
+  const applicationMenuCalls = [];
+  const browserWindowOptions = [];
   let sessionCreated = sessionDataExists;
   const events = new Map();
   function runtime(index) {
@@ -58,7 +60,8 @@ async function executeMain({
   };
   class BrowserWindow {
     static getAllWindows() { return []; }
-    constructor() {
+    constructor(options) {
+      browserWindowOptions.push(options);
       if (windowConstructionFails) throw new Error('window failed');
       throw new Error('unexpected successful window construction');
     }
@@ -66,6 +69,11 @@ async function executeMain({
   const electron = {
     app,
     BrowserWindow,
+    Menu: {
+      setApplicationMenu(value) {
+        applicationMenuCalls.push(value);
+      },
+    },
     ipcMain: {},
     session: {
       defaultSession: {
@@ -145,11 +153,11 @@ async function executeMain({
   try {
     vm.runInNewContext(mainSource, context, { filename: mainPath });
   } catch (error) {
-    if (returnOnThrow) return { calls, error, events };
+    if (returnOnThrow) return { applicationMenuCalls, browserWindowOptions, calls, error, events };
     throw error;
   }
   await new Promise((resolve) => setImmediate(resolve));
-  return { calls, events };
+  return { applicationMenuCalls, browserWindowOptions, calls, events };
 }
 
 test('a second application instance exits before registering Builder authorities', async () => {
@@ -172,7 +180,7 @@ test('a second application instance exits before registering Builder authorities
 });
 
 test('window startup failure disposes registered handlers and quits', async () => {
-  const { calls, events } = await executeMain({
+  const { applicationMenuCalls, browserWindowOptions, calls, events } = await executeMain({
     singleInstanceLock: true,
     windowConstructionFails: true,
   });
@@ -190,6 +198,16 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.equal(events.has('second-instance'), true);
   assert.equal(events.has('before-quit'), true);
   assert.equal(events.has('window-all-closed'), true);
+  assert.deepEqual(applicationMenuCalls, [null]);
+  assert.equal(browserWindowOptions.length, 1);
+  assert.equal(browserWindowOptions[0].autoHideMenuBar, true);
+  assert.equal(browserWindowOptions[0].titleBarStyle, 'hidden');
+  assert.equal(browserWindowOptions[0].titleBarOverlay.color, '#f7f6f2');
+  assert.equal(browserWindowOptions[0].titleBarOverlay.symbolColor, '#242522');
+  assert.equal(browserWindowOptions[0].titleBarOverlay.height, 44);
+  assert.equal(browserWindowOptions[0].webPreferences.contextIsolation, true);
+  assert.equal(browserWindowOptions[0].webPreferences.nodeIntegration, false);
+  assert.equal(browserWindowOptions[0].webPreferences.sandbox, true);
 });
 
 test('runtime registration failure rolls back previously registered handlers and quits', async () => {

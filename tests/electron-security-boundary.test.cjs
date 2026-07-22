@@ -14,6 +14,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /nodeIntegration:\s*false/u);
   assert.match(main, /sandbox:\s*true/u);
   assert.match(main, /setWindowOpenHandler/u);
+  assert.match(main, /Menu\.setApplicationMenu\(null\)/u);
+  assert.match(main, /autoHideMenuBar:\s*true/u);
+  assert.match(main, /titleBarStyle:\s*['"]hidden['"]/u);
+  assert.match(main, /titleBarOverlay:\s*\{/u);
   assert.match(main, /app\.isPackaged/u);
   assert.match(main, /setPermissionRequestHandler/u);
   assert.match(main, /setPermissionCheckHandler/u);
@@ -47,7 +51,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 9);
   assert.doesNotMatch(
     preload,
-    /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|safeStorage|Authorization|Bearer/iu,
+    /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|windowControl|minimize|maximize|closeWindow|safeStorage|Authorization|Bearer/iu,
   );
 });
 

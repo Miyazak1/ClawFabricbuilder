@@ -311,6 +311,7 @@ describe('BuilderApp', () => {
     expect(container.querySelectorAll('main')).toHaveLength(1);
     expect(container.querySelector('.cf-builder-workbench')).not.toBeNull();
     expect(container.querySelector('[data-builder-workbench="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-app-chrome="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workbench-rail="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workbench-context="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workbench-frame="true"]')).not.toBeNull();
@@ -319,6 +320,7 @@ describe('BuilderApp', () => {
     expect(container.textContent).toContain('Saved projects are unavailable.');
     expect(container.textContent).toContain('New project');
     expect(buttons(container, 'New project')).toHaveLength(1);
+    expect(buttons(container, 'Settings')).toHaveLength(1);
     expect(container.textContent).not.toMatch(/chat|canvas|AppLayout|generic provider|localStorage/iu);
   });
 
@@ -341,10 +343,13 @@ describe('BuilderApp', () => {
     act(() => button(container, 'CSS').click());
     act(() => button(container, 'Settings').click());
     await flush();
+    expect(container.querySelectorAll('main')).toHaveLength(1);
     expect(container.textContent).toContain('AI provider settings');
     expect(container.querySelector('.cf-builder-main-frame')).not.toBeNull();
     expect(container.querySelector('.cf-builder-settings-surface')).not.toBeNull();
     expect(container.querySelector('.cf-builder-settings-body')).not.toBeNull();
+    expect(buttons(container, 'New project')).toHaveLength(1);
+    expect(buttons(container, 'Settings')).toHaveLength(1);
     act(() => button(container, 'Back to project').click());
     await waitFor(() => {
       expect(container.querySelector('h1')?.textContent).toBe('Known timer');

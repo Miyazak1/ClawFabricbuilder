@@ -60,9 +60,49 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text);
 }
 
+.cf-builder-desktop-shell {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cf-builder-app-chrome {
+  display: flex;
+  min-height: 44px;
+  min-width: 0;
+  align-items: center;
+  border-bottom: 1px solid var(--cf-border);
+  background: var(--cf-surface);
+  color: var(--cf-text);
+  padding: 0 148px 0 12px;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.cf-builder-app-chrome-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cf-builder-app-chrome button,
+.cf-builder-app-chrome input,
+.cf-builder-app-chrome textarea,
+.cf-builder-app-chrome select,
+.cf-builder-app-chrome a,
+.cf-builder-shell button,
+.cf-builder-shell input,
+.cf-builder-shell textarea,
+.cf-builder-shell select,
+.cf-builder-shell a {
+  -webkit-app-region: no-drag;
+}
+
 .cf-builder-shell {
   display: grid;
   grid-template-columns: 72px 288px minmax(0, 1fr);
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -171,8 +211,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-page,
 .cf-builder-settings-surface {
   display: flex;
-  min-height: 100vh;
+  min-height: 0;
   min-width: 0;
+  height: 100%;
   flex-direction: column;
   overflow: hidden;
 }
@@ -559,8 +600,18 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 @media (max-width: 720px) {
-  .cf-builder-shell {
+  .cf-builder-desktop-shell {
     min-height: 100vh;
+    overflow: auto;
+  }
+
+  .cf-builder-app-chrome {
+    min-height: 40px;
+    padding: 0 112px 0 10px;
+  }
+
+  .cf-builder-shell {
+    min-height: 0;
     grid-template-columns: 1fr;
     grid-template-rows: auto auto minmax(0, 1fr);
     overflow: auto;
