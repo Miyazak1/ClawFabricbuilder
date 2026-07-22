@@ -9,19 +9,27 @@ const vm = require('node:vm');
 const mainPath = path.join(__dirname, '..', 'electron', 'main.cjs');
 const mainSource = fs.readFileSync(mainPath, 'utf8');
 
-async function executeMain({ singleInstanceLock, windowConstructionFails }) {
+async function executeMain({ singleInstanceLock, windowConstructionFails, failRegisterIndex = -1 }) {
   const calls = {
-    createRuntime: 0,
+    createGenerationRuntime: 0,
+    createProjectRuntime: 0,
+    createSettingsRuntime: 0,
     dispose: 0,
     quit: 0,
     register: 0,
     whenReady: 0,
   };
   const events = new Map();
-  const runtime = {
-    dispose() { calls.dispose += 1; },
-    register() { calls.register += 1; },
-  };
+  function runtime(index) {
+    return {
+      index,
+      dispose() { calls.dispose += 1; },
+      register() {
+        calls.register += 1;
+        if (index === failRegisterIndex) throw new Error('private register marker');
+      },
+    };
+  }
   const app = {
     getPath() { return path.join(process.cwd(), 'test-user-data'); },
     isPackaged: true,
@@ -66,8 +74,24 @@ async function executeMain({ singleInstanceLock, windowConstructionFails }) {
       if (specifier === './builder-project-ipc-runtime.cjs') {
         return {
           createBuilderProjectIpcRuntime() {
-            calls.createRuntime += 1;
-            return runtime;
+            calls.createProjectRuntime += 1;
+            return runtime(0);
+          },
+        };
+      }
+      if (specifier === './builder-provider-settings-ipc-runtime.cjs') {
+        return {
+          createBuilderProviderSettingsIpcRuntime() {
+            calls.createSettingsRuntime += 1;
+            return runtime(1);
+          },
+        };
+      }
+      if (specifier === './builder-generation-ipc-runtime.cjs') {
+        return {
+          createBuilderGenerationIpcRuntime() {
+            calls.createGenerationRuntime += 1;
+            return runtime(2);
           },
         };
       }
@@ -85,7 +109,9 @@ test('a second application instance exits before registering Builder authorities
     windowConstructionFails: false,
   });
   assert.deepEqual(calls, {
-    createRuntime: 0,
+    createGenerationRuntime: 0,
+    createProjectRuntime: 0,
+    createSettingsRuntime: 0,
     dispose: 0,
     quit: 1,
     register: 0,
@@ -100,13 +126,32 @@ test('window startup failure disposes registered handlers and quits', async () =
     windowConstructionFails: true,
   });
   assert.deepEqual(calls, {
-    createRuntime: 1,
-    dispose: 1,
+    createGenerationRuntime: 1,
+    createProjectRuntime: 1,
+    createSettingsRuntime: 1,
+    dispose: 3,
     quit: 1,
-    register: 1,
+    register: 3,
     whenReady: 1,
   });
   assert.equal(events.has('second-instance'), true);
   assert.equal(events.has('before-quit'), true);
   assert.equal(events.has('window-all-closed'), true);
+});
+
+test('runtime registration failure rolls back previously registered handlers and quits', async () => {
+  const { calls } = await executeMain({
+    singleInstanceLock: true,
+    windowConstructionFails: false,
+    failRegisterIndex: 1,
+  });
+  assert.deepEqual(calls, {
+    createGenerationRuntime: 1,
+    createProjectRuntime: 1,
+    createSettingsRuntime: 1,
+    dispose: 1,
+    quit: 1,
+    register: 2,
+    whenReady: 1,
+  });
 });

@@ -7,7 +7,7 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 
-test('Electron shell exposes only sender-bound Builder project authorities', () => {
+test('Electron shell exposes only sender-bound Builder authorities', () => {
   const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
   assert.match(main, /contextIsolation:\s*true/u);
@@ -21,13 +21,24 @@ test('Electron shell exposes only sender-bound Builder project authorities', () 
   assert.match(main, /app\.getPath\(['"]userData['"]\)/u);
   assert.match(main, /requestSingleInstanceLock/u);
   assert.match(main, /app\.on\(['"]second-instance['"]/u);
-  assert.match(main, /\.catch\(\(\) => \{[\s\S]*projectIpcRuntime\?\.dispose\(\)[\s\S]*app\.quit\(\)/u);
+  assert.match(main, /createBuilderProjectIpcRuntime/u);
+  assert.match(main, /createBuilderProviderSettingsIpcRuntime/u);
+  assert.match(main, /createBuilderGenerationIpcRuntime/u);
+  assert.match(main, /const runtimes = createIpcRuntimes\(app\.getPath\(['"]userData['"]\)\)/u);
+  assert.match(main, /registerIpcRuntimes\(runtimes\)/u);
+  assert.match(main, /ipcRuntimes = runtimes/u);
+  assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
   assert.match(preload, /builder-preload\.v1/u);
   assert.match(preload, /projectRevisions/u);
   assert.match(preload, /projectCatalog/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 3);
-  assert.doesNotMatch(preload, /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder/u);
+  assert.match(preload, /codeGenerator/u);
+  assert.match(preload, /providerSettings/u);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 9);
+  assert.doesNotMatch(
+    preload,
+    /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|safeStorage|Authorization|Bearer/iu,
+  );
 });
 
 test('build and package scripts require production artifact verification', () => {

@@ -48,11 +48,12 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
   assert.match(preload, /projectRevisions/u);
   assert.match(preload, /projectCatalog/u);
-  assert.doesNotMatch(preload, /provider|secret|settings|safeStorage/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 3);
+  assert.match(preload, /providerSettings/u);
+  assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 9);
 });
 
-test('provider settings IPC runtime remains main-only and is not wired to main or preload yet', () => {
+test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {
   const runtime = fs.readFileSync(
     path.join(root, 'electron', 'builder-provider-settings-ipc-runtime.cjs'),
     'utf8',
@@ -66,10 +67,13 @@ test('provider settings IPC runtime remains main-only and is not wired to main o
 
   const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
-  for (const source of [main, preload]) {
-    assert.doesNotMatch(source, /builder-provider-settings-ipc-runtime|provider-settings|providerSettings/iu);
-    assert.doesNotMatch(source, /clawfabric-builder:provider-settings:/u);
-  }
+  assert.match(main, /createBuilderProviderSettingsIpcRuntime/u);
+  assert.doesNotMatch(main, /clawfabric-builder:provider-settings:|credential|safeStorage/iu);
+  assert.match(preload, /providerSettings/u);
+  assert.match(preload, /clawfabric-builder:provider-settings:read-current/u);
+  assert.match(preload, /clawfabric-builder:provider-settings:replace-current/u);
+  assert.match(preload, /clawfabric-builder:provider-settings:status/u);
+  assert.doesNotMatch(preload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage/iu);
 });
 
 test('package identity and dependencies remain Builder-only', () => {

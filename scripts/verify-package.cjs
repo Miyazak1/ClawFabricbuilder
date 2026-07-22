@@ -59,6 +59,7 @@ for (const expected of [
   '/electron/builder-generation-kernel.cjs',
   '/electron/builder-generation-host-adapter.cjs',
   '/electron/builder-generation-ipc-adapter.cjs',
+  '/electron/builder-generation-ipc-runtime.cjs',
   '/electron/builder-generation-main-service.cjs',
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
@@ -67,6 +68,7 @@ assert.equal(packagedFiles.some((entry) => forbidden.test(entry)), false);
 assert.equal(packagedFiles.some((entry) => /\.test\.(?:cjs|js|ts|tsx)$/u.test(entry)), false);
 for (const forbiddenTest of [
   '/tests/builder-generation-ipc-adapter.test.cjs',
+  '/tests/builder-generation-ipc-runtime.test.cjs',
   '/tests/builder-generation-main-service.test.cjs',
   '/tests/builder-provider-settings-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-runtime.test.cjs',
@@ -107,12 +109,24 @@ const packagedProviderSettingsIpcAdapter = packagedSource('electron/builder-prov
 const packagedProviderSettingsIpcRuntime = packagedSource('electron/builder-provider-settings-ipc-runtime.cjs');
 const packagedGenerationHost = packagedSource('electron/builder-generation-host-adapter.cjs');
 const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
+const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation-ipc-runtime.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const channels = [
   'clawfabric-builder:project-revisions:commit',
   'clawfabric-builder:project-revisions:load-current',
   'clawfabric-builder:project-catalog:list-current',
 ];
+const generationChannels = [
+  'clawfabric-builder:code-generator:generate',
+  'clawfabric-builder:code-generator:cancel',
+  'clawfabric-builder:code-generator:availability',
+];
+const providerSettingsChannels = [
+  'clawfabric-builder:provider-settings:read-current',
+  'clawfabric-builder:provider-settings:replace-current',
+  'clawfabric-builder:provider-settings:status',
+];
+const preloadChannels = [...channels, ...generationChannels, ...providerSettingsChannels];
 
 function frozenObjectLiteral(node) {
   assert.equal(ts.isCallExpression(node), true);
@@ -178,18 +192,36 @@ assert.equal(exposeCalls.length, 1);
 assert.equal(exposeCalls[0].arguments.length, 2);
 assert.equal(exposeCalls[0].arguments[0].text, 'clawfabricBuilder');
 const preloadRoot = frozenObjectLiteral(exposeCalls[0].arguments[1]);
-exactObjectKeys(preloadRoot, ['bridgeVersion', 'projectRevisions', 'projectCatalog']);
+exactObjectKeys(preloadRoot, ['bridgeVersion', 'projectRevisions', 'projectCatalog', 'codeGenerator', 'providerSettings']);
 const revisionProperty = preloadRoot.properties.find((property) => property.name.text === 'projectRevisions');
 const catalogProperty = preloadRoot.properties.find((property) => property.name.text === 'projectCatalog');
+const generationProperty = preloadRoot.properties.find((property) => property.name.text === 'codeGenerator');
+const providerSettingsProperty = preloadRoot.properties.find((property) => property.name.text === 'providerSettings');
 assert.equal(ts.isPropertyAssignment(revisionProperty), true);
 assert.equal(ts.isPropertyAssignment(catalogProperty), true);
+assert.equal(ts.isPropertyAssignment(generationProperty), true);
+assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
 const revisionBridge = frozenObjectLiteral(revisionProperty.initializer);
 const catalogBridge = frozenObjectLiteral(catalogProperty.initializer);
+const generationBridge = frozenObjectLiteral(generationProperty.initializer);
+const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
 exactObjectKeys(revisionBridge, ['commit', 'loadCurrent']);
 exactObjectKeys(catalogBridge, ['listCurrent']);
-assert.deepEqual(rendererPropertyAccesses, ['invoke', 'invoke', 'invoke']);
+exactObjectKeys(generationBridge, ['generate', 'cancel', 'availability']);
+exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
+assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
+  'invoke',
+]);
 assert.deepEqual(forbiddenRendererReferences, []);
-assert.doesNotMatch(packagedPreload, /provider|secret|settings|safeStorage|generation|codeGenerator/iu);
+assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
 
 function exactInvokeMethod(object, methodName, channelName, expectedParameters) {
   const method = object.properties.find((property) => property.name.text === methodName);
@@ -215,15 +247,34 @@ function exactInvokeMethod(object, methodName, channelName, expectedParameters) 
 assert.equal(preloadConstants.get('COMMIT_CHANNEL'), channels[0]);
 assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[1]);
 assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[2]);
+assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
+assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[1]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[2]);
+assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
+assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
+assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
 exactInvokeMethod(revisionBridge, 'commit', 'COMMIT_CHANNEL', ['request']);
 exactInvokeMethod(revisionBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
 exactInvokeMethod(catalogBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
+exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'cancel', 'CANCEL_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
+exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
+exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
+exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
 
 assert.match(packagedMain, /require\(['"]\.\/builder-project-ipc-runtime\.cjs['"]\)/u);
-assert.match(packagedMain, /projectIpcRuntime\.register\(\)/u);
+assert.match(packagedMain, /require\(['"]\.\/builder-provider-settings-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /createBuilderProjectIpcRuntime/u);
+assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
+assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
+assert.match(packagedMain, /const runtimes = createIpcRuntimes\(app\.getPath\(['"]userData['"]\)\)/u);
+assert.match(packagedMain, /registerIpcRuntimes\(runtimes\)/u);
+assert.match(packagedMain, /ipcRuntimes = runtimes/u);
+assert.match(packagedMain, /disposeIpcRuntimes/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
-assert.doesNotMatch(packagedMain, /generation|codeGenerator|builder-generation-main-service|builder-generation-ipc-adapter/iu);
-assert.doesNotMatch(packagedMain, /provider-settings|providerSettings|builder-provider-settings-ipc-runtime/iu);
+assert.doesNotMatch(packagedMain, /clawfabric-builder:provider-settings:|clawfabric-builder:code-generator:|credential|safeStorage|local-provider-executor/iu);
 assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
 assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
 assert.doesNotMatch(packagedRuntime, /provider|secret|safeStorage/iu);
@@ -233,7 +284,10 @@ assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LIST_CURRENT_CHAN
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectRevisions/u);
 assert.match(packagedPreload, /projectCatalog/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 3);
+assert.match(packagedPreload, /codeGenerator/u);
+assert.match(packagedPreload, /providerSettings/u);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 9);
+assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
 assert.doesNotMatch(packagedProviderConfigRepository, /safeStorage|ipcMain|ipcRenderer|contextBridge|fetch\s*\(/u);
@@ -258,6 +312,13 @@ assert.doesNotMatch(
   packagedProviderSettingsIpcRuntime,
   /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|generic.*(?:config|secret)/iu,
 );
+assert.match(packagedGenerationIpcRuntime, /createBuilderGenerationIpcAdapter/u);
+assert.match(packagedGenerationIpcRuntime, /createBuilderGenerationMainService/u);
+assert.match(packagedGenerationIpcRuntime, /bind_current_authority/u);
+assert.doesNotMatch(
+  packagedGenerationIpcRuntime,
+  /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|providerSettings|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|generic.*(?:config|secret)/iu,
+);
 assert.doesNotMatch(packagedGenerationHost, /safeStorage|builder-provider-secret-store|builder-provider-config-repository/u);
 assert.match(packagedGenerationIpcAdapter, /createBuilderGenerationIpcAdapter/u);
 assert.match(packagedGenerationIpcAdapter, /active_renderer_required:\s*true/u);
@@ -278,10 +339,26 @@ assert.doesNotMatch(
   packagedGenerationMainService,
   /ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider-secret-store|builder-provider-config-repository|local-provider-executor/iu,
 );
-for (const channel of channels) {
+for (const channel of preloadChannels) {
   assert.equal(packagedPreload.includes(channel), true, channel);
+}
+for (const channel of channels) {
   assert.equal(
     packagedRevisionAdapter.includes(channel) || packagedCatalogAdapter.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of generationChannels) {
+  assert.equal(
+    packagedGenerationIpcAdapter.includes(channel) || packagedGenerationIpcRuntime.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of providerSettingsChannels) {
+  assert.equal(
+    packagedProviderSettingsIpcAdapter.includes(channel) || packagedProviderSettingsIpcRuntime.includes(channel),
     true,
     channel,
   );

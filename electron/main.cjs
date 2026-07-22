@@ -4,10 +4,12 @@ const path = require('node:path');
 const { app, BrowserWindow, ipcMain, session } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const { createBuilderProjectIpcRuntime } = require('./builder-project-ipc-runtime.cjs');
+const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
+const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
 
 const DEV_SERVER_URL = process.env.BUILDER_RENDERER_URL || '';
 let mainWindow = null;
-let projectIpcRuntime = null;
+let ipcRuntimes = Object.freeze([]);
 
 function createMainWindow() {
   const window = new BrowserWindow({
@@ -52,6 +54,56 @@ function denyRendererPermissions() {
   session.defaultSession.setPermissionCheckHandler(() => false);
 }
 
+function disposeIpcRuntimes() {
+  for (const runtime of [...ipcRuntimes].reverse()) {
+    try {
+      runtime.dispose();
+    } catch {
+      // Shutdown must not leave the Electron process open because cleanup reporting failed.
+    }
+  }
+  ipcRuntimes = Object.freeze([]);
+}
+
+function createIpcRuntimes(userDataPath) {
+  return Object.freeze([
+    createBuilderProjectIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      userDataPath,
+    }),
+    createBuilderProviderSettingsIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      userDataPath,
+    }),
+    createBuilderGenerationIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      userDataPath,
+    }),
+  ]);
+}
+
+function registerIpcRuntimes(runtimes) {
+  const registered = [];
+  try {
+    for (const runtime of runtimes) {
+      runtime.register();
+      registered.push(runtime);
+    }
+  } catch (error) {
+    for (const runtime of registered.reverse()) {
+      try {
+        runtime.dispose();
+      } catch {
+        // The app-level startup failure path below will quit after best-effort cleanup.
+      }
+    }
+    throw error;
+  }
+}
+
 app.setAppUserModelId('com.clawfabric.builder');
 
 if (!app.requestSingleInstanceLock()) {
@@ -66,25 +118,20 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     denyRendererPermissions();
-    projectIpcRuntime = createBuilderProjectIpcRuntime({
-      ipcMain,
-      mainWindowRef: () => mainWindow,
-      userDataPath: app.getPath('userData'),
-    });
-    projectIpcRuntime.register();
+    const runtimes = createIpcRuntimes(app.getPath('userData'));
+    registerIpcRuntimes(runtimes);
+    ipcRuntimes = runtimes;
     createMainWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });
   }).catch(() => {
-    projectIpcRuntime?.dispose();
-    projectIpcRuntime = null;
+    disposeIpcRuntimes();
     app.quit();
   });
 
   app.on('before-quit', () => {
-    projectIpcRuntime?.dispose();
-    projectIpcRuntime = null;
+    disposeIpcRuntimes();
   });
 
   app.on('window-all-closed', () => {

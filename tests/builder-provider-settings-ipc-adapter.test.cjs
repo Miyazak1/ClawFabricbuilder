@@ -446,7 +446,7 @@ test('rejects hostile options, proxy failures, and accessor payloads without lea
   assert.equal(trapCalls, 0);
 });
 
-test('source is a pure controlled adapter and main/preload still expose no settings channels', () => {
+test('source is a pure controlled adapter and shell wiring exposes only settings channels', () => {
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(
     path.join(root, 'electron', 'builder-provider-settings-ipc-adapter.cjs'),
@@ -467,10 +467,11 @@ test('source is a pure controlled adapter and main/preload still expose no setti
 
   const main = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
-  for (const text of [main, preload]) {
-    assert.doesNotMatch(text, /provider-settings|providerSettings|settings|credential|safeStorage/iu);
-    assert.doesNotMatch(text, new RegExp(READ_CURRENT_CHANNEL, 'u'));
-    assert.doesNotMatch(text, new RegExp(REPLACE_CURRENT_CHANNEL, 'u'));
-    assert.doesNotMatch(text, new RegExp(STATUS_CHANNEL, 'u'));
-  }
+  assert.match(main, /createBuilderProviderSettingsIpcRuntime/u);
+  assert.doesNotMatch(main, /clawfabric-builder:provider-settings:|credential|safeStorage/iu);
+  assert.match(preload, /providerSettings/u);
+  assert.match(preload, new RegExp(READ_CURRENT_CHANNEL, 'u'));
+  assert.match(preload, new RegExp(REPLACE_CURRENT_CHANNEL, 'u'));
+  assert.match(preload, new RegExp(STATUS_CHANNEL, 'u'));
+  assert.doesNotMatch(preload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage/iu);
 });
