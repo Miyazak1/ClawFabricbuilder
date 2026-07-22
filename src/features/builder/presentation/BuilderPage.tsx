@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Eye, FileCode2, RefreshCw, Sparkles } from 'lucide-react';
 
 import type {
@@ -33,6 +33,10 @@ const FILES: ReadonlyArray<{ file: BuilderFileName; label: string }> = [
   { file: 'styles.css', label: 'CSS' },
   { file: 'app.js', label: 'JavaScript' },
 ];
+const TOOL_VIEWS = Object.freeze([
+  { id: 'preview', label: 'Preview', Icon: Eye },
+  { id: 'code', label: 'Code', Icon: FileCode2 },
+] as const);
 const STATUSES = new Set<BuilderProjectControllerStatus>([
   'new',
   'opening',
@@ -165,6 +169,7 @@ export function BuilderPage({
   const safeActiveFile = FILES.some(({ file }) => file === activeFile)
     ? activeFile
     : FILES[0].file;
+  const [toolView, setToolView] = useState<(typeof TOOL_VIEWS)[number]['id']>('preview');
   const canGenerate = typeof onGenerate === 'function'
     && GENERATABLE_STATUSES.has(currentStatus)
     && idea.trim().length > 0;
@@ -177,6 +182,7 @@ export function BuilderPage({
 
   function selectFile(file: BuilderFileName): void {
     if (typeof onSelectFile !== 'function') return;
+    setToolView('code');
     onSelectFile(file);
     tabRefs.current[file]?.focus();
   }
@@ -192,7 +198,7 @@ export function BuilderPage({
     <div className="cf-builder-page bg-background text-foreground" data-builder-page="true">
       <header className="cf-builder-surface-toolbar">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
+          <p className="text-xs font-medium text-muted-foreground">Project</p>
           <h1 className="truncate text-base font-semibold">{projectTitle}</h1>
         </div>
         {!hasDraft ? null : (
@@ -204,18 +210,46 @@ export function BuilderPage({
         <section aria-label="Project area" className="cf-builder-panel cf-builder-output-panel border">
           <header className="cf-builder-output-toolbar">
             <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">Project</p>
-              <h2 className="text-sm font-semibold">Preview and project files</h2>
+              <p className="text-xs font-medium text-muted-foreground">Result</p>
+              <h2 className="text-sm font-semibold">{toolView === 'preview' ? 'Project preview' : 'Project files'}</h2>
             </div>
-            {!hasDraft ? (
-              <span className="cf-builder-status-pill">Draft not made yet</span>
-            ) : (
-              <span className="cf-builder-status-pill">Version {revision}</span>
-            )}
+            <div className="cf-builder-toolbar-actions">
+              <div className="cf-builder-tool-switch" role="tablist" aria-label="Project tools">
+                {TOOL_VIEWS.map(({ Icon, id, label }) => (
+                  <button
+                    aria-controls={id === 'preview' ? 'builder-tool-preview' : 'builder-code-panel'}
+                    aria-selected={toolView === id}
+                    className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
+                    data-active={toolView === id}
+                    disabled={typeof onSelectFile !== 'function'}
+                    id={`builder-tool-tab-${id}`}
+                    key={id}
+                    onClick={() => setToolView(id)}
+                    role="tab"
+                    tabIndex={toolView === id ? 0 : -1}
+                    type="button"
+                  >
+                    <Icon aria-hidden="true" className="size-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {!hasDraft ? (
+                <span className="cf-builder-status-pill">Draft not made yet</span>
+              ) : (
+                <span className="cf-builder-status-pill">Version {revision}</span>
+              )}
+            </div>
           </header>
 
           <div className="cf-builder-stage-grid">
-            <section aria-label="Preview" className="cf-builder-preview-panel cf-builder-preview-primary">
+            <section
+              aria-labelledby="builder-tool-tab-preview"
+              className="cf-builder-preview-panel cf-builder-preview-primary"
+              hidden={toolView !== 'preview'}
+              id="builder-tool-preview"
+              role="tabpanel"
+            >
               <div className="cf-builder-panel-toolbar">
                 <Eye aria-hidden="true" className="size-4" />
                 Preview
@@ -238,6 +272,7 @@ export function BuilderPage({
             <section
               aria-labelledby={tabId(safeActiveFile)}
               className="cf-builder-code-panel"
+              hidden={toolView !== 'code'}
               id="builder-code-panel"
               role="tabpanel"
             >
@@ -294,7 +329,7 @@ export function BuilderPage({
           <header className="cf-builder-composer-header">
             <div className="min-w-0">
               <p className="text-xs font-medium text-muted-foreground">Prompt</p>
-              <label className="text-sm font-semibold" htmlFor="builder-idea">What would you like to make?</label>
+              <label className="text-sm font-semibold" htmlFor="builder-idea">What do you want to build?</label>
             </div>
             <span className="cf-builder-status-pill">{hasDraft ? 'Continue this project' : 'Start from an idea'}</span>
           </header>
@@ -305,7 +340,7 @@ export function BuilderPage({
               id="builder-idea"
               maxLength={4000}
               onChange={(event) => onIdeaChange?.(event.currentTarget.value)}
-              placeholder="A tiny habit tracker with a cheerful weekly view"
+              placeholder="Describe the app, tool, or page you want..."
               readOnly={!canEditIdea}
               value={idea}
             />

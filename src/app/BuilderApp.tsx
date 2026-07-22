@@ -1,5 +1,17 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Code2, Settings } from 'lucide-react';
+import {
+  Bell,
+  Code2,
+  Compass,
+  FolderOpen,
+  History,
+  LayoutTemplate,
+  MessageSquare,
+  Rocket,
+  Settings,
+  UsersRound,
+  type LucideIcon,
+} from 'lucide-react';
 
 import {
   BuilderDesktopBridgeRootError,
@@ -23,6 +35,35 @@ export type BuilderAppProps = Readonly<{
 }>;
 
 type BuilderAppView = 'project' | 'settings';
+type BuilderRailArea =
+  | 'projects'
+  | 'runs'
+  | 'templates'
+  | 'community'
+  | 'spaces'
+  | 'activity'
+  | 'publish'
+  | 'contacts'
+  | 'settings';
+type BuilderRailItem = Readonly<{
+  Icon: LucideIcon;
+  enabled: boolean;
+  id: BuilderRailArea;
+  label: string;
+  view: BuilderAppView | null;
+}>;
+
+const BUILDER_RAIL_ITEMS: readonly BuilderRailItem[] = Object.freeze([
+  { Icon: FolderOpen, enabled: true, id: 'projects', label: 'Projects', view: 'project' },
+  { Icon: History, enabled: false, id: 'runs', label: 'Runs', view: null },
+  { Icon: LayoutTemplate, enabled: false, id: 'templates', label: 'Templates', view: null },
+  { Icon: Compass, enabled: false, id: 'community', label: 'Explore', view: null },
+  { Icon: UsersRound, enabled: false, id: 'spaces', label: 'Spaces', view: null },
+  { Icon: Bell, enabled: false, id: 'activity', label: 'Activity', view: null },
+  { Icon: Rocket, enabled: false, id: 'publish', label: 'Publish', view: null },
+  { Icon: MessageSquare, enabled: false, id: 'contacts', label: 'Contacts', view: null },
+  { Icon: Settings, enabled: true, id: 'settings', label: 'Settings', view: 'settings' },
+]);
 
 const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   bridgeVersion: 'builder-preload.v0',
@@ -168,12 +209,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [catalog, project]);
 
-  const chromeContext = view === 'settings'
-    ? 'AI provider settings'
-    : project.snapshot.status === 'ready' || project.snapshot.status === 'preview_unavailable'
-      ? project.snapshot.savedRevision?.title ?? 'New project'
-      : 'New project';
-
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
       <header className="cf-builder-app-chrome" aria-label="ClawFabric Builder window" data-builder-app-chrome="true">
@@ -182,10 +217,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             <Code2 className="size-4" />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
-            <strong className="block truncate text-sm">{chromeContext}</strong>
+            <strong className="block truncate text-sm">ClawFabric Builder</strong>
           </div>
         </div>
+        <div className="cf-builder-window-controls-slot" aria-hidden="true" />
       </header>
 
       <div className="cf-builder-shell">
@@ -196,25 +231,24 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             </span>
           </div>
           <nav className="cf-builder-rail-nav" aria-label="Builder views">
-            <button
-              aria-pressed={view === 'settings'}
-              className="cf-builder-nav-button cf-builder-rail-button inline-flex items-center justify-center gap-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => setView('settings')}
-              type="button"
-            >
-              <Settings aria-hidden="true" className="size-4" />
-              Settings
-            </button>
+            {BUILDER_RAIL_ITEMS.filter((item) => item.enabled).map(({ Icon, id, label, view: targetView }) => (
+              <button
+                aria-pressed={view === targetView}
+                className="cf-builder-nav-button cf-builder-rail-button inline-flex items-center justify-center gap-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                key={id}
+                onClick={() => {
+                  if (targetView !== null) setView(targetView);
+                }}
+                type="button"
+              >
+                <Icon aria-hidden="true" className="size-4" />
+                {label}
+              </button>
+            ))}
           </nav>
         </aside>
 
         <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
-          <header className="cf-builder-context-header">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">ClawFabric</p>
-              <strong className="block truncate text-sm">Builder</strong>
-            </div>
-          </header>
           <div className="cf-builder-context-body">
             <BuilderProjectCatalog
               onCreateProject={newProject}

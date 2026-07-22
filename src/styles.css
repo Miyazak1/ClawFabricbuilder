@@ -40,12 +40,12 @@
   --cf-danger-border: #fecdd3;
   --cf-danger-text: #be123c;
   --cf-shadow-sm: 0 1px 2px rgba(31, 32, 29, 0.06);
-  --cf-shadow-md: 0 16px 38px rgba(31, 32, 29, 0.08);
-  --cf-shadow-lg: 0 24px 70px rgba(31, 32, 29, 0.12);
+  --cf-shadow-md: 0 10px 26px rgba(31, 32, 29, 0.07);
+  --cf-shadow-lg: 0 14px 34px rgba(31, 32, 29, 0.08);
 
   color: var(--color-foreground);
   background: var(--color-background);
-  font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -73,10 +73,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-height: 44px;
   min-width: 0;
   align-items: center;
+  justify-content: space-between;
   border-bottom: 1px solid var(--cf-border);
-  background: color-mix(in srgb, var(--cf-surface) 94%, var(--cf-bg-subtle));
+  background: var(--cf-surface);
   color: var(--cf-text);
-  padding: 0 148px 0 12px;
+  padding: 0 0 0 12px;
   user-select: none;
   -webkit-app-region: drag;
 }
@@ -85,6 +86,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.cf-builder-window-controls-slot {
+  width: 148px;
+  min-height: 44px;
+  flex: 0 0 148px;
 }
 
 .cf-builder-app-chrome button,
@@ -102,7 +109,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-shell {
   display: grid;
-  grid-template-columns: 68px 276px minmax(0, 1fr);
+  grid-template-columns: 72px 276px minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -119,7 +126,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   border-right: 1px solid var(--cf-border);
   background: var(--cf-surface);
   padding: 10px 8px;
@@ -186,7 +193,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 10px 10px 12px;
+  padding: 12px;
 }
 
 .cf-builder-main-frame {
@@ -200,10 +207,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   overflow: hidden;
   border: 1px solid var(--cf-border);
   border-right: 0;
-  border-radius: 12px 0 0 0;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--cf-surface) 70%, transparent), transparent 180px),
-    var(--cf-bg);
+  border-radius: 8px 0 0 8px;
+  background: var(--cf-bg);
 }
 
 .cf-builder-header {
@@ -223,13 +228,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-surface-toolbar {
   display: flex;
-  min-height: 58px;
+  min-height: 56px;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--cf-border);
-  background: color-mix(in srgb, var(--cf-surface) 90%, transparent);
+  background: var(--cf-surface);
   padding: 0 18px;
 }
 
@@ -239,9 +244,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   flex: 1;
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   overflow: auto;
-  padding: 18px;
+  padding: 14px;
 }
 
 .cf-builder-settings-body {
@@ -274,13 +279,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   position: sticky;
   bottom: 0;
   z-index: 2;
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: color-mix(in srgb, var(--cf-surface) 96%, white);
-  box-shadow: var(--cf-shadow-md);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-sm);
 }
 
 .cf-builder-composer-header,
@@ -296,7 +301,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
   align-items: end;
 }
 
@@ -310,7 +315,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  box-shadow: var(--cf-shadow-lg);
+  box-shadow: var(--cf-shadow-sm);
 }
 
 .cf-builder-output-toolbar {
@@ -320,7 +325,25 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   justify-content: space-between;
   gap: 12px;
   border-bottom: 1px solid var(--cf-border);
-  padding: 12px 14px;
+  padding: 10px 12px;
+}
+
+.cf-builder-toolbar-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cf-builder-tool-switch {
+  display: inline-flex;
+  min-width: 0;
+  gap: 3px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface-muted);
+  padding: 2px;
 }
 
 .cf-builder-tab-strip {
@@ -337,7 +360,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: grid;
   min-height: 0;
   min-width: 0;
-  grid-template-columns: minmax(360px, 1.25fr) minmax(300px, 0.75fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
 }
@@ -352,8 +375,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-code-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  border-left: 1px solid var(--cf-border);
-  background: color-mix(in srgb, var(--cf-surface-muted) 62%, var(--cf-surface));
+  background: var(--cf-surface-muted);
 }
 
 .cf-builder-preview-panel {
@@ -362,13 +384,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-preview-primary {
-  background: color-mix(in srgb, var(--cf-surface-raised) 82%, var(--cf-bg));
+  background: var(--cf-surface);
 }
 
 .cf-builder-code-header {
   align-items: flex-start;
   flex-direction: column;
-  min-height: 52px;
+  min-height: 54px;
   border-bottom: 1px solid var(--cf-border);
   background: var(--cf-surface-muted);
   padding: 8px 10px 8px 12px;
@@ -386,7 +408,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-panel-toolbar {
   display: flex;
-  min-height: 38px;
+  min-height: 36px;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--cf-border);
@@ -404,7 +426,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   align-items: center;
   justify-content: center;
   border: 1px solid var(--cf-border);
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--cf-surface-muted);
   color: var(--cf-text-muted);
   padding: 0 9px;
@@ -416,7 +438,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-panel-subtle {
   background: var(--cf-surface-muted);
   border-color: var(--cf-border);
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--cf-text-muted);
 }
 
@@ -549,13 +571,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-catalog-header {
   display: flex;
-  min-height: 50px;
+  min-height: 48px;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid var(--cf-border);
-  padding: 8px 4px 10px;
+  padding: 4px 0 10px;
 }
 
 .cf-builder-catalog-actions,
@@ -566,7 +588,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-catalog-command {
-  padding: 10px 0;
+  padding: 10px 0 12px;
 }
 
 .cf-builder-project-list {
@@ -582,7 +604,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-code {
-  background: color-mix(in srgb, var(--cf-surface-raised) 88%, var(--cf-bg));
+  background: color-mix(in srgb, var(--cf-surface-muted) 84%, var(--cf-surface));
   color: var(--cf-text-soft);
   min-height: 0;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -612,10 +634,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-settings-card {
   display: flex;
-  width: min(840px, 100%);
+  width: min(740px, 100%);
   min-width: 0;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   padding: 14px;
 }
 
@@ -651,7 +673,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 @media (max-width: 1160px) {
   .cf-builder-shell {
-    grid-template-columns: 64px 260px minmax(0, 1fr);
+    grid-template-columns: 64px 248px minmax(0, 1fr);
   }
 
   .cf-builder-surface-body {
@@ -659,18 +681,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   }
 
   .cf-builder-composer-card {
-    order: -1;
     position: relative;
-  }
-
-  .cf-builder-stage-grid {
-    grid-template-columns: 1fr;
-    overflow: auto;
-  }
-
-  .cf-builder-code-panel {
-    border-left: 0;
-    border-top: 1px solid var(--cf-border);
   }
 
   .cf-builder-empty {
@@ -694,7 +705,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
   .cf-builder-app-chrome {
     min-height: 40px;
-    padding: 0 112px 0 10px;
+    padding-left: 10px;
+  }
+
+  .cf-builder-window-controls-slot {
+    flex-basis: 112px;
+    width: 112px;
+    min-height: 40px;
   }
 
   .cf-builder-shell {
@@ -776,7 +793,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   }
 
   .cf-builder-composer-card {
-    order: -1;
     position: relative;
   }
 
@@ -791,6 +807,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .cf-builder-output-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .cf-builder-toolbar-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .cf-builder-empty {
