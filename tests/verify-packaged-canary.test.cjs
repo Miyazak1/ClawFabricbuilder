@@ -12,6 +12,7 @@ const {
   CANARY_INPUT_VERSION,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
+  assertCustomChromeControls,
   assertReadEvidence,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
@@ -46,6 +47,17 @@ function input(overrides = {}) {
       timeout_ms: 30000,
     },
     schema_version: CANARY_INPUT_VERSION,
+    ...overrides,
+  });
+}
+
+function savedProfileInput(overrides = {}) {
+  return JSON.stringify({
+    executable_path: path.join(process.cwd(), 'release', 'win-unpacked', 'ClawFabric Builder.exe'),
+    idea: 'Make a small focus timer.',
+    mode: 'saved_profile',
+    schema_version: CANARY_INPUT_VERSION,
+    source_user_data_path: path.join(process.cwd(), 'source-profile'),
     ...overrides,
   });
 }
@@ -140,12 +152,21 @@ class FakeRole {
     this.page.events.push(['roleWaitFor', this.role, this.name, options?.state ?? null]);
     if (this.role === 'alert' && this.page.alertVisible === true) return;
     if (this.role === 'alert' && this.page.failAlertWait === true) throw new Error('secret-marker');
+    if (this.role !== 'alert') {
+      if (this.page.failRoleWaits.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
+      return;
+    }
     return new Promise(() => {});
   }
 
   first() {
     this.page.events.push(['roleFirst', this.role, this.name]);
     return this;
+  }
+
+  async isEnabled() {
+    this.page.events.push(['roleEnabled', this.role, this.name]);
+    return !this.page.disabledRoles.has(`${this.role}:${this.name}`);
   }
 }
 
@@ -171,8 +192,10 @@ class FakePage {
     this.failFills = new Set();
     this.failPreviewAttributes = false;
     this.failRoleClicks = new Set();
+    this.failRoleWaits = new Set();
     this.failTextWaitFor = new Set();
     this.failWaitFor = new Set();
+    this.disabledRoles = new Set();
     this.keepPasswordValue = false;
     this.previewVisible = true;
     this.values = new Map();
@@ -270,13 +293,28 @@ function bridgeEvidence(projectId = null) {
 }
 
 function fakeElectron(page) {
-  return {
+  const fake = {
+    appEvents: [],
     launches: [],
     async launch(options) {
-      this.launches.push(options);
+      fake.launches.push(options);
+      const requestListeners = [];
       return {
+        context: () => {
+          fake.appEvents.push(['context']);
+          return {
+            on: (event, listener) => {
+              fake.appEvents.push(['contextOn', event]);
+              if (event === 'request') requestListeners.push(listener);
+            },
+          };
+        },
         async close() {},
+        emitRequest(url) {
+          for (const listener of requestListeners) listener({ url: () => url });
+        },
         async firstWindow() {
+          fake.appEvents.push(['firstWindow']);
           page.evaluate = async (callback, argument) => {
             page.events.push(['evaluate', callback.toString(), argument]);
             return bridgeEvidence(argument.projectId);
@@ -287,6 +325,7 @@ function fakeElectron(page) {
       };
     },
   };
+  return fake;
 }
 
 function pngFixture() {
@@ -300,12 +339,35 @@ function pngFixture() {
   return PNG.sync.write(png);
 }
 
-function fakeDirectoryStat(dev, ino, symbolic = false) {
+function fakeStat(dev, ino, {
+  directory = true,
+  mtimeMs = 1,
+  size = 64n,
+  symbolic = false,
+} = {}) {
   return {
     dev,
     ino,
-    isDirectory() { return true; },
+    mtimeMs,
+    size,
+    isDirectory() { return directory; },
+    isFile() { return !directory; },
     isSymbolicLink() { return symbolic; },
+  };
+}
+
+function fakeDirectoryStat(dev, ino, symbolic = false) {
+  return fakeStat(dev, ino, { directory: true, symbolic });
+}
+
+function fakeFileStat(dev, ino, size = 64n, symbolic = false, mtimeMs = 1) {
+  return fakeStat(dev, ino, { directory: false, mtimeMs, size, symbolic });
+}
+
+function fakeDirent(name, file = true) {
+  return {
+    name,
+    isFile() { return file; },
   };
 }
 
@@ -313,6 +375,8 @@ function guardedFixture() {
   const tempRoot = path.join(process.cwd(), 'canary-temp');
   const userDataPath = path.join(tempRoot, `${PACKAGED_CANARY_USER_DATA_PREFIX}unit`);
   const state = {
+    directories: new Map(),
+    files: new Map(),
     realpath: new Map([
       [tempRoot, tempRoot],
       [userDataPath, userDataPath],
@@ -323,6 +387,14 @@ function guardedFixture() {
     ]),
   };
   const removed = [];
+  const copied = [];
+  const descriptors = new Map();
+  let nextFd = 100;
+  function statForFile(target, buffer) {
+    const existing = state.stats.get(target);
+    if (existing) return fakeFileStat(existing.dev, existing.ino, BigInt(buffer.length), false, existing.mtimeMs);
+    return fakeFileStat(1n, BigInt(200 + state.stats.size), BigInt(buffer.length));
+  }
   const fsModule = {
     existsSync(target) { return target.endsWith('fake.exe'); },
     lstatSync(target) {
@@ -334,9 +406,74 @@ function guardedFixture() {
       }
       return stat;
     },
+    closeSync(fd) {
+      const descriptor = descriptors.get(fd);
+      if (!descriptor) throw new Error('bad fd');
+      if (descriptor.flags === 'wx') {
+        const body = Buffer.concat(descriptor.chunks);
+        state.files.set(descriptor.path, body);
+        state.stats.set(descriptor.path, statForFile(descriptor.path, body));
+        state.realpath.set(descriptor.path, descriptor.path);
+        const source = Array.from(state.files.entries())
+          .find(([candidate, candidateBody]) => candidate !== descriptor.path && candidateBody.equals(body))?.[0]
+          ?? descriptor.path;
+        copied.push([source, descriptor.path]);
+      }
+      descriptors.delete(fd);
+    },
+    fstatSync(fd) {
+      const descriptor = descriptors.get(fd);
+      if (!descriptor) throw new Error('bad fd');
+      if (descriptor.flags === 'wx') {
+        const body = Buffer.concat(descriptor.chunks);
+        return statForFile(descriptor.path, body);
+      }
+      return fsModule.lstatSync(descriptor.path);
+    },
+    fsyncSync(fd) {
+      if (!descriptors.has(fd)) throw new Error('bad fd');
+    },
     mkdtempSync(prefix) {
       assert.equal(prefix, path.join(tempRoot, PACKAGED_CANARY_USER_DATA_PREFIX));
       return userDataPath;
+    },
+    mkdirSync(target) {
+      if (state.stats.has(target)) throw new Error('exists');
+      state.stats.set(target, fakeDirectoryStat(1n, BigInt(20 + state.stats.size)));
+      state.realpath.set(target, target);
+      state.directories.set(target, []);
+    },
+    openSync(target, flags) {
+      if (flags === 'r') {
+        if (!state.stats.has(target) || !state.files.has(target)) throw new Error('missing file');
+        const fd = nextFd;
+        nextFd += 1;
+        descriptors.set(fd, { flags, path: target, position: 0 });
+        return fd;
+      }
+      if (flags === 'wx') {
+        if (state.stats.has(target) || state.files.has(target)) throw new Error('exists');
+        const fd = nextFd;
+        nextFd += 1;
+        descriptors.set(fd, { chunks: [], flags, path: target });
+        return fd;
+      }
+      throw new Error('bad flags');
+    },
+    readSync(fd, buffer, offset, length, position) {
+      const descriptor = descriptors.get(fd);
+      if (!descriptor || descriptor.flags !== 'r') throw new Error('bad fd');
+      const body = state.files.get(descriptor.path);
+      const start = position === null ? descriptor.position : position;
+      const slice = body.subarray(start, start + length);
+      slice.copy(buffer, offset);
+      if (position === null) descriptor.position += slice.length;
+      return slice.length;
+    },
+    readdirSync(target) {
+      const entries = state.directories.get(target);
+      if (!entries) throw new Error('missing directory');
+      return entries;
     },
     realpathSync: {
       native(target) {
@@ -346,14 +483,58 @@ function guardedFixture() {
       },
     },
     rmSync(target) { removed.push(target); },
+    writeSync(fd, buffer, offset, length) {
+      const descriptor = descriptors.get(fd);
+      if (!descriptor || descriptor.flags !== 'wx') throw new Error('bad fd');
+      descriptor.chunks.push(Buffer.from(buffer.subarray(offset, offset + length)));
+      return length;
+    },
   };
   return {
     fsModule,
     osModule: { tmpdir: () => tempRoot },
+    copied,
     removed,
     state,
     tempRoot,
     userDataPath,
+  };
+}
+
+function savedProfileFixture() {
+  const fixture = guardedFixture();
+  const sourceRoot = path.join(process.cwd(), 'source-profile');
+  const configDir = path.join(sourceRoot, 'builder-provider-config-v1');
+  const secretsDir = path.join(sourceRoot, 'builder-provider-secrets-v1');
+  const localState = path.join(sourceRoot, 'Local State');
+  const current = path.join(configDir, 'current.json');
+  const secretName = `${'a'.repeat(64)}.json`;
+  const secret = path.join(secretsDir, secretName);
+  fixture.state.realpath.set(sourceRoot, sourceRoot);
+  fixture.state.realpath.set(configDir, configDir);
+  fixture.state.realpath.set(secretsDir, secretsDir);
+  fixture.state.realpath.set(localState, localState);
+  fixture.state.realpath.set(current, current);
+  fixture.state.realpath.set(secret, secret);
+  fixture.state.stats.set(sourceRoot, fakeDirectoryStat(2n, 100n));
+  fixture.state.stats.set(configDir, fakeDirectoryStat(2n, 101n));
+  fixture.state.stats.set(secretsDir, fakeDirectoryStat(2n, 102n));
+  fixture.state.stats.set(localState, fakeFileStat(2n, 103n, 512n));
+  fixture.state.stats.set(current, fakeFileStat(2n, 104n, 256n));
+  fixture.state.stats.set(secret, fakeFileStat(2n, 105n, 512n));
+  fixture.state.files.set(localState, Buffer.alloc(512, 'l'));
+  fixture.state.files.set(current, Buffer.alloc(256, 'c'));
+  fixture.state.files.set(secret, Buffer.alloc(512, 's'));
+  fixture.state.directories.set(configDir, [fakeDirent('current.json')]);
+  fixture.state.directories.set(secretsDir, [fakeDirent(secretName)]);
+  return {
+    ...fixture,
+    current,
+    localState,
+    secret,
+    secretName,
+    secretsDir,
+    sourceRoot,
   };
 }
 
@@ -371,6 +552,7 @@ function assertFixedCanaryError(error, code, stage) {
 test('parses exact stdin input and rejects credential in argv or env', () => {
   const parsed = parseCanaryInput(input());
   assert.equal(parsed.schema_version, CANARY_INPUT_VERSION);
+  assert.equal(Object.hasOwn(parsed, 'mode'), false);
   assert.equal(parsed.provider.credential, 'real-key-value-secret');
   assert.throws(
     () => parseCanaryInput(input({ executable_path: 'relative.exe' })),
@@ -387,6 +569,36 @@ test('parses exact stdin input and rejects credential in argv or env', () => {
   );
   assert.throws(
     () => parseCanaryInput(input({ extra: true })),
+    (error) => error.code === 'canary_input_invalid',
+  );
+});
+
+test('parses exact saved-profile input without accepting provider material', () => {
+  const parsed = parseCanaryInput(savedProfileInput());
+  assert.equal(parsed.mode, 'saved_profile');
+  assert.equal(parsed.schema_version, CANARY_INPUT_VERSION);
+  assert.equal(Object.hasOwn(parsed, 'provider'), false);
+  assert.equal(path.isAbsolute(parsed.source_user_data_path), true);
+  assert.throws(
+    () => parseCanaryInput(savedProfileInput({ provider: { credential: 'secret' } })),
+    (error) => error.code === 'canary_input_invalid',
+  );
+  assert.throws(
+    () => parseCanaryInput(savedProfileInput({ source_user_data_path: 'relative-profile' })),
+    (error) => error.code === 'canary_input_invalid',
+  );
+  for (const blockedPath of [
+    '\\\\server\\share\\profile',
+    '\\\\?\\C:\\Users\\Example\\Profile',
+    '\\\\.\\C:\\Users\\Example\\Profile',
+  ]) {
+    assert.throws(
+      () => parseCanaryInput(savedProfileInput({ source_user_data_path: blockedPath })),
+      (error) => error.code === 'canary_input_invalid',
+    );
+  }
+  assert.throws(
+    () => parseCanaryInput(input({ mode: 'first_config' })),
     (error) => error.code === 'canary_input_invalid',
   );
 });
@@ -408,6 +620,33 @@ test('fills Settings UI and permits artifacts only after password field clears',
   ]);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), true);
   assert.ok(await page.locator(SELECTORS.apiKey).screenshot());
+});
+
+test('observes custom chrome controls without clicking window actions', async () => {
+  const page = new FakePage();
+  const evidence = await assertCustomChromeControls(page);
+  assert.deepEqual(evidence, {
+    close_enabled: true,
+    maximize_or_restore_enabled: true,
+    minimize_enabled: true,
+    window_controls_enabled: true,
+  });
+  assert.deepEqual(page.events.filter((event) => event[0] === 'roleWaitFor').map((event) => event[2]), [
+    'Minimize window',
+    /^(?:Maximize|Restore) window$/u,
+    'Close window',
+  ]);
+  assert.deepEqual(page.events.filter((event) => event[0] === 'roleClick'), []);
+  assert.deepEqual(page.events.filter((event) => event[0] === 'roleEnabled').map((event) => event[2]), [
+    'Minimize window',
+    /^(?:Maximize|Restore) window$/u,
+    'Close window',
+  ]);
+  page.disabledRoles.add('button:Close window');
+  await assert.rejects(
+    assertCustomChromeControls(page),
+    (error) => error.code === 'canary_custom_chrome_failed',
+  );
 });
 
 test('generates only through real Make UI and reads bridge evidence without write commands', async () => {
@@ -611,12 +850,29 @@ test('summarizes nonblank preview pixels and tracks unexpected renderer network'
   assert.match(summary.pixel_digest, /^sha256:[0-9a-f]{64}$/u);
   const page = new FakePage();
   const recorder = networkRecorder();
-  recorder.attach(page);
+  const app = {
+    context() {
+      return {
+        on(event, listener) {
+          page.on(event, listener);
+        },
+      };
+    },
+  };
+  assert.equal(recorder.attachApplication(app), true);
   page.emitRequest('file:///app/index.html');
   page.emitRequest('https://provider.example/v1/chat/completions');
   page.emitRequest('https://unexpected.example/script.js');
   assert.deepEqual(recorder.snapshot(), {
+    application_observer_count: 1,
     unexpected_network_count: 2,
+  });
+  const fallback = networkRecorder();
+  fallback.attachPage(page);
+  page.emitRequest('wss://unexpected.example/socket');
+  assert.deepEqual(fallback.snapshot(), {
+    application_observer_count: 0,
+    unexpected_network_count: 1,
   });
 });
 
@@ -692,7 +948,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(result.safe_storage.credential_status, 'stored');
   assert.equal(result.project.revision, 1);
   assert.equal(result.project.restart_revision_unchanged, true);
-  assert.equal(result.project.restart_generation_command_issued, false);
+  assert.equal(result.project.restart_new_revision_observed, false);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
   assert.equal(result.preview.first.sandbox, 'empty');
   assert.equal(result.preview.first.script_src, 'none');
@@ -702,6 +958,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(JSON.stringify(result).includes(parsed.executable_path), false);
   assert.deepEqual(Object.keys(result.input).sort(), ['credential_source', 'idea_digest', 'schema_version']);
   assert.equal(electron.launches.length, 2);
+  assert.deepEqual(electron.appEvents, [
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
+  ]);
   for (const launch of electron.launches) {
     assert.equal(launch.env.BUILDER_PACKAGED_CANARY, '1');
     assert.equal(launch.env.BUILDER_PACKAGED_CANARY_USER_DATA_PATH, userDataPath);
@@ -725,30 +989,380 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.deepEqual(removed, [userDataPath]);
 });
 
-test('opens restart project with escaped project id selector and visible catalog facts', async () => {
+test('copies only saved provider profile files and runs without provider input or settings writes', async (t) => {
+  const parsed = parseCanaryInput(savedProfileInput({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+  const page = new FakePage();
+  const electron = fakeElectron(page);
+  const {
+    copied,
+    current,
+    fsModule,
+    localState,
+    osModule,
+    removed,
+    secret,
+    secretName,
+    userDataPath,
+  } = savedProfileFixture();
+  fsModule.copyFileSync = () => {
+    throw new Error('copyFileSync must not be used');
+  };
+  t.after(() => {
+    delete globalThis.clawfabricBuilder;
+  });
+
+  const result = await runPackagedCanary(parsed, {
+    argv: [],
+    electron,
+    env: {
+      JWT_SECRET: 'do-not-inherit',
+      PATH: 'C:\\Windows\\System32',
+      PROVIDER_API_KEY: 'unrelated-provider-secret',
+      SystemRoot: 'C:\\Windows',
+    },
+    fs: fsModule,
+    os: osModule,
+    userDataPath,
+  });
+
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v1');
+  assert.deepEqual(result.input, {
+    credential_source: 'saved_profile',
+    idea_digest: result.input.idea_digest,
+    schema_version: CANARY_INPUT_VERSION,
+  });
+  assert.equal(result.user_data.temporary, true);
+  assert.equal(result.user_data.source_profile_unchanged, true);
+  assert.equal(result.custom_chrome.window_controls_enabled, true);
+  assert.equal(result.safe_storage.configured, true);
+  assert.equal(result.safe_storage.credential_status, 'stored');
+  assert.equal(result.project.restart_revision_unchanged, true);
+  assert.equal(result.project.restart_new_revision_observed, false);
+  assert.equal(result.preview.restart_srcdoc_unchanged, true);
+  assert.deepEqual(copied.map(([source, target]) => [
+    path.relative(parsed.source_user_data_path, source),
+    path.relative(userDataPath, target),
+  ]), [
+    ['Local State', 'Local State'],
+    [path.join('builder-provider-config-v1', 'current.json'), path.join('builder-provider-config-v1', 'current.json')],
+    [path.join('builder-provider-secrets-v1', secretName), path.join('builder-provider-secrets-v1', secretName)],
+  ]);
+  assert.deepEqual(copied.map(([source]) => source), [localState, current, secret]);
+  const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
+  assert.deepEqual(roleClicks, ['New project', 'Make it']);
+  assert.equal(roleClicks.includes('Settings'), false);
+  assert.equal(roleClicks.includes('Save provider'), false);
+  assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), false);
+  assert.equal(electron.launches.length, 2);
+  assert.deepEqual(electron.appEvents, [
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
+  ]);
+  assert.deepEqual(removed, [userDataPath]);
+  const packet = JSON.stringify(result);
+  for (const forbidden of [
+    parsed.source_user_data_path,
+    userDataPath,
+    'provider.example',
+    'builder-model',
+    'real-key-value-secret',
+    'Local State',
+    'builder-provider-config-v1',
+    'builder-provider-secrets-v1',
+    secretName,
+  ]) {
+    assert.equal(packet.includes(forbidden), false, forbidden);
+  }
+});
+
+test('rejects saved profile target directory replacement before descriptor writes', async (t) => {
+  const parsed = parseCanaryInput(savedProfileInput({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+  const cases = [
+    {
+      name: 'target root identity drift',
+      pathFor(fixture) { return fixture.userDataPath; },
+      driftAt: 3,
+      drift(stat) {
+        return fakeDirectoryStat(stat.dev, 999n);
+      },
+      forbiddenTargets(fixture) {
+        return [
+          path.join(fixture.userDataPath, 'Local State'),
+          path.join(fixture.userDataPath, 'builder-provider-config-v1', 'current.json'),
+          path.join(fixture.userDataPath, 'builder-provider-secrets-v1', fixture.secretName),
+        ];
+      },
+    },
+    {
+      name: 'target config symlink',
+      pathFor(fixture) {
+        return path.join(fixture.userDataPath, 'builder-provider-config-v1');
+      },
+      driftAt: 2,
+      drift(stat) {
+        return fakeDirectoryStat(stat.dev, stat.ino, true);
+      },
+      forbiddenTargets(fixture) {
+        return [
+          path.join(fixture.userDataPath, 'builder-provider-config-v1', 'current.json'),
+          path.join(fixture.userDataPath, 'builder-provider-secrets-v1', fixture.secretName),
+        ];
+      },
+    },
+    {
+      name: 'target secrets realpath drift',
+      pathFor(fixture) {
+        return path.join(fixture.userDataPath, 'builder-provider-secrets-v1');
+      },
+      driftAt: 2,
+      drift(stat, fixture, target) {
+        fixture.state.realpath.set(target, path.join(fixture.tempRoot, 'replacement'));
+        return stat;
+      },
+      forbiddenTargets(fixture) {
+        return [path.join(fixture.userDataPath, 'builder-provider-secrets-v1', fixture.secretName)];
+      },
+    },
+  ];
+
+  for (const item of cases) {
+    const page = new FakePage();
+    const electron = fakeElectron(page);
+    const fixture = savedProfileFixture();
+    const target = item.pathFor(fixture);
+    const originalLstat = fixture.fsModule.lstatSync;
+    let seen = 0;
+    fixture.fsModule.lstatSync = (candidate) => {
+      const stat = originalLstat(candidate);
+      if (candidate === target) {
+        seen += 1;
+        if (seen === item.driftAt) return item.drift(stat, fixture, target);
+      }
+      return stat;
+    };
+    t.after(() => {
+      delete globalThis.clawfabricBuilder;
+    });
+
+    await assert.rejects(
+      runPackagedCanary(parsed, {
+        argv: [],
+        electron,
+        env: {},
+        fs: fixture.fsModule,
+        os: fixture.osModule,
+        userDataPath: fixture.userDataPath,
+      }),
+      (error) => error instanceof BuilderPackagedCanaryError
+        && error.code === 'canary_saved_profile_failed'
+        && error.stage === 'saved_profile'
+        && !error.message.includes(item.name),
+    );
+    assert.equal(electron.launches.length, 0);
+    for (const forbiddenTarget of item.forbiddenTargets(fixture)) {
+      assert.equal(fixture.state.files.has(forbiddenTarget), false, forbiddenTarget);
+    }
+    assert.deepEqual(fixture.removed, [fixture.userDataPath]);
+  }
+});
+
+test('rechecks saved profile target directory immediately before exclusive file create', async (t) => {
+  const parsed = parseCanaryInput(savedProfileInput({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+  const page = new FakePage();
+  const electron = fakeElectron(page);
+  const fixture = savedProfileFixture();
+  const targetConfigDirectory = path.join(fixture.userDataPath, 'builder-provider-config-v1');
+  const targetCurrent = path.join(targetConfigDirectory, 'current.json');
+  const originalOpen = fixture.fsModule.openSync;
+  fixture.fsModule.openSync = (target, flags) => {
+    const fd = originalOpen(target, flags);
+    if (target === fixture.current && flags === 'r') {
+      fixture.state.stats.set(targetConfigDirectory, fakeDirectoryStat(1n, 999n, true));
+    }
+    return fd;
+  };
+  t.after(() => {
+    delete globalThis.clawfabricBuilder;
+  });
+
+  await assert.rejects(
+    runPackagedCanary(parsed, {
+      argv: [],
+      electron,
+      env: {},
+      fs: fixture.fsModule,
+      os: fixture.osModule,
+      userDataPath: fixture.userDataPath,
+    }),
+    (error) => error instanceof BuilderPackagedCanaryError
+      && error.code === 'canary_saved_profile_failed'
+      && error.stage === 'saved_profile',
+  );
+  assert.equal(electron.launches.length, 0);
+  assert.equal(fixture.state.files.has(targetCurrent), false);
+  assert.deepEqual(fixture.removed, [fixture.userDataPath]);
+});
+
+test('opens restart project only for canonical project id selectors and visible catalog facts', async () => {
   const page = new FakePage();
   await openProjectFromCatalogById(page, {
-    project_id: 'builder-project:quote"slash\\line\nid',
-    revision: 3,
-    summary: 'Escaped selector summary.',
-    title: 'Escaped selector title',
+    project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
+    revision: 1,
+    summary: 'A timer.',
+    title: 'Focus timer',
   });
 
   const scopedLocators = page.events.filter((event) => event[0] === 'scopedLocator');
   assert.equal(scopedLocators.length, 1);
   assert.equal(
     scopedLocators[0][2],
-    'button[data-builder-project-id="builder-project:quote\\"slash\\\\line\\a id"]',
+    'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
   );
   const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
-    ['Escaped selector title', { exact: true }],
-    ['Escaped selector summary.', { exact: true }],
-    ['Version 3', { exact: true }],
+    ['Focus timer', { exact: true }],
+    ['A timer.', { exact: true }],
+    ['Version 1', { exact: true }],
   ]);
   assert.deepEqual(page.events.filter((event) => event[0] === 'click').map((event) => event[1]), [
-    `${SELECTORS.projectCatalog} button[data-builder-project-id="builder-project:quote\\"slash\\\\line\\a id"]`,
+    `${SELECTORS.projectCatalog} button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]`,
   ]);
+
+  const forged = bridgeEvidence('builder-project:11111111-1111-4111-8111-111111111111');
+  forged.catalog.projects[0].project_id = 'builder-project:quote"slash\\line\nid';
+  assert.throws(
+    () => assertReadEvidence(forged),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+});
+
+test('rejects malformed saved profile file sets before launch and still cleans temp profile', async (t) => {
+  const cases = [
+    {
+      name: 'missing Local State',
+      mutate(fixture) {
+        fixture.state.stats.delete(fixture.localState);
+      },
+    },
+    {
+      name: 'extra config file',
+      mutate(fixture) {
+        const configDir = path.join(fixture.sourceRoot, 'builder-provider-config-v1');
+        fixture.state.directories.set(configDir, [fakeDirent('current.json'), fakeDirent('extra.json')]);
+      },
+    },
+    {
+      name: 'non-json secret',
+      mutate(fixture) {
+        fixture.state.directories.set(fixture.secretsDir, [fakeDirent('not-json.txt')]);
+      },
+    },
+    {
+      name: 'secret bound exceeded',
+      mutate(fixture) {
+        fixture.state.stats.set(fixture.secret, fakeFileStat(2n, 105n, 65n * 1024n));
+      },
+    },
+    {
+      name: 'source symlink',
+      mutate(fixture) {
+        fixture.state.stats.set(fixture.sourceRoot, fakeDirectoryStat(2n, 100n, true));
+      },
+    },
+  ];
+  for (const item of cases) {
+    const parsed = parseCanaryInput(savedProfileInput({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+    const page = new FakePage();
+    const electron = fakeElectron(page);
+    const fixture = savedProfileFixture();
+    item.mutate(fixture);
+    t.after(() => {
+      delete globalThis.clawfabricBuilder;
+    });
+    await assert.rejects(
+      runPackagedCanary(parsed, {
+        argv: [],
+        electron,
+        env: {},
+        fs: fixture.fsModule,
+        os: fixture.osModule,
+        userDataPath: fixture.userDataPath,
+      }),
+      (error) => error instanceof BuilderPackagedCanaryError
+        && error.code === 'canary_saved_profile_failed'
+        && error.stage === 'saved_profile'
+        && !error.message.includes(item.name),
+    );
+    assert.equal(electron.launches.length, 0);
+    assert.deepEqual(fixture.removed, [fixture.userDataPath]);
+  }
+});
+
+test('detects saved profile mutation without leaking source details and still removes temp profile', async (t) => {
+  const parsed = parseCanaryInput(savedProfileInput({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+  const cases = [
+    {
+      name: 'size change',
+      mutate(fixture) {
+        fixture.state.stats.set(fixture.current, fakeFileStat(2n, 104n, 257n));
+        fixture.state.files.set(fixture.current, Buffer.alloc(257, 'c'));
+      },
+    },
+    {
+      name: 'same-size content change',
+      mutate(fixture) {
+        fixture.state.files.set(fixture.current, Buffer.alloc(256, 'x'));
+      },
+    },
+    {
+      name: 'directory identity change',
+      mutate(fixture) {
+        fixture.state.stats.set(fixture.secretsDir, fakeDirectoryStat(2n, 999n));
+      },
+    },
+  ];
+  for (const item of cases) {
+    const page = new FakePage();
+    const electron = fakeElectron(page);
+    const fixture = savedProfileFixture();
+    const originalLaunch = electron.launch;
+    electron.launch = async function launch(options) {
+      const app = await originalLaunch.call(this, options);
+      return {
+        context: app.context,
+        async close() {
+          item.mutate(fixture);
+          await app.close();
+        },
+        emitRequest: app.emitRequest,
+        firstWindow: app.firstWindow,
+      };
+    };
+    t.after(() => {
+      delete globalThis.clawfabricBuilder;
+    });
+
+    await assert.rejects(
+      runPackagedCanary(parsed, {
+        argv: [],
+        electron,
+        env: {},
+        fs: fixture.fsModule,
+        os: fixture.osModule,
+        userDataPath: fixture.userDataPath,
+      }),
+      (error) => error instanceof BuilderPackagedCanaryError
+        && error.code === 'canary_saved_profile_failed'
+        && error.stack === 'BuilderPackagedCanaryError: Packaged canary saved profile setup failed.'
+        && !error.message.includes(fixture.sourceRoot)
+        && !error.message.includes(item.name),
+    );
+    assert.deepEqual(fixture.removed, [fixture.userDataPath]);
+  }
 });
 
 test('normalizes setup failures before launch without leaking raw markers or proxy traps', async () => {
@@ -815,6 +1429,32 @@ test('normalizes injected fs setup failures while preserving guarded cleanup', a
       && !error.message.includes('secret-marker'),
   );
   assert.equal(electron.launches.length, 0);
+  assert.deepEqual(removed, [userDataPath]);
+});
+
+test('cleans direct mkdtemp path when guarded root capture fails before identity exists', async () => {
+  const parsed = parseCanaryInput(input({ executable_path: path.join(process.cwd(), 'fake.exe') }));
+  const { fsModule, osModule, removed, userDataPath } = guardedFixture();
+  let realpathCalls = 0;
+  fsModule.realpathSync.native = (target) => {
+    realpathCalls += 1;
+    if (target === userDataPath) throw new Error('secret-marker');
+    return target;
+  };
+
+  await assert.rejects(
+    runPackagedCanary(parsed, {
+      argv: [],
+      electron: fakeElectron(new FakePage()),
+      env: {},
+      fs: fsModule,
+      os: osModule,
+    }),
+    (error) => error instanceof BuilderPackagedCanaryError
+      && error.code === 'canary_cleanup_failed'
+      && !error.message.includes('secret-marker'),
+  );
+  assert.equal(realpathCalls >= 1, true);
   assert.deepEqual(removed, [userDataPath]);
 });
 

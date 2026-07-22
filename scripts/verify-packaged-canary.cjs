@@ -13,8 +13,16 @@ const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v1';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
+const LOCAL_STATE_FILE_NAME = 'Local State';
+const PROVIDER_CONFIG_DIRECTORY_NAME = 'builder-provider-config-v1';
+const PROVIDER_CONFIG_CURRENT_FILE_NAME = 'current.json';
+const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const STDIN_MAX_BYTES = 128 * 1024;
+const LOCAL_STATE_MAX_BYTES = 2 * 1024 * 1024;
+const PROVIDER_CONFIG_MAX_BYTES = 128 * 1024;
+const PROVIDER_SECRET_MAX_BYTES = 64 * 1024;
+const PROVIDER_SECRET_MAX_FILES = 8;
 const WINDOWS_ENV_ALLOWLIST = Object.freeze([
   'SystemRoot',
   'WINDIR',
@@ -50,12 +58,14 @@ const ERROR_MESSAGES = Object.freeze({
   canary_settings_navigation_failed: 'Packaged canary settings navigation failed.',
   canary_settings_panel_failed: 'Packaged canary settings panel failed.',
   canary_settings_save_failed: 'Packaged canary settings save failed.',
+  canary_saved_profile_failed: 'Packaged canary saved profile setup failed.',
   canary_new_project_failed: 'Packaged canary new project failed.',
   canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
   canary_preview_failed: 'Packaged canary preview evidence failed.',
   canary_version_failed: 'Packaged canary revision version evidence failed.',
   canary_read_evidence_failed: 'Packaged canary read evidence failed.',
   canary_restart_failed: 'Packaged canary restart restore failed.',
+  canary_custom_chrome_failed: 'Packaged canary custom window controls are unavailable.',
   canary_evidence_failed: 'Packaged canary evidence could not be verified.',
   canary_cleanup_failed: 'Packaged canary cleanup failed.',
 });
@@ -67,12 +77,14 @@ const ERROR_STAGES = Object.freeze({
   canary_settings_navigation_failed: 'settings_navigation',
   canary_settings_panel_failed: 'settings_panel',
   canary_settings_save_failed: 'settings_save',
+  canary_saved_profile_failed: 'saved_profile',
   canary_new_project_failed: 'new_project',
   canary_generation_terminal_failed: 'generation_terminal',
   canary_preview_failed: 'preview',
   canary_version_failed: 'version',
   canary_read_evidence_failed: 'read_evidence',
   canary_restart_failed: 'restart',
+  canary_custom_chrome_failed: 'custom_chrome',
   canary_evidence_failed: 'evidence',
   canary_cleanup_failed: 'cleanup',
 });
@@ -116,6 +128,17 @@ const STATUS_KEYS = Object.freeze([
 ]);
 const READ_EVIDENCE_KEYS = Object.freeze(['catalog', 'current', 'status']);
 const RUN_OPTION_KEYS = Object.freeze(['argv', 'electron', 'env', 'fs', 'os', 'userDataPath']);
+const FIRST_CONFIG_INPUT_KEYS = Object.freeze(['executable_path', 'idea', 'provider', 'schema_version']);
+const SAVED_PROFILE_INPUT_KEYS = Object.freeze([
+  'executable_path',
+  'idea',
+  'mode',
+  'schema_version',
+  'source_user_data_path',
+]);
+const PROVIDER_SECRET_FILE_PATTERN = /^[0-9a-f]{64}\.json$/u;
+const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const PROJECT_ID_LENGTH = 'builder-project:00000000-0000-0000-0000-000000000000'.length;
 
 class BuilderPackagedCanaryError extends Error {
   constructor(code = 'canary_evidence_failed') {
@@ -238,24 +261,78 @@ function sanitizeProvider(value) {
   });
 }
 
-function sanitizeInput(value) {
-  const descriptors = exactObject(value, [
-    'executable_path',
-    'idea',
-    'provider',
-    'schema_version',
-  ]);
-  if (descriptors.schema_version.value !== CANARY_INPUT_VERSION) fail('canary_input_invalid');
-  const executablePath = descriptors.executable_path.value === null
+function sanitizedExecutablePath(value) {
+  const executablePath = value === null
     ? DEFAULT_EXECUTABLE
-    : text(descriptors.executable_path.value, 2_048);
+    : text(value, 2_048);
+  if (!isLocalAbsolutePath(executablePath)) fail('canary_input_invalid');
+  return executablePath;
+}
+
+function isLocalAbsolutePath(value) {
   if (
-    !path.isAbsolute(executablePath)
-    || path.normalize(executablePath) !== executablePath
-    || path.resolve(executablePath) !== executablePath
+    typeof value !== 'string'
+    || value.length === 0
+    || value.trim() !== value
+    || value.includes('\0')
+    || !path.isAbsolute(value)
+    || path.normalize(value) !== value
+    || path.resolve(value) !== value
   ) {
+    return false;
+  }
+  if (process.platform === 'win32') {
+    if (/^\\\\/u.test(value)) return false;
+    if (!/^[A-Za-z]:\\/u.test(value)) return false;
+  }
+  return true;
+}
+
+function inputDescriptors(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) || isObjectProxy(value)) {
     fail('canary_input_invalid');
   }
+  let keys;
+  let descriptors;
+  try {
+    keys = Reflect.ownKeys(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    fail('canary_input_invalid');
+  }
+  const modeDescriptor = descriptors.mode;
+  const expectedKeys = modeDescriptor === undefined
+    ? FIRST_CONFIG_INPUT_KEYS
+    : SAVED_PROFILE_INPUT_KEYS;
+  if (
+    keys.length !== expectedKeys.length
+    || keys.some((key) => typeof key !== 'string' || !expectedKeys.includes(key))
+  ) fail('canary_input_invalid');
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !descriptor.enumerable || 'get' in descriptor || 'set' in descriptor) {
+      fail('canary_input_invalid');
+    }
+  }
+  return Object.freeze({ descriptors, mode: modeDescriptor === undefined ? 'first_config' : modeDescriptor.value });
+}
+
+function sanitizeInput(value) {
+  const { descriptors, mode } = inputDescriptors(value);
+  if (descriptors.schema_version.value !== CANARY_INPUT_VERSION) fail('canary_input_invalid');
+  const executablePath = sanitizedExecutablePath(descriptors.executable_path.value);
+  if (mode === 'saved_profile') {
+    const sourceUserDataPath = text(descriptors.source_user_data_path.value, 2_048);
+    if (!isLocalAbsolutePath(sourceUserDataPath)) fail('canary_input_invalid');
+    return Object.freeze({
+      executable_path: executablePath,
+      idea: text(descriptors.idea.value, 4_000),
+      mode: 'saved_profile',
+      schema_version: CANARY_INPUT_VERSION,
+      source_user_data_path: sourceUserDataPath,
+    });
+  }
+  if (mode !== 'first_config') fail('canary_input_invalid');
   return Object.freeze({
     executable_path: executablePath,
     idea: text(descriptors.idea.value, 4_000),
@@ -295,8 +372,9 @@ function ensureCredentialOnlyFromStdin(credential, argv, env) {
 }
 
 function redactInput(input) {
+  const credentialSource = input.mode === 'saved_profile' ? 'saved_profile' : 'stdin';
   return Object.freeze({
-    credential_source: 'stdin',
+    credential_source: credentialSource,
     idea_digest: digestText(input.idea),
     schema_version: input.schema_version,
   });
@@ -414,6 +492,356 @@ function reverifyGuardedUserDataRoot(rootIdentity, fsModule = fs, osModule = os)
     ) guardedUserDataError();
   }
   return current;
+}
+
+function savedProfileError() {
+  throw new BuilderPackagedCanaryError('canary_saved_profile_failed');
+}
+
+function normalizedFileStat(stat, maximumBytes) {
+  const size = stat.size;
+  if (typeof size !== 'bigint' && !Number.isSafeInteger(size)) savedProfileError();
+  const normalizedSize = typeof size === 'bigint' ? size : BigInt(size);
+  if (normalizedSize < 0n || normalizedSize > BigInt(maximumBytes)) savedProfileError();
+  return Object.freeze({
+    dev: typeof stat.dev === 'bigint' || Number.isSafeInteger(stat.dev) ? stat.dev : null,
+    ino: typeof stat.ino === 'bigint' || Number.isSafeInteger(stat.ino) ? stat.ino : null,
+    mtimeMs: (
+      (typeof stat.mtimeMs === 'bigint')
+      || (typeof stat.mtimeMs === 'number' && Number.isFinite(stat.mtimeMs))
+    ) ? stat.mtimeMs : null,
+    size: normalizedSize,
+  });
+}
+
+function sourceProfileFileStat(fsModule, filePath, maximumBytes, options = {}) {
+  let stat;
+  try {
+    stat = fsModule.lstatSync(filePath, { bigint: true });
+  } catch {
+    savedProfileError();
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) savedProfileError();
+  const before = normalizedFileStat(stat, maximumBytes);
+  let fd = null;
+  try {
+    fd = fsModule.openSync(filePath, 'r');
+    const opened = normalizedFileStat(fsModule.fstatSync(fd, { bigint: true }), maximumBytes);
+    compareSourceFileStat(before, opened);
+    const buffer = readBoundedDescriptor(fsModule, fd, maximumBytes);
+    const after = normalizedFileStat(fsModule.fstatSync(fd, { bigint: true }), maximumBytes);
+    compareSourceFileStat(opened, after);
+    if (BigInt(buffer.length) !== after.size) savedProfileError();
+    const snapshot = {
+      ...after,
+      sha256: nodeCrypto.createHash('sha256').update(buffer).digest('hex'),
+    };
+    if (options.includeBuffer === true) snapshot.buffer = buffer;
+    return Object.freeze(snapshot);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    savedProfileError();
+  } finally {
+    if (fd !== null) {
+      try {
+        fsModule.closeSync(fd);
+      } catch {
+        savedProfileError();
+      }
+    }
+  }
+}
+
+function readBoundedDescriptor(fsModule, fd, maximumBytes) {
+  const chunks = [];
+  let total = 0;
+  const chunkSize = Math.max(1, Math.min(64 * 1024, maximumBytes + 1));
+  const buffer = Buffer.alloc(chunkSize);
+  while (total <= maximumBytes) {
+    const remaining = maximumBytes + 1 - total;
+    const bytesRead = fsModule.readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
+    if (!Number.isSafeInteger(bytesRead) || bytesRead < 0) savedProfileError();
+    if (bytesRead === 0) break;
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    total += bytesRead;
+  }
+  if (total > maximumBytes) savedProfileError();
+  return Buffer.concat(chunks, total);
+}
+
+function compareSourceFileStat(left, right) {
+  if (left.size !== right.size) savedProfileError();
+  if (left.sha256 !== undefined && right.sha256 !== undefined && left.sha256 !== right.sha256) {
+    savedProfileError();
+  }
+  for (const key of ['dev', 'ino', 'mtimeMs']) {
+    if (left[key] !== null && right[key] !== null && left[key] !== right[key]) savedProfileError();
+  }
+}
+
+function captureSourceUserDataRoot(sourcePath, fsModule) {
+  if (!isLocalAbsolutePath(sourcePath)) savedProfileError();
+  return captureSourceDirectory(fsModule, sourcePath);
+}
+
+function captureSourceDirectory(fsModule, directoryPath) {
+  let stat;
+  let realPath;
+  try {
+    stat = fsModule.lstatSync(directoryPath, { bigint: true });
+    realPath = path.resolve(fsModule.realpathSync.native(directoryPath));
+  } catch {
+    savedProfileError();
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink() || !samePath(realPath, directoryPath)) savedProfileError();
+  return Object.freeze({
+    identity: pathIdentity(stat),
+    path: directoryPath,
+    realPath,
+  });
+}
+
+function compareSourceDirectoryIdentity(left, right) {
+  if (!samePath(left.path, right.path) || !samePath(left.realPath, right.realPath)) savedProfileError();
+  for (const key of ['dev', 'ino']) {
+    if (left.identity[key] !== null && right.identity[key] !== null && left.identity[key] !== right.identity[key]) {
+      savedProfileError();
+    }
+  }
+}
+
+function captureTargetProfileDirectories(userDataRoot, configDirectory, secretsDirectory, fsModule) {
+  const root = captureSourceDirectory(fsModule, userDataRoot.path);
+  compareSourceDirectoryIdentity(userDataRoot, root);
+  return Object.freeze({
+    config: captureSourceDirectory(fsModule, configDirectory),
+    root,
+    secrets: captureSourceDirectory(fsModule, secretsDirectory),
+  });
+}
+
+function assertTargetProfileDirectoriesUnchanged(snapshot, fsModule) {
+  compareSourceDirectoryIdentity(snapshot.root, captureSourceDirectory(fsModule, snapshot.root.path));
+  compareSourceDirectoryIdentity(snapshot.config, captureSourceDirectory(fsModule, snapshot.config.path));
+  compareSourceDirectoryIdentity(snapshot.secrets, captureSourceDirectory(fsModule, snapshot.secrets.path));
+}
+
+function assertTargetProfileWriteDirectory(snapshot, directoryKey, fsModule) {
+  compareSourceDirectoryIdentity(snapshot.root, captureSourceDirectory(fsModule, snapshot.root.path));
+  compareSourceDirectoryIdentity(snapshot[directoryKey], captureSourceDirectory(fsModule, snapshot[directoryKey].path));
+}
+
+function readExactDirectoryNames(fsModule, directoryPath, expectedNames, code = 'canary_saved_profile_failed') {
+  let entries;
+  try {
+    entries = fsModule.readdirSync(directoryPath, { withFileTypes: true });
+  } catch {
+    fail(code);
+  }
+  if (!Array.isArray(entries)) fail(code);
+  const names = entries.map((entry) => {
+    if (
+      entry === null
+      || typeof entry !== 'object'
+      || isObjectProxy(entry)
+    ) fail(code);
+    const descriptor = Object.getOwnPropertyDescriptor(entry, 'name');
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') fail(code);
+    return descriptor.value;
+  });
+  if (
+    names.length !== expectedNames.length
+    || names.some((name) => !expectedNames.includes(name))
+  ) fail(code);
+  return Object.freeze(names);
+}
+
+function readSecretDirectoryNames(fsModule, directoryPath) {
+  let entries;
+  try {
+    entries = fsModule.readdirSync(directoryPath, { withFileTypes: true });
+  } catch {
+    savedProfileError();
+  }
+  if (!Array.isArray(entries) || entries.length === 0 || entries.length > PROVIDER_SECRET_MAX_FILES) {
+    savedProfileError();
+  }
+  const names = [];
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object' || isObjectProxy(entry)) savedProfileError();
+    const nameDescriptor = Object.getOwnPropertyDescriptor(entry, 'name');
+    if (!nameDescriptor || !Object.hasOwn(nameDescriptor, 'value') || typeof nameDescriptor.value !== 'string') {
+      savedProfileError();
+    }
+    const name = nameDescriptor.value;
+    if (!PROVIDER_SECRET_FILE_PATTERN.test(name)) savedProfileError();
+    let isFile = false;
+    try {
+      isFile = typeof entry.isFile === 'function' ? Reflect.apply(entry.isFile, entry, []) : false;
+    } catch {
+      savedProfileError();
+    }
+    if (isFile !== true) savedProfileError();
+    names.push(name);
+  }
+  names.sort();
+  if (new Set(names).size !== names.length) savedProfileError();
+  return Object.freeze(names);
+}
+
+function makeDirectory(fsModule, directoryPath) {
+  try {
+    fsModule.mkdirSync(directoryPath);
+  } catch {
+    savedProfileError();
+  }
+}
+
+function writeExclusiveProfileFile(
+  fsModule,
+  targetPath,
+  buffer,
+  maximumBytes,
+  expectedSha256,
+  targetDirectories,
+  directoryKey,
+) {
+  if (!Buffer.isBuffer(buffer) || buffer.length > maximumBytes) savedProfileError();
+  let fd = null;
+  try {
+    assertTargetProfileWriteDirectory(targetDirectories, directoryKey, fsModule);
+    fd = fsModule.openSync(targetPath, 'wx');
+    let written = 0;
+    while (written < buffer.length) {
+      const bytesWritten = fsModule.writeSync(fd, buffer, written, buffer.length - written, written);
+      if (!Number.isSafeInteger(bytesWritten) || bytesWritten <= 0) savedProfileError();
+      written += bytesWritten;
+    }
+    fsModule.fsyncSync(fd);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    savedProfileError();
+  } finally {
+    if (fd !== null) {
+      try {
+        fsModule.closeSync(fd);
+      } catch {
+        savedProfileError();
+      }
+    }
+  }
+  assertTargetProfileWriteDirectory(targetDirectories, directoryKey, fsModule);
+  const copied = sourceProfileFileStat(fsModule, targetPath, maximumBytes);
+  if (copied.sha256 !== expectedSha256) savedProfileError();
+  assertTargetProfileWriteDirectory(targetDirectories, directoryKey, fsModule);
+  return copied;
+}
+
+function copyProfileFile(fsModule, sourcePath, targetPath, maximumBytes, targetDirectories, directoryKey) {
+  assertTargetProfileWriteDirectory(targetDirectories, directoryKey, fsModule);
+  const before = sourceProfileFileStat(fsModule, sourcePath, maximumBytes, { includeBuffer: true });
+  writeExclusiveProfileFile(
+    fsModule,
+    targetPath,
+    before.buffer,
+    maximumBytes,
+    before.sha256,
+    targetDirectories,
+    directoryKey,
+  );
+  assertTargetProfileWriteDirectory(targetDirectories, directoryKey, fsModule);
+  const after = sourceProfileFileStat(fsModule, sourcePath, maximumBytes);
+  compareSourceFileStat(before, after);
+  return before;
+}
+
+function captureSavedProfileSnapshot(sourceRoot, fsModule) {
+  const configDirectory = path.join(sourceRoot.path, PROVIDER_CONFIG_DIRECTORY_NAME);
+  const secretsDirectory = path.join(sourceRoot.path, PROVIDER_SECRETS_DIRECTORY_NAME);
+  const directories = Object.freeze({
+    config: captureSourceDirectory(fsModule, configDirectory),
+    root: captureSourceDirectory(fsModule, sourceRoot.path),
+    secrets: captureSourceDirectory(fsModule, secretsDirectory),
+  });
+  readExactDirectoryNames(fsModule, configDirectory, [PROVIDER_CONFIG_CURRENT_FILE_NAME]);
+  const secretNames = readSecretDirectoryNames(fsModule, secretsDirectory);
+  const files = new Map();
+  files.set(
+    LOCAL_STATE_FILE_NAME,
+    sourceProfileFileStat(fsModule, path.join(sourceRoot.path, LOCAL_STATE_FILE_NAME), LOCAL_STATE_MAX_BYTES),
+  );
+  files.set(
+    `${PROVIDER_CONFIG_DIRECTORY_NAME}/${PROVIDER_CONFIG_CURRENT_FILE_NAME}`,
+    sourceProfileFileStat(
+      fsModule,
+      path.join(configDirectory, PROVIDER_CONFIG_CURRENT_FILE_NAME),
+      PROVIDER_CONFIG_MAX_BYTES,
+    ),
+  );
+  for (const name of secretNames) {
+    files.set(
+      `${PROVIDER_SECRETS_DIRECTORY_NAME}/${name}`,
+      sourceProfileFileStat(fsModule, path.join(secretsDirectory, name), PROVIDER_SECRET_MAX_BYTES),
+    );
+  }
+  return Object.freeze({ directories, files, secretNames });
+}
+
+function assertSavedProfileUnchanged(snapshot, sourceRoot, fsModule) {
+  const current = captureSavedProfileSnapshot(sourceRoot, fsModule);
+  compareSourceDirectoryIdentity(snapshot.directories.root, current.directories.root);
+  compareSourceDirectoryIdentity(snapshot.directories.config, current.directories.config);
+  compareSourceDirectoryIdentity(snapshot.directories.secrets, current.directories.secrets);
+  if (current.files.size !== snapshot.files.size) savedProfileError();
+  for (const [name, before] of snapshot.files) {
+    const after = current.files.get(name);
+    if (!after) savedProfileError();
+    compareSourceFileStat(before, after);
+  }
+}
+
+function copySavedProviderProfile(input, userDataRoot, fsModule = fs) {
+  if (input.mode !== 'saved_profile') return null;
+  const sourceRoot = captureSourceUserDataRoot(input.source_user_data_path, fsModule);
+  const snapshot = captureSavedProfileSnapshot(sourceRoot, fsModule);
+  const targetConfigDirectory = path.join(userDataRoot.path, PROVIDER_CONFIG_DIRECTORY_NAME);
+  const targetSecretsDirectory = path.join(userDataRoot.path, PROVIDER_SECRETS_DIRECTORY_NAME);
+  makeDirectory(fsModule, targetConfigDirectory);
+  makeDirectory(fsModule, targetSecretsDirectory);
+  const targetDirectories = captureTargetProfileDirectories(
+    userDataRoot,
+    targetConfigDirectory,
+    targetSecretsDirectory,
+    fsModule,
+  );
+  copyProfileFile(
+    fsModule,
+    path.join(sourceRoot.path, LOCAL_STATE_FILE_NAME),
+    path.join(userDataRoot.path, LOCAL_STATE_FILE_NAME),
+    LOCAL_STATE_MAX_BYTES,
+    targetDirectories,
+    'root',
+  );
+  copyProfileFile(
+    fsModule,
+    path.join(sourceRoot.path, PROVIDER_CONFIG_DIRECTORY_NAME, PROVIDER_CONFIG_CURRENT_FILE_NAME),
+    path.join(targetConfigDirectory, PROVIDER_CONFIG_CURRENT_FILE_NAME),
+    PROVIDER_CONFIG_MAX_BYTES,
+    targetDirectories,
+    'config',
+  );
+  for (const name of snapshot.secretNames) {
+    copyProfileFile(
+      fsModule,
+      path.join(sourceRoot.path, PROVIDER_SECRETS_DIRECTORY_NAME, name),
+      path.join(targetSecretsDirectory, name),
+      PROVIDER_SECRET_MAX_BYTES,
+      targetDirectories,
+      'secrets',
+    );
+  }
+  assertTargetProfileDirectoriesUnchanged(targetDirectories, fsModule);
+  return Object.freeze({ sourceRoot, snapshot });
 }
 
 function sanitizeLaunchEnvironment(sourceEnv, userDataPath) {
@@ -652,15 +1080,14 @@ function sanitizeCatalog(value) {
 function sanitizeCatalogProject(value) {
   const descriptors = exactDataObject(value, CATALOG_PROJECT_KEYS);
   const project = Object.freeze({
-    project_id: descriptors.project_id.value,
+    project_id: safeProjectId(descriptors.project_id.value),
     revision: descriptors.revision.value,
     revision_digest: descriptors.revision_digest.value,
     summary: descriptors.summary.value,
     title: descriptors.title.value,
   });
   if (
-    typeof project.project_id !== 'string'
-    || project.revision !== 1
+    project.revision !== 1
     || typeof project.revision_digest !== 'string'
     || !DIGEST_PATTERN.test(project.revision_digest)
     || typeof project.summary !== 'string'
@@ -669,11 +1096,20 @@ function sanitizeCatalogProject(value) {
   return project;
 }
 
+function safeProjectId(value) {
+  if (
+    typeof value !== 'string'
+    || value.length !== PROJECT_ID_LENGTH
+    || !PROJECT_ID_PATTERN.test(value)
+  ) fail('canary_evidence_failed');
+  return value;
+}
+
 function sanitizeHead(value, expectedProject) {
   const descriptors = exactDataObject(value, HEAD_KEYS);
   const head = Object.freeze({
     head_digest: descriptors.head_digest.value,
-    project_id: descriptors.project_id.value,
+    project_id: safeProjectId(descriptors.project_id.value),
     record_kind: descriptors.record_kind.value,
     revision: descriptors.revision.value,
     revision_digest: descriptors.revision_digest.value,
@@ -698,7 +1134,7 @@ function sanitizeProjectRecord(value) {
     files: descriptors.files.value,
     parent_revision: descriptors.parent_revision.value,
     preview_script_admission: descriptors.preview_script_admission.value,
-    project_id: descriptors.project_id.value,
+    project_id: safeProjectId(descriptors.project_id.value),
     proposal_evidence: descriptors.proposal_evidence.value,
     record_kind: descriptors.record_kind.value,
     revision: descriptors.revision.value,
@@ -710,7 +1146,6 @@ function sanitizeProjectRecord(value) {
   if (
     record.schema_version !== 1
     || record.record_kind !== 'builder_project_revision'
-    || typeof record.project_id !== 'string'
     || record.revision !== 1
     || typeof record.revision_digest !== 'string'
     || !DIGEST_PATTERN.test(record.revision_digest)
@@ -793,16 +1228,32 @@ function exactRevisionFromReadEvidence(evidence, expectedProject) {
 
 function networkRecorder() {
   const unexpected = [];
+  let attachedApplicationCount = 0;
+  function observe(request) {
+    const url = request.url();
+    if (!/^(?:https?|wss?):/iu.test(url)) return;
+    unexpected.push(true);
+  }
   return Object.freeze({
-    attach(page) {
-      page.on('request', (request) => {
-        const url = request.url();
-        if (!/^(?:https?|wss?):/iu.test(url)) return;
-        unexpected.push(true);
-      });
+    attachApplication(app) {
+      if (app === null || typeof app !== 'object' || typeof app.context !== 'function') return false;
+      let context;
+      try {
+        context = app.context();
+      } catch {
+        return false;
+      }
+      if (context === null || typeof context !== 'object' || typeof context.on !== 'function') return false;
+      context.on('request', observe);
+      attachedApplicationCount += 1;
+      return true;
+    },
+    attachPage(page) {
+      page.on('request', observe);
     },
     snapshot() {
       return Object.freeze({
+        application_observer_count: attachedApplicationCount,
         unexpected_network_count: unexpected.length,
       });
     },
@@ -872,9 +1323,10 @@ async function capturePreviewEvidence(page, gate) {
 
 async function openProjectFromCatalogById(page, project) {
   try {
+    const projectId = safeProjectId(project.project_id);
     const catalog = page.locator(SELECTORS.projectCatalog);
     await catalog.waitFor({ state: 'visible' });
-    const projectButton = catalog.locator(`button${attributeEqualsSelector('data-builder-project-id', project.project_id)}`);
+    const projectButton = catalog.locator(`button${attributeEqualsSelector('data-builder-project-id', projectId)}`);
     await projectButton.waitFor({ state: 'visible' });
     await projectButton.getByText(project.title, { exact: true }).waitFor({ state: 'visible' });
     await projectButton.getByText(project.summary, { exact: true }).waitFor({ state: 'visible' });
@@ -886,6 +1338,34 @@ async function openProjectFromCatalogById(page, project) {
   }
 }
 
+async function assertCustomChromeControls(page) {
+  try {
+    const minimize = page.getByRole('button', { name: 'Minimize window' });
+    const maximizeOrRestore = page.getByRole('button', { name: /^(?:Maximize|Restore) window$/u });
+    const close = page.getByRole('button', { name: 'Close window' });
+    await minimize.waitFor({ state: 'visible' });
+    await maximizeOrRestore.waitFor({ state: 'visible' });
+    await close.waitFor({ state: 'visible' });
+    if (
+      typeof minimize.isEnabled !== 'function'
+      || typeof maximizeOrRestore.isEnabled !== 'function'
+      || typeof close.isEnabled !== 'function'
+      || await minimize.isEnabled() !== true
+      || await maximizeOrRestore.isEnabled() !== true
+      || await close.isEnabled() !== true
+    ) fail('canary_custom_chrome_failed');
+    return Object.freeze({
+      close_enabled: true,
+      maximize_or_restore_enabled: true,
+      minimize_enabled: true,
+      window_controls_enabled: true,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_custom_chrome_failed');
+  }
+}
+
 function makeTempUserData(fsModule = fs, osModule = os) {
   return fsModule.mkdtempSync(path.join(osModule.tmpdir(), PACKAGED_CANARY_USER_DATA_PREFIX));
 }
@@ -894,6 +1374,40 @@ function removeDirectory(rootIdentity, fsModule = fs, osModule = os) {
   if (!rootIdentity) return;
   reverifyGuardedUserDataRoot(rootIdentity, fsModule, osModule);
   fsModule.rmSync(rootIdentity.path, { force: true, recursive: true });
+}
+
+function removeRawTempUserDataPath(rawPath, fsModule = fs, osModule = os) {
+  if (
+    typeof rawPath !== 'string'
+    || rawPath.length === 0
+    || rawPath.trim() !== rawPath
+    || rawPath.includes('\0')
+    || !path.isAbsolute(rawPath)
+    || path.normalize(rawPath) !== rawPath
+    || path.resolve(rawPath) !== rawPath
+  ) return;
+  const tempRoot = path.resolve(osModule.tmpdir());
+  if (path.dirname(rawPath) !== tempRoot || !path.basename(rawPath).startsWith(PACKAGED_CANARY_USER_DATA_PREFIX)) {
+    return;
+  }
+  try {
+    const root = captureGuardedUserDataRoot(rawPath, fsModule, osModule);
+    removeDirectory(root, fsModule, osModule);
+    return;
+  } catch {
+    // Fall back only for the direct mkdtemp path when lstat still proves a plain directory.
+  }
+  try {
+    const stat = fsModule.lstatSync(rawPath, { bigint: true });
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+    fsModule.rmSync(rawPath, { force: true, recursive: true });
+  } catch {
+    // Cleanup is best-effort before a trusted root identity exists.
+  }
+}
+
+function attachApplicationNetworkRecorder(recorder, app) {
+  return recorder.attachApplication(app) === true;
 }
 
 async function launchApp({ electron, executablePath, userDataPath, env }) {
@@ -923,6 +1437,9 @@ async function runPackagedCanary(rawInput, options = {}) {
   let osModule = os;
   let primaryError = null;
   let result = null;
+  let savedProfile = null;
+  let rawUserDataPath = null;
+  let recorder = null;
   let userDataRoot = null;
   try {
     input = sanitizeInput(rawInput);
@@ -932,10 +1449,13 @@ async function runPackagedCanary(rawInput, options = {}) {
     osModule = runOptions.os ?? os;
     env = runOptions.env ?? process.env;
     const argv = runOptions.argv ?? process.argv.slice(2);
-    const userDataPath = runOptions.userDataPath ?? makeTempUserData(fsModule, osModule);
-    userDataRoot = captureGuardedUserDataRoot(userDataPath, fsModule, osModule);
+    rawUserDataPath = runOptions.userDataPath ?? makeTempUserData(fsModule, osModule);
+    userDataRoot = captureGuardedUserDataRoot(rawUserDataPath, fsModule, osModule);
     gate = createArtifactGate();
-    ensureCredentialOnlyFromStdin(input.provider.credential, argv, env);
+    savedProfile = copySavedProviderProfile(input, userDataRoot, fsModule);
+    if (input.mode !== 'saved_profile') {
+      ensureCredentialOnlyFromStdin(input.provider.credential, argv, env);
+    }
     let executableExists = false;
     try {
       executableExists = fsModule.existsSync(input.executable_path);
@@ -944,11 +1464,18 @@ async function runPackagedCanary(rawInput, options = {}) {
     }
     if (!executableExists) fail('canary_launch_failed');
 
+    recorder = networkRecorder();
     app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
+    const applicationObserver = attachApplicationNetworkRecorder(recorder, app);
     const page = await app.firstWindow();
-    const recorder = networkRecorder();
-    recorder.attach(page);
-    await fillProviderSettingsViaUi(page, input.provider, gate);
+    if (applicationObserver !== true) recorder.attachPage(page);
+    const customChrome = await assertCustomChromeControls(page);
+    if (input.mode !== 'saved_profile') {
+      await fillProviderSettingsViaUi(page, input.provider, gate);
+    } else {
+      await readSanitizedBridgeEvidence(page);
+      gate.allow();
+    }
     await generateProjectViaUi(page, input.idea);
     const firstEvidence = await readSanitizedBridgeEvidence(page);
     const project = projectFromReadEvidence(firstEvidence);
@@ -959,8 +1486,10 @@ async function runPackagedCanary(rawInput, options = {}) {
     app = null;
 
     app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
+    const restartApplicationObserver = attachApplicationNetworkRecorder(recorder, app);
     const restartedPage = await app.firstWindow();
-    recorder.attach(restartedPage);
+    if (restartApplicationObserver !== true) recorder.attachPage(restartedPage);
+    await assertCustomChromeControls(restartedPage);
     await openProjectFromCatalogById(restartedPage, revision);
     try {
       await restartedPage.locator(SELECTORS.preview).waitFor({ state: 'visible' });
@@ -997,6 +1526,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     result = Object.freeze({
       result_version: CANARY_RESULT_VERSION,
       artifacts_after_password_clear: gate.allowed,
+      custom_chrome: customChrome,
       input: redactInput(input),
       network,
       preview: Object.freeze({
@@ -1007,7 +1537,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       project: Object.freeze({
         catalog_project_count: firstEvidence.catalog.projects.length,
         restart_catalog_project_count: restartEvidence.catalog.projects.length,
-        restart_generation_command_issued: false,
+        restart_new_revision_observed: false,
         restart_revision_unchanged: true,
         project_id: project.project_id,
         restart_restored: true,
@@ -1019,6 +1549,7 @@ async function runPackagedCanary(rawInput, options = {}) {
         configured: restartEvidence.status.configured,
       }),
       user_data: Object.freeze({
+        ...(input.mode === 'saved_profile' ? { source_profile_unchanged: true } : {}),
         temporary: true,
       }),
     });
@@ -1033,10 +1564,22 @@ async function runPackagedCanary(rawInput, options = {}) {
     cleanupErrors.push(new BuilderPackagedCanaryError('canary_cleanup_failed'));
   }
   try {
-    removeDirectory(userDataRoot, fsModule, osModule);
+    if (savedProfile !== null) {
+      assertSavedProfileUnchanged(savedProfile.snapshot, savedProfile.sourceRoot, fsModule);
+    }
+  } catch {
+    cleanupErrors.push(new BuilderPackagedCanaryError('canary_saved_profile_failed'));
+  }
+  try {
+    if (userDataRoot !== null) {
+      removeDirectory(userDataRoot, fsModule, osModule);
+    } else {
+      removeRawTempUserDataPath(rawUserDataPath, fsModule, osModule);
+    }
   } catch {
     cleanupErrors.push(new BuilderPackagedCanaryError('canary_cleanup_failed'));
   }
+  if (primaryError !== null && primaryError.code === 'canary_saved_profile_failed') throw primaryError;
   if (cleanupErrors.length > 0) throw cleanupErrors[0];
   if (primaryError !== null) throw primaryError;
   return result;
@@ -1098,10 +1641,12 @@ module.exports = {
   PACKAGED_CANARY_USER_DATA_PATH,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
+  assertCustomChromeControls,
   assertExactRevision,
   assertReadEvidence,
   captureGuardedUserDataRoot,
   capturePreviewEvidence,
+  copySavedProviderProfile,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
