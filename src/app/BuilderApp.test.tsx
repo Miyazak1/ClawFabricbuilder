@@ -310,7 +310,12 @@ describe('BuilderApp', () => {
 
     expect(container.querySelectorAll('main')).toHaveLength(1);
     expect(container.querySelector('.cf-builder-workbench')).not.toBeNull();
-    expect(container.querySelector('.cf-builder-context')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workbench="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workbench-rail="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workbench-context="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workbench-frame="true"]')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-context-sidebar')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-workbench-frame')).not.toBeNull();
     expect(container.textContent).toContain('Saved projects are unavailable.');
     expect(container.textContent).toContain('New project');
     expect(buttons(container, 'New project')).toHaveLength(1);
@@ -338,6 +343,8 @@ describe('BuilderApp', () => {
     await flush();
     expect(container.textContent).toContain('AI provider settings');
     expect(container.querySelector('.cf-builder-main-frame')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-settings-surface')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-settings-body')).not.toBeNull();
     act(() => button(container, 'Back to project').click());
     await waitFor(() => {
       expect(container.querySelector('h1')?.textContent).toBe('Known timer');

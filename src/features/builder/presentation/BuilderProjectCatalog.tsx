@@ -24,10 +24,13 @@ export function BuilderProjectCatalog({
   const busy = status === 'loading' || status === 'refreshing';
 
   return (
-    <section aria-labelledby="builder-project-catalog-title" className="text-[var(--cf-text-soft)]" data-builder-project-catalog="true">
-      <div className="cf-builder-header flex min-h-12 items-center justify-between gap-2 border-b px-3">
-        <h2 className="text-sm font-semibold" id="builder-project-catalog-title">Your projects</h2>
-        <div className="flex items-center gap-1">
+    <section aria-labelledby="builder-project-catalog-title" className="cf-builder-catalog" data-builder-project-catalog="true">
+      <div className="cf-builder-catalog-header">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">Projects</p>
+          <h2 className="truncate text-sm font-semibold" id="builder-project-catalog-title">Your projects</h2>
+        </div>
+        <div className="cf-builder-catalog-actions">
           <button
             aria-label="Refresh projects"
             className="cf-builder-secondary-button inline-flex size-9 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
@@ -38,26 +41,29 @@ export function BuilderProjectCatalog({
           >
             <RefreshCw aria-hidden="true" className="size-4" />
           </button>
-          <button
-            className="cf-builder-primary-button inline-flex min-h-9 items-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={busy || typeof onCreateProject !== 'function'}
-            onClick={onCreateProject}
-            type="button"
-          >
-            <Plus aria-hidden="true" className="size-4" />
-            New project
-          </button>
         </div>
       </div>
 
+      <div className="cf-builder-catalog-command">
+        <button
+          className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-9 w-full items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={busy || typeof onCreateProject !== 'function'}
+          onClick={onCreateProject}
+          type="button"
+        >
+          <Plus aria-hidden="true" className="size-4" />
+          New project
+        </button>
+      </div>
+
       {status === 'loading' ? (
-        <p className="cf-builder-alert cf-builder-alert-info m-4 text-sm" role="status">Loading saved projects...</p>
+        <p className="cf-builder-alert cf-builder-alert-info m-3 text-sm" role="status">Loading saved projects...</p>
       ) : null}
       {status === 'refreshing' ? (
-        <p className="cf-builder-alert cf-builder-alert-info mx-4 mt-3 text-sm" role="status">Refreshing saved projects...</p>
+        <p className="cf-builder-alert cf-builder-alert-info mx-3 mt-3 text-sm" role="status">Refreshing saved projects...</p>
       ) : null}
       {status === 'unavailable' ? (
-        <div className="cf-builder-alert cf-builder-alert-danger m-4 flex flex-col items-start gap-3 text-sm" role="alert">
+        <div className="cf-builder-alert cf-builder-alert-danger m-3 flex flex-col items-start gap-3 text-sm" role="alert">
           <p>Saved projects are unavailable.</p>
           <button
             className="cf-builder-secondary-button inline-flex min-h-9 items-center gap-2 px-3 text-sm font-medium disabled:opacity-50"
@@ -71,15 +77,15 @@ export function BuilderProjectCatalog({
         </div>
       ) : null}
       {status === 'stale' ? (
-        <p className="cf-builder-alert cf-builder-alert-danger mx-4 mt-3 text-sm" role="alert">
+        <p className="cf-builder-alert cf-builder-alert-danger mx-3 mt-3 text-sm" role="alert">
           Saved projects could not be refreshed. Showing the previous list.
         </p>
       ) : null}
       {(status === 'ready' || status === 'stale' || status === 'refreshing') && projects.length === 0 ? (
-        <p className="cf-builder-alert cf-builder-alert-info m-4 text-sm">No saved projects yet.</p>
+        <p className="cf-builder-alert cf-builder-alert-info m-3 text-sm">No saved projects yet.</p>
       ) : null}
       {projects.length > 0 ? (
-        <ul className="divide-y divide-[var(--cf-border)]" aria-label="Saved projects">
+        <ul className="cf-builder-project-list" aria-label="Saved projects">
           {projects.map((project) => (
             <li key={project.project_id}>
               <button

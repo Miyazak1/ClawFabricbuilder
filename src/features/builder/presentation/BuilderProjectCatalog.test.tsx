@@ -72,8 +72,10 @@ describe('BuilderProjectCatalog', () => {
 
     expect(container.textContent).toContain('Your projects');
     expect(container.querySelector('[data-builder-project-catalog="true"]')?.className).toContain(
-      'text-[var(--cf-text-soft)]',
+      'cf-builder-catalog',
     );
+    expect(container.querySelector('.cf-builder-catalog-header')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-project-list')).not.toBeNull();
     expect(container.textContent).toContain('Tiny timer');
     expect(container.textContent).toContain('A small focus timer.');
     expect(container.textContent).toContain('Version 2');
@@ -96,6 +98,7 @@ describe('BuilderProjectCatalog', () => {
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="Refresh projects"]')?.click());
 
     expect(container.textContent).toContain('No saved projects yet.');
+    expect(container.querySelector('.cf-builder-catalog-command')).not.toBeNull();
     expect(button(container, 'New project')?.className).toContain('cf-builder-primary-button');
     expect(container.querySelector<HTMLButtonElement>('[aria-label="Refresh projects"]')?.className).toContain(
       'cf-builder-secondary-button',

@@ -83,6 +83,13 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(container.querySelector('[data-builder-provider-settings-panel="true"]')?.className).toContain(
       'cf-builder-panel',
     );
+    expect(container.querySelector('[data-builder-provider-settings-panel="true"]')?.className).toContain(
+      'cf-builder-settings-card',
+    );
+    expect(container.querySelector('[aria-label="Connection"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Generation limits"]')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-settings-sections')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-settings-actions')).not.toBeNull();
     expect(container.querySelector('h2')?.textContent).toBe('AI provider');
     expect(container.textContent).toContain('Connect an AI provider before making projects.');
     expect(input(container, 'builder-provider-base-url').value).toBe('https://provider.example/v1');

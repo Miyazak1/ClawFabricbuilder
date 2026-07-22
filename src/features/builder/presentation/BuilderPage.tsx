@@ -189,8 +189,8 @@ export function BuilderPage({
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground" data-builder-page="true">
-      <header className="cf-builder-header flex min-h-14 items-center justify-between gap-4 border-b px-4">
+    <div className="cf-builder-page bg-background text-foreground" data-builder-page="true">
+      <header className="cf-builder-surface-toolbar">
         <div className="min-w-0">
           <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
           <h1 className="truncate text-base font-semibold">{projectTitle}</h1>
@@ -200,9 +200,14 @@ export function BuilderPage({
         )}
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)]">
-        <section aria-label="Build request" className="flex flex-col gap-3 border-b p-4 lg:border-b-0 lg:border-r">
-          <label className="text-sm font-medium" htmlFor="builder-idea">What would you like to make?</label>
+      <div className="cf-builder-surface-body">
+        <section aria-label="Build request" className="cf-builder-panel cf-builder-composer-card border">
+          <header className="cf-builder-card-header">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">Prompt</p>
+              <label className="text-sm font-semibold" htmlFor="builder-idea">What would you like to make?</label>
+            </div>
+          </header>
           <textarea
             className="cf-builder-input min-h-36 w-full resize-y p-3 text-sm"
             disabled={busy}
@@ -214,7 +219,7 @@ export function BuilderPage({
             value={idea}
           />
           <button
-            className="cf-builder-primary-button inline-flex min-h-10 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!canGenerate}
             onClick={onGenerate}
             type="button"
@@ -277,62 +282,68 @@ export function BuilderPage({
           ) : null}
         </section>
 
-        <section aria-label="Project area" className="grid min-h-0 grid-rows-[auto_minmax(18rem,1fr)]">
-          <div className="cf-builder-header flex min-h-11 items-center gap-1 overflow-x-auto border-b px-2" role="tablist">
-            {FILES.map(({ file, label }) => (
-              <button
-                aria-controls="builder-code-panel"
-                aria-selected={safeActiveFile === file}
-                className="cf-builder-tab inline-flex min-h-9 shrink-0 items-center gap-2 px-3 text-sm"
-                data-active={safeActiveFile === file}
-                disabled={typeof onSelectFile !== 'function'}
-                id={tabId(file)}
-                key={file}
-                onClick={() => selectFile(file)}
-                onKeyDown={(event) => {
-                  if (event.key === 'ArrowRight') {
-                    event.preventDefault();
-                    selectRelativeFile(1);
-                  } else if (event.key === 'ArrowLeft') {
-                    event.preventDefault();
-                    selectRelativeFile(-1);
-                  } else if (event.key === 'Home') {
-                    event.preventDefault();
-                    selectFile(FILES[0].file);
-                  } else if (event.key === 'End') {
-                    event.preventDefault();
-                    selectFile(FILES[FILES.length - 1].file);
-                  }
-                }}
-                ref={(element) => {
-                  tabRefs.current[file] = element;
-                }}
-                role="tab"
-                tabIndex={safeActiveFile === file ? 0 : -1}
-                type="button"
-              >
-                <FileCode2 aria-hidden="true" className="size-4" />
-                {label}
-              </button>
-            ))}
-          </div>
+        <section aria-label="Project area" className="cf-builder-panel cf-builder-output-panel border">
+          <header className="cf-builder-output-toolbar">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">Project files</p>
+              <h2 className="text-sm font-semibold">Code and preview</h2>
+            </div>
+            <div className="cf-builder-tab-strip" role="tablist">
+              {FILES.map(({ file, label }) => (
+                <button
+                  aria-controls="builder-code-panel"
+                  aria-selected={safeActiveFile === file}
+                  className="cf-builder-tab inline-flex min-h-9 shrink-0 items-center gap-2 px-3 text-sm"
+                  data-active={safeActiveFile === file}
+                  disabled={typeof onSelectFile !== 'function'}
+                  id={tabId(file)}
+                  key={file}
+                  onClick={() => selectFile(file)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowRight') {
+                      event.preventDefault();
+                      selectRelativeFile(1);
+                    } else if (event.key === 'ArrowLeft') {
+                      event.preventDefault();
+                      selectRelativeFile(-1);
+                    } else if (event.key === 'Home') {
+                      event.preventDefault();
+                      selectFile(FILES[0].file);
+                    } else if (event.key === 'End') {
+                      event.preventDefault();
+                      selectFile(FILES[FILES.length - 1].file);
+                    }
+                  }}
+                  ref={(element) => {
+                    tabRefs.current[file] = element;
+                  }}
+                  role="tab"
+                  tabIndex={safeActiveFile === file ? 0 : -1}
+                  type="button"
+                >
+                  <FileCode2 aria-hidden="true" className="size-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </header>
 
-          <div className="grid min-h-0 grid-cols-1 xl:grid-cols-2">
+          <div className="cf-builder-output-grid">
             <section
               aria-labelledby={tabId(safeActiveFile)}
-              className="min-h-0 border-b xl:border-b-0 xl:border-r"
+              className="cf-builder-code-panel"
               id="builder-code-panel"
               role="tabpanel"
             >
-              <div className="cf-builder-header flex min-h-10 items-center gap-2 border-b px-3 text-xs font-medium text-muted-foreground">
+              <div className="cf-builder-panel-toolbar">
                 <Code2 aria-hidden="true" className="size-4" />
                 {safeActiveFile}
               </div>
               <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5"><code>{code}</code></pre>
             </section>
 
-            <section aria-label="Preview" className="min-h-0 p-3">
-              <div className="mb-2 flex min-h-8 items-center gap-2 text-xs font-medium text-muted-foreground">
+            <section aria-label="Preview" className="cf-builder-preview-panel">
+              <div className="cf-builder-panel-toolbar">
                 <Eye aria-hidden="true" className="size-4" />
                 Preview
               </div>

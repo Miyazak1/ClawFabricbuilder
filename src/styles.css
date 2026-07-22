@@ -60,9 +60,54 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text);
 }
 
+.cf-builder-shell {
+  display: grid;
+  grid-template-columns: 72px 288px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+}
+
 .cf-builder-global-rail {
   background: var(--cf-surface);
   border-color: var(--cf-border);
+}
+
+.cf-builder-rail {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border-right: 1px solid var(--cf-border);
+  background: var(--cf-surface);
+  padding: 12px 8px;
+}
+
+.cf-builder-rail-brand {
+  display: flex;
+  height: 40px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.cf-builder-rail-nav {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cf-builder-rail-button {
+  min-height: 54px;
+  width: 100%;
+  flex-direction: column;
+  padding: 6px 4px;
+  font-size: 10px;
+  line-height: 1.15;
 }
 
 .cf-builder-brand-mark {
@@ -79,14 +124,88 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text);
 }
 
+.cf-builder-context-sidebar {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--cf-border);
+}
+
+.cf-builder-context-header {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  border-bottom: 1px solid var(--cf-border);
+  padding: 0 16px;
+}
+
+.cf-builder-context-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+
 .cf-builder-main-frame {
   background: var(--cf-bg);
   border-color: var(--cf-border-strong);
 }
 
+.cf-builder-workbench-frame {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--cf-border-strong);
+  border-right: 0;
+  border-radius: 14px 0 0 14px;
+  background: var(--cf-bg);
+}
+
 .cf-builder-header {
   background: color-mix(in srgb, var(--cf-surface) 92%, transparent);
   border-color: var(--cf-border);
+}
+
+.cf-builder-page,
+.cf-builder-settings-surface {
+  display: flex;
+  min-height: 100vh;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cf-builder-surface-toolbar {
+  display: flex;
+  min-height: 56px;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--cf-border);
+  background: color-mix(in srgb, var(--cf-surface) 92%, transparent);
+  padding: 0 16px;
+}
+
+.cf-builder-surface-body {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: minmax(280px, 336px) minmax(0, 1fr);
+  gap: 14px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.cf-builder-settings-body {
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
 }
 
 .cf-builder-panel {
@@ -95,6 +214,96 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-radius: 8px;
   box-shadow: var(--cf-shadow-sm);
   color: var(--cf-text-soft);
+}
+
+.cf-builder-card-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--cf-border);
+  padding-bottom: 12px;
+}
+
+.cf-builder-composer-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-self: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.cf-builder-command-button {
+  width: 100%;
+}
+
+.cf-builder-output-panel {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.cf-builder-output-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--cf-border);
+  padding: 10px 12px;
+}
+
+.cf-builder-tab-strip {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+  scrollbar-width: thin;
+}
+
+.cf-builder-output-grid {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.9fr);
+  overflow: hidden;
+}
+
+.cf-builder-code-panel,
+.cf-builder-preview-panel {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cf-builder-code-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-right: 1px solid var(--cf-border);
+}
+
+.cf-builder-preview-panel {
+  overflow: auto;
+  padding: 12px;
+}
+
+.cf-builder-panel-toolbar {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--cf-border);
+  background: var(--cf-surface-muted);
+  padding: 0 12px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .cf-builder-panel-subtle {
@@ -226,9 +435,49 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text);
 }
 
+.cf-builder-catalog {
+  min-width: 0;
+  color: var(--cf-text-soft);
+}
+
+.cf-builder-catalog-header {
+  display: flex;
+  min-height: 50px;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--cf-border);
+  padding: 8px 4px 10px;
+}
+
+.cf-builder-catalog-actions,
+.cf-builder-catalog-command {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.cf-builder-catalog-command {
+  padding: 10px 0;
+}
+
+.cf-builder-project-list {
+  display: grid;
+  gap: 6px;
+}
+
+.cf-builder-project-list > li {
+  overflow: hidden;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface);
+}
+
 .cf-builder-code {
   background: color-mix(in srgb, var(--cf-surface-raised) 88%, var(--cf-bg));
   color: var(--cf-text-soft);
+  min-height: 0;
 }
 
 .cf-builder-preview-frame {
@@ -243,4 +492,162 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-color: var(--cf-border-strong);
   border-radius: 8px;
   color: var(--cf-text-muted);
+}
+
+.cf-builder-settings-card {
+  display: flex;
+  width: min(760px, 100%);
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+.cf-builder-settings-sections {
+  display: grid;
+  gap: 12px;
+}
+
+.cf-builder-form-section {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface-muted);
+  padding: 12px;
+}
+
+.cf-builder-form-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cf-builder-form-grid-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cf-builder-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1160px) {
+  .cf-builder-shell {
+    grid-template-columns: 64px 260px minmax(0, 1fr);
+  }
+
+  .cf-builder-surface-body {
+    grid-template-columns: 1fr;
+    align-content: start;
+  }
+
+  .cf-builder-composer-card {
+    align-self: stretch;
+  }
+
+  .cf-builder-output-grid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .cf-builder-code-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--cf-border);
+  }
+}
+
+@media (max-width: 720px) {
+  .cf-builder-shell {
+    min-height: 100vh;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: auto;
+  }
+
+  .cf-builder-rail {
+    min-height: 54px;
+    flex-direction: row;
+    align-items: center;
+    border-right: 0;
+    border-bottom: 1px solid var(--cf-border);
+    padding: 8px 12px;
+  }
+
+  .cf-builder-rail-brand {
+    width: auto;
+  }
+
+  .cf-builder-rail-nav {
+    flex: 1;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+  .cf-builder-rail-button {
+    min-height: 38px;
+    width: auto;
+    flex-direction: row;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  .cf-builder-context-sidebar {
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--cf-border);
+  }
+
+  .cf-builder-context-header {
+    min-height: 46px;
+    padding: 0 12px;
+  }
+
+  .cf-builder-context-body {
+    overflow: visible;
+    padding: 8px 12px 12px;
+  }
+
+  .cf-builder-workbench-frame {
+    min-height: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .cf-builder-page,
+  .cf-builder-settings-surface {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .cf-builder-surface-toolbar {
+    min-height: 52px;
+    padding: 0 12px;
+  }
+
+  .cf-builder-surface-body,
+  .cf-builder-settings-body {
+    overflow: visible;
+    padding: 12px;
+  }
+
+  .cf-builder-output-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cf-builder-tab-strip {
+    width: 100%;
+  }
+
+  .cf-builder-form-grid,
+  .cf-builder-form-grid-three {
+    grid-template-columns: 1fr;
+  }
+
+  .cf-builder-settings-actions {
+    justify-content: stretch;
+  }
 }

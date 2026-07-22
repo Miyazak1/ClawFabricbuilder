@@ -169,26 +169,34 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [catalog, project]);
 
   return (
-    <main className="cf-builder-workbench grid min-h-screen grid-cols-1 text-foreground lg:grid-cols-[19rem_minmax(0,1fr)]">
-      <aside className="cf-builder-context flex min-h-0 flex-col border-b lg:border-b-0 lg:border-r" aria-label="Builder navigation">
-        <header className="cf-builder-header flex min-h-14 items-center gap-3 border-b px-4">
+    <main className="cf-builder-workbench cf-builder-shell min-h-screen text-foreground" data-builder-workbench="true">
+      <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
+        <div className="cf-builder-rail-brand" aria-hidden="true">
           <span className="cf-builder-brand-mark inline-flex size-8 items-center justify-center">
             <Code2 aria-hidden="true" className="size-4" />
           </span>
-          <strong className="text-sm">ClawFabric Builder</strong>
-        </header>
-        <div className="flex gap-2 border-b p-3">
+        </div>
+        <nav className="cf-builder-rail-nav" aria-label="Builder views">
           <button
             aria-pressed={view === 'settings'}
-            className="cf-builder-nav-button inline-flex min-h-10 flex-1 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="cf-builder-nav-button cf-builder-rail-button inline-flex items-center justify-center gap-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setView('settings')}
             type="button"
           >
             <Settings aria-hidden="true" className="size-4" />
             Settings
           </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto">
+        </nav>
+      </aside>
+
+      <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
+        <header className="cf-builder-context-header">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">ClawFabric</p>
+            <strong className="block truncate text-sm">Builder</strong>
+          </div>
+        </header>
+        <div className="cf-builder-context-body">
           <BuilderProjectCatalog
             onCreateProject={newProject}
             onOpenProject={openProject}
@@ -198,10 +206,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         </div>
       </aside>
 
-      <section className="cf-builder-main-frame min-w-0 lg:border-l" aria-label="Builder workspace">
+        <section className="cf-builder-main-frame cf-builder-workbench-frame" aria-label="Builder workbench" data-builder-workbench-frame="true">
         {view === 'settings' ? (
-          <div className="flex min-h-screen flex-col bg-background text-foreground">
-            <header className="cf-builder-header flex min-h-14 items-center justify-between gap-4 border-b px-4">
+            <div className="cf-builder-settings-surface bg-background text-foreground">
+              <header className="cf-builder-surface-toolbar">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-muted-foreground">ClawFabric Builder</p>
                 <h1 className="truncate text-base font-semibold">AI provider settings</h1>
@@ -214,7 +222,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
                 Back to project
               </button>
             </header>
-            <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
+            <div className="cf-builder-settings-body">
+              <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
+            </div>
           </div>
         ) : (
           <BuilderPage

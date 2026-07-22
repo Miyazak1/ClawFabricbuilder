@@ -153,7 +153,14 @@ describe('BuilderPage', () => {
     const container = render(<BuilderPage {...props()} />);
 
     expect(container.querySelector('[data-builder-page="true"]')).not.toBeNull();
-    expect(container.querySelector('.cf-builder-header')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-surface-toolbar')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-surface-body')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-composer-card')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-output-panel')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-output-toolbar')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-tab-strip')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-code-panel')).not.toBeNull();
+    expect(container.querySelector('.cf-builder-preview-panel')).not.toBeNull();
     expect(container.querySelector('h1')?.textContent).toBe('New project');
     expect(buttonWithText(container, 'Make it')?.disabled).toBe(true);
     expect(container.textContent).toContain('Your preview will appear here.');
