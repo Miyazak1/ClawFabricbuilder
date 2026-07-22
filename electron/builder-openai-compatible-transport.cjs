@@ -368,6 +368,7 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
         body: JSON.stringify({
           model: request.model,
           messages: request.messages,
+          response_format: { type: 'json_object' },
           stream: false,
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
           ...(request.max_tokens === undefined ? {} : { max_tokens: request.max_tokens }),

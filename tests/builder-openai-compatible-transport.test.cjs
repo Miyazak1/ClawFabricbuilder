@@ -90,6 +90,7 @@ test('posts one fixed non-streaming Builder request and returns only bounded gen
   assert.deepEqual(JSON.parse(options.body), {
     model: 'builder-model',
     messages: request().messages,
+    response_format: { type: 'json_object' },
     stream: false,
     temperature: 0.2,
     max_tokens: 4096,
@@ -130,6 +131,7 @@ test('rejects malformed, extra, accessor, proxy, and oversized request authority
     { ...request(), timeout_ms: 999 },
     { ...request(), temperature: 3 },
     { ...request(), max_tokens: 0 },
+    { ...request(), response_format: { type: 'text' } },
     { ...request(), messages: [{ role: 'user', content: 'wrong' }] },
     { ...request(), model: 'x'.repeat(201) },
     new Proxy(request(), {}),
@@ -295,6 +297,7 @@ test('rejects unreadable bodies, malformed lengths, media types, UTF-8, JSON, an
     { value: response(providerPayload(), { headers: new Headers({ 'content-type': 'text/plain' }) }), code: 'builder_provider_response_invalid' },
     { value: response(invalidUtf8), code: 'builder_provider_response_invalid' },
     { value: response('{not-json'), code: 'builder_provider_response_invalid' },
+    { value: response(PRIVATE_MARKER, { ok: false, status: 400 }), code: 'builder_provider_failed' },
     { value: response(providerPayload(), { ok: false, status: 500 }), code: 'builder_provider_failed' },
   ];
   for (const candidate of cases) {
@@ -346,6 +349,6 @@ test('contains no legacy dispatcher, renderer, repository, secret store, or exec
   assert.deepEqual(requires, ['node:util', './builder-generation-kernel.cjs']);
   assert.doesNotMatch(
     source,
-    /chat_planner|local-provider-executor|generic.*dispatch|ipcMain|ipcRenderer|contextBridge|BrowserWindow|repository|secure-provider|localStorage|sessionStorage|child_process|worker_threads|\beval\s*\(|new Function/iu,
+    /ChatCreatePage|chat_planner|local-provider-executor|generic.*dispatch|ipcMain|ipcRenderer|contextBridge|BrowserWindow|repository|secure-provider|localStorage|sessionStorage|child_process|worker_threads|\beval\s*\(|new Function/iu,
   );
 });
