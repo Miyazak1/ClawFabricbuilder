@@ -10,6 +10,7 @@ const {
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
+  CONVERSATION_REPLAY_VERSION,
   BuilderConversationReplayError,
   replayBuilderConversation,
 } = require('../electron/builder-conversation-replay.cjs');
@@ -18,6 +19,11 @@ const PROJECT_ID = 'builder-project:22222222-2222-4222-8222-222222222222';
 const CONVERSATION_ID = 'builder-conversation:22222222-2222-4222-8222-222222222222';
 const RESULT_A = `sha256:${'a'.repeat(64)}`;
 const RESULT_B = `sha256:${'b'.repeat(64)}`;
+const COMMIT_OID = 'c'.repeat(40);
+const BASE_REVISION = Object.freeze({
+  revision_receipt_digest: RESULT_A,
+  commit_oid: COMMIT_OID,
+});
 
 function uuid(index) { return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`; }
 function id(kind, index) { return `builder-${kind}:${uuid(index)}`; }
@@ -54,7 +60,7 @@ function completeHistory() {
     message: { message_id: id('message', 1), text: 'Build a focus timer.' },
     turn_id: id('turn', 1), mode: 'work',
     task: { task_id: id('task', 1), title: 'Build focus timer' },
-    base_revision: { revision: 2, revision_digest: RESULT_A },
+    base_revision: BASE_REVISION,
   });
   events = append(events, 'run_started', {
     turn_id: id('turn', 1), run_id: id('run', 1), task_id: id('task', 1),
@@ -106,11 +112,13 @@ test('replays command events into a fresh frozen project-local task stream', () 
   const events = completeHistory();
   const replay = replayBuilderConversation(events.map((event) => structuredClone(event)));
   assert.equal(replay.project_id, PROJECT_ID);
+  assert.equal(replay.replay_version, CONVERSATION_REPLAY_VERSION);
+  assert.equal(replay.replay_version, 'builder-conversation-replay.v2');
   assert.equal(replay.conversation_id, CONVERSATION_ID);
   assert.equal(replay.event_count, 12);
   assert.equal(replay.active_turn_id, null);
   assert.equal(replay.turns.length, 2);
-  assert.deepEqual(replay.turns[0].base_revision, { revision: 2, revision_digest: RESULT_A });
+  assert.deepEqual(replay.turns[0].base_revision, BASE_REVISION);
   assert.deepEqual(replay.turns[0].runs.map((run) => ({
     attempt: run.attempt_number, retry: run.retry_of_run_id, terminal: run.terminal_status,
   })), [

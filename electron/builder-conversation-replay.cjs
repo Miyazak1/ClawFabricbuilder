@@ -9,7 +9,7 @@ const {
   sanitizeBuilderConversationEvent,
 } = require('./builder-conversation-records.cjs');
 
-const CONVERSATION_REPLAY_VERSION = 'builder-conversation-replay.v1';
+const CONVERSATION_REPLAY_VERSION = 'builder-conversation-replay.v2';
 
 class BuilderConversationReplayError extends Error {
   constructor() {

@@ -38,6 +38,7 @@ const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
 const ONE_DIGEST = `sha256:${'1'.repeat(64)}`;
+const BASE_COMMIT_OID = 'a'.repeat(40);
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 
 function uuid(index) {
@@ -99,26 +100,29 @@ function candidate({
   index,
   base = createBuilderProjectSourceTree({ files: [] }),
   operations,
-  revision = null,
-  revisionDigest = null,
+  revisionReceiptDigest = null,
+  baseCommitOid = null,
   inputDigest = ZERO_DIGEST,
 }) {
   const active = activeRunEvents(
     index,
-    revision === null ? null : { revision, revision_digest: revisionDigest },
+    revisionReceiptDigest === null ? null : {
+      revision_receipt_digest: revisionReceiptDigest,
+      commit_oid: baseCommitOid,
+    },
     inputDigest,
   );
   return createBuilderCodeChangeCandidate({
     conversation_events: active.events,
     turn_id: active.turnId,
     run_id: active.runId,
-    base_revision_evidence: revision === null ? null : {
+    base_revision_evidence: revisionReceiptDigest === null ? null : {
       evidence_version: BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION,
       project_id: PROJECT_ID,
-      revision,
-      revision_digest: revisionDigest,
+      revision_receipt_digest: revisionReceiptDigest,
+      commit_oid: baseCommitOid,
       source_tree_digest: base.source_tree_digest,
-      verification_admission: 'host_verification_required',
+      verification_admission: 'git_sqlite_read_authority_verified',
     },
     base_source_tree: base,
     operations,
@@ -140,8 +144,8 @@ function updateCandidate(base) {
   return candidate({
     index: 2,
     base,
-    revision: 1,
-    revisionDigest: ONE_DIGEST,
+    revisionReceiptDigest: ONE_DIGEST,
+    baseCommitOid: BASE_COMMIT_OID,
     inputDigest: ONE_DIGEST,
     operations: [
       { operation: 'upsert', path: 'index.html', content: '<main>Updated</main>\n' },
@@ -583,8 +587,8 @@ test('rejects expected base commits whose tree does not match the candidate base
     const wrong = candidate({
       index: 2,
       base: wrongBase,
-      revision: 1,
-      revisionDigest: ONE_DIGEST,
+      revisionReceiptDigest: ONE_DIGEST,
+      baseCommitOid: BASE_COMMIT_OID,
       inputDigest: ONE_DIGEST,
       operations: [{ operation: 'upsert', path: 'index.html', content: '<main>Updated</main>\n' }],
     });

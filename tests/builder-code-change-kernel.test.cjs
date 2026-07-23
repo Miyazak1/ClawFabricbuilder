@@ -32,6 +32,12 @@ const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
 const ONE_DIGEST = `sha256:${'1'.repeat(64)}`;
+const COMMIT_OID = 'a'.repeat(40);
+const OTHER_COMMIT_OID = 'b'.repeat(40);
+const BASE_REVISION = Object.freeze({
+  revision_receipt_digest: ONE_DIGEST,
+  commit_oid: COMMIT_OID,
+});
 
 function uuid(index) {
   return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
@@ -98,14 +104,15 @@ function expectInvalid(fn, forbidden = []) {
   });
 }
 
-function baseEvidence(baseSourceTree, revision = 7, revisionDigest = ONE_DIGEST) {
+function baseEvidence(baseSourceTree, overrides = {}) {
   return {
     evidence_version: BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION,
     project_id: PROJECT_ID,
-    revision,
-    revision_digest: revisionDigest,
+    revision_receipt_digest: ONE_DIGEST,
+    commit_oid: COMMIT_OID,
     source_tree_digest: baseSourceTree.source_tree_digest,
-    verification_admission: 'host_verification_required',
+    verification_admission: 'git_sqlite_read_authority_verified',
+    ...overrides,
   };
 }
 
@@ -133,6 +140,7 @@ test('creates a deterministic multi-file candidate from a replayed active work r
 
   assert.deepEqual(first, second);
   assert.equal(first.candidate_version, BUILDER_CODE_CHANGE_CANDIDATE_VERSION);
+  assert.equal(first.candidate_version, 'builder-code-change-candidate.v2');
   assert.equal(first.project_id, PROJECT_ID);
   assert.equal(first.conversation_id, CONVERSATION_ID);
   assert.equal(first.turn_id, TURN_ID);
@@ -141,6 +149,7 @@ test('creates a deterministic multi-file candidate from a replayed active work r
   assert.equal(first.request_digest, ZERO_DIGEST);
   assert.equal(first.base_revision_evidence, null);
   assert.equal(first.run_binding.binding_version, BUILDER_CODE_CHANGE_RUN_BINDING_VERSION);
+  assert.equal(first.run_binding.binding_version, 'builder-code-change-run-binding.v2');
   assert.equal(first.run_binding.conversation_head.sequence, 2);
   assert.equal(first.resulting_tree_digest, first.resulting_source_tree.source_tree_digest);
   assert.deepEqual(first.resulting_source_tree.files.map((entry) => entry.path), [
@@ -164,7 +173,7 @@ test('creates a deterministic multi-file candidate from a replayed active work r
   assert.ok(Object.isFrozen(first.operations));
 });
 
-test('cross-binds the replayed turn base to explicit host-required revision evidence', () => {
+test('cross-binds the replayed turn base to explicit Git and SQLite read evidence', () => {
   const base = createBuilderProjectSourceTree({
     files: [
       { path: 'README.md', content: '# Old\n' },
@@ -172,9 +181,8 @@ test('cross-binds the replayed turn base to explicit host-required revision evid
       { path: 'src/data.json', content: '{"old":true}\n' },
     ],
   });
-  const revision = { revision: 7, revision_digest: ONE_DIGEST };
   const value = createBuilderCodeChangeCandidate(candidateInput({
-    conversation_events: activeRunEvents({ baseRevision: revision, inputDigest: ONE_DIGEST }),
+    conversation_events: activeRunEvents({ baseRevision: BASE_REVISION, inputDigest: ONE_DIGEST }),
     base_source_tree: base,
     base_revision_evidence: baseEvidence(base),
     operations: [
@@ -185,7 +193,7 @@ test('cross-binds the replayed turn base to explicit host-required revision evid
   }));
 
   assert.equal(value.request_digest, ONE_DIGEST);
-  assert.deepEqual(value.run_binding.base_revision, revision);
+  assert.deepEqual(value.run_binding.base_revision, BASE_REVISION);
   assert.deepEqual(value.base_revision_evidence, baseEvidence(base));
   assert.deepEqual(value.resulting_source_tree.files.map((entry) => entry.path), [
     'README.md',
@@ -212,6 +220,14 @@ test('revalidates stored candidate transforms but honestly retains host verifica
   const changedAuthority = structuredClone(value);
   changedAuthority.authority.conversation_binding_admission = 'verified';
   expectInvalid(() => sanitizeBuilderCodeChangeCandidate(changedAuthority));
+
+  const oldCandidateVersion = structuredClone(value);
+  oldCandidateVersion.candidate_version = 'builder-code-change-candidate.v1';
+  expectInvalid(() => sanitizeBuilderCodeChangeCandidate(oldCandidateVersion));
+
+  const oldRunBindingVersion = structuredClone(value);
+  oldRunBindingVersion.run_binding.binding_version = 'builder-code-change-run-binding.v1';
+  expectInvalid(() => sanitizeBuilderCodeChangeCandidate(oldRunBindingVersion));
 });
 
 test('rejects fabricated lifecycle selections and stale or missing base evidence', () => {
@@ -227,17 +243,38 @@ test('rejects fabricated lifecycle selections and stale or missing base evidence
   });
   expectInvalid(() => createBuilderCodeChangeCandidate(candidateInput({
     conversation_events: activeRunEvents({
-      baseRevision: { revision: 7, revision_digest: ONE_DIGEST },
+      baseRevision: BASE_REVISION,
     }),
     base_source_tree: base,
     base_revision_evidence: null,
   })));
   expectInvalid(() => createBuilderCodeChangeCandidate(candidateInput({
     conversation_events: activeRunEvents({
-      baseRevision: { revision: 7, revision_digest: ONE_DIGEST },
+      baseRevision: BASE_REVISION,
     }),
     base_source_tree: base,
-    base_revision_evidence: { ...baseEvidence(base), revision_digest: ZERO_DIGEST },
+    base_revision_evidence: baseEvidence(base, { revision_receipt_digest: ZERO_DIGEST }),
+  })));
+  expectInvalid(() => createBuilderCodeChangeCandidate(candidateInput({
+    conversation_events: activeRunEvents({
+      baseRevision: BASE_REVISION,
+    }),
+    base_source_tree: base,
+    base_revision_evidence: baseEvidence(base, { commit_oid: OTHER_COMMIT_OID }),
+  })));
+  expectInvalid(() => createBuilderCodeChangeCandidate(candidateInput({
+    conversation_events: activeRunEvents({
+      baseRevision: BASE_REVISION,
+    }),
+    base_source_tree: base,
+    base_revision_evidence: {
+      evidence_version: 'builder-project-base-revision-evidence.v1',
+      project_id: PROJECT_ID,
+      revision: 7,
+      revision_digest: ONE_DIGEST,
+      source_tree_digest: base.source_tree_digest,
+      verification_admission: 'host_verification_required',
+    },
   })));
   expectInvalid(() => createBuilderCodeChangeCandidate(candidateInput({
     base_source_tree: base,
@@ -249,9 +286,8 @@ test('rejects missing deletes, folded duplicate paths, semantic no-ops, and hidd
   const base = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const value = 1;\n' }],
   });
-  const revision = { revision: 7, revision_digest: ONE_DIGEST };
   const common = {
-    conversation_events: activeRunEvents({ baseRevision: revision }),
+    conversation_events: activeRunEvents({ baseRevision: BASE_REVISION }),
     base_source_tree: base,
     base_revision_evidence: baseEvidence(base),
   };

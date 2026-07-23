@@ -14,10 +14,10 @@ const {
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
 
-const BUILDER_CODE_CHANGE_CANDIDATE_VERSION = 'builder-code-change-candidate.v1';
-const BUILDER_CODE_CHANGE_RUN_BINDING_VERSION = 'builder-code-change-run-binding.v1';
+const BUILDER_CODE_CHANGE_CANDIDATE_VERSION = 'builder-code-change-candidate.v2';
+const BUILDER_CODE_CHANGE_RUN_BINDING_VERSION = 'builder-code-change-run-binding.v2';
 const BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION =
-  'builder-project-base-revision-evidence.v1';
+  'builder-project-base-revision-evidence.v2';
 const BUILDER_CODE_CHANGE_AUTHORITY = 'deterministic_source_tree_transform';
 const MAX_CODE_CHANGE_OPERATIONS = 256;
 const MAX_CODE_CHANGE_OPERATION_UTF8_BYTES = MAX_SOURCE_TREE_UTF8_BYTES;
@@ -32,6 +32,7 @@ const ID_PATTERNS = Object.freeze({
   run: /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
 });
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 
 const CREATE_KEYS = Object.freeze([
@@ -45,8 +46,8 @@ const CREATE_KEYS = Object.freeze([
 const BASE_REVISION_EVIDENCE_KEYS = Object.freeze([
   'evidence_version',
   'project_id',
-  'revision',
-  'revision_digest',
+  'revision_receipt_digest',
+  'commit_oid',
   'source_tree_digest',
   'verification_admission',
 ]);
@@ -63,7 +64,7 @@ const RUN_BINDING_KEYS = Object.freeze([
   'verification_admission',
 ]);
 const CONVERSATION_HEAD_KEYS = Object.freeze(['sequence', 'event_id', 'event_digest']);
-const CONVERSATION_BASE_REVISION_KEYS = Object.freeze(['revision', 'revision_digest']);
+const CONVERSATION_BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const OPERATION_KEYS = Object.freeze(['operation', 'path', 'content', 'content_digest']);
 const RAW_OPERATION_KEYS = Object.freeze(['operation', 'path', 'content']);
 const AUTHORITY_KEYS = Object.freeze([
@@ -192,17 +193,16 @@ function safeDigest(value) {
   return safePattern(value, DIGEST_PATTERN, 71);
 }
 
+function safeGitOid(value) {
+  return safePattern(value, GIT_OID_PATTERN, 40);
+}
+
 function safeIdentity(value, kind) {
   return safePattern(value, ID_PATTERNS[kind], 128);
 }
 
 function safeProjectId(value) {
   return safePattern(value, PROJECT_ID_PATTERN, 64);
-}
-
-function safeRevision(value) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000) fail();
-  return value;
 }
 
 function pathComparisonKey(value) {
@@ -213,8 +213,8 @@ function sanitizeConversationBaseRevision(value) {
   if (value === null) return null;
   assertExactObject(value, CONVERSATION_BASE_REVISION_KEYS);
   return {
-    revision: safeRevision(valueAt(value, 'revision')),
-    revision_digest: safeDigest(valueAt(value, 'revision_digest')),
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+    commit_oid: safeGitOid(valueAt(value, 'commit_oid')),
   };
 }
 
@@ -240,20 +240,20 @@ function sanitizeBaseRevisionEvidence(value, projectId, sourceTreeDigest, conver
   assertExactObject(value, BASE_REVISION_EVIDENCE_KEYS);
   if (
     valueAt(value, 'evidence_version') !== BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION
-    || valueAt(value, 'verification_admission') !== 'host_verification_required'
+    || valueAt(value, 'verification_admission') !== 'git_sqlite_read_authority_verified'
   ) fail();
   const evidence = {
     evidence_version: BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION,
     project_id: safeProjectId(valueAt(value, 'project_id')),
-    revision: safeRevision(valueAt(value, 'revision')),
-    revision_digest: safeDigest(valueAt(value, 'revision_digest')),
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+    commit_oid: safeGitOid(valueAt(value, 'commit_oid')),
     source_tree_digest: safeDigest(valueAt(value, 'source_tree_digest')),
-    verification_admission: 'host_verification_required',
+    verification_admission: 'git_sqlite_read_authority_verified',
   };
   if (
     evidence.project_id !== projectId
-    || evidence.revision !== conversationBase.revision
-    || evidence.revision_digest !== conversationBase.revision_digest
+    || evidence.revision_receipt_digest !== conversationBase.revision_receipt_digest
+    || evidence.commit_oid !== conversationBase.commit_oid
     || evidence.source_tree_digest !== sourceTreeDigest
   ) fail();
   return evidence;

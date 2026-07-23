@@ -3,7 +3,7 @@
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
-const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v1';
+const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
 const MAX_EVENT_SEQUENCE = 4_096;
 const MAX_EVENT_RECORD_BYTES = 24 * 1_024;
@@ -18,6 +18,7 @@ const CONVERSATION_AUTHORITY = Object.freeze({
 });
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const ID_PATTERNS = Object.freeze({
   conversation: /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   event: /^builder-conversation-event:[0-9a-f]{64}$/u,
@@ -50,7 +51,7 @@ const AUTHORITY_KEYS = Object.freeze([
 const MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const TASK_KEYS = Object.freeze(['task_id', 'title']);
 const ASSISTANT_MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
-const BASE_REVISION_KEYS = Object.freeze(['revision', 'revision_digest']);
+const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const PAYLOAD_KEYS = Object.freeze({
   turn_submitted: Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision']),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
@@ -172,6 +173,7 @@ function safeCancelRequestId(value) {
   return safePattern(value, ID_PATTERNS.cancel_request, 104);
 }
 function safeDigest(value) { return safePattern(value, DIGEST_PATTERN, 71); }
+function safeGitOid(value) { return safePattern(value, GIT_OID_PATTERN, 40); }
 
 function safeSequence(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_EVENT_SEQUENCE) fail();
@@ -218,9 +220,10 @@ function sanitizeTask(value) {
 function sanitizeBaseRevision(value) {
   if (value === null) return null;
   assertExactObject(value, BASE_REVISION_KEYS);
-  const revision = valueAt(value, 'revision');
-  if (!Number.isSafeInteger(revision) || revision < 1 || revision > 1_000_000) fail();
-  return { revision, revision_digest: safeDigest(valueAt(value, 'revision_digest')) };
+  return {
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+    commit_oid: safeGitOid(valueAt(value, 'commit_oid')),
+  };
 }
 
 function nullable(value, sanitizer) { return value === null ? null : sanitizer(value); }

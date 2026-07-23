@@ -17,6 +17,11 @@ const {
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
 const DIGEST_A = `sha256:${'a'.repeat(64)}`;
+const COMMIT_OID = 'b'.repeat(40);
+const BASE_REVISION = Object.freeze({
+  revision_receipt_digest: DIGEST_A,
+  commit_oid: COMMIT_OID,
+});
 
 function uuid(index) { return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`; }
 function typedId(kind, index) { return `builder-${kind}:${uuid(index)}`; }
@@ -55,17 +60,18 @@ test('creates deterministic project-bound command and event evidence with canoni
     turn_id: typedId('turn', 1),
     mode: 'work',
     task: { task_id: typedId('task', 1), title: 'Create focus timer' },
-    base_revision: { revision: 3, revision_digest: DIGEST_A },
+    base_revision: BASE_REVISION,
   });
   const repeated = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Build a quiet focus timer.' },
     turn_id: typedId('turn', 1),
     mode: 'work',
     task: { task_id: typedId('task', 1), title: 'Create focus timer' },
-    base_revision: { revision: 3, revision_digest: DIGEST_A },
+    base_revision: BASE_REVISION,
   });
 
   assert.deepEqual(event, repeated);
+  assert.equal(event.record_version, 'builder-conversation-event.v2');
   assert.match(event.command_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.match(event.event_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.match(event.event_id, /^builder-conversation-event:[0-9a-f]{64}$/u);
@@ -112,11 +118,14 @@ test('rejects non-derived conversation/event/command evidence and payload drift'
   });
   const cases = [
     { ...event, conversation_id: `builder-conversation:${uuid(99)}` },
+    { ...event, record_version: 'builder-conversation-event.v1' },
     { ...event, event_id: `builder-conversation-event:${'f'.repeat(64)}` },
     { ...event, command_digest: DIGEST_A },
     { ...event, event_digest: DIGEST_A },
     { ...event, unexpected: true },
-    { ...event, payload: { ...event.payload, base_revision: { revision: 0, revision_digest: DIGEST_A } } },
+    { ...event, payload: { ...event.payload, base_revision: { revision: 3, revision_digest: DIGEST_A } } },
+    { ...event, payload: { ...event.payload, base_revision: { ...BASE_REVISION, revision: 3 } } },
+    { ...event, payload: { ...event.payload, base_revision: { ...BASE_REVISION, commit_oid: DIGEST_A } } },
     { ...event, payload: { ...event.payload, source: '<html></html>' } },
     { ...event, authority: { ...event.authority, permission_admission: 'granted' } },
   ];
