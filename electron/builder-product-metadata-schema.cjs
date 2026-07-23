@@ -12,9 +12,9 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 
-const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v1';
-const BUILDER_PRODUCT_METADATA_USER_VERSION = 1;
-const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v1';
+const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v2';
+const BUILDER_PRODUCT_METADATA_USER_VERSION = 2;
+const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v2';
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_PATTERN}$`, 'u');
@@ -48,7 +48,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     current_revision_receipt_digest TEXT,
     current_revision_number INTEGER NOT NULL DEFAULT 0,
     metadata_schema_version TEXT NOT NULL,
-    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v1'),
+    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v2'),
     CHECK (project_created_at_ms >= 0),
     CHECK (current_revision_number >= 0),
     CHECK (
@@ -144,12 +144,19 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     revision_receipt_digest TEXT NOT NULL,
     revision_number INTEGER NOT NULL,
     previous_revision_receipt_digest TEXT,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
     object_format TEXT NOT NULL,
     commit_oid TEXT NOT NULL,
     tree_oid TEXT NOT NULL,
     parent_oid TEXT,
     candidate_id TEXT NOT NULL,
     candidate_digest TEXT NOT NULL,
+    resulting_tree_digest TEXT NOT NULL,
+    semantic_identity_digest TEXT NOT NULL,
     verification_receipt_digest TEXT NOT NULL,
     task_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
@@ -159,10 +166,14 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     UNIQUE (project_id, revision_number),
     UNIQUE (project_id, commit_oid),
     CHECK (revision_number >= 1),
+    CHECK (length(title) BETWEEN 1 AND 80),
+    CHECK (length(summary) BETWEEN 1 AND 400),
     CHECK (object_format = 'sha1'),
     CHECK (selected_at_ms >= 0),
     FOREIGN KEY (project_id, previous_revision_receipt_digest)
       REFERENCES project_revisions(project_id, revision_receipt_digest)
+      ON DELETE RESTRICT ON UPDATE RESTRICT,
+    FOREIGN KEY (project_id, conversation_id) REFERENCES conversations(project_id, conversation_id)
       ON DELETE RESTRICT ON UPDATE RESTRICT,
     FOREIGN KEY (project_id, task_id) REFERENCES tasks(project_id, task_id)
       ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -248,6 +259,11 @@ function safePattern(value, pattern, maximum) {
 
 function safeInteger(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail();
+  return value;
+}
+
+function safeLimit(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 256) fail();
   return value;
 }
 
@@ -389,12 +405,19 @@ function sanitizeReview(value) {
 function sanitizeProjectRevisionInput(value) {
   exactObject(value, [
     'project_id',
+    'title',
+    'summary',
+    'conversation_id',
+    'turn_id',
+    'request_id',
     'object_format',
     'commit_oid',
     'tree_oid',
     'parent_oid',
     'candidate_id',
     'candidate_digest',
+    'resulting_tree_digest',
+    'semantic_identity_digest',
     'verification_receipt_digest',
     'selected_at_ms',
   ]);
@@ -402,12 +425,19 @@ function sanitizeProjectRevisionInput(value) {
   if (objectFormat !== 'sha1') fail();
   return freezeDeep({
     project_id: safeProjectId(valueAt(value, 'project_id')),
+    title: safeText(valueAt(value, 'title'), 80),
+    summary: safeText(valueAt(value, 'summary'), 400),
+    conversation_id: safeConversationId(valueAt(value, 'conversation_id')),
+    turn_id: safeTurnId(valueAt(value, 'turn_id')),
+    request_id: safeRequestId(valueAt(value, 'request_id')),
     object_format: objectFormat,
     commit_oid: safeGitOid(valueAt(value, 'commit_oid'), objectFormat),
     tree_oid: safeGitOid(valueAt(value, 'tree_oid'), objectFormat),
     parent_oid: safeGitOid(valueAt(value, 'parent_oid'), objectFormat, true),
     candidate_id: safeCandidateId(valueAt(value, 'candidate_id')),
     candidate_digest: safeDigest(valueAt(value, 'candidate_digest')),
+    resulting_tree_digest: safeDigest(valueAt(value, 'resulting_tree_digest')),
+    semantic_identity_digest: safeDigest(valueAt(value, 'semantic_identity_digest')),
     verification_receipt_digest: safeDigest(valueAt(value, 'verification_receipt_digest')),
     selected_at_ms: safeInteger(valueAt(value, 'selected_at_ms')),
   });
@@ -464,6 +494,11 @@ function assertRequestBindings(request) {
     || request.review.subject_verification_receipt_digest !== gitReceipt.verification_receipt_digest
     || request.revision.candidate_id !== verification.candidate_id
     || request.revision.candidate_digest !== verification.candidate_digest
+    || request.revision.conversation_id !== request.conversation.conversation_id
+    || request.revision.turn_id !== request.run.turn_id
+    || request.revision.request_id !== request.run.request_id
+    || request.revision.resulting_tree_digest !== gitReceipt.resulting_tree_digest
+    || request.revision.semantic_identity_digest !== gitReceipt.semantic_identity_digest
     || request.revision.verification_receipt_digest !== gitReceipt.verification_receipt_digest
     || request.revision.object_format !== gitReceipt.object_format
     || request.revision.commit_oid !== gitReceipt.commit_oid
@@ -473,6 +508,8 @@ function assertRequestBindings(request) {
     || verification.object_format !== gitReceipt.object_format
     || verification.expected_base_oid !== gitReceipt.expected_base_oid
     || verification.candidate_tree_oid !== gitReceipt.tree_oid
+    || verification.resulting_tree_digest !== gitReceipt.resulting_tree_digest
+    || verification.semantic_identity_digest !== gitReceipt.semantic_identity_digest
   ) fail();
   const expectedBaseOid = safeGitOid(verification.expected_base_oid, gitReceipt.object_format, true);
   const candidateTreeOid = safeGitOid(verification.candidate_tree_oid, gitReceipt.object_format);
@@ -519,12 +556,19 @@ function createRevisionReceipt(value) {
     'project_id',
     'revision_number',
     'previous_revision_receipt_digest',
+    'title',
+    'summary',
+    'conversation_id',
+    'turn_id',
+    'request_id',
     'object_format',
     'commit_oid',
     'tree_oid',
     'parent_oid',
     'candidate_id',
     'candidate_digest',
+    'resulting_tree_digest',
+    'semantic_identity_digest',
     'verification_receipt_digest',
     'task_id',
     'run_id',
@@ -537,16 +581,23 @@ function createRevisionReceipt(value) {
     candidate_digest: safeDigest(valueAt(value, 'candidate_digest')),
     candidate_id: safeCandidateId(valueAt(value, 'candidate_id')),
     commit_oid: safeGitOid(valueAt(value, 'commit_oid'), objectFormat),
+    conversation_id: safeConversationId(valueAt(value, 'conversation_id')),
     object_format: objectFormat,
     parent_oid: safeGitOid(valueAt(value, 'parent_oid'), objectFormat, true),
     previous_revision_receipt_digest: safeNullableDigest(valueAt(value, 'previous_revision_receipt_digest')),
     project_id: safeProjectId(valueAt(value, 'project_id')),
+    request_id: safeRequestId(valueAt(value, 'request_id')),
+    resulting_tree_digest: safeDigest(valueAt(value, 'resulting_tree_digest')),
     review_id: safeReviewId(valueAt(value, 'review_id')),
     revision_number: safeInteger(valueAt(value, 'revision_number')),
     run_id: safeRunId(valueAt(value, 'run_id')),
     selected_at_ms: safeInteger(valueAt(value, 'selected_at_ms')),
+    semantic_identity_digest: safeDigest(valueAt(value, 'semantic_identity_digest')),
+    summary: safeText(valueAt(value, 'summary'), 400),
     task_id: safeTaskId(valueAt(value, 'task_id')),
+    title: safeText(valueAt(value, 'title'), 80),
     tree_oid: safeGitOid(valueAt(value, 'tree_oid'), objectFormat),
+    turn_id: safeTurnId(valueAt(value, 'turn_id')),
     verification_receipt_digest: safeDigest(valueAt(value, 'verification_receipt_digest')),
   });
   if (body.revision_number < 1) fail();
@@ -598,14 +649,21 @@ function sanitizeRecordProjectRevisionRequest(value) {
       candidate_digest: request.revision.candidate_digest,
       candidate_id: request.revision.candidate_id,
       commit_oid: request.revision.commit_oid,
+      conversation_id: request.revision.conversation_id,
       object_format: request.revision.object_format,
       parent_oid: request.revision.parent_oid,
       project_id: request.revision.project_id,
+      request_id: request.revision.request_id,
+      resulting_tree_digest: request.revision.resulting_tree_digest,
       review_id: request.review.review_id,
       run_id: request.run.run_id,
       selected_at_ms: request.revision.selected_at_ms,
+      semantic_identity_digest: request.revision.semantic_identity_digest,
+      summary: request.revision.summary,
       task_id: request.task.task_id,
+      title: request.revision.title,
       tree_oid: request.revision.tree_oid,
+      turn_id: request.revision.turn_id,
       verification_receipt_digest: request.revision.verification_receipt_digest,
     },
     semantic_hash: sha256Canonical({
@@ -627,18 +685,38 @@ function sanitizeLoadCurrentRequest(value) {
   return freezeDeep({ project_id: safeProjectId(valueAt(value, 'project_id')) });
 }
 
+function sanitizeLoadProjectRevisionRequest(value) {
+  exactObject(value, ['project_id', 'revision_receipt_digest']);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+  });
+}
+
+function sanitizeListCurrentProjectRevisionsRequest(value) {
+  exactObject(value, ['limit']);
+  return freezeDeep({ limit: safeLimit(valueAt(value, 'limit')) });
+}
+
 function sanitizeReceiptRow(value) {
   exactObject(value, [
     'project_id',
     'revision_receipt_digest',
     'revision_number',
     'previous_revision_receipt_digest',
+    'title',
+    'summary',
+    'conversation_id',
+    'turn_id',
+    'request_id',
     'object_format',
     'commit_oid',
     'tree_oid',
     'parent_oid',
     'candidate_id',
     'candidate_digest',
+    'resulting_tree_digest',
+    'semantic_identity_digest',
     'verification_receipt_digest',
     'task_id',
     'run_id',
@@ -649,16 +727,23 @@ function sanitizeReceiptRow(value) {
     candidate_digest: valueAt(value, 'candidate_digest'),
     candidate_id: valueAt(value, 'candidate_id'),
     commit_oid: valueAt(value, 'commit_oid'),
+    conversation_id: valueAt(value, 'conversation_id'),
     object_format: valueAt(value, 'object_format'),
     parent_oid: valueAt(value, 'parent_oid'),
     previous_revision_receipt_digest: valueAt(value, 'previous_revision_receipt_digest'),
     project_id: valueAt(value, 'project_id'),
+    request_id: valueAt(value, 'request_id'),
+    resulting_tree_digest: valueAt(value, 'resulting_tree_digest'),
     review_id: valueAt(value, 'review_id'),
     revision_number: valueAt(value, 'revision_number'),
     run_id: valueAt(value, 'run_id'),
     selected_at_ms: valueAt(value, 'selected_at_ms'),
+    semantic_identity_digest: valueAt(value, 'semantic_identity_digest'),
+    summary: valueAt(value, 'summary'),
     task_id: valueAt(value, 'task_id'),
+    title: valueAt(value, 'title'),
     tree_oid: valueAt(value, 'tree_oid'),
+    turn_id: valueAt(value, 'turn_id'),
     verification_receipt_digest: valueAt(value, 'verification_receipt_digest'),
   });
   if (safeDigest(valueAt(value, 'revision_receipt_digest')) !== receipt.revision_receipt_digest) fail();
@@ -691,6 +776,8 @@ module.exports = Object.freeze({
   createRevisionReceipt: safeBoundary(createRevisionReceipt),
   sha256Canonical: safeBoundary(sha256Canonical),
   sanitizeLoadCurrentRequest: safeBoundary(sanitizeLoadCurrentRequest),
+  sanitizeLoadProjectRevisionRequest: safeBoundary(sanitizeLoadProjectRevisionRequest),
+  sanitizeListCurrentProjectRevisionsRequest: safeBoundary(sanitizeListCurrentProjectRevisionsRequest),
   sanitizeReceiptRow: safeBoundary(sanitizeReceiptRow),
   sanitizeRecordProjectRevisionRequest: safeBoundary(sanitizeRecordProjectRevisionRequest),
 });

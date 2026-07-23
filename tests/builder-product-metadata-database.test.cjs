@@ -64,6 +64,9 @@ function request({
   parent = null,
   candidateDigest = digest('c'),
   resultingTreeDigest = digest('d'),
+  semanticIdentityDigest = digest('e'),
+  title = 'Create the project',
+  summary = 'A saved Builder project revision.',
   expected = null,
   selectedAt = 5,
   baseCreatedAt = 1,
@@ -90,7 +93,7 @@ function request({
     commit_oid: commit,
     candidate_tree_oid: tree,
     resulting_tree_digest: resultingTreeDigest,
-    semantic_identity_digest: digest('e'),
+    semantic_identity_digest: semanticIdentityDigest,
     object_format: 'sha1',
     commit_ref_admission: 'verified',
     request_ref_admission: 'verified',
@@ -115,7 +118,7 @@ function request({
       task_id: taskId,
       project_id: projectId,
       conversation_id: conversationId,
-      title: 'Create the project',
+      title,
       base_commit_oid: parent,
       created_at_ms: baseCreatedAt + 1,
     },
@@ -157,7 +160,7 @@ function request({
       candidate_id: candidateId,
       candidate_digest: candidateDigest,
       resulting_tree_digest: resultingTreeDigest,
-      semantic_identity_digest: digest('e'),
+      semantic_identity_digest: semanticIdentityDigest,
       verification_receipt_digest: verificationDigest,
       object_format: 'sha1',
       commit_oid: commit,
@@ -170,12 +173,19 @@ function request({
     },
     project_revision: {
       project_id: projectId,
+      title,
+      summary,
+      conversation_id: conversationId,
+      turn_id: turnId,
+      request_id: requestId,
       object_format: 'sha1',
       commit_oid: commit,
       tree_oid: tree,
       parent_oid: parent,
       candidate_id: candidateId,
       candidate_digest: candidateDigest,
+      resulting_tree_digest: resultingTreeDigest,
+      semantic_identity_digest: semanticIdentityDigest,
       verification_receipt_digest: verificationDigest,
       selected_at_ms: selectedAt,
     },
@@ -238,7 +248,7 @@ function seedRevisionChainFixture(filePath, length) {
     const insertProject = raw.prepare(`INSERT OR IGNORE INTO projects (
       project_id, project_created_at_ms, current_revision_receipt_digest,
       current_revision_number, metadata_schema_version
-    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v1')`);
+    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v2')`);
     const insertConversation = raw.prepare(`INSERT OR IGNORE INTO conversations (
       project_id, conversation_id, created_at_ms
     ) VALUES (?, ?, ?)`);
@@ -256,9 +266,11 @@ function seedRevisionChainFixture(filePath, length) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertRevision = raw.prepare(`INSERT INTO project_revisions (
       project_id, revision_receipt_digest, revision_number, previous_revision_receipt_digest,
-      object_format, commit_oid, tree_oid, parent_oid, candidate_id, candidate_digest,
-      verification_receipt_digest, task_id, run_id, review_id, selected_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      title, summary, conversation_id, turn_id, request_id, object_format, commit_oid,
+      tree_oid, parent_oid, candidate_id, candidate_digest, resulting_tree_digest,
+      semantic_identity_digest, verification_receipt_digest, task_id, run_id, review_id,
+      selected_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (let index = 1; index <= length; index += 1) {
       const rawRequest = request({
         idempotencyIndex: index,
@@ -327,12 +339,19 @@ function seedRevisionChainFixture(filePath, length) {
         receipt.revision_receipt_digest,
         receipt.revision_number,
         receipt.previous_revision_receipt_digest,
+        receipt.title,
+        receipt.summary,
+        receipt.conversation_id,
+        receipt.turn_id,
+        receipt.request_id,
         receipt.object_format,
         receipt.commit_oid,
         receipt.tree_oid,
         receipt.parent_oid,
         receipt.candidate_id,
         receipt.candidate_digest,
+        receipt.resulting_tree_digest,
+        receipt.semantic_identity_digest,
         receipt.verification_receipt_digest,
         receipt.task_id,
         receipt.run_id,
@@ -394,6 +413,12 @@ test('records monotonic Project Revision receipts and restores current after res
   assert.equal(first.operation, 'recorded');
   assert.equal(first.receipt.project_id, PROJECT_ID);
   assert.equal(first.receipt.revision_number, 1);
+  assert.equal(first.receipt.title, 'Create the project');
+  assert.equal(first.receipt.summary, 'A saved Builder project revision.');
+  assert.equal(first.receipt.conversation_id, CONVERSATION_ID);
+  assert.match(first.receipt.request_id, /^builder-git-request:/u);
+  assert.equal(first.receipt.resulting_tree_digest, digest('d'));
+  assert.equal(first.receipt.semantic_identity_digest, digest('e'));
   assert.equal(first.receipt.previous_revision_receipt_digest, null);
   assert.equal(first.receipt.parent_oid, null);
   assert.equal(first.receipt.candidate_digest, digest('c'));
@@ -434,7 +459,92 @@ test('records monotonic Project Revision receipts and restores current after res
   const current = restarted.load_current_project_revision({ project_id: PROJECT_ID });
   assert.equal(current.operation, 'current_loaded');
   assert.deepEqual(current.receipt, second.receipt);
+  const exactFirst = restarted.load_project_revision({
+    project_id: PROJECT_ID,
+    revision_receipt_digest: first.receipt.revision_receipt_digest,
+  });
+  assert.equal(exactFirst.operation, 'revision_loaded');
+  assert.deepEqual(exactFirst.receipt, first.receipt);
+  assert.equal(exactFirst.current.revision_receipt_digest, second.receipt.revision_receipt_digest);
+  assert.notEqual(exactFirst.current.revision_receipt_digest, exactFirst.receipt.revision_receipt_digest);
   restarted.close();
+});
+
+test('lists current Project Revisions as stable redacted catalog entries', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  const laterProject = metadata.record_project_revision_receipt(request({
+    projectId: OTHER_PROJECT_ID,
+    conversationId: OTHER_CONVERSATION_ID,
+    idempotencyIndex: 2,
+    taskIndex: 11,
+    runIndex: 12,
+    reviewIndex: 13,
+    turnIndex: 14,
+    requestIndex: 15,
+    candidateIndex: 16,
+    commit: '2'.repeat(40),
+    tree: '3'.repeat(40),
+    candidateDigest: digest('2'),
+    resultingTreeDigest: digest('3'),
+    semanticIdentityDigest: digest('4'),
+    title: 'Second project',
+    summary: 'Another current project.',
+    selectedAt: 20,
+  }));
+  const firstProject = metadata.record_project_revision_receipt(request({
+    idempotencyIndex: 3,
+    taskIndex: 21,
+    runIndex: 22,
+    reviewIndex: 23,
+    turnIndex: 24,
+    requestIndex: 25,
+    candidateIndex: 26,
+    commit: '4'.repeat(40),
+    tree: '5'.repeat(40),
+    candidateDigest: digest('5'),
+    resultingTreeDigest: digest('6'),
+    semanticIdentityDigest: digest('7'),
+    title: 'First project',
+    summary: 'The first current project.',
+    selectedAt: 10,
+  }));
+
+  const listed = metadata.list_current_project_revisions({ limit: 256 });
+  assert.equal(listed.result_version, BUILDER_PRODUCT_METADATA_RESULT_VERSION);
+  assert.equal(listed.operation, 'current_listed');
+  assert.deepEqual(listed.projects, [
+    {
+      project_id: PROJECT_ID,
+      title: 'First project',
+      summary: 'The first current project.',
+      revision_number: 1,
+      revision_receipt_digest: firstProject.receipt.revision_receipt_digest,
+      commit_oid: firstProject.receipt.commit_oid,
+      tree_oid: firstProject.receipt.tree_oid,
+      selected_at_ms: 10,
+    },
+    {
+      project_id: OTHER_PROJECT_ID,
+      title: 'Second project',
+      summary: 'Another current project.',
+      revision_number: 1,
+      revision_receipt_digest: laterProject.receipt.revision_receipt_digest,
+      commit_oid: laterProject.receipt.commit_oid,
+      tree_oid: laterProject.receipt.tree_oid,
+      selected_at_ms: 20,
+    },
+  ]);
+  const catalogPacket = JSON.stringify(listed.projects);
+  assert.doesNotMatch(
+    catalogPacket,
+    /candidate_digest|verification_receipt_digest|conversation_id|turn_id|request_id|source/iu,
+  );
+  assert.deepEqual(
+    metadata.list_current_project_revisions({ limit: 1 }).projects.map((entry) => entry.project_id),
+    [PROJECT_ID],
+  );
+  metadata.close();
 });
 
 test('replays the original action receipt while re-querying latest current', (t) => {
@@ -467,14 +577,17 @@ test('replays the original action receipt while re-querying latest current', (t)
 
   const upstreamReplay = structuredClone(firstRequest);
   upstreamReplay.git_candidate_receipt.replay = true;
-  const replayedAfterGitReplay = metadata.record_project_revision_receipt(upstreamReplay);
-  assert.equal(replayedAfterGitReplay.operation, 'replayed');
-  assert.deepEqual(replayedAfterGitReplay.receipt, first.receipt);
-  assert.equal(
-    replayedAfterGitReplay.current.revision_receipt_digest,
-    second.receipt.revision_receipt_digest,
-  );
+  const upstreamReplayResult = metadata.record_project_revision_receipt(upstreamReplay);
+  assert.equal(upstreamReplayResult.operation, 'replayed');
+  assert.deepEqual(upstreamReplayResult.receipt, first.receipt);
   metadata.close();
+
+  const recoveryPath = temporaryDatabase(t);
+  const recovered = createBuilderProductMetadataDatabase(recoveryPath);
+  const recoveredResult = recovered.record_project_revision_receipt(upstreamReplay);
+  assert.equal(recoveredResult.operation, 'recorded');
+  assert.equal(recoveredResult.receipt.commit_oid, first.receipt.commit_oid);
+  recovered.close();
 
   {
     const raw = new DatabaseSync(filePath);
@@ -1026,7 +1139,9 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
   const metadata = createBuilderProductMetadataDatabase(filePath);
   assert.deepEqual(Reflect.ownKeys(metadata).sort(), [
     'close',
+    'list_current_project_revisions',
     'load_current_project_revision',
+    'load_project_revision',
     'record_project_revision_receipt',
   ]);
   assert.equal(Object.isFrozen(metadata), true);

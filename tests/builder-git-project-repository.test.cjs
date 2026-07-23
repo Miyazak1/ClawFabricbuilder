@@ -24,6 +24,7 @@ const {
 const {
   BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
   BUILDER_GIT_CANDIDATE_VERIFICATION_VERSION,
+  BUILDER_GIT_VERIFIED_CANDIDATE_READ_RESULT_VERSION,
   BuilderGitProjectRepositoryError,
   createBuilderGitProjectRepository,
   createDefaultBuilderGitProjectRepository,
@@ -382,6 +383,171 @@ test('persist_candidate_commit creates immutable candidate and request refs with
   }
 });
 
+test('read_verified_candidate returns a fresh verified Git tree for initial, update, and restart', async () => {
+  const value = fixture();
+  try {
+    const firstChange = initialCandidate();
+    const firstReceipt = await value.repository.persist_candidate_commit(request(firstChange, 1));
+    const firstRead = await value.repository.read_verified_candidate(firstReceipt);
+    assert.deepEqual(Object.keys(firstRead), [
+      'result_version',
+      'candidate_receipt',
+      'verification_receipt',
+      'source_tree',
+      'code_authority',
+      'read_admission',
+    ]);
+    assert.equal(firstRead.result_version, BUILDER_GIT_VERIFIED_CANDIDATE_READ_RESULT_VERSION);
+    assert.equal(firstRead.code_authority, 'git_commit_tree');
+    assert.equal(firstRead.read_admission, 'verified');
+    assert.deepEqual(firstRead.candidate_receipt, firstReceipt);
+    assert.notEqual(firstRead.candidate_receipt, firstReceipt);
+    assert.equal(firstRead.verification_receipt.receipt_version, BUILDER_GIT_CANDIDATE_VERIFICATION_VERSION);
+    assert.equal(firstRead.verification_receipt.commit_oid, firstReceipt.commit_oid);
+    assert.deepEqual(firstRead.source_tree, firstChange.resulting_source_tree);
+    assert.notEqual(firstRead.source_tree, firstChange.resulting_source_tree);
+    assert.equal(Object.isFrozen(firstRead), true);
+    assert.equal(Object.isFrozen(firstRead.candidate_receipt), true);
+    assert.equal(Object.isFrozen(firstRead.verification_receipt), true);
+    assert.equal(Object.isFrozen(firstRead.source_tree), true);
+
+    const secondChange = updateCandidate(firstRead.source_tree);
+    const secondReceipt = await value.repository.persist_candidate_commit(
+      request(secondChange, 2, firstReceipt.commit_oid),
+    );
+    const restartedRead = await value.restart().read_verified_candidate(structuredClone(secondReceipt));
+    assert.equal(restartedRead.candidate_receipt.commit_oid, secondReceipt.commit_oid);
+    assert.equal(restartedRead.candidate_receipt.parent_oid, firstReceipt.commit_oid);
+    assert.deepEqual(restartedRead.source_tree, secondChange.resulting_source_tree);
+  } finally {
+    fs.rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('read and verification never recreate a missing project repository', async () => {
+  const value = fixture();
+  try {
+    const receipt = await value.repository.persist_candidate_commit(request(initialCandidate(), 1));
+    const projectRoot = path.join(value.projectsRoot, UUID);
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+
+    await assert.rejects(
+      value.repository.read_verified_candidate(receipt),
+      expectCode('builder_git_project_integrity_failed'),
+    );
+    assert.equal(fs.existsSync(projectRoot), false);
+
+    await assert.rejects(
+      value.repository.verify_candidate_receipt(receipt),
+      expectCode('builder_git_project_integrity_failed'),
+    );
+    assert.equal(fs.existsSync(projectRoot), false);
+  } finally {
+    fs.rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('bounds Git tree entries and blob bytes before reading the complete tree', async (t) => {
+  const value = fixture();
+  try {
+    const receipt = await value.repository.persist_candidate_commit(request(initialCandidate(), 1));
+    const result = (stdout, found = true) => Object.freeze({
+      runner_version: 'test-runner.v1',
+      operation: 'test',
+      found,
+      stdout,
+    });
+    const entry = (index) => (
+      `100644 blob ${index.toString(16).padStart(40, '0')}\tfile-${index}.txt\0`
+    );
+
+    await t.test('rejects too many entries before the first blob read', async () => {
+      let blobReads = 0;
+      const bounded = createBuilderGitProjectRepository({
+        projects_root: value.projectsRoot,
+        runtime_root: value.runtimeRoot,
+        now_seconds: () => 1,
+        git_runner: {
+          async run(operation) {
+            if (operation === 'read_object_format') return result('sha1\n');
+            if (operation === 'read_candidate' || operation === 'read_request') {
+              return result(`${receipt.commit_oid}\n`);
+            }
+            if (operation === 'list_tree') {
+              return result(Array.from({ length: 513 }, (_, index) => entry(index + 1)).join(''));
+            }
+            if (operation === 'read_blob') blobReads += 1;
+            throw new Error('unexpected operation');
+          },
+        },
+      });
+      await assert.rejects(
+        bounded.read_verified_candidate(receipt),
+        expectCode('builder_git_project_integrity_failed'),
+      );
+      assert.equal(blobReads, 0);
+    });
+
+    await t.test('rejects an oversized blob before reading the commit', async () => {
+      let commitReads = 0;
+      const bounded = createBuilderGitProjectRepository({
+        projects_root: value.projectsRoot,
+        runtime_root: value.runtimeRoot,
+        now_seconds: () => 1,
+        git_runner: {
+          async run(operation) {
+            if (operation === 'read_object_format') return result('sha1\n');
+            if (operation === 'read_candidate' || operation === 'read_request') {
+              return result(`${receipt.commit_oid}\n`);
+            }
+            if (operation === 'list_tree') return result(entry(1));
+            if (operation === 'read_blob') return result('x'.repeat(512 * 1024 + 1));
+            if (operation === 'read_commit') commitReads += 1;
+            throw new Error('unexpected operation');
+          },
+        },
+      });
+      await assert.rejects(
+        bounded.read_verified_candidate(receipt),
+        expectCode('builder_git_project_integrity_failed'),
+      );
+      assert.equal(commitReads, 0);
+    });
+
+    await t.test('stops when cumulative source bytes exceed the tree budget', async () => {
+      let blobReads = 0;
+      const bounded = createBuilderGitProjectRepository({
+        projects_root: value.projectsRoot,
+        runtime_root: value.runtimeRoot,
+        now_seconds: () => 1,
+        git_runner: {
+          async run(operation) {
+            if (operation === 'read_object_format') return result('sha1\n');
+            if (operation === 'read_candidate' || operation === 'read_request') {
+              return result(`${receipt.commit_oid}\n`);
+            }
+            if (operation === 'list_tree') {
+              return result(Array.from({ length: 9 }, (_, index) => entry(index + 1)).join(''));
+            }
+            if (operation === 'read_blob') {
+              blobReads += 1;
+              return result('x'.repeat(512 * 1024));
+            }
+            throw new Error('unexpected operation');
+          },
+        },
+      });
+      await assert.rejects(
+        bounded.read_verified_candidate(receipt),
+        expectCode('builder_git_project_integrity_failed'),
+      );
+      assert.equal(blobReads, 9);
+    });
+  } finally {
+    fs.rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
 test('binds update candidate to expected base as the only commit parent', async () => {
   const value = fixture();
   try {
@@ -522,6 +688,10 @@ test('replay rejects tampered commit tree, parent, and trailers', async () => {
       value.repository.persist_candidate_commit(raw),
       expectCode('builder_git_project_conflict'),
     );
+    await assert.rejects(
+      value.repository.read_verified_candidate(originalReceipt),
+      expectCode('builder_git_project_integrity_failed'),
+    );
     fs.writeFileSync(refPathForReceipt(projectRoot, originalReceipt, 'request'), `${originalReceipt.commit_oid}\n`);
     const restoredReceipt = await value.restart().persist_candidate_commit(raw);
     const badCommitSource = [
@@ -551,6 +721,10 @@ test('replay rejects tampered commit tree, parent, and trailers', async () => {
       value.repository.verify_candidate_receipt({ ...restoredReceipt, commit_oid: badOid }),
       expectCode('builder_git_project_integrity_failed'),
     );
+    await assert.rejects(
+      value.repository.read_verified_candidate({ ...restoredReceipt, commit_oid: badOid }),
+      expectCode('builder_git_project_integrity_failed'),
+    );
   } finally {
     fs.rmSync(value.root, { recursive: true, force: true });
   }
@@ -566,6 +740,47 @@ test('verification rebuilds source tree bytes and rejects non-file Git tree entr
       value.repository.verify_candidate_receipt({
         ...receipt,
         resulting_tree_digest: ZERO_DIGEST,
+      }),
+      expectCode('builder_git_project_integrity_failed'),
+    );
+    await assert.rejects(
+      value.repository.read_verified_candidate({
+        ...receipt,
+        resulting_tree_digest: ZERO_DIGEST,
+      }),
+      expectCode('builder_git_project_integrity_failed'),
+    );
+
+    const wrongBlob = writeLooseBlob(projectRoot, '<main>Tampered</main>\n');
+    const wrongBlobTree = writeLooseTree(projectRoot, [
+      { mode: '100644', path: 'index.html', oid: wrongBlob },
+    ]);
+    const wrongBlobCommit = writeLooseCommit(projectRoot, [
+      `tree ${wrongBlobTree}`,
+      'author ClawFabric Builder <builder@localhost> 1750000000 +0000',
+      'committer ClawFabric Builder <builder@localhost> 1750000000 +0000',
+      '',
+      'ClawFabric Builder candidate',
+      '',
+      `Builder-Object-Format: ${receipt.object_format}`,
+      `Builder-Project-Id: ${receipt.project_id}`,
+      `Builder-Conversation-Id: ${receipt.conversation_id}`,
+      `Builder-Turn-Id: ${receipt.turn_id}`,
+      `Builder-Task-Id: ${receipt.task_id}`,
+      `Builder-Run-Id: ${receipt.run_id}`,
+      `Builder-Request-Id: ${receipt.request_id}`,
+      `Builder-Semantic-Identity-Digest: ${receipt.semantic_identity_digest}`,
+      `Builder-Candidate-Digest: ${receipt.candidate_digest}`,
+      'Builder-Expected-Base-Oid: none',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(refPathForReceipt(projectRoot, receipt, 'candidate'), `${wrongBlobCommit}\n`);
+    fs.writeFileSync(refPathForReceipt(projectRoot, receipt, 'request'), `${wrongBlobCommit}\n`);
+    await assert.rejects(
+      value.repository.read_verified_candidate({
+        ...receipt,
+        commit_oid: wrongBlobCommit,
+        tree_oid: wrongBlobTree,
       }),
       expectCode('builder_git_project_integrity_failed'),
     );
@@ -597,6 +812,14 @@ test('verification rebuilds source tree bytes and rejects non-file Git tree entr
     fs.writeFileSync(refPathForReceipt(projectRoot, receipt, 'request'), `${badCommit}\n`);
     await assert.rejects(
       value.repository.verify_candidate_receipt({
+        ...receipt,
+        commit_oid: badCommit,
+        tree_oid: symlinkTree,
+      }),
+      expectCode('builder_git_project_integrity_failed'),
+    );
+    await assert.rejects(
+      value.repository.read_verified_candidate({
         ...receipt,
         commit_oid: badCommit,
         tree_oid: symlinkTree,
@@ -678,6 +901,12 @@ test('forged candidates fail closed without leaking values and caller cannot inj
       }),
       expectCode('builder_git_project_invalid', [marker]),
     );
+    await assert.rejects(
+      repository.read_verified_candidate({
+        echo: marker,
+      }),
+      expectCode('builder_git_project_invalid', [marker]),
+    );
 
     const forged = structuredClone(initialCandidate());
     forged.resulting_source_tree.files[0].content = marker;
@@ -751,7 +980,10 @@ test('source boundary is main-only candidate Git authority with no current, IPC,
   assert.match(source, /sanitizeBuilderProjectSourceTree/u);
   assert.match(source, /prepare_change/u);
   assert.match(source, /persist_candidate_commit/u);
+  assert.match(source, /read_verified_candidate/u);
   assert.match(source, /verify_candidate_receipt/u);
+  assert.match(source, /code_authority:\s*'git_commit_tree'/u);
+  assert.match(source, /read_admission:\s*'verified'/u);
   assert.match(source, /code_authority:\s*CODE_AUTHORITY/u);
   assert.match(source, /product_revision_admission:\s*PRODUCT_REVISION_ADMISSION/u);
   assert.match(source, /const scheduled = next\.catch\(\(\) => undefined\)\.finally/u);

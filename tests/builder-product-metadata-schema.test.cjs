@@ -13,6 +13,9 @@ const {
   CREATE_SCHEMA_SQL,
   METADATA_TABLES,
   BuilderProductMetadataSchemaError,
+  sanitizeListCurrentProjectRevisionsRequest,
+  sanitizeLoadCurrentRequest,
+  sanitizeLoadProjectRevisionRequest,
   sanitizeRecordProjectRevisionRequest,
   sha256Canonical,
 } = require('../electron/builder-product-metadata-schema.cjs');
@@ -43,6 +46,9 @@ function request({
   expected = null,
   candidateDigest = digest('c'),
   resultingTreeDigest = digest('d'),
+  semanticIdentityDigest = digest('e'),
+  title = 'Create the project',
+  summary = 'A saved Builder project revision.',
   selectedAt = 5,
   baseCreatedAt = 1,
   overrides = {},
@@ -67,7 +73,7 @@ function request({
     commit_oid: commit,
     candidate_tree_oid: tree,
     resulting_tree_digest: resultingTreeDigest,
-    semantic_identity_digest: digest('e'),
+    semantic_identity_digest: semanticIdentityDigest,
     object_format: 'sha1',
     commit_ref_admission: 'verified',
     request_ref_admission: 'verified',
@@ -92,7 +98,7 @@ function request({
       task_id: taskId,
       project_id: PROJECT_ID,
       conversation_id: CONVERSATION_ID,
-      title: 'Create the project',
+      title,
       base_commit_oid: parent,
       created_at_ms: baseCreatedAt + 1,
     },
@@ -134,7 +140,7 @@ function request({
       candidate_id: candidateId,
       candidate_digest: candidateDigest,
       resulting_tree_digest: resultingTreeDigest,
-      semantic_identity_digest: digest('e'),
+      semantic_identity_digest: semanticIdentityDigest,
       verification_receipt_digest: verificationDigest,
       object_format: 'sha1',
       commit_oid: commit,
@@ -147,12 +153,19 @@ function request({
     },
     project_revision: {
       project_id: PROJECT_ID,
+      title,
+      summary,
+      conversation_id: CONVERSATION_ID,
+      turn_id: turnId,
+      request_id: requestId,
       object_format: 'sha1',
       commit_oid: commit,
       tree_oid: tree,
       parent_oid: parent,
       candidate_id: candidateId,
       candidate_digest: candidateDigest,
+      resulting_tree_digest: resultingTreeDigest,
+      semantic_identity_digest: semanticIdentityDigest,
       verification_receipt_digest: verificationDigest,
       selected_at_ms: selectedAt,
     },
@@ -175,9 +188,9 @@ function assertSchemaError(fn) {
 }
 
 test('defines the exact C0 product metadata schema surface', () => {
-  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v1');
-  assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v1');
-  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 1);
+  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v2');
+  assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v2');
+  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 2);
   assert.deepEqual(METADATA_TABLES, [
     'projects',
     'project_revisions',
@@ -250,16 +263,23 @@ test('sanitizes a Git-verifier-bound Project Revision receipt without proving Gi
   assert.equal(safe.git_candidate_receipt.code_authority, 'git_commit_candidate');
   assert.equal(safe.git_candidate_receipt.replay, false);
   assert.equal(safe.receipt_input.project_id, PROJECT_ID);
+  assert.equal(safe.receipt_input.title, 'Create the project');
+  assert.equal(safe.receipt_input.summary, 'A saved Builder project revision.');
+  assert.equal(safe.receipt_input.conversation_id, CONVERSATION_ID);
   assert.equal(safe.receipt_input.object_format, 'sha1');
   assert.equal(safe.receipt_input.commit_oid, 'a'.repeat(40));
   assert.equal(safe.receipt_input.tree_oid, 'b'.repeat(40));
   assert.equal(safe.receipt_input.parent_oid, null);
   assert.equal(safe.receipt_input.candidate_digest, digest('c'));
+  assert.equal(safe.receipt_input.resulting_tree_digest, digest('d'));
+  assert.equal(safe.receipt_input.semantic_identity_digest, digest('e'));
   assert.match(safe.receipt_input.verification_receipt_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.match(safe.semantic_hash, /^sha256:[0-9a-f]{64}$/u);
   const replayed = request();
   replayed.git_candidate_receipt.replay = true;
-  assert.equal(sanitizeRecordProjectRevisionRequest(replayed).semantic_hash, safe.semantic_hash);
+  const replaySafe = sanitizeRecordProjectRevisionRequest(replayed);
+  assert.equal(replaySafe.git_candidate_receipt.replay, true);
+  assert.equal(replaySafe.semantic_hash, safe.semantic_hash);
 });
 
 test('fails closed on malformed, proxy, rejected, and cross-boundary receipts', () => {
@@ -315,6 +335,20 @@ test('fails closed on malformed, proxy, rejected, and cross-boundary receipts', 
   }));
   assertSchemaError(() => sanitizeRecordProjectRevisionRequest({
     ...request(),
+    project_revision: {
+      ...request().project_revision,
+      resulting_tree_digest: digest('f'),
+    },
+  }));
+  assertSchemaError(() => sanitizeRecordProjectRevisionRequest({
+    ...request(),
+    project_revision: {
+      ...request().project_revision,
+      semantic_identity_digest: digest('f'),
+    },
+  }));
+  assertSchemaError(() => sanitizeRecordProjectRevisionRequest({
+    ...request(),
     git_candidate_receipt: { ...request().git_candidate_receipt, product_revision_admission: 'recorded' },
   }));
   assertSchemaError(() => sanitizeRecordProjectRevisionRequest({
@@ -354,6 +388,12 @@ test('rejects nested proxy, accessor, symbol, resource drift, and forged verifie
     },
   })));
   assertSchemaError(() => sanitizeRecordProjectRevisionRequest(request({
+    title: 'x'.repeat(81),
+  })));
+  assertSchemaError(() => sanitizeRecordProjectRevisionRequest(request({
+    summary: 'x'.repeat(401),
+  })));
+  assertSchemaError(() => sanitizeRecordProjectRevisionRequest(request({
     overrides: {
       task: { ...request().task, title: 'x'.repeat(10_000) },
     },
@@ -364,6 +404,28 @@ test('rejects nested proxy, accessor, symbol, resource drift, and forged verifie
   forged.review.subject_verification_receipt_digest = digest('f');
   forged.project_revision.verification_receipt_digest = digest('f');
   assertSchemaError(() => sanitizeRecordProjectRevisionRequest(forged));
+});
+
+test('sanitizes exact current, exact revision, and catalog list read requests', () => {
+  assert.deepEqual(
+    sanitizeLoadCurrentRequest({ project_id: PROJECT_ID }),
+    { project_id: PROJECT_ID },
+  );
+  assert.deepEqual(
+    sanitizeLoadProjectRevisionRequest({
+      project_id: PROJECT_ID,
+      revision_receipt_digest: digest('a'),
+    }),
+    { project_id: PROJECT_ID, revision_receipt_digest: digest('a') },
+  );
+  assert.deepEqual(
+    sanitizeListCurrentProjectRevisionsRequest({ limit: 256 }),
+    { limit: 256 },
+  );
+  assertSchemaError(() => sanitizeLoadCurrentRequest({ project_id: PROJECT_ID, extra: true }));
+  assertSchemaError(() => sanitizeLoadProjectRevisionRequest({ project_id: PROJECT_ID }));
+  assertSchemaError(() => sanitizeListCurrentProjectRevisionsRequest({ limit: 0 }));
+  assertSchemaError(() => sanitizeListCurrentProjectRevisionsRequest({ limit: 257 }));
 });
 
 test('returns fresh fixed schema errors without leaking hostile markers', () => {

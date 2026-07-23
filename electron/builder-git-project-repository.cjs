@@ -17,6 +17,9 @@ const {
 } = require('./builder-code-change-kernel.cjs');
 const {
   BuilderProjectSourceTreeError,
+  MAX_SOURCE_FILE_UTF8_BYTES,
+  MAX_SOURCE_FILES,
+  MAX_SOURCE_TREE_UTF8_BYTES,
   createBuilderProjectSourceTree,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
@@ -71,6 +74,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_git_project_integrity_failed: 'The project folder could not be verified.',
   builder_git_project_failed: 'The project change could not be saved.',
 });
+const BUILDER_GIT_VERIFIED_CANDIDATE_READ_RESULT_VERSION = 'builder-git-verified-candidate-read-result.v1';
 
 class BuilderGitProjectRepositoryError extends Error {
   constructor(code = 'builder_git_project_invalid') {
@@ -517,6 +521,15 @@ function createBuilderGitProjectRepository(rawOptions) {
     if (format.stdout.trim() !== BUILDER_GIT_OBJECT_FORMAT) fail('builder_git_project_integrity_failed');
   }
 
+  async function assertExistingRepository(projectRoot) {
+    assertSafeDirectory(projectRoot, false);
+    assertSafeDirectory(path.join(projectRoot, '.git'), false);
+    const format = await runner.run('read_object_format', projectRoot, {}, {
+      timeout_ms: DEFAULT_TIMEOUT_MS,
+    });
+    if (format.stdout.trim() !== BUILDER_GIT_OBJECT_FORMAT) fail('builder_git_project_integrity_failed');
+  }
+
   async function buildTreeFromSourceTree(projectRoot, sourceTree, semanticHashHint) {
     const tree = sanitizeBuilderProjectSourceTree(sourceTree);
     const entries = [];
@@ -600,24 +613,32 @@ function createBuilderGitProjectRepository(rawOptions) {
       { object_format: BUILDER_GIT_OBJECT_FORMAT, oid: treeOid },
       { timeout_ms: DEFAULT_TIMEOUT_MS },
     );
+    const entries = parseTreeEntries(listed.stdout);
+    if (entries.length > MAX_SOURCE_FILES) fail('builder_git_project_integrity_failed');
     const files = [];
-    for (const entry of parseTreeEntries(listed.stdout)) {
+    let totalBytes = 0;
+    for (const entry of entries) {
       const blob = await runner.run(
         'read_blob',
         projectRoot,
         { object_format: BUILDER_GIT_OBJECT_FORMAT, oid: entry.oid },
         { timeout_ms: DEFAULT_TIMEOUT_MS },
       );
+      const blobBytes = Buffer.byteLength(blob.stdout, 'utf8');
+      totalBytes += blobBytes;
+      if (blobBytes > MAX_SOURCE_FILE_UTF8_BYTES || totalBytes > MAX_SOURCE_TREE_UTF8_BYTES) {
+        fail('builder_git_project_integrity_failed');
+      }
       files.push({ path: entry.path, content: blob.stdout });
     }
     return createBuilderProjectSourceTree({ files });
   }
 
-  async function verifyReceiptFromDisk(rawReceipt) {
+  async function verifyReceiptAndSourceFromDisk(rawReceipt) {
     try {
       const receipt = sanitizeBuilderGitCandidateReceipt(rawReceipt);
       const projectRoot = projectDirectory(projectsRoot, receipt.project_id);
-      await ensureRepository(projectRoot);
+      await assertExistingRepository(projectRoot);
       const requestHash = sha256Hex(receipt.request_id);
       const semanticHash = receipt.semantic_identity_digest.slice('sha256:'.length);
       const candidateRef = await readExistingRef(
@@ -652,10 +673,31 @@ function createBuilderGitProjectRepository(rawOptions) {
       assertCommitMatchesReceipt(parseCommitObject(commit.stdout), receipt);
       const verification = createBuilderGitCandidateVerificationReceipt(receipt);
       sanitizeBuilderGitCandidateReceiptPair(receipt, verification);
-      return verification;
+      return freezeDeep({
+        candidate_receipt: receipt,
+        verification_receipt: verification,
+        source_tree: sourceTree,
+      });
     } catch (error) {
       return Promise.reject(normalizeError(error));
     }
+  }
+
+  async function verifyReceiptFromDisk(rawReceipt) {
+    const verified = await verifyReceiptAndSourceFromDisk(rawReceipt);
+    return verified.verification_receipt;
+  }
+
+  async function readVerifiedCandidate(rawReceipt) {
+    const verified = await verifyReceiptAndSourceFromDisk(rawReceipt);
+    return freezeDeep({
+      result_version: BUILDER_GIT_VERIFIED_CANDIDATE_READ_RESULT_VERSION,
+      candidate_receipt: verified.candidate_receipt,
+      verification_receipt: verified.verification_receipt,
+      source_tree: verified.source_tree,
+      code_authority: 'git_commit_tree',
+      read_admission: 'verified',
+    });
   }
 
   async function prepareInternal(request) {
@@ -862,6 +904,7 @@ function createBuilderGitProjectRepository(rawOptions) {
   return Object.freeze({
     prepare_change: prepareChange,
     persist_candidate_commit: persistCandidateCommit,
+    read_verified_candidate: readVerifiedCandidate,
     verify_candidate_receipt: verifyReceiptFromDisk,
   });
 }
@@ -881,6 +924,7 @@ module.exports = Object.freeze({
   BUILDER_GIT_PROJECT_REPOSITORY_VERSION,
   BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
   BUILDER_GIT_CANDIDATE_VERIFICATION_VERSION,
+  BUILDER_GIT_VERIFIED_CANDIDATE_READ_RESULT_VERSION,
   CODE_AUTHORITY,
   PRODUCT_REVISION_ADMISSION,
   ZERO_OID,

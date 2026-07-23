@@ -17,11 +17,13 @@ const {
   createRevisionReceipt,
   sha256Canonical,
   sanitizeLoadCurrentRequest,
+  sanitizeLoadProjectRevisionRequest,
+  sanitizeListCurrentProjectRevisionsRequest,
   sanitizeReceiptRow,
   sanitizeRecordProjectRevisionRequest,
 } = require('./builder-product-metadata-schema.cjs');
 
-const DATABASE_ID = 'builder-product-metadata-database.v1';
+const DATABASE_ID = 'builder-product-metadata-database.v2';
 const MAX_REVISION_CHAIN_DEPTH = 1024;
 const ERROR_MESSAGES = Object.freeze({
   builder_product_metadata_invalid: 'Builder product metadata could not be verified.',
@@ -357,17 +359,24 @@ function receiptFromRow(row, missingCode = 'builder_product_metadata_not_found')
       candidate_digest: row.candidate_digest,
       candidate_id: row.candidate_id,
       commit_oid: row.commit_oid,
+      conversation_id: row.conversation_id,
       object_format: row.object_format,
       parent_oid: row.parent_oid,
       previous_revision_receipt_digest: row.previous_revision_receipt_digest,
       project_id: row.project_id,
+      request_id: row.request_id,
+      resulting_tree_digest: row.resulting_tree_digest,
       review_id: row.review_id,
       revision_number: row.revision_number,
       revision_receipt_digest: row.revision_receipt_digest,
       run_id: row.run_id,
       selected_at_ms: row.selected_at_ms,
+      semantic_identity_digest: row.semantic_identity_digest,
+      summary: row.summary,
       task_id: row.task_id,
+      title: row.title,
       tree_oid: row.tree_oid,
+      turn_id: row.turn_id,
       verification_receipt_digest: row.verification_receipt_digest,
     });
   } catch (error) {
@@ -395,8 +404,11 @@ function verifyReceiptRelations(db, receipt) {
     !task
     || !runRecord
     || !review
+    || task.conversation_id !== receipt.conversation_id
     || task.base_commit_oid !== receipt.parent_oid
     || runRecord.task_id !== receipt.task_id
+    || runRecord.turn_id !== receipt.turn_id
+    || runRecord.request_id !== receipt.request_id
     || runRecord.candidate_id !== receipt.candidate_id
     || runRecord.status !== 'succeeded'
     || runRecord.result_kind !== 'candidate'
@@ -415,9 +427,10 @@ function loadReceiptRow(db, projectId, digest, missingCode = 'builder_product_me
   return receiptFromRow(one(
     db,
     `SELECT project_id, revision_receipt_digest, revision_number,
-      previous_revision_receipt_digest, object_format, commit_oid, tree_oid, parent_oid,
-      candidate_id, candidate_digest, verification_receipt_digest, task_id, run_id,
-      review_id, selected_at_ms
+      previous_revision_receipt_digest, title, summary, conversation_id, turn_id,
+      request_id, object_format, commit_oid, tree_oid, parent_oid, candidate_id,
+      candidate_digest, resulting_tree_digest, semantic_identity_digest,
+      verification_receipt_digest, task_id, run_id, review_id, selected_at_ms
       FROM project_revisions WHERE project_id = ? AND revision_receipt_digest = ?`,
     [projectId, digest],
   ), missingCode);
@@ -502,6 +515,8 @@ function loadCurrentReceipt(db, projectId, fullChain) {
 function currentSummary(receipt) {
   return frozen({
     project_id: receipt.project_id,
+    title: receipt.title,
+    summary: receipt.summary,
     revision_receipt_digest: receipt.revision_receipt_digest,
     revision_number: receipt.revision_number,
     object_format: receipt.object_format,
@@ -528,6 +543,39 @@ function result(db, operation, actionReceipt, currentReceipt) {
         : operation === 'replayed'
           ? 'idempotent_replay_action_receipt_latest_current'
           : 'current_readback',
+      git_object_verification: 'not_performed_by_metadata_database',
+      source_bytes_stored: false,
+      credential_storage: 'not_present',
+      ui_state_storage: 'not_present',
+    },
+  });
+}
+
+function catalogSummary(receipt) {
+  return frozen({
+    project_id: receipt.project_id,
+    title: receipt.title,
+    summary: receipt.summary,
+    revision_number: receipt.revision_number,
+    revision_receipt_digest: receipt.revision_receipt_digest,
+    commit_oid: receipt.commit_oid,
+    tree_oid: receipt.tree_oid,
+    selected_at_ms: receipt.selected_at_ms,
+  });
+}
+
+function listResult(db, projects) {
+  return frozen({
+    result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+    operation: 'current_listed',
+    projects,
+    metadata_evidence: {
+      database_id: DATABASE_ID,
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
+      runtime_pragmas: runtimePragmas(db),
+      transaction: 'current_list_full_chain_readback',
       git_object_verification: 'not_performed_by_metadata_database',
       source_bytes_stored: false,
       credential_storage: 'not_present',
@@ -629,19 +677,28 @@ function recordProjectRevision(db, rawRequest) {
     ensureReview(db, request.review);
     run(db, `INSERT INTO project_revisions (
       project_id, revision_receipt_digest, revision_number, previous_revision_receipt_digest,
-      object_format, commit_oid, tree_oid, parent_oid, candidate_id, candidate_digest,
-      verification_receipt_digest, task_id, run_id, review_id, selected_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      title, summary, conversation_id, turn_id, request_id, object_format, commit_oid,
+      tree_oid, parent_oid, candidate_id, candidate_digest, resulting_tree_digest,
+      semantic_identity_digest, verification_receipt_digest, task_id, run_id, review_id,
+      selected_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       receipt.project_id,
       receipt.revision_receipt_digest,
       receipt.revision_number,
       receipt.previous_revision_receipt_digest,
+      receipt.title,
+      receipt.summary,
+      receipt.conversation_id,
+      receipt.turn_id,
+      receipt.request_id,
       receipt.object_format,
       receipt.commit_oid,
       receipt.tree_oid,
       receipt.parent_oid,
       receipt.candidate_id,
       receipt.candidate_digest,
+      receipt.resulting_tree_digest,
+      receipt.semantic_identity_digest,
       receipt.verification_receipt_digest,
       receipt.task_id,
       receipt.run_id,
@@ -691,6 +748,28 @@ function loadCurrent(db, rawRequest) {
   const request = sanitizeLoadCurrentRequest(rawRequest);
   const current = loadCurrentReceipt(db, request.project_id, true);
   return result(db, 'current_loaded', current, current);
+}
+
+function loadProjectRevision(db, rawRequest) {
+  const request = sanitizeLoadProjectRevisionRequest(rawRequest);
+  const actionReceipt = loadReceipt(db, request.project_id, request.revision_receipt_digest);
+  const current = loadCurrentReceipt(db, request.project_id, true);
+  return result(db, 'revision_loaded', actionReceipt, current);
+}
+
+function listCurrentProjectRevisions(db, rawRequest) {
+  const request = sanitizeListCurrentProjectRevisionsRequest(rawRequest);
+  const rows = all(
+    db,
+    `SELECT project_id, current_revision_receipt_digest, current_revision_number
+      FROM projects
+      WHERE current_revision_receipt_digest IS NOT NULL
+      ORDER BY project_id ASC
+      LIMIT ?`,
+    [request.limit],
+  );
+  const projects = rows.map((row) => catalogSummary(validateProjectCurrentTuple(db, row, false, true)));
+  return listResult(db, projects);
 }
 
 function ownErrorField(error, key) {
@@ -755,6 +834,18 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     load_current_project_revision(rawRequest) {
       try { return loadCurrent(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    load_project_revision(rawRequest) {
+      try { return loadProjectRevision(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    list_current_project_revisions(rawRequest) {
+      try { return listCurrentProjectRevisions(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },
