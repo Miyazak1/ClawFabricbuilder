@@ -11,6 +11,7 @@ const root = path.resolve(__dirname, '..');
 const unpacked = path.join(root, 'release', 'win-unpacked');
 const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
+const unpackedArchive = path.join(unpacked, 'resources', 'app.asar.unpacked');
 const builtIndex = path.join(root, 'dist', 'index.html');
 const workspacePackageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
@@ -52,6 +53,9 @@ for (const expected of [
   '/electron/main.cjs',
   '/electron/preload.cjs',
   '/electron/runtime-options.cjs',
+  '/electron/builder-git-command-runner.cjs',
+  '/electron/builder-git-receipt-contract.cjs',
+  '/electron/builder-git-project-repository.cjs',
   '/electron/builder-project-revision-record.cjs',
   '/electron/builder-project-revision-repository.cjs',
   '/electron/builder-project-revision-ipc-adapter.cjs',
@@ -85,13 +89,73 @@ for (const forbiddenTest of [
   assert.equal(packagedFiles.includes(forbiddenTest), false, forbiddenTest);
 }
 assert.equal(packagedFiles.includes('/scripts/verify-packaged-canary.cjs'), false);
-assert.equal(packagedFiles.some((entry) => entry.startsWith('/node_modules/')), false);
+const allowedPackagedNodeModuleRoots = Object.freeze([
+  '/node_modules/b4a/',
+  '/node_modules/bare-events/',
+  '/node_modules/bare-fs/',
+  '/node_modules/bare-path/',
+  '/node_modules/bare-stream/',
+  '/node_modules/bare-url/',
+  '/node_modules/dugite/',
+  '/node_modules/events-universal/',
+  '/node_modules/fast-fifo/',
+  '/node_modules/progress/',
+  '/node_modules/streamx/',
+  '/node_modules/tar-stream/',
+  '/node_modules/teex/',
+  '/node_modules/text-decoder/',
+]);
+const packagedNodeModuleFiles = packagedFiles.filter((entry) => entry.startsWith('/node_modules/'));
+assert.equal(packagedNodeModuleFiles.length > 0, true);
+function isAllowedPackagedNodeModule(entry) {
+  return allowedPackagedNodeModuleRoots.some((rootPath) => (
+    entry === rootPath.slice(0, -1) || entry.startsWith(rootPath)
+  ));
+}
+for (const entry of packagedNodeModuleFiles) {
+  assert.equal(
+    isAllowedPackagedNodeModule(entry),
+    true,
+    entry,
+  );
+}
+for (const expectedDugiteLoaderFile of [
+  '/node_modules/dugite/package.json',
+  '/node_modules/dugite/build/lib/index.js',
+  '/node_modules/dugite/build/lib/git-environment.js',
+]) {
+  assert.equal(packagedFiles.includes(expectedDugiteLoaderFile), true, expectedDugiteLoaderFile);
+}
+assert.deepEqual(workspacePackageJson.build.asarUnpack, [
+  'node_modules/dugite/git/**/*',
+  'node_modules/dugite/LICENSE',
+  'node_modules/dugite/git/LICENSE.txt',
+]);
 assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'playwright-core'), true);
 assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'pngjs'), true);
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'playwright-core'), false);
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'pngjs'), false);
+assert.equal(workspacePackageJson.dependencies?.dugite, '3.2.2');
+assert.equal(workspacePackageJson.devDependencies?.dugite, undefined);
 assert.equal(workspacePackageJson.scripts['verify:packaged-canary'], 'node scripts/verify-packaged-canary.cjs');
 assert.equal(workspacePackageJson.build.nsis.deleteAppDataOnUninstall, false);
+const unpackedDugiteRoot = path.join(unpackedArchive, 'node_modules', 'dugite');
+const unpackedGitRoot = path.join(unpackedDugiteRoot, 'git');
+assert.equal(fs.statSync(path.join(unpackedDugiteRoot, 'LICENSE')).isFile(), true);
+assert.equal(fs.statSync(path.join(unpackedGitRoot, 'LICENSE.txt')).isFile(), true);
+assert.equal(fs.statSync(path.join(unpackedGitRoot, 'cmd', 'git.exe')).isFile(), true);
+assert.equal(fs.statSync(path.join(unpackedGitRoot, 'mingw64', 'libexec', 'git-core')).isDirectory(), true);
+const packagedGitVersion = execFileSync(path.join(unpackedGitRoot, 'cmd', 'git.exe'), ['--version'], {
+  encoding: 'utf8',
+  env: {
+    PATH: '',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_NO_REPLACE_OBJECTS: '1',
+    SystemRoot: process.env.SystemRoot || 'C:\\Windows',
+  },
+  windowsHide: true,
+}).trim();
+assert.match(packagedGitVersion, /^git version \d+\.\d+\.\d+/u);
 for (const entry of packagedEntries.filter(
   (value) => /\.(?:cjs|css|html|js|json)$/u.test(value.normalizedPath),
 )) {
@@ -117,6 +181,9 @@ assert.doesNotMatch(packagedHtml, /__BUILDER_CONNECT_SRC__/u);
 
 const packagedMain = packagedSource('electron/main.cjs');
 const packagedPreload = packagedSource('electron/preload.cjs');
+const packagedGitRunner = packagedSource('electron/builder-git-command-runner.cjs');
+const packagedGitReceiptContract = packagedSource('electron/builder-git-receipt-contract.cjs');
+const packagedGitRepository = packagedSource('electron/builder-git-project-repository.cjs');
 const packagedRuntime = packagedSource('electron/builder-project-ipc-runtime.cjs');
 const packagedRevisionAdapter = packagedSource('electron/builder-project-revision-ipc-adapter.cjs');
 const packagedCatalogAdapter = packagedSource('electron/builder-project-catalog-ipc-adapter.cjs');
@@ -341,6 +408,29 @@ assert.doesNotMatch(packagedMain, /clawfabric-builder:provider-settings:|clawfab
 assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
 assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
 assert.doesNotMatch(packagedRuntime, /provider|secret|safeStorage/iu);
+assert.match(packagedGitRunner, /resolveGitBinary\(['"]['"]\)/u);
+assert.match(packagedGitRunner, /GIT_NO_REPLACE_OBJECTS:\s*['"]1['"]/u);
+assert.match(packagedGitRunner, /--no-replace-objects/u);
+assert.match(packagedGitRunner, /shell:\s*false/u);
+assert.doesNotMatch(
+  packagedGitRunner,
+  /dugite\.(?:exec|spawn)|setupEnvironment|shell:\s*true|fetch\s*\(|https?:|Authorization|Bearer|safeStorage|ipcMain|ipcRenderer|require\(['"][^'"]*preload[^'"]*['"]\)|sqlite|better-sqlite/iu,
+);
+assert.match(packagedGitReceiptContract, /BUILDER_GIT_CANDIDATE_RECEIPT_VERSION/u);
+assert.match(packagedGitReceiptContract, /CANDIDATE_RECEIPT_KEYS/u);
+assert.match(packagedGitReceiptContract, /sanitizeBuilderGitCandidateVerificationReceipt/u);
+assert.match(packagedGitReceiptContract, /sanitizeBuilderGitCandidateReceiptPair/u);
+assert.doesNotMatch(
+  packagedGitReceiptContract,
+  /node:fs|require\(['"][^'"]*(?:builder-git-project-repository|builder-git-command-runner|dugite)[^'"]*['"]\)|ipcMain|ipcRenderer|BrowserWindow|sqlite|better-sqlite|fetch\s*\(|https?:|safeStorage/iu,
+);
+assert.match(packagedGitRepository, /persist_candidate_commit/u);
+assert.match(packagedGitRepository, /code_authority:\s*CODE_AUTHORITY/u);
+assert.match(packagedGitRepository, /product_revision_admission:\s*PRODUCT_REVISION_ADMISSION/u);
+assert.doesNotMatch(
+  packagedGitRepository,
+  /builder-project-revision-repository|head\.json|read_current|load_current|refs\/heads\/main|ipcMain|ipcRenderer|preload|BrowserWindow|sqlite|better-sqlite|fetch\s*\(|https?:|child_process|execFile|shell/iu,
+);
 assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*COMMIT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.commit\.invoke,?\s*\}\)/u);
 assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LOAD_CURRENT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.loadCurrent\.invoke,?\s*\}\)/u);
 assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LIST_CURRENT_CHANNEL,\s*invoke:\s*catalogAdapter\.channels\.listCurrent\.invoke,?\s*\}\)/u);

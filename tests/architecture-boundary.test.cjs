@@ -83,10 +83,21 @@ test('package identity and dependencies remain Builder-only', () => {
   assert.equal(packageJson.build.appId, 'com.clawfabric.builder');
   assert.equal(packageJson.build.productName, 'ClawFabric Builder');
   assert.equal(packageJson.build.electronDist, 'node_modules/electron/dist');
+  assert.deepEqual(packageJson.build.asarUnpack, [
+    'node_modules/dugite/git/**/*',
+    'node_modules/dugite/LICENSE',
+    'node_modules/dugite/git/LICENSE.txt',
+  ]);
   assert.equal(path.isAbsolute(packageJson.build.electronDist), false);
   assert.equal(packageJson.build.electronDist.includes('..'), false);
   assert.equal(packageJson.dependencies?.electron, undefined);
+  assert.equal(packageJson.dependencies?.dugite, '3.2.2');
   assert.equal(typeof packageJson.devDependencies?.electron, 'string');
+  assert.equal(packageJson.devDependencies?.dugite, undefined);
+  const verifier = fs.readFileSync(path.join(root, 'scripts', 'verify-package.cjs'), 'utf8');
+  assert.match(verifier, /entry === rootPath\.slice\(0, -1\) \|\| entry\.startsWith\(rootPath\)/u);
+  assert.match(verifier, /allowedPackagedNodeModuleRoots/u);
+  assert.doesNotMatch(verifier, /startsWith\('\/node_modules\/'\)\), false/u);
   for (const dependency of ['axios', '@xyflow/react', 'electron-updater', 'ajv']) {
     assert.equal(packageJson.dependencies?.[dependency], undefined);
     assert.equal(packageJson.devDependencies?.[dependency], undefined);

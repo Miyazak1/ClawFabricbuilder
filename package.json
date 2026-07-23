@@ -60,6 +60,11 @@
       "dist/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "node_modules/dugite/git/**/*",
+      "node_modules/dugite/LICENSE",
+      "node_modules/dugite/git/LICENSE.txt"
+    ],
     "win": {
       "target": [
         "nsis"
@@ -71,5 +76,8 @@
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false
     }
+  },
+  "dependencies": {
+    "dugite": "3.2.2"
   }
 }
