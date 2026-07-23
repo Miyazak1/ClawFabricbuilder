@@ -3,15 +3,6 @@
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
-const {
-  BUILDER_CODE_CHANGE_CANDIDATE_VERSION,
-  sanitizeBuilderCodeChangeCandidate,
-} = require('./builder-code-change-kernel.cjs');
-const {
-  createBuilderProjectSourceTree,
-  sanitizeBuilderProjectSourceTree,
-} = require('./builder-project-source-tree.cjs');
-
 const BUILDER_PROJECT_PROPOSAL_KIND = 'builder_code_project';
 const BUILDER_CODE_GENERATOR_AUTHORITY = 'builder_code_project_generator';
 const BUILDER_CODE_PROJECT_PROMPT_VERSION_V1 = 'builder-code-project.v1';
@@ -20,9 +11,6 @@ const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v1';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v1';
 const BUILDER_PROJECT_RECORD_KIND = 'builder_project_revision';
 const BUILDER_PROJECT_SCHEMA_VERSION = 1;
-const BUILDER_PROJECT_SCHEMA_VERSION_V2 = 2;
-const BUILDER_PROJECT_CODE_CHANGE_EVIDENCE_VERSION =
-  'builder-project-code-change-evidence.v1';
 const BUILDER_PROJECT_REVISION_INVALID_REASON = 'record_invalid';
 const BUILDER_PROJECT_STATIC_PREVIEW_REASON = 'static_preview_contract_rejected';
 const BUILDER_PROJECT_REVISION_ERROR_REASONS = new Set([
@@ -35,14 +23,8 @@ const BUILDER_PROJECT_HTML_MAX_UTF8_BYTES = 256 * 1024;
 const BUILDER_PROJECT_CSS_MAX_UTF8_BYTES = 128 * 1024;
 const BUILDER_PROJECT_JS_MAX_UTF8_BYTES = 128 * 1024;
 const MAX_RECORD_BYTES = BUILDER_PROJECT_TOTAL_MAX_UTF8_BYTES + 8 * 1024;
-const MAX_V2_RECORD_BYTES = 16 * 1024 * 1024;
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const FORBIDDEN_JAVASCRIPT_MODULE_PATTERN = /\b(?:import|export)\b/u;
 const LOCAL_PATH_PATTERN = /(?:file:\/{1,3}|\\\\|(?:^|[\s"'`=(,:])(?:[A-Za-z]:[\\/]|~[\\/]|\/(?!\/)[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*))/iu;
@@ -89,48 +71,6 @@ const REVISION_KEYS = Object.freeze([
   'execution_admission',
   'preview_script_admission',
 ]);
-const V2_CREATE_KEYS = Object.freeze([
-  'candidate',
-  'parent_revision_record',
-  'title',
-  'summary',
-]);
-const V2_BASE_REVISION_KEYS = Object.freeze([
-  'revision',
-  'revision_digest',
-  'source_tree_digest',
-]);
-const V2_CHANGE_EVIDENCE_KEYS = Object.freeze([
-  'evidence_version',
-  'candidate_version',
-  'candidate_id',
-  'candidate_digest',
-  'project_id',
-  'conversation_id',
-  'turn_id',
-  'task_id',
-  'run_id',
-  'request_digest',
-  'base_revision',
-  'resulting_tree_digest',
-  'candidate_verification_admission',
-]);
-const V2_REVISION_KEYS = Object.freeze([
-  'schema_version',
-  'record_kind',
-  'project_id',
-  'revision',
-  'revision_digest',
-  'parent_revision',
-  'title',
-  'summary',
-  'source_tree',
-  'source_tree_digest',
-  'change_evidence',
-  'preview_admission',
-  'execution_admission',
-]);
-
 class BuilderProjectRevisionRecordError extends Error {
   constructor(reason = BUILDER_PROJECT_REVISION_INVALID_REASON) {
     super('The local project version could not be verified.');
@@ -232,18 +172,8 @@ function safeProjectId(value) {
   return value;
 }
 
-function safeIdentity(value, pattern) {
-  if (typeof value !== 'string' || value.length > 160 || !pattern.test(value)) fail();
-  return value;
-}
-
 function safeDigest(value) {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) fail();
-  return value;
-}
-
-function safeV2Revision(value) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000) fail();
   return value;
 }
 
@@ -570,253 +500,12 @@ function revisionDigestBody(revision) {
   };
 }
 
-function schemaVersionForV2Parent(value) {
-  if (!isPlainObject(value)) fail();
-  const schemaVersion = valueAt(value, 'schema_version');
-  if (
-    schemaVersion !== BUILDER_PROJECT_SCHEMA_VERSION
-    && schemaVersion !== BUILDER_PROJECT_SCHEMA_VERSION_V2
-  ) fail();
-  return schemaVersion;
-}
-
-function sanitizeV2BaseRevision(value) {
-  if (value === null) return null;
-  assertExactObject(value, V2_BASE_REVISION_KEYS);
-  return {
-    revision: safeV2Revision(valueAt(value, 'revision')),
-    revision_digest: safeDigest(valueAt(value, 'revision_digest')),
-    source_tree_digest: safeDigest(valueAt(value, 'source_tree_digest')),
-  };
-}
-
-function sameV2BaseRevision(left, right) {
-  return left === null
-    ? right === null
-    : right !== null
-      && left.revision === right.revision
-      && left.revision_digest === right.revision_digest
-      && left.source_tree_digest === right.source_tree_digest;
-}
-
-function sanitizeV2ChangeEvidence(value) {
-  assertExactObject(value, V2_CHANGE_EVIDENCE_KEYS);
-  if (
-    valueAt(value, 'evidence_version') !== BUILDER_PROJECT_CODE_CHANGE_EVIDENCE_VERSION
-    || valueAt(value, 'candidate_version') !== BUILDER_CODE_CHANGE_CANDIDATE_VERSION
-    || valueAt(value, 'candidate_verification_admission') !== 'host_verification_required'
-  ) fail();
-  const candidateDigest = safeDigest(valueAt(value, 'candidate_digest'));
-  const candidateId = safeIdentity(valueAt(value, 'candidate_id'), CANDIDATE_ID_PATTERN);
-  if (
-    candidateId
-      !== `builder-code-change-candidate:${candidateDigest.slice('sha256:'.length)}`
-  ) fail();
-  const projectId = safeProjectId(valueAt(value, 'project_id'));
-  const conversationId = safeIdentity(
-    valueAt(value, 'conversation_id'),
-    CONVERSATION_ID_PATTERN,
-  );
-  if (projectId.slice('builder-project:'.length)
-    !== conversationId.slice('builder-conversation:'.length)) fail();
-  return {
-    evidence_version: BUILDER_PROJECT_CODE_CHANGE_EVIDENCE_VERSION,
-    candidate_version: BUILDER_CODE_CHANGE_CANDIDATE_VERSION,
-    candidate_id: candidateId,
-    candidate_digest: candidateDigest,
-    project_id: projectId,
-    conversation_id: conversationId,
-    turn_id: safeIdentity(valueAt(value, 'turn_id'), TURN_ID_PATTERN),
-    task_id: safeIdentity(valueAt(value, 'task_id'), TASK_ID_PATTERN),
-    run_id: safeIdentity(valueAt(value, 'run_id'), RUN_ID_PATTERN),
-    request_digest: safeDigest(valueAt(value, 'request_digest')),
-    base_revision: sanitizeV2BaseRevision(valueAt(value, 'base_revision')),
-    resulting_tree_digest: safeDigest(valueAt(value, 'resulting_tree_digest')),
-    candidate_verification_admission: 'host_verification_required',
-  };
-}
-
-function v2RevisionDigestBody(revision) {
-  return {
-    change_evidence: revision.change_evidence,
-    execution_admission: revision.execution_admission,
-    parent_revision: revision.parent_revision,
-    preview_admission: revision.preview_admission,
-    project_id: revision.project_id,
-    record_kind: revision.record_kind,
-    revision: revision.revision,
-    schema_version: revision.schema_version,
-    source_tree: revision.source_tree,
-    source_tree_digest: revision.source_tree_digest,
-    summary: revision.summary,
-    title: revision.title,
-  };
-}
-
-function sanitizedV2RevisionDigestBody(value) {
-  assertExactObject(value, V2_REVISION_KEYS);
-  const revision = safeV2Revision(valueAt(value, 'revision'));
-  if (
-    valueAt(value, 'schema_version') !== BUILDER_PROJECT_SCHEMA_VERSION_V2
-    || valueAt(value, 'record_kind') !== BUILDER_PROJECT_RECORD_KIND
-    || valueAt(value, 'preview_admission') !== 'not_evaluated'
-    || valueAt(value, 'execution_admission') !== 'not_evaluated'
-  ) fail();
-  const projectId = safeProjectId(valueAt(value, 'project_id'));
-  const parentRevision = sanitizeParent(valueAt(value, 'parent_revision'));
-  if (
-    (revision === 1 && parentRevision !== null)
-    || (revision > 1 && parentRevision?.revision !== revision - 1)
-  ) fail();
-  const title = safeDisplayText(valueAt(value, 'title'), 80);
-  const summary = safeDisplayText(valueAt(value, 'summary'), 400);
-  if (containsUnsafeMaterial(title) || containsUnsafeMaterial(summary)) fail();
-  const sourceTree = sanitizeBuilderProjectSourceTree(valueAt(value, 'source_tree'));
-  const sourceTreeDigest = safeDigest(valueAt(value, 'source_tree_digest'));
-  const changeEvidence = sanitizeV2ChangeEvidence(valueAt(value, 'change_evidence'));
-  if (
-    sourceTree.source_tree_digest !== sourceTreeDigest
-    || changeEvidence.project_id !== projectId
-    || changeEvidence.resulting_tree_digest !== sourceTreeDigest
-    || (parentRevision === null) !== (changeEvidence.base_revision === null)
-    || (
-      parentRevision !== null
-      && (
-        changeEvidence.base_revision.revision !== parentRevision.revision
-        || changeEvidence.base_revision.revision_digest !== parentRevision.revision_digest
-      )
-    )
-  ) fail();
-  return v2RevisionDigestBody({
-    schema_version: BUILDER_PROJECT_SCHEMA_VERSION_V2,
-    record_kind: BUILDER_PROJECT_RECORD_KIND,
-    project_id: projectId,
-    revision,
-    parent_revision: parentRevision,
-    title,
-    summary,
-    source_tree: sourceTree,
-    source_tree_digest: sourceTreeDigest,
-    change_evidence: changeEvidence,
-    preview_admission: 'not_evaluated',
-    execution_admission: 'not_evaluated',
-  });
-}
-
-function sourceTreeForParentRecord(record) {
-  if (record.schema_version === BUILDER_PROJECT_SCHEMA_VERSION_V2) {
-    return record.source_tree;
-  }
-  return createBuilderProjectSourceTree({
-    files: FILE_KEYS.map((filePath) => ({
-      path: filePath,
-      content: record.files[filePath],
-    })),
-  });
-}
-
-function v2BaseRevisionFromCandidate(candidate) {
-  if (candidate.base_revision_evidence === null) return null;
-  return {
-    revision: candidate.base_revision_evidence.revision,
-    revision_digest: candidate.base_revision_evidence.revision_digest,
-    source_tree_digest: candidate.base_revision_evidence.source_tree_digest,
-  };
-}
-
-function v2ChangeEvidenceFromCandidate(candidate) {
-  return {
-    evidence_version: BUILDER_PROJECT_CODE_CHANGE_EVIDENCE_VERSION,
-    candidate_version: candidate.candidate_version,
-    candidate_id: candidate.candidate_id,
-    candidate_digest: candidate.candidate_digest,
-    project_id: candidate.project_id,
-    conversation_id: candidate.conversation_id,
-    turn_id: candidate.turn_id,
-    task_id: candidate.task_id,
-    run_id: candidate.run_id,
-    request_digest: candidate.request_digest,
-    base_revision: v2BaseRevisionFromCandidate(candidate),
-    resulting_tree_digest: candidate.resulting_tree_digest,
-    candidate_verification_admission: 'host_verification_required',
-  };
-}
-
-function createBuilderProjectRevisionRecordV2(value) {
-  assertExactObject(value, V2_CREATE_KEYS);
-  const candidate = sanitizeBuilderCodeChangeCandidate(valueAt(value, 'candidate'));
-  const rawParent = valueAt(value, 'parent_revision_record');
-  const parent = rawParent === null ? null : sanitizeBuilderProjectRevisionParentForV2(rawParent);
-  const title = safeDisplayText(valueAt(value, 'title'), 80);
-  const summary = safeDisplayText(valueAt(value, 'summary'), 400);
-  if (containsUnsafeMaterial(title) || containsUnsafeMaterial(summary)) fail();
-
-  let revision = 1;
-  let parentRevision = null;
-  if (parent === null) {
-    if (
-      candidate.base_revision_evidence !== null
-      || candidate.base_source_tree.files.length !== 0
-    ) fail();
-  } else {
-    revision = safeV2Revision(parent.revision + 1);
-    parentRevision = {
-      revision: parent.revision,
-      revision_digest: parent.revision_digest,
-    };
-    const parentSourceTree = sourceTreeForParentRecord(parent);
-    const expectedBase = {
-      revision: parent.revision,
-      revision_digest: parent.revision_digest,
-      source_tree_digest: parentSourceTree.source_tree_digest,
-    };
-    if (
-      candidate.project_id !== parent.project_id
-      || !sameV2BaseRevision(v2BaseRevisionFromCandidate(candidate), expectedBase)
-      || candidate.base_source_tree.source_tree_digest !== parentSourceTree.source_tree_digest
-    ) fail();
-  }
-
-  const sourceTree = sanitizeBuilderProjectSourceTree(candidate.resulting_source_tree);
-  if (
-    candidate.resulting_tree_digest !== sourceTree.source_tree_digest
-    || candidate.authority.conversation_binding_admission !== 'host_verification_required'
-    || candidate.authority.base_revision_binding_admission !== 'host_verification_required'
-    || candidate.authority.revision_admission !== 'not_created'
-    || candidate.authority.preview_admission !== 'not_evaluated'
-    || candidate.authority.execution_admission !== 'not_evaluated'
-  ) fail();
-  const unsigned = {
-    schema_version: BUILDER_PROJECT_SCHEMA_VERSION_V2,
-    record_kind: BUILDER_PROJECT_RECORD_KIND,
-    project_id: candidate.project_id,
-    revision,
-    parent_revision: parentRevision,
-    title,
-    summary,
-    source_tree: sourceTree,
-    source_tree_digest: sourceTree.source_tree_digest,
-    change_evidence: v2ChangeEvidenceFromCandidate(candidate),
-    preview_admission: 'not_evaluated',
-    execution_admission: 'not_evaluated',
-  };
-  const revisionDigest = sha256Canonical(v2RevisionDigestBody(unsigned));
-  return sanitizeBuilderProjectRevisionRecordV2({
-    ...unsigned,
-    revision_digest: revisionDigest,
-  });
-}
-
 function digestBuilderProjectProposalRecord(revision) {
   return sha256Canonical(sanitizedProposalDigestBody(revision));
 }
 
 function digestBuilderProjectRevisionRecord(revision) {
   return sha256Canonical(sanitizedRevisionDigestBody(revision));
-}
-
-function digestBuilderProjectRevisionRecordV2(revision) {
-  return sha256Canonical(sanitizedV2RevisionDigestBody(revision));
 }
 
 function sanitizeBuilderProjectRevisionRecordV1(value) {
@@ -870,19 +559,6 @@ function sanitizeBuilderProjectRevisionRecordV1(value) {
   return freezeDeep({ ...unsigned, revision_digest: revisionDigest });
 }
 
-function sanitizeBuilderProjectRevisionRecordV2(value) {
-  const revisionDigest = safeDigest(valueAt(value, 'revision_digest'));
-  const unsigned = sanitizedV2RevisionDigestBody(value);
-  if (sha256Canonical(unsigned) !== revisionDigest) fail();
-  return freezeDeep({ ...unsigned, revision_digest: revisionDigest });
-}
-
-function sanitizeBuilderProjectRevisionParentForV2(value) {
-  return schemaVersionForV2Parent(value) === BUILDER_PROJECT_SCHEMA_VERSION
-    ? sanitizeBuilderProjectRevisionRecordV1(value)
-    : sanitizeBuilderProjectRevisionRecordV2(value);
-}
-
 function sanitizeBuilderProjectRevisionRecord(value) {
   return sanitizeBuilderProjectRevisionRecordV1(value);
 }
@@ -891,13 +567,6 @@ function serializeBuilderProjectRevisionRecord(value) {
   const record = sanitizeBuilderProjectRevisionRecord(value);
   const serialized = `${canonicalJson(record)}\n`;
   if (Buffer.byteLength(serialized, 'utf8') > MAX_RECORD_BYTES) fail();
-  return serialized;
-}
-
-function serializeBuilderProjectRevisionRecordV2(value) {
-  const record = sanitizeBuilderProjectRevisionRecordV2(value);
-  const serialized = `${canonicalJson(record)}\n`;
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_V2_RECORD_BYTES) fail();
   return serialized;
 }
 
@@ -913,22 +582,12 @@ function safeBoundary(fn) {
 module.exports = Object.freeze({
   BUILDER_PROJECT_RECORD_KIND,
   BUILDER_PROJECT_SCHEMA_VERSION,
-  BUILDER_PROJECT_SCHEMA_VERSION_V2,
-  BUILDER_PROJECT_CODE_CHANGE_EVIDENCE_VERSION,
   BUILDER_PROJECT_REVISION_INVALID_REASON,
   BUILDER_PROJECT_STATIC_PREVIEW_REASON,
   MAX_RECORD_BYTES,
-  MAX_V2_RECORD_BYTES,
   BuilderProjectRevisionRecordError,
-  createBuilderProjectRevisionRecordV2: safeBoundary(createBuilderProjectRevisionRecordV2),
   digestBuilderProjectProposalRecord: safeBoundary(digestBuilderProjectProposalRecord),
   digestBuilderProjectRevisionRecord: safeBoundary(digestBuilderProjectRevisionRecord),
-  digestBuilderProjectRevisionRecordV2:
-    safeBoundary(digestBuilderProjectRevisionRecordV2),
   sanitizeBuilderProjectRevisionRecord: safeBoundary(sanitizeBuilderProjectRevisionRecord),
-  sanitizeBuilderProjectRevisionRecordV2:
-    safeBoundary(sanitizeBuilderProjectRevisionRecordV2),
   serializeBuilderProjectRevisionRecord: safeBoundary(serializeBuilderProjectRevisionRecord),
-  serializeBuilderProjectRevisionRecordV2:
-    safeBoundary(serializeBuilderProjectRevisionRecordV2),
 });
