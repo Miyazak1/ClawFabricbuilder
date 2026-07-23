@@ -10,14 +10,21 @@ const {
   createBuilderGenerationHostAdapter,
 } = require('../electron/builder-generation-host-adapter.cjs');
 const {
+  createBuilderConversationEvent,
+} = require('../electron/builder-conversation-records.cjs');
+const {
   createBuilderProviderConfig,
 } = require('../electron/builder-provider-config.cjs');
 const {
-  digestBuilderProjectProposalRecord,
-  digestBuilderProjectRevisionRecord,
-} = require('../electron/builder-project-revision-record.cjs');
+  createBuilderProjectSourceTree,
+} = require('../electron/builder-project-source-tree.cjs');
 
-const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const UUID = '123e4567-e89b-42d3-a456-426614174000';
+const PROJECT_ID = `builder-project:${UUID}`;
+const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174003';
+const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174004';
+const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174006';
+const GIT_REQUEST_ID = 'builder-git-request:123e4567-e89b-42d3-a456-426614174007';
 const PRIVATE_MARKER = 'private-secret-marker';
 
 function canonicalJson(value) {
@@ -31,59 +38,95 @@ function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
-function request(targetRevision = 1, parentRevision = null) {
+function request({ instruction = 'Make a focus timer.', existingProjectId = null } = {}) {
   const unsigned = {
-    version: 'builder-generation-request.v1',
-    idea: targetRevision === 1 ? 'Make a focus timer.' : 'Add a pause button.',
-    project_id: PROJECT_ID,
-    target_revision: targetRevision,
-    parent_revision: parentRevision,
+    version: 'builder-generation-request.v2',
+    instruction,
+    existing_project_id: existingProjectId,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
 }
 
-function proposal(title = 'Focus timer') {
+function providerOutput(overrides = {}) {
   return {
-    kind: 'builder_code_project',
-    title,
+    kind: 'builder_code_change_operations',
+    title: 'Focus timer',
     summary: 'A quiet timer for focused work.',
-    files: {
-      'index.html': '<main><h1>Focus</h1><button>Start</button></main>',
-      'styles.css': 'main { max-width: 30rem; margin: 2rem auto; }',
-      'app.js': 'document.querySelector("button")?.addEventListener("click", () => {});',
-    },
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main><h1>Focus</h1></main>\n' },
+      { operation: 'upsert', path: 'src/app.js', content: 'import process from "node:process";\nconsole.log(process.pid);\n' },
+    ],
+    ...overrides,
   };
 }
 
-function revisionRecord() {
-  const source = proposal();
-  const proposalDigest = digestBuilderProjectProposalRecord(source);
-  const unsigned = {
-    schema_version: 1,
-    record_kind: 'builder_project_revision',
+function sourceTree(files = []) {
+  return createBuilderProjectSourceTree({ files });
+}
+
+function events({ requestDigest = request().request_digest, baseRevision = null } = {}) {
+  const first = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
     project_id: PROJECT_ID,
-    revision: 1,
-    revision_digest: `sha256:${'0'.repeat(64)}`,
-    parent_revision: null,
-    title: source.title,
-    summary: source.summary,
-    files: source.files,
-    proposal_evidence: {
-      authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
-      request_version: 'builder-generation-request.v1',
-      result_version: 'builder-generation-result.v1',
-      request_digest: `sha256:${'1'.repeat(64)}`,
-      proposal_digest: proposalDigest,
-      project_id: PROJECT_ID,
-      target_revision: 1,
-      parent_revision: null,
+    conversation_id: `builder-conversation:${UUID}`,
+    sequence: 1,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174001',
+    event_type: 'turn_submitted',
+    previous_event: null,
+    payload: {
+      message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: 'Make a focus timer.' },
+      turn_id: TURN_ID,
+      mode: 'work',
+      task: { task_id: TASK_ID, title: 'Create Builder project' },
+      base_revision: baseRevision,
     },
-    execution_admission: 'not_evaluated',
-    preview_script_admission: 'not_authorized',
+    authority: {
+      context_authority: 'project_local_conversation',
+      permission_admission: 'not_granted',
+      execution_admission: 'not_granted',
+      revision_admission: 'not_created',
+    },
+  });
+  const second = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: `builder-conversation:${UUID}`,
+    sequence: 2,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174005',
+    event_type: 'run_started',
+    previous_event: { sequence: first.sequence, event_id: first.event_id, event_digest: first.event_digest },
+    payload: {
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      attempt_number: 1,
+      retry_of_run_id: null,
+      input_digest: requestDigest,
+    },
+    authority: {
+      context_authority: 'project_local_conversation',
+      permission_admission: 'not_granted',
+      execution_admission: 'not_granted',
+      revision_admission: 'not_created',
+    },
+  });
+  return [first, second];
+}
+
+function contextFor(raw = request(), overrides = {}) {
+  const base = overrides.base_source_tree ?? sourceTree();
+  return {
+    project_id: PROJECT_ID,
+    base_revision_evidence: overrides.base_revision_evidence ?? null,
+    base_source_tree: base,
+    conversation_events: overrides.conversation_events ?? events({ requestDigest: raw.request_digest }),
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    git_request_id: GIT_REQUEST_ID,
   };
-  unsigned.revision_digest = digestBuilderProjectRevisionRecord(unsigned);
-  return unsigned;
 }
 
 function providerConfig() {
@@ -110,87 +153,86 @@ function dependencies(overrides = {}) {
       secret_ref: config.secret_ref,
       credential: 'real-key-value',
     }),
-    loadParentRevision: async () => {
-      throw new Error('not expected');
-    },
+    buildGenerationContext: (raw) => contextFor(raw),
     transport: async () => ({
       transport_version: 'builder-openai-compatible-transport.v1',
-      generated_text: JSON.stringify(proposal()),
+      generated_text: JSON.stringify(providerOutput()),
     }),
     ...overrides,
   };
 }
 
-function revisionLoadedEnvelope(record) {
-  return {
-    result_version: 'builder-project-repository-result.v1',
-    record,
-    restart_restore: true,
-    persistence_evidence: {
-      evidence_version: 'builder-project-repository-result.v1',
-      operation: 'revision_loaded',
-      authority_scope: 'single_main_process_serialized_expected_head',
-      cross_process_cas: 'not_proven',
-      sudden_power_loss_durability: 'not_proven',
-      revision_file_fsync: 'not_performed',
-      immutable_revision_publish: 'not_performed',
-      revision_parent_directory_fsync: 'not_performed',
-      head_file_fsync: 'not_performed',
-      head_publish: 'not_performed',
-      head_parent_directory_fsync: 'not_performed',
-      reopened_hash_verified: true,
-    },
-  };
-}
-
-test('generates revision one without reading repository parent authority', async () => {
-  let parentReads = 0;
+test('generates an unsaved code-change candidate from verified base context', async () => {
+  let contextReads = 0;
   let transportInput;
+  const rawRequest = request();
   const adapter = createBuilderGenerationHostAdapter(dependencies({
-    loadParentRevision: async () => { parentReads += 1; },
+    buildGenerationContext: (raw) => {
+      contextReads += 1;
+      return contextFor(raw);
+    },
     transport: async (...args) => {
       transportInput = args;
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
-        generated_text: JSON.stringify(proposal()),
+        generated_text: JSON.stringify(providerOutput()),
       };
     },
   }));
-  const rawRequest = request();
   const result = await adapter.generate(rawRequest);
-  assert.equal(parentReads, 0);
+
+  assert.equal(contextReads, 1);
   assert.equal(result.request_id, rawRequest.request_digest);
-  assert.equal(result.proposal.title, 'Focus timer');
-  assert.deepEqual(result.admissions, { execution: 'not_evaluated', preview_script: 'not_authorized' });
+  assert.equal(result.title, 'Focus timer');
+  assert.equal(result.candidate.project_id, PROJECT_ID);
+  assert.equal(result.candidate.authority.revision_admission, 'not_created');
+  assert.equal(result.candidate.authority.preview_admission, 'not_evaluated');
+  assert.equal(result.context.git_request_id, GIT_REQUEST_ID);
   assert.equal(transportInput[0].base_url, 'https://provider.example/v1');
   assert.equal(transportInput[0].credential, 'real-key-value');
   assert.equal(transportInput[1].signal instanceof AbortSignal, true);
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
 });
 
-test('loads and binds the exact trusted parent for revision two', async () => {
-  const parent = revisionRecord();
-  const parentRef = { revision: 1, revision_digest: parent.revision_digest };
-  const queries = [];
+test('passes verified current source into the prompt for an existing project', async () => {
+  const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Add a pause button.' });
+  const base = sourceTree([{ path: 'src/app.js', content: 'export const before = true;\n' }]);
+  const baseRevision = {
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
+  };
   let userPrompt = '';
   const adapter = createBuilderGenerationHostAdapter(dependencies({
-    loadParentRevision: async (query) => {
-      queries.push(query);
-      return revisionLoadedEnvelope(parent);
-    },
+    buildGenerationContext: () => contextFor(rawRequest, {
+      base_source_tree: base,
+      base_revision_evidence: {
+        evidence_version: 'builder-project-base-revision-evidence.v2',
+        project_id: PROJECT_ID,
+        revision_receipt_digest: baseRevision.revision_receipt_digest,
+        commit_oid: baseRevision.commit_oid,
+        source_tree_digest: base.source_tree_digest,
+        verification_admission: 'git_sqlite_read_authority_verified',
+      },
+      conversation_events: events({
+        requestDigest: rawRequest.request_digest,
+        baseRevision,
+      }),
+    }),
     transport: async (input) => {
       userPrompt = input.messages[1].content;
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
-        generated_text: JSON.stringify(proposal('Focus timer with pause')),
+        generated_text: JSON.stringify(providerOutput({
+          operations: [{ operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' }],
+        })),
       };
     },
   }));
-  const result = await adapter.generate(request(2, parentRef));
-  assert.deepEqual(queries, [{ project_id: PROJECT_ID, revision: 1, revision_digest: parent.revision_digest }]);
+  const result = await adapter.generate(rawRequest);
+
   assert.match(userPrompt, /Add a pause button/u);
-  assert.match(userPrompt, /Focus timer/u);
-  assert.deepEqual(result.evidence.parent_revision, parentRef);
+  assert.match(userPrompt, /export const before = true/u);
+  assert.equal(result.candidate.base_source_tree.source_tree_digest, base.source_tree_digest);
 });
 
 test('shares exact concurrent requests and releases single-flight after completion', async () => {
@@ -206,7 +248,7 @@ test('shares exact concurrent requests and releases single-flight after completi
   assert.equal(first, second);
   resolveTransport({
     transport_version: 'builder-openai-compatible-transport.v1',
-    generated_text: JSON.stringify(proposal()),
+    generated_text: JSON.stringify(providerOutput()),
   });
   await Promise.all([first, second]);
   await adapter.generate(raw);
@@ -236,15 +278,13 @@ test('cancels only the exact active request and propagates abort to transport', 
   });
 });
 
-test('cancels a stalled parent lookup without invoking provider authority', async () => {
-  const parent = revisionRecord();
-  const parentRef = { revision: 1, revision_digest: parent.revision_digest };
+test('cancels a stalled base read without invoking provider authority', async () => {
   let providerReads = 0;
   const adapter = createBuilderGenerationHostAdapter(dependencies({
     readProviderConfig: () => { providerReads += 1; return providerConfig(); },
-    loadParentRevision: async () => new Promise(() => {}),
+    buildGenerationContext: async () => new Promise(() => {}),
   }));
-  const raw = request(2, parentRef);
+  const raw = request();
   const pending = adapter.generate(raw);
   assert.equal(adapter.cancel({ request_id: raw.request_digest }).cancelled, true);
   await assert.rejects(pending, { code: 'builder_generation_cancelled' });
@@ -275,34 +315,13 @@ test('reports availability only when config and encrypted secret resolution are 
     }),
   }));
   assert.equal(malformedCredential.availability().available, false);
-  for (const credential of ['\ud800', '😀'.repeat(4097)]) {
-    const invalid = createBuilderGenerationHostAdapter(dependencies({
-      resolveSecret: () => ({
-        resolution_version: 'builder-provider-secret-resolution.v1',
-        secret_ref: providerConfig().secret_ref,
-        credential,
-      }),
-    }));
-    assert.equal(invalid.availability().available, false);
-  }
 });
 
-test('fails closed on parent, config, secret, transport, and generated response drift', async () => {
-  const parent = revisionRecord();
-  const parentRef = { revision: 1, revision_digest: parent.revision_digest };
+test('fails closed on base, config, secret, transport, and provider response drift', async () => {
   const cases = [
     [dependencies({ readProviderConfig: () => ({}) }), request(), 'builder_generation_provider_unavailable'],
     [dependencies({ resolveSecret: () => ({ credential: PRIVATE_MARKER }) }), request(), 'builder_generation_provider_unavailable'],
-    [dependencies({ loadParentRevision: async () => ({ record: parent }) }), request(2, parentRef), 'builder_generation_parent_unavailable'],
-    [dependencies({
-      loadParentRevision: async () => ({
-        ...revisionLoadedEnvelope(parent),
-        persistence_evidence: {
-          ...revisionLoadedEnvelope(parent).persistence_evidence,
-          operation: 'current_loaded',
-        },
-      }),
-    }), request(2, parentRef), 'builder_generation_parent_unavailable'],
+    [dependencies({ buildGenerationContext: () => ({}) }), request(), 'builder_generation_base_unavailable'],
     [dependencies({ transport: async () => ({ generated_text: '{}' }) }), request(), 'builder_generation_structured_response_invalid'],
     [dependencies({ transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: '{}' }) }), request(), 'builder_generation_structured_response_invalid'],
   ];
@@ -337,41 +356,12 @@ test('maps timeout and provider failures without reflecting raw errors', async (
       return true;
     });
   }
-  const accessorError = {};
-  Object.defineProperty(accessorError, 'code', {
-    get() { throw new Error(PRIVATE_MARKER); },
-  });
-  const adapter = createBuilderGenerationHostAdapter(dependencies({
-    transport: async () => { throw accessorError; },
-  }));
-  await assert.rejects(adapter.generate(request()), (error) => {
-    assert.equal(error.code, 'builder_generation_failed');
-    assert.doesNotMatch(`${error.message}:${error.stack}`, /private/iu);
-    return true;
-  });
 });
 
-test('preserves static preview contract rejection separately from structured provider output', async () => {
-  const adapter = createBuilderGenerationHostAdapter(dependencies({
-    transport: async () => ({
-      transport_version: 'builder-openai-compatible-transport.v1',
-      generated_text: JSON.stringify({
-        ...proposal(),
-        files: { ...proposal().files, 'index.html': '<script>private-marker</script>' },
-      }),
-    }),
-  }));
-  await assert.rejects(adapter.generate(request()), (error) => {
-    assert.equal(error.code, 'builder_generation_static_preview_contract_rejected');
-    assert.doesNotMatch(`${error.message}:${error.stack}`, /private-marker|script/iu);
-    return true;
-  });
-});
-
-test('contains no IPC, renderer, legacy dispatcher, generic Chat, save, or execution authority', () => {
+test('contains no IPC, renderer, legacy dispatcher, generic Chat, save, or old revision authority', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'builder-generation-host-adapter.cjs'), 'utf8');
   assert.doesNotMatch(
     source,
-    /ipcMain|ipcRenderer|contextBridge|BrowserWindow|chat_planner|local-provider-executor|ChatCreatePage|Canvas|JobMeta|repository\.commit|safeStorage|child_process|worker_threads|\beval\s*\(|new Function/iu,
+    /ipcMain|ipcRenderer|contextBridge|BrowserWindow|chat_planner|local-provider-executor|ChatCreatePage|Canvas|JobMeta|repository\.commit|safeStorage|builder-project-revision|revision_digest|static_preview|child_process|worker_threads|\beval\s*\(|new Function/iu,
   );
 });

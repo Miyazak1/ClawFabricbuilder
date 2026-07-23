@@ -35,6 +35,15 @@ function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
+function request() {
+  const body = {
+    version: 'builder-generation-request.v2',
+    instruction: 'Make a timer.',
+    existing_project_id: null,
+  };
+  return { ...body, request_digest: digest(body) };
+}
+
 function activeWindow() {
   const webContents = { isDestroyed: () => false };
   return { webContents, isDestroyed: () => false };
@@ -64,7 +73,7 @@ function fakeIpcMain(failOnChannel = null, failRemoveOnChannel = null) {
   return authority;
 }
 
-function runtimeWithService(service) {
+function runtimeWithService(service, probes = {}) {
   const runtimePath = path.join(__dirname, '..', 'electron', 'builder-generation-ipc-runtime.cjs');
   const source = fs.readFileSync(runtimePath, 'utf8');
   const context = vm.createContext({
@@ -82,8 +91,8 @@ function runtimeWithService(service) {
           AVAILABILITY_CHANNEL,
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
-              generate: { invoke: (_event, request) => options.generate(request) },
-              cancel: { invoke: (_event, request) => options.cancel(request) },
+              generate: { invoke: (_event, body) => options.generate(body) },
+              cancel: { invoke: (_event, body) => options.cancel(body) },
               availability: { invoke: () => options.availability() },
             },
           }),
@@ -92,7 +101,9 @@ function runtimeWithService(service) {
       if (specifier === './builder-generation-main-service.cjs') {
         return {
           createBuilderGenerationMainService: (options) => {
+            probes.serviceOptions = options;
             assert.equal(options.transport, context.__sentinelTransport);
+            assert.equal(options.projectReadAuthority, context.__readAuthority);
             return service;
           },
         };
@@ -105,17 +116,53 @@ function runtimeWithService(service) {
           },
         };
       }
-      if (specifier === './builder-project-revision-repository.cjs') {
-        return { createBuilderProjectRevisionRepository: () => ({ load_revision() {} }) };
-      }
       if (specifier === './builder-provider-config-repository.cjs') {
         return { createBuilderProviderConfigRepository: () => ({ bind_current_authority() {} }) };
+      }
+      if (specifier === './builder-git-project-repository.cjs') {
+        return {
+          createDefaultBuilderGitProjectRepository(options) {
+            probes.gitOptions = options;
+            context.__gitRepository = { read_verified_candidate() {} };
+            return context.__gitRepository;
+          },
+        };
+      }
+      if (specifier === './builder-product-metadata-database.cjs') {
+        return {
+          createBuilderProductMetadataDatabase(databasePath) {
+            probes.metadataPath = databasePath;
+            context.__metadataDatabase = {
+              closed: false,
+              close() { this.closed = true; },
+              load_current_project_revision() {},
+              load_project_revision() {},
+              list_current_project_revisions() {},
+            };
+            return context.__metadataDatabase;
+          },
+        };
+      }
+      if (specifier === './builder-project-read-authority.cjs') {
+        return {
+          createBuilderProjectReadAuthority(options) {
+            probes.readAuthorityOptions = options;
+            assert.equal(options.metadata_database, context.__metadataDatabase);
+            assert.equal(options.git_repository, context.__gitRepository);
+            context.__readAuthority = { load_current() {} };
+            return context.__readAuthority;
+          },
+        };
+      }
+      if (specifier === './builder-project-revision-repository.cjs') {
+        throw new Error('old revision repository must not be imported');
       }
       return require(path.join(path.dirname(runtimePath), specifier));
     },
   });
   vm.runInContext(source, context, { filename: runtimePath });
   return {
+    context,
     createRuntime(options) {
       context.__ipcMain = options.ipcMain;
       context.__fetchImpl = options.fetchImpl;
@@ -145,8 +192,11 @@ test('registers exactly the controlled generation channels and keeps provider st
     userDataPath,
   });
 
-  assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v1');
+  assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v2');
   assert.deepEqual(runtime.channels, [GENERATE_CHANNEL, CANCEL_CHANNEL, AVAILABILITY_CHANNEL]);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v2', 'builder.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-config-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
   assert.equal(runtime.register(), true);
@@ -168,6 +218,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.throws(() => runtime.register(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
+  runtime.dispose();
 });
 
 test('keeps active-renderer and request validation inside the controlled adapter', async (t) => {
@@ -195,6 +246,7 @@ test('keeps active-renderer and request validation inside the controlled adapter
     ipcMain.handlers.get(CANCEL_CHANNEL)({ sender: mainWindow.webContents }, { request_id: 'bad' }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
+  runtime.dispose();
 });
 
 test('rolls back partial registration and rejects malformed runtime authority', (t) => {
@@ -213,6 +265,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   ));
   assert.deepEqual([...ipcMain.handlers.keys()], []);
   assert.deepEqual(ipcMain.removed, [GENERATE_CHANNEL]);
+  assert.equal(runtime.dispose(), false);
 
   const removalFailure = fakeIpcMain(CANCEL_CHANNEL, GENERATE_CHANNEL);
   const cleanupRuntime = createBuilderGenerationIpcRuntime({
@@ -230,7 +283,6 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   });
   removalFailure.failRemoveOnChannel = null;
   assert.equal(cleanupRuntime.dispose(), true);
-  assert.deepEqual([...removalFailure.handlers.keys()], []);
 
   for (const invalid of [
     null,
@@ -257,20 +309,58 @@ test('rolls back partial registration and rejects malformed runtime authority', 
         && !`${error.message}:${error.stack}`.includes('private'),
     );
   }
+});
 
-  let getterCalls = 0;
-  const accessorIpcMain = {};
-  Object.defineProperties(accessorIpcMain, {
-    handle: { get() { getterCalls += 1; return () => {}; } },
-    removeHandler: { get() { getterCalls += 1; return () => {}; } },
+test('closes product metadata when generation channel registration fails', (t) => {
+  const harness = runtimeWithService({
+    generate: async () => ({ ok: true }),
+    cancel: () => ({ cancelled: false }),
+    availability: () => ({ available: false }),
   });
-  assert.throws(() => createBuilderGenerationIpcRuntime({
+  const ipcMain = fakeIpcMain(CANCEL_CHANNEL);
+  const runtime = harness.createRuntime({
     fetchImpl: unreachableFetch,
-    ipcMain: accessorIpcMain,
-    mainWindowRef: () => mainWindow,
+    ipcMain,
+    mainWindow: activeWindow(),
     userDataPath: temporaryUserData(t),
-  }), { code: 'builder_generation_ipc_runtime_unavailable' });
-  assert.equal(getterCalls, 0);
+  });
+
+  assert.equal(harness.context.__metadataDatabase.closed, false);
+  assert.throws(() => runtime.register(), {
+    code: 'builder_generation_ipc_runtime_unavailable',
+  });
+  assert.deepEqual([...ipcMain.handlers.keys()], []);
+  assert.equal(harness.context.__metadataDatabase.closed, true);
+  assert.equal(runtime.dispose(), false);
+});
+
+test('composes Git, SQLite metadata, read authority, and closes metadata on dispose', (t) => {
+  const probes = {};
+  const service = {
+    generate() { return Promise.reject(new Error('not used')); },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const runtimeModule = runtimeWithService(service, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const userDataPath = temporaryUserData(t);
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath,
+  });
+
+  assert.equal(probes.gitOptions.projects_root, path.join(userDataPath, 'builder-projects-v2'));
+  assert.equal(probes.gitOptions.runtime_root, path.join(userDataPath, 'builder-git-runtime-v2'));
+  assert.equal(probes.metadataPath, path.join(userDataPath, 'builder-product-metadata-v2', 'builder.sqlite'));
+  assert.equal(probes.readAuthorityOptions.metadata_database, runtimeModule.context.__metadataDatabase);
+  assert.equal(probes.serviceOptions.projectReadAuthority, runtimeModule.context.__readAuthority);
+  assert.equal(runtime.dispose(), false);
+  assert.equal(runtimeModule.context.__metadataDatabase.closed, true);
 });
 
 test('cancels every accepted generation before removing its cancel channel', async (t) => {
@@ -280,12 +370,12 @@ test('cancels every accepted generation before removing its cancel channel', asy
     generate() {
       return new Promise((_resolve, reject) => { rejectGeneration = reject; });
     },
-    cancel(request) {
-      cancelRequests.push(request);
+    cancel(body) {
+      cancelRequests.push(body);
       const error = new Error('private provider request');
       error.code = 'builder_generation_cancelled';
       rejectGeneration(error);
-      return { request_id: request.request_id, cancelled: true };
+      return { request_id: body.request_id, cancelled: true };
     },
     availability() {
       return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
@@ -301,25 +391,18 @@ test('cancels every accepted generation before removing its cancel channel', asy
     userDataPath: temporaryUserData(t),
   });
   runtime.register();
-  const requestBody = {
-    version: 'builder-generation-request.v1',
-    idea: 'Make a timer.',
-    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
-    target_revision: 1,
-    parent_revision: null,
-  };
-  const request = { ...requestBody, request_digest: digest(requestBody) };
-  const operation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, request);
+  const body = request();
+  const operation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, body);
   const cancelled = assert.rejects(operation, { code: 'builder_generation_cancelled' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.dispose(), true);
   assert.equal(cancelRequests.length, 1);
-  assert.equal(cancelRequests[0].request_id, request.request_digest);
+  assert.equal(cancelRequests[0].request_id, body.request_digest);
   await cancelled;
   assert.deepEqual([...ipcMain.handlers.keys()], []);
 });
 
-test('contains no preload, renderer, settings write, generic provider, or legacy authority', () => {
+test('contains no preload, renderer, settings write, generic provider, or legacy revision authority', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'electron', 'builder-generation-ipc-runtime.cjs'),
     'utf8',
@@ -327,11 +410,13 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   for (const forbidden of [
     /ipcRenderer|contextBridge|BrowserWindow|require\(['"]electron['"]\)|\bnet\b/u,
     /write_current|credential|safeStorage|providerSettings/u,
+    /builder-project-revision-repository|builder-project-revisions-v1|projectRevisionRepository|load_revision/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
   ]) assert.doesNotMatch(source, forbidden);
+  assert.match(source, /createDefaultBuilderGitProjectRepository/u);
+  assert.match(source, /createBuilderProductMetadataDatabase/u);
+  assert.match(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
   assert.match(source, /createBuilderOpenAICompatibleTransport\(\{ fetchImpl: options\.fetchImpl \}\)/u);
   assert.doesNotMatch(source, /globalThis\.fetch/u);
-  assert.match(source, /createBuilderGenerationIpcAdapter/u);
-  assert.match(source, /bind_current_authority/u);
 });

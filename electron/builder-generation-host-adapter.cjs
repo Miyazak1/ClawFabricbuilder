@@ -13,29 +13,28 @@ const {
 const {
   sanitizeBuilderProviderConfig,
 } = require('./builder-provider-config.cjs');
-const {
-  sanitizeBuilderProjectRevisionRecord,
-} = require('./builder-project-revision-record.cjs');
 
 const BUILDER_GENERATION_AVAILABILITY_VERSION = 'builder-generation-availability.v1';
 const BUILDER_PROVIDER_SECRET_RESOLUTION_VERSION = 'builder-provider-secret-resolution.v1';
-const REPOSITORY_RESULT_VERSION = 'builder-project-repository-result.v1';
-const PERSISTENCE_EVIDENCE_KEYS = Object.freeze([
-  'evidence_version', 'operation', 'authority_scope', 'cross_process_cas',
-  'sudden_power_loss_durability', 'revision_file_fsync', 'immutable_revision_publish',
-  'revision_parent_directory_fsync', 'head_file_fsync', 'head_publish',
-  'head_parent_directory_fsync', 'reopened_hash_verified',
-]);
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const CONTEXT_KEYS = Object.freeze([
+  'project_id',
+  'base_revision_evidence',
+  'base_source_tree',
+  'conversation_events',
+  'turn_id',
+  'task_id',
+  'run_id',
+  'git_request_id',
+]);
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
-  builder_generation_parent_unavailable: 'The current project version is unavailable.',
+  builder_generation_base_unavailable: 'The current project source is unavailable.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_cancelled: 'AI project generation was cancelled.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
-  builder_generation_static_preview_contract_rejected: 'The generated project is not supported by the static preview.',
   builder_generation_failed: 'The project draft could not be generated.',
 });
 
@@ -47,10 +46,10 @@ class BuilderGenerationHostAdapterError extends Error {
     this.code = selected;
     this.retryable = [
       'builder_generation_provider_unavailable',
+      'builder_generation_base_unavailable',
       'builder_generation_timeout',
       'builder_generation_provider_http_error',
       'builder_generation_structured_response_invalid',
-      'builder_generation_static_preview_contract_rejected',
       'builder_generation_failed',
     ].includes(selected);
     this.stack = `${this.name}: ${this.message}`;
@@ -84,8 +83,8 @@ function ownValue(value, key, code) {
   return descriptor.value;
 }
 
-function requiredMethod(value) {
-  if (typeof value !== 'function') fail('builder_generation_provider_unavailable');
+function requiredMethod(value, code = 'builder_generation_provider_unavailable') {
+  if (typeof value !== 'function') fail(code);
   return value;
 }
 
@@ -137,56 +136,6 @@ function sanitizeSecretResolution(value, expectedRef) {
   return credential;
 }
 
-function sanitizeParentEnvelope(value, request) {
-  const envelope = exactObject(
-    value,
-    ['result_version', 'record', 'restart_restore', 'persistence_evidence'],
-    'builder_generation_parent_unavailable',
-  );
-  if (
-    ownValue(envelope, 'result_version', 'builder_generation_parent_unavailable') !== REPOSITORY_RESULT_VERSION
-    || ownValue(envelope, 'restart_restore', 'builder_generation_parent_unavailable') !== true
-  ) fail('builder_generation_parent_unavailable');
-  const persistenceEvidence = exactObject(
-    ownValue(envelope, 'persistence_evidence', 'builder_generation_parent_unavailable'),
-    PERSISTENCE_EVIDENCE_KEYS,
-    'builder_generation_parent_unavailable',
-  );
-  const expectedEvidence = {
-    evidence_version: REPOSITORY_RESULT_VERSION,
-    operation: 'revision_loaded',
-    authority_scope: 'single_main_process_serialized_expected_head',
-    cross_process_cas: 'not_proven',
-    sudden_power_loss_durability: 'not_proven',
-    revision_file_fsync: 'not_performed',
-    immutable_revision_publish: 'not_performed',
-    revision_parent_directory_fsync: 'not_performed',
-    head_file_fsync: 'not_performed',
-    head_publish: 'not_performed',
-    head_parent_directory_fsync: 'not_performed',
-    reopened_hash_verified: true,
-  };
-  for (const key of PERSISTENCE_EVIDENCE_KEYS) {
-    if (ownValue(persistenceEvidence, key, 'builder_generation_parent_unavailable') !== expectedEvidence[key]) {
-      fail('builder_generation_parent_unavailable');
-    }
-  }
-  let record;
-  try {
-    record = sanitizeBuilderProjectRevisionRecord(
-      ownValue(envelope, 'record', 'builder_generation_parent_unavailable'),
-    );
-  } catch {
-    fail('builder_generation_parent_unavailable');
-  }
-  if (
-    record.project_id !== request.project_id
-    || record.revision !== request.parent_revision.revision
-    || record.revision_digest !== request.parent_revision.revision_digest
-  ) fail('builder_generation_parent_unavailable');
-  return record;
-}
-
 function sanitizeTransportResult(value) {
   const source = exactObject(
     value,
@@ -233,19 +182,16 @@ function mapKernelError(error) {
       code = descriptor.value;
     }
   }
-  if (code === 'builder_generation_static_preview_contract_rejected') {
-    fail('builder_generation_static_preview_contract_rejected');
-  }
-  if (code === 'builder_generation_structured_response_invalid') {
-    fail('builder_generation_structured_response_invalid');
-  }
+  if (code === 'builder_generation_base_unavailable') fail('builder_generation_base_unavailable');
+  if (code === 'builder_generation_structured_response_invalid') fail('builder_generation_structured_response_invalid');
+  if (code === 'builder_generation_request_invalid') fail('builder_generation_request_invalid');
   fail('builder_generation_failed');
 }
 
 function createBuilderGenerationHostAdapter(options = {}) {
   const readProviderConfig = requiredMethod(options.readProviderConfig);
   const resolveSecret = requiredMethod(options.resolveSecret);
-  const loadParentRevision = requiredMethod(options.loadParentRevision);
+  const buildGenerationContext = requiredMethod(options.buildGenerationContext, 'builder_generation_base_unavailable');
   const transport = options.transport === undefined
     ? createBuilderOpenAICompatibleTransport()
     : requiredMethod(options.transport);
@@ -264,43 +210,39 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  async function parentRecord(request, signal) {
-    if (request.parent_revision === null) return null;
+  async function generationContext(request, signal) {
     if (signal.aborted) fail('builder_generation_cancelled');
-    let envelope;
     let removeAbortListener = () => {};
     try {
-      const resolution = Promise.resolve(Reflect.apply(loadParentRevision, undefined, [{
-        project_id: request.project_id,
-        revision: request.parent_revision.revision,
-        revision_digest: request.parent_revision.revision_digest,
-      }]));
+      const resolution = Promise.resolve(Reflect.apply(buildGenerationContext, undefined, [request]));
       const aborted = new Promise((_resolve, reject) => {
         const onAbort = () => reject(new BuilderGenerationHostAdapterError('builder_generation_cancelled'));
         removeAbortListener = () => signal.removeEventListener('abort', onAbort);
         signal.addEventListener('abort', onAbort, { once: true });
       });
-      envelope = await Promise.race([resolution, aborted]);
+      return exactObject(
+        await Promise.race([resolution, aborted]),
+        CONTEXT_KEYS,
+        'builder_generation_base_unavailable',
+      );
     } catch {
       if (signal.aborted) fail('builder_generation_cancelled');
-      fail('builder_generation_parent_unavailable');
+      fail('builder_generation_base_unavailable');
     } finally {
       try { removeAbortListener(); } catch { /* best-effort listener cleanup */ }
     }
-    if (signal.aborted) fail('builder_generation_cancelled');
-    return sanitizeParentEnvelope(envelope, request);
   }
 
   async function run(request, controller) {
-    const parent = await parentRecord(request, controller.signal);
+    const context = await generationContext(request, controller.signal);
     let descriptor;
     try {
       descriptor = createBuilderGenerationPromptDescriptor({
         request,
-        parent_revision_record: parent,
+        base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
       });
-    } catch {
-      fail('builder_generation_parent_unavailable');
+    } catch (error) {
+      mapKernelError(error);
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
@@ -324,11 +266,16 @@ function createBuilderGenerationHostAdapter(options = {}) {
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const generatedText = sanitizeTransportResult(transportResult);
     try {
-      return projectBuilderGenerationResult({
+      const draft = projectBuilderGenerationResult({
         request,
-        parent_revision_record: parent,
+        base_revision_evidence: ownValue(context, 'base_revision_evidence', 'builder_generation_base_unavailable'),
+        base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
+        conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
+        turn_id: ownValue(context, 'turn_id', 'builder_generation_base_unavailable'),
+        run_id: ownValue(context, 'run_id', 'builder_generation_base_unavailable'),
         generated_text: generatedText,
       });
+      return Object.freeze({ ...draft, context });
     } catch (error) {
       mapKernelError(error);
     }

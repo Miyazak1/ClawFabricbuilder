@@ -20,10 +20,22 @@ const {
   createBuilderProviderSecretStore,
 } = require('../electron/builder-provider-secret-store.cjs');
 const {
-  createBuilderProjectRevisionRepository,
-} = require('../electron/builder-project-revision-repository.cjs');
+  createBuilderProjectSourceTree,
+} = require('../electron/builder-project-source-tree.cjs');
 
-const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const UUIDS = Object.freeze([
+  '123e4567-e89b-42d3-a456-426614174000',
+  '123e4567-e89b-42d3-a456-426614174001',
+  '123e4567-e89b-42d3-a456-426614174002',
+  '123e4567-e89b-42d3-a456-426614174003',
+  '123e4567-e89b-42d3-a456-426614174004',
+  '123e4567-e89b-42d3-a456-426614174005',
+  '123e4567-e89b-42d3-a456-426614174006',
+  '123e4567-e89b-42d3-a456-426614174007',
+  '123e4567-e89b-42d3-a456-426614174008',
+  '123e4567-e89b-42d3-a456-426614174009',
+]);
+const PROJECT_ID = `builder-project:${UUIDS[0]}`;
 const PRIVATE_MARKER = 'private-main-service-marker';
 
 function canonicalJson(value) {
@@ -37,15 +49,22 @@ function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
-function request() {
+function request({ instruction = 'Make a focus timer.', existingProjectId = null } = {}) {
   const unsigned = {
-    version: 'builder-generation-request.v1',
-    idea: 'Make a focus timer.',
-    project_id: PROJECT_ID,
-    target_revision: 1,
-    parent_revision: null,
+    version: 'builder-generation-request.v2',
+    instruction,
+    existing_project_id: existingProjectId,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
+}
+
+function createUuidFactory(seed = 0) {
+  let index = seed;
+  return () => {
+    const value = UUIDS[index % UUIDS.length];
+    index += 1;
+    return value;
+  };
 }
 
 function config(model = 'builder-model') {
@@ -63,16 +82,36 @@ function config(model = 'builder-model') {
   });
 }
 
-function proposal() {
+function providerOutput(overrides = {}) {
   return {
-    kind: 'builder_code_project',
+    kind: 'builder_code_change_operations',
     title: 'Focus timer',
     summary: 'A quiet timer for focused work.',
-    files: {
-      'index.html': '<main><h1>Focus</h1></main>',
-      'styles.css': 'main { max-width: 30rem; }',
-      'app.js': 'document.querySelector("h1")?.focus();',
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main><h1>Focus</h1></main>\n' },
+      { operation: 'upsert', path: 'src/app.js', content: 'console.log("ready");\n' },
+    ],
+    ...overrides,
+  };
+}
+
+function readResult(sourceTree = createBuilderProjectSourceTree({
+  files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+})) {
+  return {
+    result_version: 'builder-project-read-result.v1',
+    operation: 'current_loaded',
+    product_revision_receipt: {
+      project_id: PROJECT_ID,
+      revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+      commit_oid: '2'.repeat(40),
+      resulting_tree_digest: sourceTree.source_tree_digest,
     },
+    current: {},
+    source_tree: sourceTree,
+    git_candidate_receipt: {},
+    git_verification_receipt: {},
+    authority_evidence: {},
   };
 }
 
@@ -98,13 +137,18 @@ function repositories(overrides = {}) {
       return authority;
     },
   };
-  const projectRevisionRepository = {
-    load_revision() { throw new Error('revision one must not load a parent'); },
+  const projectReadAuthority = {
+    load_current() { throw new Error('new project must not read current source'); },
   };
-  return { providerConfigRepository, projectRevisionRepository, ...overrides };
+  return {
+    providerConfigRepository,
+    projectReadAuthority,
+    createUuid: createUuidFactory(),
+    ...overrides,
+  };
 }
 
-test('binds one provider config and secret snapshot per availability or generation operation', async () => {
+test('binds provider snapshot and returns only a redacted unsaved draft packet', async () => {
   const transportInputs = [];
   const service = createBuilderGenerationMainService({
     ...repositories(),
@@ -112,12 +156,12 @@ test('binds one provider config and secret snapshot per availability or generati
       transportInputs.push(input);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
-        generated_text: JSON.stringify(proposal()),
+        generated_text: JSON.stringify(providerOutput()),
       };
     },
   });
 
-  assert.equal(service.service_version, 'builder-generation-main-service.v1');
+  assert.equal(service.service_version, 'builder-generation-main-service.v2');
   assert.deepEqual(service.availability(), {
     version: 'builder-generation-availability.v1',
     available: true,
@@ -125,21 +169,71 @@ test('binds one provider config and secret snapshot per availability or generati
     supports_cancel: true,
   });
   const result = await service.generate(request());
-  assert.equal(result.proposal.title, 'Focus timer');
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.match(result.draft_id, /^builder-generation-draft:[0-9a-f]{64}$/u);
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, null);
+  assert.equal(result.candidate.candidate_version, 'builder-code-change-candidate.v2');
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.equal(result.admissions.conversation, 'candidate_local_not_recorded');
+  assert.equal(result.restart_restore, 'not_persisted');
   assert.equal(transportInputs.length, 1);
   assert.equal(transportInputs[0].model, 'builder-model-2');
   assert.equal(transportInputs[0].credential, 'credential-2');
-  assert.doesNotMatch(JSON.stringify(result), /credential|provider\.example|builder-model/iu);
+  assert.doesNotMatch(JSON.stringify(result), /credential|provider\.example|builder-model|operations|conversation_events|git_request_id/iu);
   assert.deepEqual(service.authority, {
     provider_config_snapshot_bound: true,
-    parent_revision_main_repository: true,
+    project_read_authority_verified_source: true,
+    pending_draft_restart_restore: 'not_persisted',
+    conversation_event_admission: 'candidate_local_not_recorded',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
   });
 });
 
-test('generates through the persisted provider authority without exposing its credential', async (t) => {
+test('uses read authority for existing projects and stores a main-only pending draft', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const reads = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      createUuid: createUuidFactory(1),
+      projectReadAuthority: {
+        load_current(query) {
+          reads.push(query);
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        operations: [{ operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' }],
+      })),
+    }),
+  });
+
+  const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
+  assert.deepEqual(reads, [{ project_id: PROJECT_ID }]);
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.base_revision_evidence.revision_receipt_digest, `sha256:${'1'.repeat(64)}`);
+  assert.equal(result.source_tree.source_tree_digest, result.candidate.resulting_tree_digest);
+  assert.equal(Object.hasOwn(result.candidate, 'operations'), false);
+
+  const pending = service.read_pending_draft({ draft_id: result.draft_id });
+  assert.equal(pending.result_version, 'builder-generation-pending-draft.v1');
+  assert.equal(pending.draft_id, result.draft_id);
+  assert.match(pending.git_request_id, /^builder-git-request:/u);
+  assert.equal(pending.candidate.candidate_digest, result.candidate.candidate_digest);
+  assert.equal(pending.conversation_events.length, 2);
+  assert.equal(pending.conversation_event_admission, 'candidate_local_not_recorded');
+  assert.equal(pending.restart_restore, 'not_persisted');
+});
+
+test('generates through persisted provider authority without exposing its credential', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-main-service-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const safeStorage = {
@@ -153,7 +247,6 @@ test('generates through the persisted provider authority without exposing its cr
   };
   const secretStore = createBuilderProviderSecretStore(root, { safeStorage });
   const providerConfigRepository = createBuilderProviderConfigRepository(root, { secretStore });
-  const projectRevisionRepository = createBuilderProjectRevisionRepository(root);
   providerConfigRepository.write_current({
     config: {
       base_url: 'https://provider.example/v1',
@@ -171,13 +264,12 @@ test('generates through the persisted provider authority without exposing its cr
   });
   const transportInputs = [];
   const service = createBuilderGenerationMainService({
-    providerConfigRepository,
-    projectRevisionRepository,
+    ...repositories({ providerConfigRepository }),
     transport: async (input) => {
       transportInputs.push(input);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
-        generated_text: JSON.stringify(proposal()),
+        generated_text: JSON.stringify(providerOutput()),
       };
     },
   });
@@ -189,42 +281,11 @@ test('generates through the persisted provider authority without exposing its cr
   assert.doesNotMatch(JSON.stringify(result), new RegExp(`${PRIVATE_MARKER}|provider\\.example|persisted-builder-model`, 'iu'));
 });
 
-test('forwards only the exact parent lookup to the main-owned revision repository', async () => {
-  const queries = [];
-  const raw = request();
-  raw.target_revision = 2;
-  raw.parent_revision = { revision: 1, revision_digest: `sha256:${'0'.repeat(64)}` };
-  const unsigned = { ...raw };
-  delete unsigned.request_digest;
-  raw.request_digest = digest(unsigned);
-  const service = createBuilderGenerationMainService({
-    ...repositories({
-      projectRevisionRepository: {
-        load_revision(query) {
-          queries.push(query);
-          return Promise.reject(new Error(PRIVATE_MARKER));
-        },
-      },
-    }),
-    transport: async () => { throw new Error('transport must not run'); },
-  });
-  await assert.rejects(service.generate(raw), (error) => {
-    assert.equal(error.code, 'builder_generation_parent_unavailable');
-    assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
-    return true;
-  });
-  assert.deepEqual(queries, [{
-    project_id: PROJECT_ID,
-    revision: 1,
-    revision_digest: `sha256:${'0'.repeat(64)}`,
-  }]);
-});
-
-test('fails closed for malformed repositories, authority pairs, and accessor options', async () => {
+test('fails closed for malformed repositories, read authority, authority pairs, and accessor options', async () => {
   const cases = [
     null,
     {},
-    { providerConfigRepository: {}, projectRevisionRepository: {} },
+    { providerConfigRepository: {}, projectReadAuthority: {} },
     new Proxy({}, { getPrototypeOf() { throw new Error(PRIVATE_MARKER); } }),
   ];
   for (const value of cases) {
@@ -245,56 +306,34 @@ test('fails closed for malformed repositories, authority pairs, and accessor opt
   });
 
   const invalidAuthority = createBuilderGenerationMainService({
-    providerConfigRepository: { bind_current_authority: () => ({}) },
-    projectRevisionRepository: { load_revision() {} },
+    ...repositories({
+      providerConfigRepository: { bind_current_authority: () => ({}) },
+    }),
     transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: '{}' }),
   });
   assert.equal(invalidAuthority.availability().available, false);
 
-  const malformedMethod = createBuilderGenerationMainService({
-    providerConfigRepository: {
-      bind_current_authority: () => ({ readProviderConfig() {}, resolveSecret: 1 }),
-    },
-    projectRevisionRepository: { load_revision() {} },
-    transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: '{}' }),
-  });
-  assert.equal(malformedMethod.availability().available, false);
-
-  let binds = 0;
-  let secretResolutions = 0;
-  const recoversAfterInvalidConfig = createBuilderGenerationMainService({
-    providerConfigRepository: {
-      bind_current_authority() {
-        binds += 1;
-        const boundConfig = binds === 1 ? { invalid: true } : config();
-        return {
-          readProviderConfig() { return boundConfig; },
-          resolveSecret(secretRef) {
-            secretResolutions += 1;
-            return {
-              resolution_version: 'builder-provider-secret-resolution.v1',
-              secret_ref: secretRef,
-              credential: 'recovered-credential',
-            };
-          },
-        };
+  const malformedRead = createBuilderGenerationMainService({
+    ...repositories({
+      projectReadAuthority: {
+        load_current() { return {}; },
       },
-    },
-    projectRevisionRepository: { load_revision() {} },
-    transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: '{}' }),
+    }),
+    transport: async () => ({ transport_version: 'builder-openai-compatible-transport.v1', generated_text: JSON.stringify(providerOutput()) }),
   });
-  assert.equal(recoversAfterInvalidConfig.availability().available, false);
-  assert.equal(secretResolutions, 0);
-  assert.equal(recoversAfterInvalidConfig.availability().available, true);
-  assert.equal(secretResolutions, 1);
+  await assert.rejects(
+    malformedRead.generate(request({ existingProjectId: PROJECT_ID })),
+    { code: 'builder_generation_base_unavailable' },
+  );
 });
 
-test('does not register Electron or expose provider settings and credential authority', () => {
+test('does not register Electron, save, old revision, or expose provider credential authority', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'builder-generation-main-service.cjs'), 'utf8');
   for (const forbidden of [
     /require\(['"]electron['"]\)/u,
     /ipcMain|ipcRenderer|contextBridge|BrowserWindow/u,
     /safeStorage|write_current|publish\(/u,
+    /builder-project-revision|projectRevisionRepository|load_revision|revision_digest/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
   ]) assert.doesNotMatch(source, forbidden);
 });

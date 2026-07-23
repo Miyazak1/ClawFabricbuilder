@@ -4,24 +4,26 @@ const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
 const {
-  MAX_RECORD_BYTES,
-  BUILDER_PROJECT_STATIC_PREVIEW_REASON,
-  BuilderProjectRevisionRecordError,
-  digestBuilderProjectProposalRecord,
-  sanitizeBuilderProjectRevisionRecord,
-} = require('./builder-project-revision-record.cjs');
+  BuilderCodeChangeKernelError,
+  MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES,
+  createBuilderCodeChangeCandidate,
+} = require('./builder-code-change-kernel.cjs');
+const {
+  BuilderProjectSourceTreeError,
+  MAX_SOURCE_TREE_UTF8_BYTES,
+  sanitizeBuilderProjectSourceTree,
+} = require('./builder-project-source-tree.cjs');
 
-const BUILDER_PROJECT_PROPOSAL_KIND = 'builder_code_project';
-const BUILDER_CODE_GENERATOR_AUTHORITY = 'builder_code_project_generator';
-const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v2';
-const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v1';
-const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v1';
-const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-descriptor.v1';
+const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v3';
+const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2';
+const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2';
+const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-descriptor.v2';
+const BUILDER_GENERATED_OPERATIONS_KIND = 'builder_code_change_operations';
 
-const MAX_IDEA_CODE_POINTS = 4000;
-const MAX_IDEA_UTF8_BYTES = 16 * 1024;
-const MAX_GENERATED_TEXT_BYTES = MAX_RECORD_BYTES;
-const MAX_PROMPT_DESCRIPTOR_BYTES = MAX_RECORD_BYTES + (32 * 1024);
+const MAX_INSTRUCTION_CODE_POINTS = 4000;
+const MAX_INSTRUCTION_UTF8_BYTES = 16 * 1024;
+const MAX_GENERATED_TEXT_BYTES = MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES;
+const MAX_PROMPT_DESCRIPTOR_BYTES = MAX_SOURCE_TREE_UTF8_BYTES + (96 * 1024);
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -31,73 +33,69 @@ const CREDENTIAL_ASSIGNMENT_PATTERN = /["'`]?(?:api[_-]?key|access[_-]?token|ref
 const AUTHORIZATION_VALUE_PATTERN = /\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,}/iu;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/u;
 const CREDENTIAL_URL_PATTERN = /https?:\/\/[^\s/:@]+:[^\s/@]+@/iu;
-const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b/u;
+const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{20,})\b/u;
 
-const REQUEST_KEYS = Object.freeze([
-  'version',
-  'idea',
-  'project_id',
-  'target_revision',
-  'parent_revision',
-  'request_digest',
+const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
+const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree']);
+const RESULT_INPUT_KEYS = Object.freeze([
+  'request',
+  'base_revision_evidence',
+  'base_source_tree',
+  'conversation_events',
+  'turn_id',
+  'run_id',
+  'generated_text',
 ]);
-const PARENT_KEYS = Object.freeze(['revision', 'revision_digest']);
-const PROMPT_INPUT_KEYS = Object.freeze(['request', 'parent_revision_record']);
-const RESULT_INPUT_KEYS = Object.freeze(['request', 'parent_revision_record', 'generated_text']);
-const PROPOSAL_KEYS = Object.freeze(['kind', 'title', 'summary', 'files']);
-const FILE_KEYS = Object.freeze(['index.html', 'styles.css', 'app.js']);
+const PROVIDER_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'operations']);
+const RAW_OPERATION_KEYS = Object.freeze(['operation', 'path', 'content']);
 
 const JSON_OUTPUT_EXAMPLE = JSON.stringify({
-  kind: BUILDER_PROJECT_PROPOSAL_KIND,
+  kind: BUILDER_GENERATED_OPERATIONS_KIND,
   title: 'Focus timer',
   summary: 'A calm timer with one clear action.',
-  files: {
-    'index.html': '<main id="app"><h1>Focus timer</h1><button id="start">Start</button></main>',
-    'styles.css': '#app { max-width: 32rem; margin: 2rem auto; }',
-    'app.js': 'const start = document.querySelector("#start");\nstart?.addEventListener("click", () => {});',
-  },
+  operations: [
+    { operation: 'upsert', path: 'index.html', content: '<main><h1>Focus timer</h1></main>\n' },
+    { operation: 'upsert', path: 'src/app.js', content: 'console.log("ready");\n' },
+  ],
 });
 
 const SYSTEM_INSTRUCTION = [
-  'Create or revise one small web project.',
+  'Create or revise one small software project.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
-  'Use exactly the keys kind, title, summary, and files.',
-  'Set kind to builder_code_project.',
-  'Use exactly index.html, styles.css, and app.js inside files.',
+  'Use exactly the keys kind, title, summary, and operations.',
+  `Set kind to ${BUILDER_GENERATED_OPERATIONS_KIND}.`,
   `Example JSON object: ${JSON_OUTPUT_EXAMPLE}`,
-  'The host stores and assembles these three files separately; index.html must not reference styles.css or app.js.',
-  'Give index.html the complete semantic structure, visible initial state, and stable ids or data attributes used by the other files.',
-  'Put layout, visual states, and responsive styling in styles.css.',
-  'Put state, rendering, event binding, and input validation in small named functions in app.js.',
-  'Keep selectors and ids consistent across index.html, styles.css, and app.js.',
-  'For a complex request, complete one coherent core flow and simplify optional features instead of adding files, dependencies, or unsafe capabilities.',
-  'Keep index.html static: no scripts, active embeds, forms, navigation, event handlers, or URL-bearing attributes.',
-  'Do not include script, link, style, form, iframe, meta, or other active tags in index.html.',
-  'Keep styles.css self-contained: no imports, fonts, URLs, images, or executable CSS.',
-  'Keep app.js self-contained and do not use import, export, dynamic module loading, network access, filesystem access, process access, eval, or Function constructors.',
-  'Do not add fields for host identities, evidence, admissions, or runtime claims.',
-  'Do not include credentials or local filesystem paths.',
+  'operations is an array of source changes. Each operation uses exactly operation, path, and content.',
+  'operation must be upsert or delete. For delete, content must be null. For upsert, content is the complete file content.',
+  'Use ordinary relative project paths. Do not include absolute paths or local machine paths.',
+  'You may generate general source code in any language when it fits the request, including imports, process APIs, networking code, tests, or configuration files.',
+  'Do not claim the code was executed, previewed, saved, committed, or reviewed.',
+  'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
+  'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
+  'Prefer a small coherent change over a broad scaffold when the request is ambiguous.',
 ].join('\n');
 
 const OUTPUT_CONTRACT = Object.freeze({
-  kind: BUILDER_PROJECT_PROPOSAL_KIND,
-  exact_keys: Object.freeze(['kind', 'title', 'summary', 'files']),
-  exact_file_keys: Object.freeze(['index.html', 'styles.css', 'app.js']),
+  kind: BUILDER_GENERATED_OPERATIONS_KIND,
+  exact_keys: Object.freeze(['kind', 'title', 'summary', 'operations']),
+  operation_keys: Object.freeze(['operation', 'path', 'content']),
   format: 'json_object_only',
 });
 
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
-  builder_generation_parent_invalid: 'The current project version could not be verified.',
-  builder_generation_structured_response_invalid: 'The generated response could not be used.',
-  builder_generation_static_preview_contract_rejected: 'The generated project is not supported by the static preview.',
+  builder_generation_base_unavailable: 'The current project source could not be verified.',
+  builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
 });
 
 class BuilderGenerationKernelError extends Error {
   constructor(code) {
-    super(ERROR_MESSAGES[code] || ERROR_MESSAGES.builder_generation_structured_response_invalid);
+    const selected = Object.hasOwn(ERROR_MESSAGES, code)
+      ? code
+      : 'builder_generation_structured_response_invalid';
+    super(ERROR_MESSAGES[selected]);
     this.name = 'BuilderGenerationKernelError';
-    this.code = Object.hasOwn(ERROR_MESSAGES, code) ? code : 'builder_generation_structured_response_invalid';
+    this.code = selected;
     this.stack = `${this.name}: ${this.message}`;
   }
 }
@@ -154,7 +152,7 @@ function canonicalJson(value, code) {
   fail(code);
 }
 
-function sha256Canonical(value, code) {
+function sha256Canonical(value, code = 'builder_generation_request_invalid') {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value, code), 'utf8').digest('hex')}`;
 }
 
@@ -170,11 +168,11 @@ function hasUnpairedSurrogate(value) {
   return false;
 }
 
-function hasDisallowedIdeaControl(value) {
+function hasDisallowedControl(value, allowFormatting) {
   if (UNSAFE_UNICODE_FORMAT_PATTERN.test(value)) return true;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
-    if ((code >= 0x7f && code <= 0x9f) || (code <= 0x1f && ![0x09, 0x0a, 0x0d].includes(code))) {
+    if ((code >= 0x7f && code <= 0x9f) || (code <= 0x1f && (!allowFormatting || ![0x09, 0x0a, 0x0d].includes(code)))) {
       return true;
     }
   }
@@ -191,27 +189,26 @@ function containsUnsafeMaterial(value) {
     || COMMON_SECRET_VALUE_PATTERN.test(normalized);
 }
 
-function safeIdea(value) {
+function safeText(value, maximumCodePoints, maximumUtf8Bytes, allowFormatting, code) {
   if (
     typeof value !== 'string'
     || value.length === 0
     || value.trim() !== value
-    || value.length > MAX_IDEA_UTF8_BYTES
+    || value.length > maximumUtf8Bytes
     || value.normalize('NFC') !== value
-    || value.length > MAX_IDEA_CODE_POINTS * 2
-    || Array.from(value).length > MAX_IDEA_CODE_POINTS
-    || Buffer.byteLength(value, 'utf8') > MAX_IDEA_UTF8_BYTES
+    || value.length > maximumCodePoints * 2
+    || Array.from(value).length > maximumCodePoints
+    || Buffer.byteLength(value, 'utf8') > maximumUtf8Bytes
     || hasUnpairedSurrogate(value)
-    || hasDisallowedIdeaControl(value)
+    || hasDisallowedControl(value, allowFormatting)
     || containsUnsafeMaterial(value)
-  ) fail('builder_generation_request_invalid');
+  ) fail(code);
   return value;
 }
 
-function safeProjectId(value) {
-  if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) {
-    fail('builder_generation_request_invalid');
-  }
+function safeProjectId(value, code) {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) fail(code);
   return value;
 }
 
@@ -220,42 +217,23 @@ function safeDigest(value, code) {
   return value;
 }
 
-function sanitizeParent(value) {
-  if (value === null) return null;
-  assertExactObject(value, PARENT_KEYS, 'builder_generation_request_invalid');
-  const revision = valueAt(value, 'revision', 'builder_generation_request_invalid');
-  if (!Number.isSafeInteger(revision) || revision < 1) fail('builder_generation_request_invalid');
-  return {
-    revision,
-    revision_digest: safeDigest(
-      valueAt(value, 'revision_digest', 'builder_generation_request_invalid'),
-      'builder_generation_request_invalid',
-    ),
-  };
-}
-
 function sanitizeBuilderGenerationRequestInternal(value) {
   assertExactObject(value, REQUEST_KEYS, 'builder_generation_request_invalid');
   const version = valueAt(value, 'version', 'builder_generation_request_invalid');
-  const targetRevision = valueAt(value, 'target_revision', 'builder_generation_request_invalid');
-  if (
-    version !== BUILDER_GENERATION_REQUEST_PROTOCOL
-    || !Number.isSafeInteger(targetRevision)
-    || targetRevision < 1
-  ) fail('builder_generation_request_invalid');
-
-  const parent = sanitizeParent(valueAt(value, 'parent_revision', 'builder_generation_request_invalid'));
-  if (
-    (targetRevision === 1 && parent !== null)
-    || (targetRevision > 1 && parent?.revision !== targetRevision - 1)
-  ) fail('builder_generation_request_invalid');
-
+  if (version !== BUILDER_GENERATION_REQUEST_PROTOCOL) fail('builder_generation_request_invalid');
   const unsigned = {
     version: BUILDER_GENERATION_REQUEST_PROTOCOL,
-    idea: safeIdea(valueAt(value, 'idea', 'builder_generation_request_invalid')),
-    project_id: safeProjectId(valueAt(value, 'project_id', 'builder_generation_request_invalid')),
-    target_revision: targetRevision,
-    parent_revision: parent,
+    instruction: safeText(
+      valueAt(value, 'instruction', 'builder_generation_request_invalid'),
+      MAX_INSTRUCTION_CODE_POINTS,
+      MAX_INSTRUCTION_UTF8_BYTES,
+      true,
+      'builder_generation_request_invalid',
+    ),
+    existing_project_id: safeProjectId(
+      valueAt(value, 'existing_project_id', 'builder_generation_request_invalid'),
+      'builder_generation_request_invalid',
+    ),
   };
   const digest = safeDigest(
     valueAt(value, 'request_digest', 'builder_generation_request_invalid'),
@@ -276,49 +254,31 @@ function sanitizeBuilderGenerationRequest(value) {
   }
 }
 
-function sanitizeParentRevisionRecord(value, request) {
-  if (request.parent_revision === null) {
-    if (value !== null) fail('builder_generation_parent_invalid');
-    return null;
-  }
-  if (value === null || value === undefined) fail('builder_generation_parent_invalid');
-  let record;
-  try {
-    record = sanitizeBuilderProjectRevisionRecord(value);
-  } catch {
-    fail('builder_generation_parent_invalid');
-  }
-  if (
-    record.project_id !== request.project_id
-    || record.revision !== request.parent_revision.revision
-    || record.revision_digest !== request.parent_revision.revision_digest
-  ) fail('builder_generation_parent_invalid');
-  return record;
-}
-
-function promptInput(value) {
+function sanitizePromptInput(value) {
   assertExactObject(value, PROMPT_INPUT_KEYS, 'builder_generation_request_invalid');
   const request = sanitizeBuilderGenerationRequestInternal(
     valueAt(value, 'request', 'builder_generation_request_invalid'),
   );
-  const parent = sanitizeParentRevisionRecord(
-    valueAt(value, 'parent_revision_record', 'builder_generation_parent_invalid'),
-    request,
-  );
-  return { request, parent };
+  let baseSourceTree;
+  try {
+    baseSourceTree = sanitizeBuilderProjectSourceTree(valueAt(value, 'base_source_tree', 'builder_generation_base_unavailable'));
+  } catch {
+    fail('builder_generation_base_unavailable');
+  }
+  return { request, baseSourceTree };
 }
 
 function createBuilderGenerationPromptDescriptor(value) {
   try {
-    const { request, parent } = promptInput(value);
+    const { request, baseSourceTree } = sanitizePromptInput(value);
     const userContext = {
-      idea: request.idea,
-      mode: parent === null ? 'create' : 'revise',
-      target_revision: request.target_revision,
-      current_project: parent === null ? null : {
-        title: parent.title,
-        summary: parent.summary,
-        files: parent.files,
+      instruction: request.instruction,
+      mode: request.existing_project_id === null ? 'create' : 'revise',
+      current_source_tree: {
+        files: baseSourceTree.files.map((file) => ({
+          path: file.path,
+          content: file.content,
+        })),
       },
     };
     const descriptor = {
@@ -330,14 +290,14 @@ function createBuilderGenerationPromptDescriptor(value) {
       output_contract: {
         kind: OUTPUT_CONTRACT.kind,
         exact_keys: [...OUTPUT_CONTRACT.exact_keys],
-        exact_file_keys: [...OUTPUT_CONTRACT.exact_file_keys],
+        operation_keys: [...OUTPUT_CONTRACT.operation_keys],
         format: OUTPUT_CONTRACT.format,
       },
       max_generated_text_bytes: MAX_GENERATED_TEXT_BYTES,
     };
     if (Buffer.byteLength(canonicalJson(descriptor, 'builder_generation_request_invalid'), 'utf8')
       > MAX_PROMPT_DESCRIPTOR_BYTES) {
-      fail('builder_generation_parent_invalid');
+      fail('builder_generation_base_unavailable');
     }
     return freezeDeep(descriptor);
   } catch (error) {
@@ -346,33 +306,49 @@ function createBuilderGenerationPromptDescriptor(value) {
   }
 }
 
-function sanitizeGeneratedProposal(value) {
-  assertExactObject(value, PROPOSAL_KEYS, 'builder_generation_structured_response_invalid');
-  const files = valueAt(value, 'files', 'builder_generation_structured_response_invalid');
-  assertExactObject(files, FILE_KEYS, 'builder_generation_structured_response_invalid');
-  const proposal = {
-    kind: valueAt(value, 'kind', 'builder_generation_structured_response_invalid'),
-    title: valueAt(value, 'title', 'builder_generation_structured_response_invalid'),
-    summary: valueAt(value, 'summary', 'builder_generation_structured_response_invalid'),
-    files: {
-      'index.html': valueAt(files, 'index.html', 'builder_generation_structured_response_invalid'),
-      'styles.css': valueAt(files, 'styles.css', 'builder_generation_structured_response_invalid'),
-      'app.js': valueAt(files, 'app.js', 'builder_generation_structured_response_invalid'),
-    },
-  };
-  let proposalDigest;
-  try {
-    proposalDigest = digestBuilderProjectProposalRecord(proposal);
-  } catch (error) {
-    if (
-      error instanceof BuilderProjectRevisionRecordError
-      && error.reason === BUILDER_PROJECT_STATIC_PREVIEW_REASON
-    ) {
-      fail('builder_generation_static_preview_contract_rejected');
-    }
+function sanitizeGeneratedOperations(value) {
+  assertExactObject(value, PROVIDER_OUTPUT_KEYS, 'builder_generation_structured_response_invalid');
+  if (valueAt(value, 'kind', 'builder_generation_structured_response_invalid')
+    !== BUILDER_GENERATED_OPERATIONS_KIND) fail('builder_generation_structured_response_invalid');
+  const operations = valueAt(value, 'operations', 'builder_generation_structured_response_invalid');
+  if (!Array.isArray(operations) || utilTypes.isProxy(operations) || operations.length === 0 || operations.length > 256) {
     fail('builder_generation_structured_response_invalid');
   }
-  return { proposal: freezeDeep(proposal), proposalDigest };
+  const keys = Reflect.ownKeys(operations);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== operations.length + 1) {
+    fail('builder_generation_structured_response_invalid');
+  }
+  const safeOperations = [];
+  for (let index = 0; index < operations.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(operations, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      fail('builder_generation_structured_response_invalid');
+    }
+    const operation = descriptor.value;
+    assertExactObject(operation, RAW_OPERATION_KEYS, 'builder_generation_structured_response_invalid');
+    safeOperations.push({
+      operation: valueAt(operation, 'operation', 'builder_generation_structured_response_invalid'),
+      path: valueAt(operation, 'path', 'builder_generation_structured_response_invalid'),
+      content: valueAt(operation, 'content', 'builder_generation_structured_response_invalid'),
+    });
+  }
+  return {
+    title: safeText(
+      valueAt(value, 'title', 'builder_generation_structured_response_invalid'),
+      80,
+      512,
+      false,
+      'builder_generation_structured_response_invalid',
+    ),
+    summary: safeText(
+      valueAt(value, 'summary', 'builder_generation_structured_response_invalid'),
+      400,
+      2 * 1024,
+      false,
+      'builder_generation_structured_response_invalid',
+    ),
+    operations: safeOperations,
+  };
 }
 
 function parseGeneratedText(value) {
@@ -391,7 +367,7 @@ function parseGeneratedText(value) {
   } catch {
     fail('builder_generation_structured_response_invalid');
   }
-  return sanitizeGeneratedProposal(parsed);
+  return sanitizeGeneratedOperations(parsed);
 }
 
 function projectBuilderGenerationResult(value) {
@@ -400,31 +376,38 @@ function projectBuilderGenerationResult(value) {
     const request = sanitizeBuilderGenerationRequestInternal(
       valueAt(value, 'request', 'builder_generation_request_invalid'),
     );
-    sanitizeParentRevisionRecord(
-      valueAt(value, 'parent_revision_record', 'builder_generation_parent_invalid'),
-      request,
-    );
-    const { proposal, proposalDigest } = parseGeneratedText(
+    const generated = parseGeneratedText(
       valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
     );
+    let candidate;
+    try {
+      candidate = createBuilderCodeChangeCandidate({
+        conversation_events: valueAt(value, 'conversation_events', 'builder_generation_request_invalid'),
+        turn_id: valueAt(value, 'turn_id', 'builder_generation_request_invalid'),
+        run_id: valueAt(value, 'run_id', 'builder_generation_request_invalid'),
+        base_revision_evidence: valueAt(value, 'base_revision_evidence', 'builder_generation_base_unavailable'),
+        base_source_tree: valueAt(value, 'base_source_tree', 'builder_generation_base_unavailable'),
+        operations: generated.operations,
+      });
+    } catch (error) {
+      if (error instanceof BuilderCodeChangeKernelError || error instanceof BuilderProjectSourceTreeError) {
+        fail('builder_generation_structured_response_invalid');
+      }
+      throw error;
+    }
+    if (candidate.request_digest !== request.request_digest) fail('builder_generation_request_invalid');
     return freezeDeep({
       version: BUILDER_GENERATION_RESULT_PROTOCOL,
       request_id: request.request_digest,
-      proposal,
-      evidence: {
-        authority: BUILDER_CODE_GENERATOR_AUTHORITY,
-        prompt_version: BUILDER_CODE_PROJECT_PROMPT_VERSION,
-        request_version: BUILDER_GENERATION_REQUEST_PROTOCOL,
-        result_version: BUILDER_GENERATION_RESULT_PROTOCOL,
-        request_digest: request.request_digest,
-        proposal_digest: proposalDigest,
-        project_id: request.project_id,
-        target_revision: request.target_revision,
-        parent_revision: request.parent_revision === null ? null : { ...request.parent_revision },
-      },
+      title: generated.title,
+      summary: generated.summary,
+      candidate,
       admissions: {
+        conversation: 'candidate_local_not_recorded',
+        draft: 'candidate_not_saved',
+        save: 'not_performed',
+        preview: 'not_evaluated',
         execution: 'not_evaluated',
-        preview_script: 'not_authorized',
       },
     });
   } catch (error) {
@@ -434,7 +417,10 @@ function projectBuilderGenerationResult(value) {
 }
 
 module.exports = Object.freeze({
+  BUILDER_GENERATED_OPERATIONS_KIND,
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
+  BUILDER_GENERATION_REQUEST_PROTOCOL,
+  BUILDER_GENERATION_RESULT_PROTOCOL,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
   sanitizeBuilderGenerationRequest,

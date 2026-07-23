@@ -7,6 +7,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  BUILDER_GENERATED_OPERATIONS_KIND,
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
@@ -15,13 +16,17 @@ const {
   sanitizeBuilderGenerationRequest,
 } = require('../electron/builder-generation-kernel.cjs');
 const {
-  digestBuilderProjectProposalRecord,
-  digestBuilderProjectRevisionRecord,
-  sanitizeBuilderProjectRevisionRecord,
-} = require('../electron/builder-project-revision-record.cjs');
+  createBuilderConversationEvent,
+} = require('../electron/builder-conversation-records.cjs');
+const {
+  createBuilderProjectSourceTree,
+} = require('../electron/builder-project-source-tree.cjs');
 
-const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
-const OTHER_PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174001';
+const UUID = '123e4567-e89b-42d3-a456-426614174000';
+const PROJECT_ID = `builder-project:${UUID}`;
+const REVISION_RECEIPT_DIGEST = `sha256:${'1'.repeat(64)}`;
+const COMMIT_OID = '2'.repeat(40);
+const SOURCE_TREE_DIGEST = `sha256:${'3'.repeat(64)}`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
 
 function canonicalJson(value) {
@@ -38,75 +43,105 @@ function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
-function proposal(overrides = {}) {
-  return {
-    kind: 'builder_code_project',
-    title: 'Focus timer',
-    summary: 'A calm timer for one focused task.',
-    files: {
-      'index.html': '<main><h1>Focus</h1><button id="start">Start</button></main>',
-      'styles.css': 'main { max-width: 32rem; margin: 2rem auto; }',
-      'app.js': 'const button = document.querySelector("#start");\nbutton?.addEventListener("click", () => {});',
-    },
-    ...overrides,
-  };
-}
-
 function request({
-  idea = 'Make a calm focus timer.',
-  projectId = PROJECT_ID,
-  targetRevision = 1,
-  parentRevision = null,
+  instruction = 'Make a calm focus timer.',
+  existingProjectId = null,
 } = {}) {
   const unsigned = {
-    version: 'builder-generation-request.v1',
-    idea,
-    project_id: projectId,
-    target_revision: targetRevision,
-    parent_revision: parentRevision,
+    version: 'builder-generation-request.v2',
+    instruction,
+    existing_project_id: existingProjectId,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
 }
 
-function revisionRecord({
-  projectId = PROJECT_ID,
-  revision = 1,
-  parentRevision = null,
-  sourceProposal = proposal(),
-} = {}) {
-  const proposalDigest = digestBuilderProjectProposalRecord(sourceProposal);
-  const unsigned = {
-    schema_version: 1,
-    record_kind: 'builder_project_revision',
-    project_id: projectId,
-    revision,
-    parent_revision: parentRevision,
-    title: sourceProposal.title,
-    summary: sourceProposal.summary,
-    files: sourceProposal.files,
-    proposal_evidence: {
-      authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v1',
-      request_version: 'builder-generation-request.v1',
-      result_version: 'builder-generation-result.v1',
-      request_digest: ZERO_DIGEST,
-      proposal_digest: proposalDigest,
-      project_id: projectId,
-      target_revision: revision,
-      parent_revision: parentRevision,
-    },
-    execution_admission: 'not_evaluated',
-    preview_script_admission: 'not_authorized',
-  };
-  const revisionDigest = digestBuilderProjectRevisionRecord({
-    ...unsigned,
-    revision_digest: ZERO_DIGEST,
-  });
-  return sanitizeBuilderProjectRevisionRecord({ ...unsigned, revision_digest: revisionDigest });
+function sourceTree(files = []) {
+  return createBuilderProjectSourceTree({ files });
 }
 
-function generatedText(sourceProposal = proposal()) {
-  return JSON.stringify(sourceProposal);
+function baseEvidence(tree = sourceTree()) {
+  return {
+    evidence_version: 'builder-project-base-revision-evidence.v2',
+    project_id: PROJECT_ID,
+    revision_receipt_digest: REVISION_RECEIPT_DIGEST,
+    commit_oid: COMMIT_OID,
+    source_tree_digest: tree.source_tree_digest || SOURCE_TREE_DIGEST,
+    verification_admission: 'git_sqlite_read_authority_verified',
+  };
+}
+
+function conversationEvents({
+  projectId = PROJECT_ID,
+  instruction = 'Make a calm focus timer.',
+  requestDigest = request().request_digest,
+  baseRevision = null,
+} = {}) {
+  const conversationId = `builder-conversation:${projectId.slice('builder-project:'.length)}`;
+  const first = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: projectId,
+    conversation_id: conversationId,
+    sequence: 1,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174001',
+    event_type: 'turn_submitted',
+    previous_event: null,
+    payload: {
+      message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: instruction },
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+      mode: 'work',
+      task: { task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174004', title: 'Create Builder project' },
+      base_revision: baseRevision,
+    },
+    authority: {
+      context_authority: 'project_local_conversation',
+      permission_admission: 'not_granted',
+      execution_admission: 'not_granted',
+      revision_admission: 'not_created',
+    },
+  });
+  const second = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: projectId,
+    conversation_id: conversationId,
+    sequence: 2,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174005',
+    event_type: 'run_started',
+    previous_event: {
+      sequence: first.sequence,
+      event_id: first.event_id,
+      event_digest: first.event_digest,
+    },
+    payload: {
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+      task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174004',
+      attempt_number: 1,
+      retry_of_run_id: null,
+      input_digest: requestDigest,
+    },
+    authority: {
+      context_authority: 'project_local_conversation',
+      permission_admission: 'not_granted',
+      execution_admission: 'not_granted',
+      revision_admission: 'not_created',
+    },
+  });
+  return [first, second];
+}
+
+function generatedText(overrides = {}) {
+  return JSON.stringify({
+    kind: BUILDER_GENERATED_OPERATIONS_KIND,
+    title: 'Focus timer',
+    summary: 'A calm timer for one focused task.',
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main><h1>Focus</h1></main>\n' },
+      { operation: 'upsert', path: 'src/app.js', content: 'import process from "node:process";\nconsole.log(process.pid);\n' },
+    ],
+    ...overrides,
+  });
 }
 
 function expectKernelError(fn, code, forbidden = []) {
@@ -119,168 +154,128 @@ function expectKernelError(fn, code, forbidden = []) {
   });
 }
 
-test('sanitizes a C0 generation request as a fresh deeply frozen value', () => {
-  const raw = request();
+test('sanitizes a v2 renderer request with only instruction, nullable project, and digest', () => {
+  const raw = request({ existingProjectId: PROJECT_ID });
   const safe = sanitizeBuilderGenerationRequest(raw);
 
   assert.deepEqual(safe, raw);
   assert.notEqual(safe, raw);
   assert.ok(Object.isFrozen(safe));
-  assert.ok(Object.isFrozen(safe.parent_revision) || safe.parent_revision === null);
-  raw.idea = 'changed';
-  assert.equal(safe.idea, 'Make a calm focus timer.');
+  assert.equal(safe.existing_project_id, PROJECT_ID);
+  raw.instruction = 'changed';
+  assert.equal(safe.instruction, 'Make a calm focus timer.');
 });
 
-test('builds a deterministic create prompt without exposing host project identity', () => {
+test('builds a deterministic operations prompt without exposing host identities', () => {
   const rawRequest = request();
-  const first = createBuilderGenerationPromptDescriptor({
-    request: rawRequest,
-    parent_revision_record: null,
-  });
-  const second = createBuilderGenerationPromptDescriptor({
-    request: structuredClone(rawRequest),
-    parent_revision_record: null,
-  });
+  const base = sourceTree();
+  const first = createBuilderGenerationPromptDescriptor({ request: rawRequest, base_source_tree: base });
+  const second = createBuilderGenerationPromptDescriptor({ request: structuredClone(rawRequest), base_source_tree: base });
 
   assert.deepEqual(first, second);
   assert.equal(first.version, BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION);
   assert.equal(first.request_id, rawRequest.request_digest);
-  assert.equal(first.prompt_version, 'builder-code-project.v2');
+  assert.equal(first.prompt_version, 'builder-code-project.v3');
   assert.equal(first.max_generated_text_bytes, MAX_GENERATED_TEXT_BYTES);
   assert.deepEqual(first.output_contract, {
-    kind: 'builder_code_project',
-    exact_keys: ['kind', 'title', 'summary', 'files'],
-    exact_file_keys: ['index.html', 'styles.css', 'app.js'],
+    kind: BUILDER_GENERATED_OPERATIONS_KIND,
+    exact_keys: ['kind', 'title', 'summary', 'operations'],
+    operation_keys: ['operation', 'path', 'content'],
     format: 'json_object_only',
   });
-  assert.match(first.system_instruction, /stores and assembles these three files separately/iu);
-  assert.match(first.system_instruction, /index\.html must not reference styles\.css or app\.js/iu);
-  assert.match(first.system_instruction, /complete semantic structure, visible initial state/iu);
-  assert.match(first.system_instruction, /state, rendering, event binding, and input validation/iu);
-  assert.match(first.system_instruction, /selectors and ids consistent/iu);
-  assert.match(first.system_instruction, /complete one coherent core flow and simplify optional features/iu);
-  assert.match(first.system_instruction, /Do not include script, link, style, form, iframe, meta/iu);
-  const examplePrefix = 'Example JSON object: ';
-  const exampleLine = first.system_instruction.split('\n').find((line) => line.startsWith(examplePrefix));
-  assert.ok(exampleLine);
-  const example = JSON.parse(exampleLine.slice(examplePrefix.length));
-  assert.deepEqual(Object.keys(example), ['kind', 'title', 'summary', 'files']);
-  assert.equal(example.kind, 'builder_code_project');
-  assert.deepEqual(Object.keys(example.files), ['index.html', 'styles.css', 'app.js']);
-  assert.deepEqual(projectBuilderGenerationResult({
-    request: rawRequest,
-    parent_revision_record: null,
-    generated_text: JSON.stringify(example),
-  }).proposal, example);
+  assert.match(first.system_instruction, /You may generate general source code in any language/iu);
+  assert.match(first.system_instruction, /imports, process APIs, networking code/iu);
+  assert.doesNotMatch(first.system_instruction, /index\.html.*styles\.css.*app\.js/iu);
   assert.deepEqual(JSON.parse(first.user_instruction), {
-    current_project: null,
-    idea: 'Make a calm focus timer.',
+    instruction: 'Make a calm focus timer.',
     mode: 'create',
-    target_revision: 1,
+    current_source_tree: { files: [] },
   });
-  assert.doesNotMatch(first.user_instruction, /builder-project:|revision_digest|request_digest/iu);
-  assert.ok(Object.isFrozen(first));
-  assert.ok(Object.isFrozen(first.output_contract));
-  assert.ok(Object.isFrozen(first.output_contract.exact_keys));
+  assert.doesNotMatch(first.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
 });
 
-test('binds a revision prompt to the exact trusted parent source', () => {
-  const parent = revisionRecord();
-  const rawRequest = request({
-    idea: 'Make the timer gentler.',
-    targetRevision: 2,
-    parentRevision: { revision: 1, revision_digest: parent.revision_digest },
-  });
-  const descriptor = createBuilderGenerationPromptDescriptor({
-    request: rawRequest,
-    parent_revision_record: parent,
-  });
+test('includes verified source text for existing-project revision prompts', () => {
+  const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Add keyboard shortcuts.' });
+  const base = sourceTree([
+    { path: 'src/app.js', content: 'export const count = 1;\n' },
+  ]);
+  const descriptor = createBuilderGenerationPromptDescriptor({ request: rawRequest, base_source_tree: base });
   const context = JSON.parse(descriptor.user_instruction);
 
   assert.equal(context.mode, 'revise');
-  assert.equal(context.target_revision, 2);
-  assert.deepEqual(context.current_project, {
-    title: parent.title,
-    summary: parent.summary,
-    files: parent.files,
-  });
+  assert.deepEqual(context.current_source_tree.files, [
+    { path: 'src/app.js', content: 'export const count = 1;\n' },
+  ]);
   assert.doesNotMatch(descriptor.user_instruction, new RegExp(PROJECT_ID, 'u'));
-  assert.doesNotMatch(descriptor.user_instruction, new RegExp(parent.revision_digest, 'u'));
 });
 
-test('projects generated JSON into the exact host-owned C0 result evidence', () => {
+test('projects provider operations into a host-owned unsaved code-change candidate', () => {
   const rawRequest = request();
-  const sourceProposal = proposal({
-    files: {
-      'index.html': '<main><h1>Hello</h1></main>',
-      'styles.css': 'main { color: navy; }',
-      'app.js': '',
-    },
-  });
+  const base = sourceTree();
   const result = projectBuilderGenerationResult({
     request: rawRequest,
-    parent_revision_record: null,
-    generated_text: generatedText(sourceProposal),
+    base_revision_evidence: null,
+    base_source_tree: base,
+    conversation_events: conversationEvents(),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+    generated_text: generatedText(),
   });
 
-  assert.deepEqual(result, {
-    version: 'builder-generation-result.v1',
-    request_id: rawRequest.request_digest,
-    proposal: sourceProposal,
-    evidence: {
-      authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v2',
-      request_version: 'builder-generation-request.v1',
-      result_version: 'builder-generation-result.v1',
-      request_digest: rawRequest.request_digest,
-      proposal_digest: digestBuilderProjectProposalRecord(sourceProposal),
-      project_id: PROJECT_ID,
-      target_revision: 1,
-      parent_revision: null,
-    },
-    admissions: { execution: 'not_evaluated', preview_script: 'not_authorized' },
-  });
-  assert.ok(Object.isFrozen(result));
-  assert.ok(Object.isFrozen(result.proposal));
-  assert.ok(Object.isFrozen(result.proposal.files));
-  assert.ok(Object.isFrozen(result.evidence));
-  assert.ok(Object.isFrozen(result.admissions));
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.equal(result.title, 'Focus timer');
+  assert.equal(result.candidate.candidate_version, 'builder-code-change-candidate.v2');
+  assert.equal(result.candidate.project_id, PROJECT_ID);
+  assert.equal(result.candidate.request_digest, rawRequest.request_digest);
+  assert.equal(result.candidate.authority.revision_admission, 'not_created');
+  assert.equal(result.candidate.authority.preview_admission, 'not_evaluated');
+  assert.equal(result.candidate.authority.execution_admission, 'not_evaluated');
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.equal(result.admissions.conversation, 'candidate_local_not_recorded');
+  assert.ok(result.candidate.resulting_source_tree.files.some((file) => file.path === 'src/app.js'));
 });
 
-test('projects a revision result without allowing generated text to choose identity', () => {
-  const parent = revisionRecord();
-  const rawRequest = request({
-    targetRevision: 2,
-    parentRevision: { revision: 1, revision_digest: parent.revision_digest },
-  });
+test('cross-binds existing-project base evidence to conversation and source tree', () => {
+  const base = sourceTree([{ path: 'src/app.js', content: 'export const before = true;\n' }]);
+  const rawRequest = request({ existingProjectId: PROJECT_ID });
+  const baseRevision = { revision_receipt_digest: REVISION_RECEIPT_DIGEST, commit_oid: COMMIT_OID };
   const result = projectBuilderGenerationResult({
     request: rawRequest,
-    parent_revision_record: parent,
-    generated_text: generatedText(proposal({ title: 'Focus timer v2' })),
+    base_revision_evidence: baseEvidence(base),
+    base_source_tree: base,
+    conversation_events: conversationEvents({
+      requestDigest: rawRequest.request_digest,
+      baseRevision,
+    }),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+    generated_text: generatedText({
+      operations: [{ operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' }],
+    }),
   });
 
-  assert.equal(result.evidence.project_id, PROJECT_ID);
-  assert.equal(result.evidence.target_revision, 2);
-  assert.deepEqual(result.evidence.parent_revision, rawRequest.parent_revision);
-  assert.notEqual(result.evidence.parent_revision, rawRequest.parent_revision);
-  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.deepEqual(result.candidate.base_revision_evidence, baseEvidence(base));
+  assert.deepEqual(result.candidate.run_binding.base_revision, baseRevision);
+  assert.equal(result.candidate.base_source_tree.source_tree_digest, base.source_tree_digest);
 });
 
 test('fails closed on malformed, drifted, unsafe, and forged generation requests', () => {
   const valid = request();
   const invalidRequests = [
     { ...valid, extra: true },
-    Object.fromEntries(Object.entries(valid).filter(([key]) => key !== 'idea')),
-    { ...valid, version: 'builder-generation-request.v2' },
+    Object.fromEntries(Object.entries(valid).filter(([key]) => key !== 'instruction')),
+    { ...valid, version: 'builder-generation-request.v1' },
     { ...valid, request_digest: ZERO_DIGEST },
-    { ...valid, target_revision: 2 },
-    { ...valid, idea: ' padded ' },
-    { ...valid, idea: 'Cafe\u0301' },
-    { ...valid, idea: 'bad\u0000idea' },
-    { ...valid, idea: `api_key=${'x'.repeat(24)}` },
-    { ...valid, idea: 'Read C:\\Users\\Alice\\secret.txt' },
-    { ...valid, idea: '\ud800' },
-    { ...valid, idea: 'x'.repeat(4001) },
+    { ...valid, existing_project_id: 'builder-project:not-a-uuid' },
+    { ...valid, instruction: ' padded ' },
+    { ...valid, instruction: 'Cafe\u0301' },
+    { ...valid, instruction: 'bad\u0000idea' },
+    { ...valid, instruction: `api_key=${'x'.repeat(24)}` },
+    { ...valid, instruction: 'Read C:\\Users\\Alice\\secret.txt' },
+    { ...valid, instruction: '\ud800' },
+    { ...valid, instruction: 'x'.repeat(4001) },
   ];
   for (const candidate of invalidRequests) {
     expectKernelError(
@@ -290,12 +285,9 @@ test('fails closed on malformed, drifted, unsafe, and forged generation requests
     );
   }
 
-  const symbolRequest = { ...valid, [Symbol('hidden')]: true };
-  expectKernelError(() => sanitizeBuilderGenerationRequest(symbolRequest), 'builder_generation_request_invalid');
-
   let getterCalls = 0;
   const accessorRequest = { ...valid };
-  Object.defineProperty(accessorRequest, 'idea', {
+  Object.defineProperty(accessorRequest, 'instruction', {
     enumerable: true,
     get() { getterCalls += 1; return 'marker-accessor'; },
   });
@@ -315,112 +307,79 @@ test('fails closed on malformed, drifted, unsafe, and forged generation requests
   assert.equal(proxyGets, 0);
 });
 
-test('requires exact trusted parent evidence before preparing or projecting a revision', () => {
-  const parent = revisionRecord();
-  const rawRequest = request({
-    targetRevision: 2,
-    parentRevision: { revision: 1, revision_digest: parent.revision_digest },
-  });
-  const badParents = [
-    null,
-    revisionRecord({ projectId: OTHER_PROJECT_ID }),
-    { ...parent, revision_digest: ZERO_DIGEST },
-    { ...parent, revision: 2 },
-    { ...parent, extra: true },
-  ];
-  for (const candidate of badParents) {
-    expectKernelError(
-      () => createBuilderGenerationPromptDescriptor({
-        request: rawRequest,
-        parent_revision_record: candidate,
-      }),
-      'builder_generation_parent_invalid',
-    );
-    expectKernelError(
-      () => projectBuilderGenerationResult({
-        request: rawRequest,
-        parent_revision_record: candidate,
-        generated_text: generatedText(),
-      }),
-      'builder_generation_parent_invalid',
-    );
-  }
-
-  expectKernelError(
-    () => createBuilderGenerationPromptDescriptor({
-      request: request(),
-      parent_revision_record: parent,
-    }),
-    'builder_generation_parent_invalid',
-  );
-});
-
-test('classifies malformed or decorated generated text as a structured response failure', () => {
+test('classifies malformed generated text and rejects forged provider authority', () => {
   const rawRequest = request();
-  const validText = generatedText();
-  const invalidText = [
+  const common = {
+    request: rawRequest,
+    base_revision_evidence: null,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents(),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+  };
+  for (const generated_text of [
     '',
-    ` ${validText}`,
-    `${validText}\n`,
-    `\`\`\`json\n${validText}\n\`\`\``,
-    `prefix${validText}`,
-    `${validText}suffix`,
+    ` ${generatedText()}`,
+    `${generatedText()}\n`,
+    `\`\`\`json\n${generatedText()}\n\`\`\``,
     '{',
     'null',
     '[]',
     '42',
     '"text"',
     'x'.repeat(MAX_GENERATED_TEXT_BYTES + 1),
-  ];
-  for (const candidate of invalidText) {
+  ]) {
     expectKernelError(
-      () => projectBuilderGenerationResult({
-        request: rawRequest,
-        parent_revision_record: null,
-        generated_text: candidate,
-      }),
+      () => projectBuilderGenerationResult({ ...common, generated_text }),
       'builder_generation_structured_response_invalid',
-      ['prefix', 'suffix'],
     );
   }
-});
-
-test('separates structured shape drift from static preview contract rejection', () => {
-  const rawRequest = request();
-  const cases = [
-    [{ ...proposal(), project_id: OTHER_PROJECT_ID }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), evidence: { authority: 'model' } }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), admissions: { execution: 'authorized' } }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), files: { ...proposal().files, extra: 'x' } }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), kind: 'other' }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), title: ' padded ' }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), summary: `Bearer ${'a'.repeat(24)}` }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), files: { ...proposal().files, 'index.html': '<script>alert(1)</script>' } }, 'builder_generation_static_preview_contract_rejected'],
-    [{ ...proposal(), files: { ...proposal().files, 'index.html': '<img src="asset.png">' } }, 'builder_generation_static_preview_contract_rejected'],
-    [{ ...proposal(), files: { ...proposal().files, 'styles.css': 'body{background:url(asset.png)}' } }, 'builder_generation_static_preview_contract_rejected'],
-    [{ ...proposal(), files: { ...proposal().files, 'styles.css': '@font-face{font-family:x}' } }, 'builder_generation_static_preview_contract_rejected'],
-    [{ ...proposal(), files: { ...proposal().files, 'app.js': 'import x from "./x.js";' } }, 'builder_generation_static_preview_contract_rejected'],
-    [{ ...proposal(), files: { ...proposal().files, 'app.js': 'const p = "C:\\\\Users\\\\Alice";' } }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), files: { ...proposal().files, 'app.js': 'const api_key = "sk-abcdefghijklmnop";' } }, 'builder_generation_structured_response_invalid'],
-    [{ ...proposal(), files: { ...proposal().files, 'app.js': '\ud800' } }, 'builder_generation_structured_response_invalid'],
-  ];
-  for (const [candidate, code] of cases) {
+  for (const body of [
+    { kind: 'builder_code_project', title: 'A', summary: 'B', operations: [] },
+    {
+      kind: BUILDER_GENERATED_OPERATIONS_KIND,
+      title: 'A',
+      summary: 'B',
+      operations: [],
+      candidate_id: 'builder-code-change-candidate:forged',
+    },
+    {
+      kind: BUILDER_GENERATED_OPERATIONS_KIND,
+      title: ' padded ',
+      summary: 'B',
+      operations: [{ operation: 'upsert', path: 'a.txt', content: 'a' }],
+    },
+    {
+      kind: BUILDER_GENERATED_OPERATIONS_KIND,
+      title: 'A',
+      summary: `Bearer ${'a'.repeat(24)}`,
+      operations: [{ operation: 'upsert', path: 'a.txt', content: 'a' }],
+    },
+    {
+      kind: BUILDER_GENERATED_OPERATIONS_KIND,
+      title: 'A',
+      summary: 'B',
+      operations: [{ operation: 'upsert', path: 'C:\\Users\\Alice\\secret.txt', content: 'x' }],
+    },
+    {
+      kind: BUILDER_GENERATED_OPERATIONS_KIND,
+      title: 'A',
+      summary: 'B',
+      operations: [{ operation: 'upsert', path: 'safe.txt', content: 'api_key=abcd1234abcd1234abcd1234' }],
+    },
+  ]) {
     expectKernelError(
-      () => projectBuilderGenerationResult({
-        request: rawRequest,
-        parent_revision_record: null,
-        generated_text: JSON.stringify(candidate),
-      }),
-      code,
-      ['Alice', 'Bearer'],
+      () => projectBuilderGenerationResult({ ...common, generated_text: JSON.stringify(body) }),
+      'builder_generation_structured_response_invalid',
+      ['Alice', 'Bearer', 'api_key'],
     );
   }
 });
 
-test('returns only fixed safe errors without reflecting untrusted request or generated text', () => {
+test('returns only fixed safe errors without reflecting rejected material', () => {
   const requestMarker = 'request-marker-do-not-leak';
   expectKernelError(
-    () => sanitizeBuilderGenerationRequest(request({ idea: `${requestMarker} api_key=abcdefghijklmno` })),
+    () => sanitizeBuilderGenerationRequest(request({ instruction: `${requestMarker} api_key=abcdefghijklmno` })),
     'builder_generation_request_invalid',
     [requestMarker, 'abcdefghijklmno', PROJECT_ID],
   );
@@ -429,7 +388,11 @@ test('returns only fixed safe errors without reflecting untrusted request or gen
   expectKernelError(
     () => projectBuilderGenerationResult({
       request: request(),
-      parent_revision_record: null,
+      base_revision_evidence: null,
+      base_source_tree: sourceTree(),
+      conversation_events: conversationEvents(),
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
       generated_text: responseMarker,
     }),
     'builder_generation_structured_response_invalid',
@@ -437,34 +400,27 @@ test('returns only fixed safe errors without reflecting untrusted request or gen
   );
 });
 
-test('stays aligned with the committed C0 protocol and avoids product authority imports', () => {
+test('stays aligned with the v2 draft protocol and avoids old revision or sandbox authority', () => {
   const root = path.resolve(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'electron', 'builder-generation-kernel.cjs'), 'utf8');
-  const frontend = fs.readFileSync(
-    path.join(root, 'src', 'features', 'builder', 'application', 'builderGeneration.ts'),
-    'utf8',
-  );
-  const domain = fs.readFileSync(
-    path.join(root, 'src', 'features', 'builder', 'domain', 'builderProject.ts'),
-    'utf8',
-  );
-  const contractSource = `${domain}\n${frontend}`;
   const requires = [...source.matchAll(/require\((['"])([^'"]+)\1\)/gu)].map((match) => match[2]);
 
-  assert.deepEqual(requires, ['node:crypto', 'node:util', './builder-project-revision-record.cjs']);
+  assert.deepEqual(requires, [
+    'node:crypto',
+    'node:util',
+    './builder-code-change-kernel.cjs',
+    './builder-project-source-tree.cjs',
+  ]);
   for (const literal of [
-    'builder-generation-request.v1',
-    'builder-generation-result.v1',
-    'builder_code_project_generator',
-    'builder-code-project.v2',
-    'request_digest',
-    'proposal_digest',
-    "execution: 'not_evaluated'",
-    "preview_script: 'not_authorized'",
+    'builder-generation-request.v2',
+    'builder-generation-result.v2',
+    'builder-code-project.v3',
+    'builder_code_change_operations',
+    'candidate_not_saved',
+    'not_performed',
   ]) {
-    assert.match(contractSource, new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
     assert.match(source, new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   }
-  assert.match(contractSource, /builder-code-project\.v1/u);
+  assert.doesNotMatch(source, /builder-project-revision-record|revision_digest|target_revision|parent_revision|static_preview|index\.html.*styles\.css.*app\.js/iu);
   assert.doesNotMatch(source, /(?:fetch\s*\(|node:https|node:http|electron|ipcMain|ipcRenderer|local-provider|chat_planner|ChatCreatePage|Canvas|JobMeta|secure-provider|repository\.commit|localStorage|sessionStorage|indexedDB|child_process|worker_threads|\beval\s*\(|new Function)/u);
 });
