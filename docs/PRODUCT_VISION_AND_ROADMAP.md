@@ -22,10 +22,10 @@ long-term system has six connected experiences:
 6. **Discover and Reuse** - publish verified work to a work-native community,
    inspect its lineage, remix it, and improve it.
 
-The trusted foundation is shared across all six experiences: Project Version,
-Workflow Version, Goal, Task, Run, Artifact, Review, Permission, Agent,
-Contribution, Delegation, Space/Membership, Identity/Conversation, and
-Publication facts.
+The trusted foundation is shared across all six experiences: Git-backed code
+version facts, Project Revision receipts, Workflow Version, Goal, Task, Run,
+Artifact, Review, Permission, Agent, Contribution, Delegation,
+Space/Membership, Identity/Conversation, and Publication facts.
 Conversation, reactions, presence, and UI state are interaction surfaces, not
 durable work authority.
 
@@ -49,7 +49,7 @@ Say what you want
 The user should not need to understand compilers, schemas, adapters, receipts,
 or sandbox protocols to complete this loop.
 
-## Current Checkpoint: Builder Coding MVP
+## Current Architecture Direction: Git-Backed Builder
 
 As of repository HEAD `a7e0fc2` on 2026-07-22, the standalone desktop Builder
 demonstrated:
@@ -58,7 +58,7 @@ demonstrated:
 - OpenAI-compatible provider configuration, including a real DeepSeek check;
 - encrypted local credential storage;
 - natural-language project generation and revision;
-- immutable local Project Revisions and restart recovery;
+- local Project Revisions and restart recovery;
 - static preview that does not execute generated JavaScript;
 - saved project discovery and reopen;
 - packaged Windows verification, installed parity, and uninstall data safety.
@@ -70,10 +70,45 @@ This checkpoint proves the first creation loop. It does not yet prove a
 persistent AI Agent, arbitrary generated-code execution, cloud collaboration,
 public publishing, or Agent-to-Agent delegation.
 
-It also does not yet prove the intended continuing human-AI work experience.
+The long-term storage model is now clean architecture rather than compatibility
+with that first storage prototype:
+
+- each Builder project is a normal project directory and standard Git
+  repository;
+- the packaged app carries canonical Git, currently located through `dugite`;
+- the Git runner invokes embedded Git with a minimal fixed environment and does
+  not inherit arbitrary `process.env` through `dugite.exec`;
+- AI changes first become working tree edits and a reviewable diff;
+- explicit acceptance persists an immutable Git candidate commit/ref without
+  updating `main` or claiming that the candidate is current;
+- one SQLite transaction records and selects the Project Revision receipt bound
+  to its Task, Run, Review decision, commit, tree, and parent OIDs;
+- a separate expected-old projection updates `main` and the selected working
+  tree after SQLite selection;
+- Git commit, tree, and parent OIDs are the code facts;
+- Builder Project Revision is a SQLite product receipt binding Project, Task,
+  Run, Review, Artifact, and Git OIDs;
+- SQLite manages Conversation, Task, Run, Review, Artifact references,
+  idempotency, and provider-independent metadata;
+- `.clawfabric/` stores project identity and local configuration only, not
+  source history or credentials.
+
+SQLite current selection is the product fact. `main` and the working tree are
+rebuildable projections, not reverse authority. A Git candidate without a
+selected SQLite receipt is an invisible orphan candidate. A selected receipt
+whose Git commit evidence is missing is an integrity failure. Branch or
+working-tree drift is repaired from SQLite and cannot rewrite SQLite truth.
+
+Development-stage Builder does not read old projects, old v1 JSON revisions,
+old APIs, or old renderer contracts. Compatibility and migration are not goals
+unless a future real-user migration is explicitly authorized. The old JSON
+revision repository, IPC, and catalog chain can be deleted directly; new work
+must not rely on mixed-mode restore.
+
 The current one-shot Make/Update interaction must evolve through the
 [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md),
-where conversation guides work but saved Revisions and Runs remain authoritative.
+where conversation guides work but Git commits, Project Revision receipts, and
+Runs remain authoritative.
 
 ## Roadmap
 
@@ -94,14 +129,20 @@ User experience:
 
 Required facts:
 
-- Project Revision remains source authority;
+- Git commit, tree, and parent OIDs are source authority;
+- Project Revision is a product receipt bound to Git OIDs;
+- an immutable candidate commit is not current until SQLite records and selects
+  its Project Revision receipt;
+- `main` and the working tree are projected from that selection with
+  expected-old compare-and-swap and may be rebuilt after drift;
 - each generation or modification becomes a local Run fact;
-- preview and export become Artifact facts derived from a revision or run;
+- preview and export become Artifact facts derived from a Project Revision
+  receipt or Run;
 - Activity is a read model derived from those facts, not a second source of
   truth.
 
-This stage spans common foundation Gates F1-F5 in the implementation plan;
-individual conversation, History, Version, and provider improvements may ship
+This stage spans common foundation Gates F0-F7 in the implementation plan;
+individual Git kernel, SQLite metadata, conversation, History, Version, and provider improvements may ship
 earlier when their own gates pass.
 
 Not promised yet:
@@ -126,12 +167,13 @@ Required facts:
 - Run records an attempt and its terminal result;
 - Review records an explicit decision;
 - Permission records what tools and data the AI may use;
-- all source changes still end in an immutable Project Revision.
+- all source changes still end in a reviewed Git commit plus Project Revision
+  receipt.
 
 The AI may propose work, but it cannot silently publish, share, delete, grant
-permissions, or mutate a verified version.
+permissions, or commit a verified version.
 
-This stage adds Gates F6-F7: durable Permission authority followed by the
+This stage adds Gates F8-F9: durable Permission authority followed by the
 tool-enabled work session. Tool access is an upgrade to the continuing Builder
 conversation, not a prerequisite for asking questions or iterating on a code
 candidate.

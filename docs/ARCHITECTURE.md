@@ -9,31 +9,87 @@ The delivery order and release evidence are defined in
 
 ## Product Boundary
 
-The first product loop is: describe an idea, generate a code draft, save a revision, reopen it, revise it, and inspect a static preview.
+The first product loop is: describe an idea, generate a code draft, review the
+working tree diff, save a Git-backed revision receipt, reopen it, revise it,
+and inspect a static preview.
 
 The desktop application owns four narrow authorities:
 
 1. Builder provider settings and encrypted credentials.
 2. Bounded code-generation transport.
-3. Immutable local project revisions and verified project heads.
+3. Git-backed project worktrees and SQLite product metadata.
 4. A controlled renderer bridge exposing only Builder operations.
 
 Generated JavaScript is stored and displayed but is not executed in the first release. Workflow promotion, arbitrary code execution, collaboration, and publishing require later independent gates.
 
-The current Project Revision authority is the first member of a broader trusted
-work model. Future Goal, Task, Run, Artifact, Review, Permission, Contribution,
-Agent Definition/Version, Delegation, Workflow Version, Space/Membership,
+The code authority is a normal project directory with a standard Git
+repository. Git commit, tree, and parent object IDs are the durable code facts.
+Builder Project Revision is a SQLite product receipt that binds a Project,
+Run, Review decision, and Artifact evidence to Git object IDs. It must not copy
+source files into a second JSON revision chain.
+
+Future Goal, Task, Run, Artifact, Review, Permission, Contribution, Agent
+Definition/Version, Delegation, Workflow Version, Space/Membership,
 Identity/Contact/Conversation, and Publication authorities must be added
-independently and must not be inferred from chat, community, model identity, or
-renderer state.
+independently and must not be inferred from chat, community, model identity,
+renderer state, or Git metadata alone.
+
+## Project Storage Model
+
+Each Builder project is a plain directory. The directory contains user-visible
+source files, a standard `.git/` repository, and a small `.clawfabric/`
+directory for project-local identity and configuration.
+
+The packaged application carries a canonical Git implementation. The current
+choice is `dugite` for locating embedded Git. The runner must construct a
+minimal fixed environment and invoke the embedded Git binary directly; it must
+not use `dugite.exec` in a way that inherits arbitrary `process.env`.
+
+The intended save flow is:
+
+1. AI produces a bounded code-change candidate.
+2. Builder applies the candidate to a project working tree and presents its
+   diff for review.
+3. Explicit acceptance persists an immutable Git candidate commit and
+   candidate ref. This does not update `main` and does not make the candidate
+   current.
+4. One SQLite transaction records and selects a Project Revision receipt bound
+   to the accepted candidate commit, tree, and parent OIDs, plus the producing
+   Task, Run, Review decision, and Artifact references.
+5. A separate projection step uses expected-old compare-and-swap to update
+   `main` and materialize the selected working tree.
+
+SQLite owns product semantics: Project registry, Conversation, Task, Run,
+Review, Artifact references, idempotency, provider-independent metadata, and
+the current product selection. It does not duplicate the full source history.
+The SQLite current selection is the product fact. `main` and the materialized
+working tree are rebuildable projections and cannot change that selection in
+reverse.
+
+Crash and integrity semantics are explicit:
+
+- a Git candidate without a selected SQLite Project Revision receipt is an
+  orphan candidate and is never visible as current;
+- a selected SQLite receipt whose commit, tree, or parent evidence is missing
+  or invalid is an integrity failure;
+- a missing or drifted `main` or working tree is repaired by projecting the
+  SQLite selection again with expected-old compare-and-swap;
+- branch or working-tree drift must never be used to rewrite SQLite product
+  truth.
+
+`.clawfabric/` owns only project identity and project-local configuration. It is
+not a database of source revisions, not a second VCS, and not a credential
+store.
 
 ## Isolation Rules
 
 - No runtime import, symlink, workspace dependency, or relative path may point to `ClawFabric v5`.
 - Legacy Chat, Canvas, Job, server collaboration, Current State, Auto Edit, and Python backend code are not product dependencies.
 - Extraction copies are pinned in `provenance/extraction-manifest.json` and become independently maintained after import.
-- The new application uses a distinct app id, profile, protocol, and project repository.
-- Existing project or provider data is never read automatically. Migration must be explicit and source profiles remain read-only.
+- The new application uses a distinct app id, profile, protocol, and project workspace model.
+- Development-stage builds do not read old projects, v1 JSON revisions, old IPC/catalog APIs, or old renderer contracts.
+- Backward compatibility and migration are not product requirements unless a future user-data migration is explicitly authorized.
+- The old JSON revision repository, IPC, and catalog chain may be deleted directly; replacement work must not depend on mixed-mode reads.
 
 ## Repository Documentation Authority
 

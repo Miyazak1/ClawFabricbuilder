@@ -9,14 +9,61 @@ authority.
 ## Verified Starting Point
 
 The standalone Builder has a dedicated desktop shell, encrypted provider
-settings, bounded generation transport, immutable Project Revisions, saved
-project discovery, restart restore, and static preview. The dated package and
-real-provider evidence is recorded in
+settings, bounded generation transport, saved project discovery, restart
+restore, and static preview. The dated package and real-provider evidence is recorded in
 [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md).
+
+That checkpoint proved the first creation loop, but the storage authority has
+now been superseded. The long-term architecture is Git-backed code facts plus
+SQLite product receipts. The old JSON revision repository, IPC, and catalog
+chain are not compatibility surfaces and may be deleted directly.
 
 ## Common Foundation Gates
 
 These gates support every later product branch.
+
+### Gate F0 - Git Kernel and SQLite Metadata
+
+Replace the self-managed JSON source revision chain with a mature storage
+split:
+
+- every Builder project is a plain directory with a standard Git repository;
+- packaged builds carry canonical Git, currently located through `dugite`;
+- the Git runner builds a minimal fixed environment and invokes embedded Git
+  directly instead of inheriting `process.env` through `dugite.exec`;
+- AI changes first materialize as working tree edits and a reviewable diff;
+- explicit acceptance persists an immutable Git candidate commit and candidate
+  ref without updating `main` or claiming current product state;
+- one SQLite transaction records and selects a Project Revision receipt bound
+  to Task, Run, Review, commit, tree, and parent evidence;
+- a separate projection uses expected-old compare-and-swap to update `main`
+  and the selected working tree;
+- commit, tree, and parent OIDs are the code version facts;
+- SQLite records Project, Project Revision receipts, Conversation, Task, Run,
+  Review, Artifact references, idempotency, and provider-independent metadata;
+- Project Revision binds product facts to Git OIDs and never copies source into
+  a second revision chain;
+- `.clawfabric/` stores only project identity and project-local configuration.
+
+Evidence requirements:
+
+- no old v1 project repository, IPC, catalog, renderer contract, or migration
+  path is read;
+- Git operations use the packaged canonical Git with a minimal runner
+  environment;
+- candidate persistence does not update `main`, claim current status, or bypass
+  a persisted Task, Run, and Review verification receipt;
+- SQLite selection atomically records the Project Revision receipt, commit OID,
+  tree OID, parent OIDs, Task, Run, and Review decision;
+- `main` and the working tree are rebuildable projections of SQLite current
+  selection and cannot become reverse authority;
+- SQLite writes are atomic, restart-safe, corruption-safe, and idempotent;
+- a Git candidate without a SQLite receipt remains an invisible orphan;
+- a selected SQLite receipt with missing or invalid Git objects is an integrity
+  failure;
+- branch or working-tree drift is repaired from SQLite with expected-old
+  compare-and-swap and cannot rewrite SQLite truth;
+- `.clawfabric/` cannot become a second VCS or credential store.
 
 ### Gate F1 - Provider Compatibility
 
@@ -31,45 +78,75 @@ Evidence requirements:
 - availability and generation are tested per supported provider shape;
 - unsupported provider behavior fails safely without silent fallback.
 
-### Gate F2 - Conversation, Message, Task, and Run Contracts
+### Gate F2 - Generation, IPC, and Frontend Cutover
+
+Move generation, project IPC, catalog, and frontend flows onto Gate F0 facts.
+
+Evidence requirements:
+
+- renderer never submits finished Project Revision records;
+- generation returns a code-change candidate, not a saved version;
+- candidate application changes only the working tree under Git authority;
+- persistence creates only an immutable Git candidate commit/ref until SQLite
+  records and selects the Project Revision receipt;
+- `main` and the materialized working tree are updated only by the independent
+  expected-old projection after SQLite selection;
+- catalog and History read SQLite receipts bound to Git OIDs;
+- preview reads the selected worktree/commit through a bounded adapter;
+- old v1 repository, IPC, and catalog modules have no production consumers.
+
+### Gate F3 - Delete v1 Repository, IPC, and Catalog
+
+Delete the old JSON Project Revision repository, legacy project IPC, and legacy
+catalog chain directly. Development-stage builds do not need compatibility,
+migration, mixed-mode reads, or old-project restore.
+
+Evidence requirements:
+
+- no production import remains;
+- no package verifier entry requires old v1 files;
+- boundary tests forbid old repository, IPC, and catalog authority;
+- no fallback path recreates JSON revision-chain storage.
+
+### Gate F4 - Conversation, Message, Task, and Run Contracts
 
 Define the project-local continuing-work model before adding more product
 surfaces. Conversation and Message are communication context. Task and Run bind
-requested work and attempts. None of them is Project source authority.
+requested work and attempts. None of them is code source authority.
 
 Evidence requirements:
 
 - one Conversation is bound to one Project identity;
 - Messages are append-only, actor-bound, ordered, bounded, and restart-safe;
 - questions can produce explanations without creating source-change Tasks;
-- requested work creates an explicit Task bound to the base Revision and user
+- requested work creates an explicit Task bound to the base Git commit and user
   Message;
 - each attempt is a distinct Run with pending, completed, failed, cancelled, or
   interrupted terminal state;
 - retries link to prior attempts and never rewrite them;
 - no Message, Task, or Run can grant tools, save source, publish, or impersonate
-  a Revision.
+  a Git commit or Project Revision receipt.
 
 The exact interaction contract is defined in
 [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md).
 
-### Gate F3 - Main-Owned Conversation and Run Repository
+### Gate F5 - Main-Owned Conversation and Run Repository
 
 Persist project-local Messages, Tasks, Runs, and safe assistant results in a
 main-owned append-only repository.
 
 Evidence requirements:
 
-- request, project, parent revision, Message, Task, and terminal result are
+- request, project, parent Git commit, Message, Task, and terminal result are
   bound without exposing credentials or raw private data;
 - pending, completed, failed, cancelled, and interrupted are distinct;
 - retries are new attempts linked to the prior attempt;
 - restart restores facts without redispatch;
 - corruption and conflicting append evidence fail closed;
 - reads and replay do not call the provider or mutate Project source;
-- a completed Run does not imply a saved Revision or Artifact.
+- a completed Run does not imply a saved Project Revision receipt or Artifact.
 
-### Gate F4 - Provider Projection and Candidate Results
+### Gate F6 - Provider Projection and Candidate Results
 
 Extend the dedicated Builder provider authority from one-shot generation to
 bounded question, explanation, plan, and code-candidate outcomes.
@@ -84,31 +161,40 @@ Evidence requirements:
   tests rather than silent fallback;
 - assistant text, progress, failures, and candidate code are independently
   sanitized and linked to their Run;
-- a candidate can be previewed or compared but is never written to the Project
-  repository by provider completion alone;
+- a candidate can be previewed or compared but is never committed by provider
+  completion alone;
 - cancellation, timeout, empty structured output, schema mismatch, and provider
   rejection produce fixed safe terminal evidence.
 
-### Gate F5 - Explicit Save, Versions, Review, History, and Artifacts
+### Gate F7 - Explicit Save, Versions, Review, History, and Artifacts
 
-Bind an accepted candidate to an explicit Save decision, then add version
-comparison, duplicate, restore-as-new-version, read-only History, export,
-explicit Review, and preview/export Artifact records. History is derived from
-verified facts; it is not a second activity database.
+Bind an accepted candidate to an explicit Save decision through Git candidate
+persistence, SQLite Project Revision selection, and a separate `main`/working
+tree projection. Then add version comparison, duplicate,
+restore-as-new-version, read-only History, export, explicit Review, and
+preview/export Artifact records. History is derived from verified facts; it is
+not a second activity database.
 
 Evidence requirements:
 
 - duplicate creates new Project identity and preserved lineage;
 - restore never rewrites history;
 - Review decisions are durable and actor-bound;
-- Save binds the accepted candidate, Task, Run, base Revision, and new Revision;
-- only revisions reachable from a verified project head appear in History;
-- orphaned or competing revisions do not appear and corruption fails closed;
-- Artifact identity binds the producing Revision or Run;
+- Save binds the accepted candidate, Task, Run, Review decision, base commit,
+  candidate commit/tree/parent evidence, and selected Project Revision receipt;
+- candidate persistence alone never updates `main` or makes a Revision current;
+- SQLite selection is the product fact; `main` and working tree are
+  expected-old projections that can be rebuilt after drift or interruption;
+- orphan Git candidates remain invisible, selected receipts with missing Git
+  evidence fail integrity checks, and branch drift cannot rewrite SQLite;
+- only receipts bound to verified Git commits appear in History;
+- orphaned metadata, missing commits, or competing receipts do not appear and
+  corruption fails closed;
+- Artifact identity binds the producing Project Revision receipt or Run;
 - missing or unavailable bytes remain explicit;
 - sharing and publishing remain disabled unless separately authorized.
 
-### Gate F6 - Permission Authority
+### Gate F8 - Permission Authority
 
 Create deny-by-default, durable Permission facts before AI is allowed to inspect
 additional context or use tools.
@@ -123,7 +209,7 @@ Evidence requirements:
 - revocation affects future actions and is visible in audit history;
 - every tool call proves the current permission intersection.
 
-### Gate F7 - Tool-Enabled Human-AI Work Session
+### Gate F9 - Tool-Enabled Human-AI Work Session
 
 Move from one-shot generation to a bounded, inspectable work session: gather
 approved context, propose a plan, edit, verify, repair, and request Review.
@@ -137,12 +223,21 @@ Evidence requirements:
 - bounded step, cost, time, retry, and output policy;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
-- only a saved Project Revision changes project truth.
+- only a reviewed Git commit plus Project Revision receipt changes project
+  truth.
 
-The continuing Builder collaboration checkpoint is complete after F1-F5. The
-tool-enabled Personal Workbench checkpoint is complete only after F1-F7.
+The continuing Builder collaboration checkpoint is complete after F0-F7. The
+tool-enabled Personal Workbench checkpoint is complete only after F0-F9.
 Provider compatibility, conversation, explicit Save, and version UI may ship
 earlier behind their own completed gates.
+
+## Now and Next
+
+1. Git kernel and SQLite metadata foundation.
+2. Generation, IPC, catalog, and frontend cutover to Git-backed facts.
+3. Direct deletion of old v1 JSON revision repository, IPC, and catalog.
+4. Continuing conversation, diff, Review, History, and explicit Save.
+5. Agents, collaboration, Spaces, Capability, Workflow, and Community tracks.
 
 ## Parallel Product Tracks
 
@@ -198,8 +293,8 @@ Add local Spaces first, then authenticated synchronization.
 
 Evidence requirements:
 
-- Space and Membership/Role grants are canonical and separate from Project
-  source authority;
+- Space and Membership/Role grants are canonical and separate from code source
+  authority;
 - external work enters through a Contribution;
 - acceptance is explicit, idempotent, and reviewable;
 - Inbox is a projection of invitations, reviews, failures, delegations, and
@@ -266,8 +361,8 @@ never described as safely runnable merely because AI generated it.
 Navigation follows real evidence:
 
 1. `Projects` and `Settings` - active now.
-2. `History/Review` and personal `Activity` - after F2-F4.
-3. `Agents` and `Tasks` - after F6-F7 and A1.
+2. `History/Review` and personal `Activity` - after F4-F7.
+3. `Agents` and `Tasks` - after F8-F9 and A1.
 4. `Contacts` and `Chat` - after B1.
 5. `Spaces` and `Inbox` - after B2.
 6. `Share` - after C1.
