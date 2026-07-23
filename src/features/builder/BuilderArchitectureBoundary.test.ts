@@ -14,11 +14,13 @@ const PURE_BUILDER_FILES = new Set([
   'components/BuilderStaticPreview.tsx',
   'domain/builderProject.ts',
   'domain/builderProjectCatalog.ts',
+  'domain/builderProjectSnapshot.ts',
   'domain/builderProviderSettings.ts',
   'presentation/BuilderPage.tsx',
   'presentation/BuilderProviderSettingsPanel.tsx',
   'presentation/BuilderProjectCatalog.tsx',
   'preview/builderStaticPreview.ts',
+  'preview/builderSourceTreePreview.ts',
 ]);
 const INTEGRATION_FILES = new Set([
   'hooks/useBuilderProjectCatalogController.ts',
@@ -191,6 +193,10 @@ describe('Builder architecture boundary', () => {
       'utf8',
     );
     const preview = readFileSync(join(BUILDER_ROOT, 'preview', 'builderStaticPreview.ts'), 'utf8');
+    const sourceTreePreview = readFileSync(
+      join(BUILDER_ROOT, 'preview', 'builderSourceTreePreview.ts'),
+      'utf8',
+    );
     const previewComponent = readFileSync(
       join(BUILDER_ROOT, 'components', 'BuilderStaticPreview.tsx'),
       'utf8',
@@ -232,6 +238,9 @@ describe('Builder architecture boundary', () => {
     ]);
     expect(moduleBoundary('builderStaticPreview.ts', preview).staticImports).toEqual([
       '../domain/builderProject',
+    ]);
+    expect(moduleBoundary('builderSourceTreePreview.ts', sourceTreePreview).staticImports).toEqual([
+      '../domain/builderProjectSnapshot',
     ]);
     expect(moduleBoundary('BuilderStaticPreview.tsx', previewComponent).staticImports).toEqual([
       '../preview/builderStaticPreview',
