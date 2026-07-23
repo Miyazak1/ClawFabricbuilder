@@ -36,6 +36,7 @@ const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
+  builder_generation_draft_conflict: 'The generated project draft could not be verified.',
   builder_generation_service_unavailable: 'AI project generation is unavailable.',
 });
 
@@ -491,12 +492,35 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function releasePendingDraft(rawRequest) {
+    try {
+      exactObject(rawRequest, ['draft_id', 'candidate_digest']);
+      const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
+      const candidateDigest = safeDigest(valueAt(rawRequest, 'candidate_digest'));
+      const draft = pendingDrafts.get(draftId);
+      if (!draft || draft.candidate.candidate_digest !== candidateDigest) {
+        throw new BuilderGenerationMainServiceError('builder_generation_draft_conflict');
+      }
+      pendingDrafts.delete(draftId);
+      return freezeDeep({
+        result_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
+        draft_id: draftId,
+        released: true,
+        pending_draft_restart_restore: 'not_persisted',
+      });
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
+  }
+
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     generate,
     cancel: host.cancel,
     availability: host.availability,
     read_pending_draft: readPendingDraft,
+    release_pending_draft: releasePendingDraft,
     authority: Object.freeze({
       provider_config_snapshot_bound: true,
       project_read_authority_verified_source: true,

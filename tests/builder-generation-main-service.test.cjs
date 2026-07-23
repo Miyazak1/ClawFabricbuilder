@@ -231,6 +231,29 @@ test('uses read authority for existing projects and stores a main-only pending d
   assert.equal(pending.conversation_events.length, 2);
   assert.equal(pending.conversation_event_admission, 'candidate_local_not_recorded');
   assert.equal(pending.restart_restore, 'not_persisted');
+
+  assert.throws(
+    () => service.release_pending_draft({
+      draft_id: result.draft_id,
+      candidate_digest: `sha256:${'f'.repeat(64)}`,
+    }),
+    (error) => error.code === 'builder_generation_draft_conflict'
+      && !`${error.message}:${error.stack}`.includes(result.draft_id),
+  );
+  assert.equal(service.read_pending_draft({ draft_id: result.draft_id }).draft_id, result.draft_id);
+  assert.deepEqual(service.release_pending_draft({
+    draft_id: result.draft_id,
+    candidate_digest: result.candidate.candidate_digest,
+  }), {
+    result_version: 'builder-generation-pending-draft.v1',
+    draft_id: result.draft_id,
+    released: true,
+    pending_draft_restart_restore: 'not_persisted',
+  });
+  assert.throws(
+    () => service.read_pending_draft({ draft_id: result.draft_id }),
+    (error) => error.code === 'builder_generation_service_unavailable',
+  );
 });
 
 test('generates through persisted provider authority without exposing its credential', async (t) => {

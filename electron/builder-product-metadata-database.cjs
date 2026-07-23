@@ -750,6 +750,38 @@ function loadCurrent(db, rawRequest) {
   return result(db, 'current_loaded', current, current);
 }
 
+function loadProjectIdentity(db, rawRequest) {
+  const request = sanitizeLoadCurrentRequest(rawRequest);
+  const row = one(
+    db,
+    `SELECT project_id, project_created_at_ms, current_revision_receipt_digest,
+      current_revision_number
+      FROM projects WHERE project_id = ?`,
+    [request.project_id],
+  );
+  validateProjectCurrentTuple(db, row, true, true);
+  return frozen({
+    result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+    operation: 'project_identity_loaded',
+    project: {
+      project_id: request.project_id,
+      created_at_ms: row.project_created_at_ms,
+    },
+    metadata_evidence: {
+      database_id: DATABASE_ID,
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
+      runtime_pragmas: runtimePragmas(db),
+      transaction: 'project_identity_readback',
+      git_object_verification: 'not_performed_by_metadata_database',
+      source_bytes_stored: false,
+      credential_storage: 'not_present',
+      ui_state_storage: 'not_present',
+    },
+  });
+}
+
 function loadProjectRevision(db, rawRequest) {
   const request = sanitizeLoadProjectRevisionRequest(rawRequest);
   const actionReceipt = loadReceipt(db, request.project_id, request.revision_receipt_digest);
@@ -834,6 +866,12 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     load_current_project_revision(rawRequest) {
       try { return loadCurrent(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    load_project_identity(rawRequest) {
+      try { return loadProjectIdentity(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

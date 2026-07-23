@@ -408,6 +408,7 @@ test('records monotonic Project Revision receipts and restores current after res
   const filePath = temporaryDatabase(t);
   const metadata = createBuilderProductMetadataDatabase(filePath);
   const first = metadata.record_project_revision_receipt(request());
+  const identity = metadata.load_project_identity({ project_id: PROJECT_ID });
 
   assert.equal(first.result_version, BUILDER_PRODUCT_METADATA_RESULT_VERSION);
   assert.equal(first.operation, 'recorded');
@@ -427,6 +428,12 @@ test('records monotonic Project Revision receipts and restores current after res
   assert.equal(first.metadata_evidence.source_bytes_stored, false);
   assert.equal(first.metadata_evidence.credential_storage, 'not_present');
   assert.equal(first.metadata_evidence.ui_state_storage, 'not_present');
+  assert.deepEqual(identity.project, {
+    project_id: PROJECT_ID,
+    created_at_ms: 1,
+  });
+  assert.equal(identity.operation, 'project_identity_loaded');
+  assert.doesNotMatch(JSON.stringify(identity), /commit_oid|revision_receipt_digest|candidate_digest/u);
   assert.deepEqual(first.metadata_evidence.runtime_pragmas, {
     foreign_keys: 'on',
     journal_mode: 'wal',
@@ -467,6 +474,10 @@ test('records monotonic Project Revision receipts and restores current after res
   assert.deepEqual(exactFirst.receipt, first.receipt);
   assert.equal(exactFirst.current.revision_receipt_digest, second.receipt.revision_receipt_digest);
   assert.notEqual(exactFirst.current.revision_receipt_digest, exactFirst.receipt.revision_receipt_digest);
+  assert.deepEqual(restarted.load_project_identity({ project_id: PROJECT_ID }).project, {
+    project_id: PROJECT_ID,
+    created_at_ms: 1,
+  });
   restarted.close();
 });
 
@@ -1141,6 +1152,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
     'close',
     'list_current_project_revisions',
     'load_current_project_revision',
+    'load_project_identity',
     'load_project_revision',
     'record_project_revision_receipt',
   ]);

@@ -103,7 +103,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderGenerationMainService: (options) => {
             probes.serviceOptions = options;
             assert.equal(options.transport, context.__sentinelTransport);
-            assert.equal(options.projectReadAuthority, context.__readAuthority);
+            assert.equal(options.projectReadAuthority, context.__projectMainAuthority.project_read_authority);
             return service;
           },
         };
@@ -119,38 +119,22 @@ function runtimeWithService(service, probes = {}) {
       if (specifier === './builder-provider-config-repository.cjs') {
         return { createBuilderProviderConfigRepository: () => ({ bind_current_authority() {} }) };
       }
-      if (specifier === './builder-git-project-repository.cjs') {
+      if (specifier === './builder-project-main-authority.cjs') {
         return {
-          createDefaultBuilderGitProjectRepository(options) {
-            probes.gitOptions = options;
-            context.__gitRepository = { read_verified_candidate() {} };
-            return context.__gitRepository;
-          },
-        };
-      }
-      if (specifier === './builder-product-metadata-database.cjs') {
-        return {
-          createBuilderProductMetadataDatabase(databasePath) {
-            probes.metadataPath = databasePath;
-            context.__metadataDatabase = {
+          PROJECT_REPOSITORY_DIRECTORY: 'builder-projects-v2',
+          GIT_RUNTIME_DIRECTORY: 'builder-git-runtime-v2',
+          METADATA_DIRECTORY: 'builder-product-metadata-v2',
+          METADATA_DATABASE: 'builder.sqlite',
+          createBuilderProjectMainAuthority(options) {
+            probes.projectMainAuthorityOptions = options;
+            context.__projectMainAuthority = {
               closed: false,
-              close() { this.closed = true; },
-              load_current_project_revision() {},
-              load_project_revision() {},
-              list_current_project_revisions() {},
+              git_authority: { persist_candidate_commit() {}, verify_candidate_receipt() {} },
+              metadata_authority: { load_project_identity() {}, record_project_revision_receipt() {} },
+              project_read_authority: { load_current() {}, load_revision() {}, list_current() {} },
+              close() { this.closed = true; return true; },
             };
-            return context.__metadataDatabase;
-          },
-        };
-      }
-      if (specifier === './builder-project-read-authority.cjs') {
-        return {
-          createBuilderProjectReadAuthority(options) {
-            probes.readAuthorityOptions = options;
-            assert.equal(options.metadata_database, context.__metadataDatabase);
-            assert.equal(options.git_repository, context.__gitRepository);
-            context.__readAuthority = { load_current() {} };
-            return context.__readAuthority;
+            return context.__projectMainAuthority;
           },
         };
       }
@@ -311,7 +295,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   }
 });
 
-test('closes product metadata when generation channel registration fails', (t) => {
+test('closes project main authority when generation channel registration fails', (t) => {
   const harness = runtimeWithService({
     generate: async () => ({ ok: true }),
     cancel: () => ({ cancelled: false }),
@@ -325,16 +309,16 @@ test('closes product metadata when generation channel registration fails', (t) =
     userDataPath: temporaryUserData(t),
   });
 
-  assert.equal(harness.context.__metadataDatabase.closed, false);
+  assert.equal(harness.context.__projectMainAuthority.closed, false);
   assert.throws(() => runtime.register(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.deepEqual([...ipcMain.handlers.keys()], []);
-  assert.equal(harness.context.__metadataDatabase.closed, true);
+  assert.equal(harness.context.__projectMainAuthority.closed, true);
   assert.equal(runtime.dispose(), false);
 });
 
-test('composes Git, SQLite metadata, read authority, and closes metadata on dispose', (t) => {
+test('composes project main authority and closes it on dispose', (t) => {
   const probes = {};
   const service = {
     generate() { return Promise.reject(new Error('not used')); },
@@ -354,13 +338,12 @@ test('composes Git, SQLite metadata, read authority, and closes metadata on disp
     userDataPath,
   });
 
-  assert.equal(probes.gitOptions.projects_root, path.join(userDataPath, 'builder-projects-v2'));
-  assert.equal(probes.gitOptions.runtime_root, path.join(userDataPath, 'builder-git-runtime-v2'));
-  assert.equal(probes.metadataPath, path.join(userDataPath, 'builder-product-metadata-v2', 'builder.sqlite'));
-  assert.equal(probes.readAuthorityOptions.metadata_database, runtimeModule.context.__metadataDatabase);
-  assert.equal(probes.serviceOptions.projectReadAuthority, runtimeModule.context.__readAuthority);
+  assert.equal(probes.projectMainAuthorityOptions.userDataPath, userDataPath);
+  assert.deepEqual(Object.keys(probes.projectMainAuthorityOptions), ['userDataPath']);
+  assert.equal(probes.serviceOptions.projectReadAuthority,
+    runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(runtime.dispose(), false);
-  assert.equal(runtimeModule.context.__metadataDatabase.closed, true);
+  assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
 });
 
 test('cancels every accepted generation before removing its cancel channel', async (t) => {
@@ -413,9 +396,10 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
     /builder-project-revision-repository|builder-project-revisions-v1|projectRevisionRepository|load_revision/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
   ]) assert.doesNotMatch(source, forbidden);
-  assert.match(source, /createDefaultBuilderGitProjectRepository/u);
-  assert.match(source, /createBuilderProductMetadataDatabase/u);
-  assert.match(source, /createBuilderProjectReadAuthority/u);
+  assert.match(source, /createBuilderProjectMainAuthority/u);
+  assert.doesNotMatch(source, /createDefaultBuilderGitProjectRepository/u);
+  assert.doesNotMatch(source, /createBuilderProductMetadataDatabase/u);
+  assert.doesNotMatch(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
   assert.match(source, /createBuilderOpenAICompatibleTransport\(\{ fetchImpl: options\.fetchImpl \}\)/u);
   assert.doesNotMatch(source, /globalThis\.fetch/u);

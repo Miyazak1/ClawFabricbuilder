@@ -1,6 +1,5 @@
 'use strict';
 
-const fs = require('node:fs');
 const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
@@ -20,23 +19,17 @@ const {
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
-  createDefaultBuilderGitProjectRepository,
-} = require('./builder-git-project-repository.cjs');
-const {
-  createBuilderProductMetadataDatabase,
-} = require('./builder-product-metadata-database.cjs');
-const {
-  createBuilderProjectReadAuthority,
-} = require('./builder-project-read-authority.cjs');
+  GIT_RUNTIME_DIRECTORY,
+  METADATA_DATABASE,
+  METADATA_DIRECTORY,
+  PROJECT_REPOSITORY_DIRECTORY,
+  createBuilderProjectMainAuthority,
+} = require('./builder-project-main-authority.cjs');
 const {
   createBuilderProviderConfigRepository,
 } = require('./builder-provider-config-repository.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
-const PROJECT_REPOSITORY_DIRECTORY = 'builder-projects-v2';
-const GIT_RUNTIME_DIRECTORY = 'builder-git-runtime-v2';
-const METADATA_DIRECTORY = 'builder-product-metadata-v2';
-const METADATA_DATABASE = 'builder.sqlite';
 const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 
@@ -127,26 +120,13 @@ function safeOptions(value) {
 function createBuilderGenerationIpcRuntime(rawOptions) {
   const options = safeOptions(rawOptions);
   let providerConfigRepository = null;
-  let metadataDatabase = null;
+  let projectMainAuthority = null;
   let service;
   let adapter;
   let activeRequestIds = () => Object.freeze([]);
   try {
-    const projectsRoot = path.join(options.userDataPath, PROJECT_REPOSITORY_DIRECTORY);
-    const runtimeRoot = path.join(options.userDataPath, GIT_RUNTIME_DIRECTORY);
-    const metadataRoot = path.join(options.userDataPath, METADATA_DIRECTORY);
-    fs.mkdirSync(projectsRoot, { recursive: true, mode: 0o700 });
-    fs.mkdirSync(runtimeRoot, { recursive: true, mode: 0o700 });
-    fs.mkdirSync(metadataRoot, { recursive: true, mode: 0o700 });
-    metadataDatabase = createBuilderProductMetadataDatabase(path.join(metadataRoot, METADATA_DATABASE));
-    const gitRepository = createDefaultBuilderGitProjectRepository({
-      projects_root: projectsRoot,
-      runtime_root: runtimeRoot,
-      now_seconds: () => Math.floor(Date.now() / 1000),
-    });
-    const projectReadAuthority = createBuilderProjectReadAuthority({
-      metadata_database: metadataDatabase,
-      git_repository: gitRepository,
+    projectMainAuthority = createBuilderProjectMainAuthority({
+      userDataPath: options.userDataPath,
     });
     const lazyProviderConfigRepository = Object.freeze({
       bind_current_authority() {
@@ -158,7 +138,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
-      projectReadAuthority,
+      projectReadAuthority: projectMainAuthority.project_read_authority,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
     });
     const activeRequests = new Map();
@@ -196,7 +176,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
-    try { metadataDatabase?.close(); } catch { /* fixed failure below */ }
+    try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
     fail();
   }
 
@@ -233,11 +213,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     return failed === false;
   }
 
-  function closeMetadataDatabase() {
-    if (metadataDatabase === null) return true;
+  function closeProjectMainAuthority() {
+    if (projectMainAuthority === null) return true;
     try {
-      metadataDatabase.close();
-      metadataDatabase = null;
+      projectMainAuthority.close();
+      projectMainAuthority = null;
       return true;
     } catch {
       return false;
@@ -259,7 +239,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return true;
       } catch {
         const removed = removeInstalledHandlers();
-        const closed = closeMetadataDatabase();
+        const closed = closeProjectMainAuthority();
         state = removed && closed ? 'disposed' : 'cleanup_required';
         fail();
       }
@@ -267,7 +247,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     dispose() {
       if (state === 'disposed') return false;
       if (state === 'idle') {
-        const closed = closeMetadataDatabase();
+        const closed = closeProjectMainAuthority();
         if (!closed) {
           state = 'cleanup_required';
           fail();
@@ -277,7 +257,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       const cancelled = cancelActiveRequests();
       const removed = removeInstalledHandlers();
-      const closed = closeMetadataDatabase();
+      const closed = closeProjectMainAuthority();
       if (!cancelled || !removed || !closed) {
         state = 'cleanup_required';
         fail();
