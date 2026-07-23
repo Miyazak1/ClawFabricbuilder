@@ -10,21 +10,25 @@ ClawFabric Builder application.
 3. [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
 4. [Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md)
 5. [Implementation Plan](IMPLEMENTATION_PLAN.md)
-6. [Builder Architecture](ARCHITECTURE.md)
-7. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
-8. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
-9. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
+6. [Legacy Future Plan Coverage Matrix](LEGACY_FUTURE_PLAN_COVERAGE_MATRIX.md)
+7. [Builder Architecture](ARCHITECTURE.md)
+8. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
+9. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
+10. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
 
 ## Authority
 
 - These documents define the future product direction for
   `D:\CODE\clawfabric-builder`.
 - Documents in `D:\CODE\ClawFabric v5\docs` remain historical references and
-  compatibility evidence. They do not authorize dependencies on the old
-  application tree.
+  extraction evidence. They do not authorize dependencies on the old
+  application tree or compatibility work.
 - `provenance/extraction-manifest.json` records both code extraction evidence and
   the old documents rewritten into this repository's authority. Documentation
   migration creates no runtime, package, import, or data dependency.
+- `LEGACY_FUTURE_PLAN_COVERAGE_MATRIX.md` classifies old future-plan document
+  families as rewritten, summarized, principles-only, future-candidate, or
+  intentionally excluded. It is a coverage map, not a compatibility promise.
 - Product capabilities are real only when their implementation, tests, package
   verification, and required canaries pass. A roadmap item is not an execution
   authority by itself.
