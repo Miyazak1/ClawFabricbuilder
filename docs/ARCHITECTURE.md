@@ -62,6 +62,9 @@ The intended save flow is:
 SQLite owns product semantics: Project registry, Conversation, Task, Run,
 Review, Artifact references, idempotency, provider-independent metadata, and
 the current product selection. It does not duplicate the full source history.
+It may keep bounded indexes from durable Conversation events, such as a draft
+id to candidate-result event mapping, so main-only authorities can restore
+candidate proof after restart without storing source bytes or provider payloads.
 The SQLite current selection is the product fact. `main` and the materialized
 working tree are rebuildable projections and cannot change that selection in
 reverse.

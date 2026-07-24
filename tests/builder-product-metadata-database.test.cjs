@@ -30,6 +30,7 @@ const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
 const OTHER_PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174001';
 const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000';
 const OTHER_CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174001';
+const DRAFT_ID = `builder-generation-draft:${'5'.repeat(64)}`;
 
 function temporaryDatabase(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-product-metadata-'));
@@ -115,6 +116,54 @@ function terminalConversationEvents(initial) {
     turn_id: initial[0].payload.turn_id,
     run_id: initial[1].payload.run_id,
     outcome: 'responded',
+  }, completed);
+  return [completed, terminal];
+}
+
+function candidateTerminalConversationEvents(initial) {
+  const completed = conversationEvent(3, 'run_completed', {
+    turn_id: initial[0].payload.turn_id,
+    run_id: initial[1].payload.run_id,
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: digest('b'),
+    assistant_message: {
+      message_id: `builder-message:${uuid(205)}`,
+      text: 'The draft is ready to review.',
+    },
+    candidate_result: {
+      draft_id: DRAFT_ID,
+      title: 'Timer draft',
+      summary: 'A draft ready to save.',
+      git_candidate_receipt: {
+        receipt_version: 'builder-git-candidate-receipt.v1',
+        repository_version: 'builder-git-project-repository.v1',
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        turn_id: initial[0].payload.turn_id,
+        task_id: initial[0].payload.task.task_id,
+        run_id: initial[1].payload.run_id,
+        request_id: `builder-git-request:${uuid(206)}`,
+        candidate_id: `builder-code-change-candidate:${'6'.repeat(64)}`,
+        candidate_digest: digest('b'),
+        resulting_tree_digest: digest('d'),
+        semantic_identity_digest: digest('e'),
+        verification_receipt_digest: digest('f'),
+        object_format: 'sha1',
+        commit_oid: '1'.repeat(40),
+        tree_oid: '2'.repeat(40),
+        parent_oid: null,
+        expected_base_oid: null,
+        code_authority: 'git_commit_candidate',
+        product_revision_admission: 'not_recorded',
+        replay: false,
+      },
+    },
+  }, initial[1]);
+  const terminal = conversationEvent(4, 'turn_completed', {
+    turn_id: initial[0].payload.turn_id,
+    run_id: initial[1].payload.run_id,
+    outcome: 'candidate_ready',
   }, completed);
   return [completed, terminal];
 }
@@ -339,7 +388,7 @@ function seedRevisionChainFixture(filePath, length) {
     const insertProject = raw.prepare(`INSERT OR IGNORE INTO projects (
       project_id, project_created_at_ms, current_revision_receipt_digest,
       current_revision_number, metadata_schema_version
-    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v3')`);
+    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v4')`);
     const insertConversation = raw.prepare(`INSERT OR IGNORE INTO conversations (
       project_id, conversation_id, created_at_ms
     ) VALUES (?, ?, ?)`);
@@ -482,6 +531,7 @@ test('creates a strict node:sqlite C0 metadata database with exact schema and PR
   );
   assert.ok(inspected.tableRows.every((row) => row.strict === 1));
   assert.ok(inspected.indexes.includes('runs_task_idx'));
+  assert.ok(inspected.indexes.includes('conversation_candidate_results_project_idx'));
 
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'electron', 'builder-product-metadata-database.cjs'),
@@ -1243,6 +1293,35 @@ test('appends a terminal batch with expected-head CAS and rejects stale or drift
   metadata.close();
 });
 
+test('indexes candidate terminal events by draft id and restores them after restart', (t) => {
+  const filePath = temporaryDatabase(t);
+  const initial = initialConversationEvents();
+  const terminal = candidateTerminalConversationEvents(initial);
+  let metadata = createBuilderProductMetadataDatabase(filePath);
+  metadata.append_conversation_events(appendConversationRequest(initial));
+  metadata.append_conversation_events(appendConversationRequest(terminal, prior(initial[1])));
+
+  const loaded = metadata.load_conversation_candidate_by_draft({ draft_id: DRAFT_ID });
+  assert.equal(loaded.operation, 'conversation_loaded');
+  assert.deepEqual(loaded.current_head, prior(terminal[1]));
+  assert.equal(loaded.snapshot.turns[0].outcome, 'candidate_ready');
+  assert.equal(loaded.snapshot.turns[0].runs[0].candidate_result.draft_id, DRAFT_ID);
+  assert.throws(
+    () => metadata.load_conversation_candidate_by_draft({
+      draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    }),
+    assertDatabaseError('builder_product_metadata_not_found'),
+  );
+  metadata.close();
+
+  metadata = createBuilderProductMetadataDatabase(filePath);
+  assert.deepEqual(
+    metadata.load_conversation_candidate_by_draft({ draft_id: DRAFT_ID }),
+    loaded,
+  );
+  metadata.close();
+});
+
 test('fails closed when canonical conversation event bytes are corrupted', (t) => {
   const filePath = temporaryDatabase(t);
   const initial = initialConversationEvents();
@@ -1348,6 +1427,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
     'close',
     'list_current_project_revisions',
     'load_conversation',
+    'load_conversation_candidate_by_draft',
     'load_current_project_revision',
     'load_project_identity',
     'load_project_revision',

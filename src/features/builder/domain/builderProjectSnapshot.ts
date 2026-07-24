@@ -1,7 +1,7 @@
 export const BUILDER_PROJECT_READ_RESULT_VERSION = 'builder-project-read-result.v1' as const;
 export const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v3' as const;
-export const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v3' as const;
-export const BUILDER_PRODUCT_METADATA_USER_VERSION = 3 as const;
+export const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v4' as const;
+export const BUILDER_PRODUCT_METADATA_USER_VERSION = 4 as const;
 export const BUILDER_GIT_PROJECT_REPOSITORY_VERSION = 'builder-git-project-repository.v1' as const;
 export const BUILDER_GIT_CANDIDATE_RECEIPT_VERSION = 'builder-git-candidate-receipt.v1' as const;
 export const BUILDER_GIT_CANDIDATE_VERIFICATION_RECEIPT_VERSION =

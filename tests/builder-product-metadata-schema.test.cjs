@@ -188,23 +188,26 @@ function assertSchemaError(fn) {
 }
 
 test('defines the exact C0 product metadata schema surface', () => {
-  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v3');
+  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v4');
   assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v3');
-  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 3);
+  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 4);
   assert.deepEqual(METADATA_TABLES, [
     'projects',
     'project_revisions',
     'conversations',
     'conversation_events',
+    'conversation_candidate_results',
     'tasks',
     'runs',
     'reviews',
     'idempotency_records',
   ]);
-  assert.equal(CREATE_SCHEMA_SQL.filter((sql) => /\bCREATE TABLE\b/u.test(sql)).length, 8);
+  assert.equal(CREATE_SCHEMA_SQL.filter((sql) => /\bCREATE TABLE\b/u.test(sql)).length, 9);
   assert.ok(CREATE_SCHEMA_SQL.every((sql) => !/\bCREATE TABLE\b/u.test(sql) || /\bSTRICT\b/u.test(sql)));
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /FOREIGN KEY \(project_id, run_id\) REFERENCES runs/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /UNIQUE \(project_id, commit_oid\)/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /CREATE TABLE conversation_candidate_results/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /PRIMARY KEY \(draft_id\)/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /current_event_sequence/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /command_digest/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /previous_event_digest/u);

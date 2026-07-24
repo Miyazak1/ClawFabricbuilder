@@ -228,16 +228,21 @@ function runtimeWithService(service, probes = {}) {
         return {
           PROJECT_REPOSITORY_DIRECTORY: 'builder-projects-v2',
           GIT_RUNTIME_DIRECTORY: 'builder-git-runtime-v2',
-          METADATA_DIRECTORY: 'builder-product-metadata-v3',
+          METADATA_DIRECTORY: 'builder-product-metadata-v4',
           METADATA_DATABASE: 'builder.sqlite',
           createBuilderProjectMainAuthority(options) {
             probes.projectMainAuthorityOptions = options;
             context.__projectMainAuthority = {
               closed: false,
-              git_authority: { persist_candidate_commit() {}, verify_candidate_receipt() {} },
+              git_authority: {
+                persist_candidate_commit() {},
+                verify_candidate_receipt() {},
+                read_verified_candidate() {},
+              },
               metadata_authority: {
                 append_conversation_events() {},
                 load_conversation() {},
+                load_conversation_candidate_by_draft() {},
                 load_project_identity() {},
                 record_project_revision_receipt() {},
               },
@@ -312,7 +317,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
-  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v3', 'builder.sqlite')), true);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v4', 'builder.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-config-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
   assert.equal(runtime.register(), true);

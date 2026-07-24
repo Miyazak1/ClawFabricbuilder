@@ -310,6 +310,7 @@ function sanitizeOptions(value) {
     metadataAuthority,
     appendEvents: ownMethod(metadataAuthority, 'append_conversation_events'),
     loadConversation: ownMethod(metadataAuthority, 'load_conversation'),
+    loadCandidateByDraft: ownMethod(metadataAuthority, 'load_conversation_candidate_by_draft'),
     loadProjectIdentity: ownMethod(metadataAuthority, 'load_project_identity'),
     createUuid,
     nowMs,
@@ -349,6 +350,37 @@ function createBuilderConversationMainService(rawOptions) {
         project_id: projectId,
         conversation_id: conversationId,
       }]);
+      return sanitizeAuthorityResult(result, projectId, conversationId);
+    } catch (error) {
+      if (ownCode(error) === 'builder_product_metadata_not_found') return null;
+      fail();
+    }
+  }
+
+  function loadCandidateConversation(draftId) {
+    try {
+      const result = Reflect.apply(options.loadCandidateByDraft, options.metadataAuthority, [{
+        draft_id: draftId,
+      }]);
+      exactObject(result, [
+        'result_version',
+        'operation',
+        'conversation',
+        'action_events',
+        'current_head',
+        'events',
+        'snapshot',
+        'metadata_evidence',
+      ]);
+      const conversation = exactObject(valueAt(result, 'conversation'), [
+        'project_id', 'conversation_id', 'created_at_ms',
+      ]);
+      const projectId = safeProjectId(valueAt(conversation, 'project_id'));
+      const conversationId = safePattern(
+        valueAt(conversation, 'conversation_id'),
+        CONVERSATION_ID_PATTERN,
+      );
+      if (conversationId.slice('builder-conversation:'.length) !== projectUuid(projectId)) fail();
       return sanitizeAuthorityResult(result, projectId, conversationId);
     } catch (error) {
       if (ownCode(error) === 'builder_product_metadata_not_found') return null;
@@ -792,6 +824,75 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     });
   }
 
+  function readCandidateDraft(rawRequest) {
+    exactObject(rawRequest, ['draft_id']);
+    const draftId = safePattern(valueAt(rawRequest, 'draft_id'), DRAFT_ID_PATTERN);
+    const state = loadCandidateConversation(draftId);
+    if (state === null) fail();
+    let match = null;
+    for (const turn of state.snapshot.turns) {
+      if (turn.mode !== 'work' || turn.task === null) continue;
+      for (const run of turn.runs) {
+        if (run.candidate_result?.draft_id !== draftId) continue;
+        if (match !== null) fail();
+        match = { turn, run };
+      }
+    }
+    if (match === null) fail();
+    const { turn, run } = match;
+    const candidateResult = run.candidate_result;
+    const receipt = candidateResult.git_candidate_receipt;
+    if (
+      turn.status !== 'completed'
+      || turn.outcome !== 'candidate_ready'
+      || run.status !== 'completed'
+      || run.terminal_status !== 'succeeded'
+      || run.result_kind !== 'candidate'
+      || run.result_digest !== receipt.candidate_digest
+      || receipt.project_id !== state.conversation.project_id
+      || receipt.conversation_id !== state.conversation.conversation_id
+      || receipt.turn_id !== turn.turn_id
+      || receipt.task_id !== turn.task.task_id
+      || receipt.run_id !== run.run_id
+    ) fail();
+    const completed = state.events.find((event) => (
+      event.event_type === 'run_completed'
+      && event.payload.turn_id === turn.turn_id
+      && event.payload.run_id === run.run_id
+      && event.payload.candidate_result?.draft_id === draftId
+    ));
+    const turnCompleted = completed === undefined
+      ? null
+      : state.events[completed.sequence];
+    if (
+      !completed
+      || !turnCompleted
+      || turnCompleted.event_type !== 'turn_completed'
+      || turnCompleted.payload.turn_id !== turn.turn_id
+      || turnCompleted.payload.run_id !== run.run_id
+      || turnCompleted.payload.outcome !== 'candidate_ready'
+    ) fail();
+    return freezeDeep({
+      result_version: 'builder-conversation-candidate-draft-read-result.v1',
+      draft_id: draftId,
+      project_id: state.conversation.project_id,
+      conversation_id: state.conversation.conversation_id,
+      turn_id: turn.turn_id,
+      task_id: turn.task.task_id,
+      run_id: run.run_id,
+      candidate_digest: receipt.candidate_digest,
+      base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
+      conversation_head: eventHead(turnCompleted),
+      candidate_result: {
+        draft_id: candidateResult.draft_id,
+        title: candidateResult.title,
+        summary: candidateResult.summary,
+        git_candidate_receipt: { ...receipt },
+      },
+      verification_admission: 'sqlite_replay_verified',
+    });
+  }
+
   function readStream(rawRequest) {
     try {
       exactObject(rawRequest, ['project_id']);
@@ -818,12 +919,14 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     complete_failure: completeFailure,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
+    read_candidate_draft: readCandidateDraft,
     read_stream: readStream,
     authority: Object.freeze({
       storage: 'sqlite_conversation_event_chain',
       provider_dispatch: false,
       renderer_exposure: false,
       restart_running_recovery: 'interrupted_without_provider_redispatch',
+      candidate_draft_restore: 'sqlite_index_replay_verified',
     }),
   });
 }

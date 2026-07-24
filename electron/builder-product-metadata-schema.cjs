@@ -12,8 +12,8 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 
-const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v3';
-const BUILDER_PRODUCT_METADATA_USER_VERSION = 3;
+const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v4';
+const BUILDER_PRODUCT_METADATA_USER_VERSION = 4;
 const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v3';
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -26,6 +26,7 @@ const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_PATTERN}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_PATTERN}$`, 'u');
 const REVIEW_ID_PATTERN = new RegExp(`^builder-review:${UUID_PATTERN}$`, 'u');
 const IDEMPOTENCY_KEY_PATTERN = /^builder-idempotency:[0-9a-f]{64}$/u;
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const GIT_SHA1_PATTERN = /^[0-9a-f]{40}$/u;
 const ACTOR_ID_PATTERN = new RegExp(`^(?:builder-user|builder-agent):${UUID_PATTERN}$`, 'u');
@@ -35,6 +36,7 @@ const METADATA_TABLES = Object.freeze([
   'project_revisions',
   'conversations',
   'conversation_events',
+  'conversation_candidate_results',
   'tasks',
   'runs',
   'reviews',
@@ -48,7 +50,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     current_revision_receipt_digest TEXT,
     current_revision_number INTEGER NOT NULL DEFAULT 0,
     metadata_schema_version TEXT NOT NULL,
-    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v3'),
+    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v4'),
     CHECK (project_created_at_ms >= 0),
     CHECK (current_revision_number >= 0),
     CHECK (
@@ -112,6 +114,23 @@ const CREATE_SCHEMA_SQL = Object.freeze([
         AND previous_event_id IS NOT NULL AND previous_event_digest IS NOT NULL)
     ),
     FOREIGN KEY (project_id, conversation_id, previous_event_sequence)
+      REFERENCES conversation_events(project_id, conversation_id, sequence)
+      ON DELETE RESTRICT ON UPDATE RESTRICT,
+    FOREIGN KEY (project_id, conversation_id) REFERENCES conversations(project_id, conversation_id)
+      ON DELETE RESTRICT ON UPDATE RESTRICT
+  ) STRICT`,
+  `CREATE TABLE conversation_candidate_results (
+    project_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    draft_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    candidate_digest TEXT NOT NULL,
+    PRIMARY KEY (draft_id),
+    UNIQUE (project_id, conversation_id, sequence),
+    CHECK (sequence BETWEEN 1 AND 1024),
+    CHECK (length(draft_id) = 89),
+    CHECK (length(candidate_digest) = 71),
+    FOREIGN KEY (project_id, conversation_id, sequence)
       REFERENCES conversation_events(project_id, conversation_id, sequence)
       ON DELETE RESTRICT ON UPDATE RESTRICT,
     FOREIGN KEY (project_id, conversation_id) REFERENCES conversations(project_id, conversation_id)
@@ -229,6 +248,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
       ON DELETE RESTRICT ON UPDATE RESTRICT
   ) STRICT`,
   'CREATE INDEX project_revisions_project_selected_idx ON project_revisions(project_id, selected_at_ms)',
+  'CREATE INDEX conversation_candidate_results_project_idx ON conversation_candidate_results(project_id, conversation_id)',
   'CREATE INDEX tasks_conversation_idx ON tasks(project_id, conversation_id)',
   'CREATE INDEX runs_task_idx ON runs(project_id, task_id)',
   'CREATE INDEX reviews_run_idx ON reviews(project_id, run_id)',
@@ -332,6 +352,7 @@ function safeReviewId(value) { return safePattern(value, REVIEW_ID_PATTERN, 91);
 function safeDigest(value) { return safePattern(value, DIGEST_PATTERN, 71); }
 function safeIdempotencyKey(value) { return safePattern(value, IDEMPOTENCY_KEY_PATTERN, 84); }
 function safeActorId(value) { return safePattern(value, ACTOR_ID_PATTERN, 96); }
+function safeDraftId(value) { return safePattern(value, DRAFT_ID_PATTERN, 89); }
 
 function safeGitOid(value, objectFormat, nullable = false) {
   if (nullable && value === null) return null;
@@ -727,6 +748,11 @@ function sanitizeListCurrentProjectRevisionsRequest(value) {
   return freezeDeep({ limit: safeLimit(valueAt(value, 'limit')) });
 }
 
+function sanitizeLoadConversationCandidateByDraftRequest(value) {
+  exactObject(value, ['draft_id']);
+  return freezeDeep({ draft_id: safeDraftId(valueAt(value, 'draft_id')) });
+}
+
 function sanitizeReceiptRow(value) {
   exactObject(value, [
     'project_id',
@@ -807,6 +833,8 @@ module.exports = Object.freeze({
   sanitizeLoadCurrentRequest: safeBoundary(sanitizeLoadCurrentRequest),
   sanitizeLoadProjectRevisionRequest: safeBoundary(sanitizeLoadProjectRevisionRequest),
   sanitizeListCurrentProjectRevisionsRequest: safeBoundary(sanitizeListCurrentProjectRevisionsRequest),
+  sanitizeLoadConversationCandidateByDraftRequest:
+    safeBoundary(sanitizeLoadConversationCandidateByDraftRequest),
   sanitizeReceiptRow: safeBoundary(sanitizeReceiptRow),
   sanitizeRecordProjectRevisionRequest: safeBoundary(sanitizeRecordProjectRevisionRequest),
 });

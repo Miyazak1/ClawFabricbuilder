@@ -119,6 +119,7 @@ function conversationService() {
     candidate: [],
     failure: [],
     cancel: [],
+    readCandidate: [],
   };
   const service = {
     calls,
@@ -224,6 +225,12 @@ function conversationService() {
         cancel_requested: true,
       };
     },
+    read_candidate_draft(input) {
+      calls.readCandidate.push(input);
+      const error = new Error('missing private draft');
+      error.code = 'builder_product_metadata_not_found';
+      throw error;
+    },
   };
   return service;
 }
@@ -266,6 +273,9 @@ function gitAuthority() {
     },
     async verify_candidate_receipt(receipt) {
       return createBuilderGitCandidateVerificationReceipt(receipt);
+    },
+    async read_verified_candidate() {
+      throw new Error('unexpected private candidate read');
     },
   };
 }
@@ -366,7 +376,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   assert.deepEqual(service.authority, {
     provider_config_snapshot_bound: true,
     project_read_authority_verified_source: true,
-    pending_draft_restart_restore: 'not_persisted',
+    pending_draft_restart_restore: 'git_sqlite_verified',
     conversation_event_admission: 'sqlite_recorded',
     credential_exposed_to_renderer: false,
     electron_registration: false,
@@ -533,11 +543,12 @@ test('uses read authority for existing projects and stores a main-only pending d
   assert.equal(result.source_tree.source_tree_digest, result.candidate.resulting_tree_digest);
   assert.equal(Object.hasOwn(result.candidate, 'operations'), false);
 
-  const pending = service.read_pending_draft({ draft_id: result.draft_id });
-  assert.equal(pending.result_version, 'builder-generation-pending-draft.v1');
+  const pending = await service.read_pending_draft({ draft_id: result.draft_id });
+  assert.equal(pending.result_version, 'builder-generation-pending-draft.v2');
   assert.equal(pending.draft_id, result.draft_id);
   assert.match(pending.git_request_id, /^builder-git-request:/u);
-  assert.equal(pending.candidate.candidate_digest, result.candidate.candidate_digest);
+  assert.equal(pending.candidate_proof.candidate_digest, result.candidate.candidate_digest);
+  assert.equal(pending.candidate_proof.resulting_tree_digest, result.candidate.resulting_tree_digest);
   assert.equal(pending.conversation_head.sequence, 4);
   assert.equal(pending.conversation_event_admission, 'sqlite_recorded');
   assert.equal(pending.restart_restore, 'not_persisted');
@@ -550,21 +561,83 @@ test('uses read authority for existing projects and stores a main-only pending d
     (error) => error.code === 'builder_generation_draft_conflict'
       && !`${error.message}:${error.stack}`.includes(result.draft_id),
   );
-  assert.equal(service.read_pending_draft({ draft_id: result.draft_id }).draft_id, result.draft_id);
+  assert.equal((await service.read_pending_draft({ draft_id: result.draft_id })).draft_id, result.draft_id);
   assert.deepEqual(service.release_pending_draft({
     draft_id: result.draft_id,
     candidate_digest: result.candidate.candidate_digest,
   }), {
-    result_version: 'builder-generation-pending-draft.v1',
+    result_version: 'builder-generation-pending-draft.v2',
     draft_id: result.draft_id,
     released: true,
     pending_draft_restart_restore: 'not_persisted',
     conversation_event_admission: 'sqlite_recorded',
   });
-  assert.throws(
-    () => service.read_pending_draft({ draft_id: result.draft_id }),
+  await assert.rejects(
+    service.read_pending_draft({ draft_id: result.draft_id }),
     (error) => error.code === 'builder_generation_service_unavailable',
   );
+});
+
+test('restores a pending draft from conversation proof and verified Git source after memory loss', async () => {
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle, gitAuthority: git }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+  const result = await service.generate(request());
+  const recorded = lifecycle.calls.candidate[0].candidate_result;
+
+  const restoredLifecycle = conversationService();
+  restoredLifecycle.read_candidate_draft = (input) => {
+    restoredLifecycle.calls.readCandidate.push(input);
+    return {
+      result_version: 'builder-conversation-candidate-draft-read-result.v1',
+      draft_id: result.draft_id,
+      project_id: recorded.git_candidate_receipt.project_id,
+      conversation_id: recorded.git_candidate_receipt.conversation_id,
+      turn_id: recorded.git_candidate_receipt.turn_id,
+      task_id: recorded.git_candidate_receipt.task_id,
+      run_id: recorded.git_candidate_receipt.run_id,
+      candidate_digest: recorded.git_candidate_receipt.candidate_digest,
+      base_revision: null,
+      conversation_head: {
+        sequence: 4,
+        event_id: `builder-conversation-event:${'a'.repeat(64)}`,
+        event_digest: `sha256:${'b'.repeat(64)}`,
+      },
+      candidate_result: recorded,
+      verification_admission: 'sqlite_replay_verified',
+    };
+  };
+  const restoredGit = gitAuthority();
+  restoredGit.read_verified_candidate = async (receipt) => ({
+    result_version: 'builder-git-verified-candidate-read-result.v1',
+    candidate_receipt: receipt,
+    verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
+    source_tree: result.source_tree,
+    code_authority: 'git_commit_tree',
+    read_admission: 'verified',
+  });
+  const restoredService = createBuilderGenerationMainService({
+    ...repositories({ conversationService: restoredLifecycle, gitAuthority: restoredGit }),
+    transport: async () => {
+      throw new Error('provider must not be called for pending restore');
+    },
+  });
+
+  const pending = await restoredService.read_pending_draft({ draft_id: result.draft_id });
+  assert.equal(pending.result_version, 'builder-generation-pending-draft.v2');
+  assert.equal(pending.restart_restore, 'git_sqlite_verified');
+  assert.equal(pending.draft_id, result.draft_id);
+  assert.equal(pending.git_request_id, recorded.git_candidate_receipt.request_id);
+  assert.equal(pending.candidate_proof.candidate_digest, result.candidate.candidate_digest);
+  assert.equal(pending.candidate_proof.request_digest, null);
+  assert.deepEqual(restoredLifecycle.calls.readCandidate, [{ draft_id: result.draft_id }]);
+  assert.doesNotMatch(JSON.stringify(pending), /source_tree|operations|provider|credential/iu);
 });
 
 test('generates through persisted provider authority without exposing its credential', async (t) => {

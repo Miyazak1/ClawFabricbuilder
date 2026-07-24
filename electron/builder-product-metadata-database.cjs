@@ -37,6 +37,7 @@ const {
   sanitizeLoadCurrentRequest,
   sanitizeLoadProjectRevisionRequest,
   sanitizeListCurrentProjectRevisionsRequest,
+  sanitizeLoadConversationCandidateByDraftRequest,
   sanitizeReceiptRow,
   sanitizeRecordProjectRevisionRequest,
 } = require('./builder-product-metadata-schema.cjs');
@@ -383,6 +384,26 @@ function eventFromRow(row, projectId, conversationId) {
   return event;
 }
 
+function candidateResultFromEvent(event) {
+  const descriptor = Object.getOwnPropertyDescriptor(event.payload, 'candidate_result');
+  if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+  return descriptor.value;
+}
+
+function indexConversationCandidate(db, event) {
+  const candidateResult = candidateResultFromEvent(event);
+  if (candidateResult === null) return;
+  run(db, `INSERT INTO conversation_candidate_results (
+    project_id, conversation_id, draft_id, sequence, candidate_digest
+  ) VALUES (?, ?, ?, ?, ?)`, [
+    event.project_id,
+    event.conversation_id,
+    candidateResult.draft_id,
+    event.sequence,
+    candidateResult.git_candidate_receipt.candidate_digest,
+  ]);
+}
+
 function loadConversationState(db, projectId, conversationId, missingCode) {
   const conversation = loadConversationRow(db, projectId, conversationId, missingCode);
   const rows = all(
@@ -547,6 +568,7 @@ function appendConversationEvents(db, rawRequest) {
         recordJson,
         request.recorded_at_ms,
       ]);
+      indexConversationCandidate(db, event);
     }
     const nextHead = eventHead(request.events.at(-1));
     const updated = run(
@@ -598,6 +620,46 @@ function loadConversation(db, rawRequest) {
       request.conversation_id,
       'builder_product_metadata_not_found',
     );
+    const loaded = conversationResult(db, 'conversation_loaded', state, []);
+    db.exec('COMMIT');
+    return loaded;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    throw error;
+  }
+}
+
+function loadConversationCandidateByDraft(db, rawRequest) {
+  const request = sanitizeLoadConversationCandidateByDraftRequest(rawRequest);
+  db.exec('BEGIN');
+  try {
+    const row = one(
+      db,
+      `SELECT project_id, conversation_id, draft_id, sequence, candidate_digest
+        FROM conversation_candidate_results WHERE draft_id = ?`,
+      [request.draft_id],
+    );
+    if (!row) fail('builder_product_metadata_not_found');
+    if (
+      row.draft_id !== request.draft_id
+      || typeof row.project_id !== 'string'
+      || typeof row.conversation_id !== 'string'
+      || !Number.isSafeInteger(row.sequence)
+      || typeof row.candidate_digest !== 'string'
+    ) fail('builder_product_metadata_integrity_failed');
+    const state = loadConversationState(
+      db,
+      row.project_id,
+      row.conversation_id,
+      'builder_product_metadata_integrity_failed',
+    );
+    const event = state.events[row.sequence - 1];
+    const candidateResult = event === undefined ? null : candidateResultFromEvent(event);
+    if (
+      candidateResult === null
+      || candidateResult.draft_id !== request.draft_id
+      || candidateResult.git_candidate_receipt.candidate_digest !== row.candidate_digest
+    ) fail('builder_product_metadata_integrity_failed');
     const loaded = conversationResult(db, 'conversation_loaded', state, []);
     db.exec('COMMIT');
     return loaded;
@@ -1209,6 +1271,12 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     load_conversation(rawRequest) {
       try { return loadConversation(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    load_conversation_candidate_by_draft(rawRequest) {
+      try { return loadConversationCandidateByDraft(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

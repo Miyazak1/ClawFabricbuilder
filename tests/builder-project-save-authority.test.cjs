@@ -50,6 +50,7 @@ const candidateActionStart = new WeakMap();
 const candidateFullEvents = new WeakMap();
 const candidateActionEvents = new WeakMap();
 const candidateGitReceipts = new WeakMap();
+const pendingProofGitReceipts = new WeakMap();
 
 function canonicalJson(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') {
@@ -211,17 +212,28 @@ function pending(candidateValue, {
     events.slice(candidateActionStart.get(candidateValue)),
   );
   candidateGitReceipts.set(candidateValue, receipt);
+  const baseRevision = candidateValue.run_binding.base_revision;
+  const proof = {
+    proof_version: 'builder-generation-pending-candidate-proof.v1',
+    project_id: candidateValue.project_id,
+    conversation_id: candidateValue.conversation_id,
+    turn_id: candidateValue.turn_id,
+    task_id: candidateValue.task_id,
+    run_id: candidateValue.run_id,
+    request_digest: candidateValue.request_digest,
+    git_request_id: receipt.request_id,
+    candidate_id: candidateValue.candidate_id,
+    candidate_digest: candidateValue.candidate_digest,
+    resulting_tree_digest: candidateValue.resulting_tree_digest,
+    expected_base_oid: receipt.expected_base_oid,
+    base_revision: baseRevision === null ? null : { ...baseRevision },
+  };
+  pendingProofGitReceipts.set(proof, receipt);
   return {
-    result_version: 'builder-generation-pending-draft.v1',
+    result_version: 'builder-generation-pending-draft.v2',
     draft_id: draftId,
     restart_restore: 'not_persisted',
     conversation_event_admission: 'sqlite_recorded',
-    request: {
-      version: 'builder-generation-request.v2',
-      instruction: 'Save this draft.',
-      existing_project_id: candidateValue.base_revision_evidence === null ? null : PROJECT_ID,
-      request_digest: ZERO_DIGEST,
-    },
     git_request_id: receipt.request_id,
     title,
     summary,
@@ -230,14 +242,14 @@ function pending(candidateValue, {
       event_id: candidateFullEvents.get(candidateValue).at(-1).event_id,
       event_digest: candidateFullEvents.get(candidateValue).at(-1).event_digest,
     },
-    candidate: candidateValue,
+    candidate_proof: proof,
   };
 }
 
 function conversationServiceFor(draft) {
   return {
     verify_candidate(input) {
-      const candidateValue = draft.candidate;
+      const candidateValue = draft.candidate_proof;
       assert.deepEqual(input, {
         project_id: candidateValue.project_id,
         conversation_id: candidateValue.conversation_id,
@@ -254,7 +266,7 @@ function conversationServiceFor(draft) {
           draft_id: draft.draft_id,
           title: draft.title,
           summary: draft.summary,
-          git_candidate_receipt: candidateGitReceipts.get(candidateValue),
+          git_candidate_receipt: pendingProofGitReceipts.get(candidateValue),
         },
         verification_admission: 'sqlite_replay_verified',
       };
@@ -320,7 +332,7 @@ function draftsStore(initialPending) {
     release_pending_draft(body) {
       released.push(body);
       const value = drafts.get(body.draft_id);
-      if (!value || value.candidate.candidate_digest !== body.candidate_digest) {
+      if (!value || value.candidate_proof.candidate_digest !== body.candidate_digest) {
         const error = new Error('private release failure');
         error.code = 'builder_generation_draft_conflict';
         throw error;

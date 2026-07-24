@@ -161,6 +161,44 @@ test('restores the same renderer-safe task stream after a real database restart'
   }
 });
 
+test('restores a main-only candidate draft proof after a real database restart', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    const candidate = candidateResult(context);
+    item.service.complete_candidate({
+      context,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const before = item.service.read_candidate_draft({ draft_id: candidate.draft_id });
+    assert.equal(before.result_version, 'builder-conversation-candidate-draft-read-result.v1');
+    assert.equal(before.draft_id, candidate.draft_id);
+    assert.equal(before.conversation_head.sequence, 4);
+    assert.equal(before.base_revision, null);
+    assert.equal(before.candidate_result.git_candidate_receipt.candidate_digest, CANDIDATE_DIGEST);
+    assert.doesNotMatch(JSON.stringify(before), /source_tree|provider|credential|running|live/iu);
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(500),
+      nowMs: () => 5_000,
+    });
+    assert.deepEqual(
+      restartedService.read_candidate_draft({ draft_id: candidate.draft_id }),
+      before,
+    );
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    fs.rmSync(item.root, { recursive: true, force: true });
+  }
+});
+
 test('returns a legal empty stream when the project has no conversation', () => {
   const item = fixture();
   try {

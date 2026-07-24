@@ -40,10 +40,11 @@ test('owns Builder project Git, SQLite metadata, and read authority facades', (t
   ]);
   assert.deepEqual(Object.keys(authority.metadata_authority).sort(), [
     'append_conversation_events',
+    'load_conversation_candidate_by_draft',
     'load_conversation',
     'load_project_identity',
     'record_project_revision_receipt',
-  ]);
+  ].sort());
   assert.deepEqual(Object.keys(authority.project_read_authority).sort(), [
     'list_current',
     'load_current',

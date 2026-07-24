@@ -246,6 +246,8 @@ Included:
 - one active foreground Task/Run at a time;
 - cancel, deliberate retry, candidate preview, reject, and explicit Save;
 - restart restore for conversation, terminal runs, and current candidate state;
+- main-only candidate proof restore by draft id from SQLite event indexes and
+  Git-verified candidate source, without renderer-supplied receipt or source;
 - fixed provider errors and no credential readback.
 
 Excluded:
