@@ -491,6 +491,17 @@ async function sanitizeSourceTree(value: unknown): Promise<BuilderProjectSourceT
   });
 }
 
+export async function sanitizeBuilderProjectSourceTree(
+  value: unknown,
+): Promise<BuilderProjectSourceTree> {
+  try {
+    return await sanitizeSourceTree(value);
+  } catch (error) {
+    if (error instanceof BuilderProjectSnapshotError) throw error;
+    throw invalid();
+  }
+}
+
 async function sanitizeProductReceipt(value: unknown): Promise<BuilderProductRevisionReceipt> {
   const source = exactRecord(value, PRODUCT_RECEIPT_KEYS);
   const receipt = deepFreeze({

@@ -254,7 +254,14 @@ function projectDirectory(projectsRoot, projectId) {
 
 function gitControlIndexPath(projectRoot, semanticHash) {
   const operationId = nodeCrypto.randomBytes(16).toString('hex');
-  return path.join(projectRoot, '.git', 'clawfabric', 'indexes', `${semanticHash}-${operationId}.index`);
+  const tracePrefix = sha256Hex(semanticHash).slice(0, 16);
+  return path.join(
+    projectRoot,
+    '.git',
+    'clawfabric',
+    'indexes',
+    `i-${tracePrefix}-${operationId}.index`,
+  );
 }
 
 function safeRelativeProjectPath(value) {

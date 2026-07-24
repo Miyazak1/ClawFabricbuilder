@@ -1,660 +1,235 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  digestBuilderProjectProposal,
-  type BuilderProjectRevision,
-} from '../domain/builderProject';
-import { isTrustedBuilderStaticPreviewProjection } from '../preview/builderStaticPreview';
+  createBuilderProjectController,
+  isTrustedBuilderProjectControllerSnapshot,
+} from './builderProjectController';
+import type {
+  BuilderCodeGeneratorPort,
+  BuilderProjectWorkspacePort,
+} from './builderPorts';
 import {
-  BuilderDesktopCodeGeneratorPortError,
-  type BuilderGenerationDiagnosticCode,
-} from '../infrastructure/builderDesktopCodeGeneratorPort';
-import {
-  prepareBuilderGeneration,
-  projectBuilderGeneration,
-  type BuilderGenerationRequest,
-} from './builderGeneration';
-import type { BuilderProjectRepositoryPort } from './builderPorts';
-import { createBuilderProjectController } from './builderProjectController';
+  DRAFT_ID,
+  PROJECT_ID,
+  createGenerationDraft,
+  createReadWire,
+  createSaveResult,
+} from '../../../test/builderV2Fixtures';
 
-const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
-
-function proposal(title = 'Tiny timer') {
-  return {
-    kind: 'builder_code_project' as const,
-    title,
-    summary: 'A small focus timer.',
-    files: {
-      'index.html': `<main>${title}</main>`,
-      'styles.css': 'main { color: red; }',
-      'app.js': 'const timer = 1;',
-    },
-  };
-}
-
-async function resultFor(request: BuilderGenerationRequest, title?: string) {
-  const generated = proposal(title);
-  const proposalDigest = await digestBuilderProjectProposal(generated);
-  return {
-    version: 'builder-generation-result.v1',
-    request_id: request.request_digest,
-    proposal: generated,
-    evidence: {
-      authority: 'builder_code_project_generator',
-      prompt_version: 'builder-code-project.v2',
-      request_version: request.version,
-      result_version: 'builder-generation-result.v1',
-      request_digest: request.request_digest,
-      proposal_digest: proposalDigest,
-      project_id: request.project_id,
-      target_revision: request.target_revision,
-      parent_revision: request.parent_revision === null ? null : { ...request.parent_revision },
-    },
-    admissions: { execution: 'not_evaluated', preview_script: 'not_authorized' },
-  };
-}
-
-async function headFor(record: BuilderProjectRevision) {
-  const body = {
-    schema_version: 1,
-    record_kind: 'builder_project_head',
-    project_id: record.project_id,
-    revision: record.revision,
-    revision_digest: record.revision_digest,
-  };
-  const canonical = JSON.stringify(body, Object.keys(body).sort());
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
-  return {
-    ...body,
-    head_digest: `sha256:${Array.from(
-      new Uint8Array(digest),
-      (byte) => byte.toString(16).padStart(2, '0'),
-    ).join('')}`,
-  };
-}
-
-function persistence(operation: 'committed' | 'replayed' | 'current_loaded') {
-  const committed = operation === 'committed';
-  return {
-    evidence_version: 'builder-project-repository-result.v1',
-    operation,
-    authority_scope: 'single_main_process_serialized_expected_head',
-    cross_process_cas: 'not_proven',
-    sudden_power_loss_durability: 'not_proven',
-    revision_file_fsync: committed ? 'proven' : 'not_performed',
-    immutable_revision_publish: committed ? 'no_clobber_completed' : 'not_performed',
-    revision_parent_directory_fsync: committed ? 'proven' : 'not_performed',
-    head_file_fsync: committed ? 'proven' : 'not_performed',
-    head_publish: committed ? 'same_directory_replace_reopened' : 'not_performed',
-    head_parent_directory_fsync: committed ? 'proven' : 'not_performed',
-    reopened_hash_verified: true,
-  };
-}
-
-async function commitReceipt(record: BuilderProjectRevision, replay = false) {
-  return {
-    result_version: 'builder-project-repository-result.v1',
-    record,
-    head: await headFor(record),
-    idempotent_replay: replay,
-    persistence_evidence: persistence(replay ? 'replayed' : 'committed'),
-  };
-}
-
-async function currentReceipt(record: BuilderProjectRevision) {
-  return {
-    result_version: 'builder-project-repository-result.v1',
-    record,
-    head: await headFor(record),
-    restart_restore: true,
-    persistence_evidence: persistence('current_loaded'),
-  };
-}
-
-function repositoryHarness(order: string[]) {
-  let current: BuilderProjectRevision | null = null;
-  let failNextCommit = false;
-  let loadOverride: BuilderProjectRevision | null | undefined;
-  const repository: BuilderProjectRepositoryPort = {
-    async commit(request) {
-      order.push(`commit:${request.revision.revision}`);
-      if (failNextCommit) {
-        failNextCommit = false;
-        throw new Error('private commit detail');
+function setup(options: {
+  generate?: BuilderCodeGeneratorPort['generate'];
+  open?: BuilderProjectWorkspacePort['open'];
+  saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
+  loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
+} = {}) {
+  const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
+  const saveDraft = vi.fn(options.saveDraft ?? (async () => {
+    throw new Error('save not configured');
+  }));
+  const loadCurrent = vi.fn(options.loadCurrent ?? (async () => createReadWire()));
+  const open = vi.fn(options.open ?? (async (request) => (
+    request.project_id === null
+      ? {
+        result_version: 'builder-project-selection-result.v1',
+        operation: 'new_selected',
+        project_id: null,
       }
-      current = request.revision;
-      return commitReceipt(request.revision);
-    },
-    async loadCurrent() {
-      order.push('loadCurrent');
-      const selected = loadOverride === undefined ? current : loadOverride;
-      if (selected === null) throw new Error('private load detail');
-      return currentReceipt(selected);
-    },
+      : createReadWire()
+  )));
+  const workspace: BuilderProjectWorkspacePort = {
+    open,
+    saveDraft,
+    loadCurrent,
+    listCurrent: async () => ({ projects: [] }),
   };
-  return {
-    repository,
-    current: () => current,
-    setCurrent: (value: BuilderProjectRevision | null) => { current = value; },
-    setLoadOverride: (value: BuilderProjectRevision | null | undefined) => {
-      loadOverride = value;
-    },
-    failCommit: () => { failNextCommit = true; },
-  };
+  const controller = createBuilderProjectController({
+    generator: { generate },
+    workspace,
+  });
+  return { controller, generate, loadCurrent, open, saveDraft };
 }
 
-function generatorHarness(order: string[]) {
-  const generate = vi.fn(async (request: BuilderGenerationRequest) => {
-    order.push(`generate:${request.target_revision}`);
-    return resultFor(request, request.target_revision === 1 ? 'First draft' : 'Updated draft');
-  });
-  return { generate };
-}
+describe('Builder project controller v2', () => {
+  it('opens a Git/SQLite verified project and previews its source tree', async () => {
+    const { controller, loadCurrent, open } = setup();
+    const result = await controller.open(PROJECT_ID);
 
-describe('Builder project controller', () => {
-  it('publishes a project only after generation, commit evidence, reopen, and preview', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
+    expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(loadCurrent).not.toHaveBeenCalled();
+    expect(result.status).toBe('ready');
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+    expect(result.savedProject?.authority_evidence).toEqual({
+      product_authority: 'sqlite_product_revision_receipt',
+      code_authority: 'git_commit_tree',
+      source_read_admission: 'verified',
+      current_selection: 'sqlite_current_project_revision',
     });
-    const statuses: string[] = [];
-    controller.subscribe(() => statuses.push(controller.getSnapshot().status));
-
-    const final = await controller.generate('Make a timer');
-
-    expect(order).toEqual(['generate:1', 'commit:1', 'loadCurrent']);
-    expect(statuses).toEqual(['generating', 'committing', 'reopening', 'ready']);
-    expect(final.status).toBe('ready');
-    expect(final.savedRevision?.revision).toBe(1);
-    expect(final.savedRevision).toEqual(repository.current());
-    expect(isTrustedBuilderStaticPreviewProjection(final.preview)).toBe(true);
-    expect(final.preview?.src_doc).not.toContain('const timer');
+    expect(result.preview?.version).toBe('builder-source-tree-static-preview.v2');
+    expect(isTrustedBuilderProjectControllerSnapshot(result)).toBe(true);
   });
 
-  it('opens a restart-restored project and advances from its exact parent', async () => {
-    const firstOrder: string[] = [];
-    const firstRepository = repositoryHarness(firstOrder);
-    const first = createBuilderProjectController({
-      generator: generatorHarness(firstOrder),
-      repository: firstRepository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    const revisionOne = (await first.generate('Make a timer')).savedRevision as BuilderProjectRevision;
+  it('generates an unsaved draft without calling save or durable reads', async () => {
+    const { controller, generate, loadCurrent, saveDraft } = setup();
+    const result = await controller.generate('Make a timer.');
 
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    repository.setCurrent(revisionOne);
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({ generator, repository: repository.repository });
-    expect((await controller.open(PROJECT_ID)).savedRevision?.revision).toBe(1);
-    const updated = await controller.generate('Make the timer calmer');
-
-    expect(updated.status).toBe('ready');
-    expect(order).toEqual(['loadCurrent', 'generate:2', 'commit:2', 'loadCurrent']);
-    expect(updated.savedRevision?.parent_revision).toEqual({
-      revision: 1,
-      revision_digest: revisionOne.revision_digest,
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate.mock.calls[0][0]).toMatchObject({
+      version: 'builder-generation-request.v2',
+      instruction: 'Make a timer.',
+      existing_project_id: null,
     });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(loadCurrent).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
+    expect(result.savedProject).toBeNull();
+    expect(result.draft?.admissions.save).toBe('not_performed');
   });
 
-  it('reconciles an uncertain commit from current authority without regenerating', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: {
-        ...repository.repository,
-        async commit(request) {
-          order.push(`commit:${request.revision.revision}`);
-          repository.setCurrent(request.revision);
-          throw new Error('response lost');
-        },
+  it('updates from the selected saved project but still does not auto-save', async () => {
+    const { controller, generate, saveDraft } = setup();
+    await controller.open(PROJECT_ID);
+    const result = await controller.generate('Add a pause button.');
+
+    expect(generate.mock.calls[0][0]).toMatchObject({
+      instruction: 'Add a pause button.',
+      existing_project_id: PROJECT_ID,
+    });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+  });
+
+  it('saves by draft_id only and accepts the verified reopen as current', async () => {
+    const readWire = await createReadWire();
+    let draft = await createGenerationDraft();
+    const { controller, saveDraft, loadCurrent } = setup({
+      generate: async (request) => {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
       },
-      createProjectId: () => PROJECT_ID,
+      saveDraft: async (request) => {
+        expect(request).toEqual({ draft_id: DRAFT_ID });
+        return createSaveResult(draft, readWire);
+      },
+      loadCurrent: async () => readWire,
     });
+    await controller.generate('Make a timer.');
+    const result = await controller.save();
 
-    const final = await controller.generate('Make a timer');
-    expect(final.status).toBe('ready');
-    expect(final.savedRevision?.revision).toBe(1);
-    expect(generator.generate).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(['generate:1', 'commit:1', 'loadCurrent']);
+    expect(saveDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(loadCurrent).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(result.status).toBe('ready');
+    expect(result.draft).toBeNull();
+    expect(result.savedProject?.target.revision_number).toBe(1);
   });
 
-  it('keeps an unverified candidate private and retries the same save without regenerating', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    repository.failCommit();
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
+  it('keeps an unsaved draft visible when the Save outcome cannot be verified', async () => {
+    const { controller } = setup({
+      saveDraft: async () => {
+        throw new Error('private disk detail');
+      },
+      open: async (request) => {
+        if (request.project_id !== null) throw new Error('not found');
+        return {
+          result_version: 'builder-project-selection-result.v1',
+          operation: 'new_selected',
+          project_id: null,
+        };
+      },
     });
+    await controller.generate('Make a timer.');
+    const result = await controller.save();
 
-    const uncertain = await controller.generate('Make a timer');
-    expect(uncertain.status).toBe('save_unverified');
-    expect(uncertain.savedRevision).toBeNull();
-    expect(uncertain.preview).toBeNull();
-
-    expect(await controller.generate('Do not start a second attempt')).toBe(uncertain);
-    expect(generator.generate).toHaveBeenCalledTimes(1);
-
-    const recovered = await controller.retrySave();
-    expect(recovered.status).toBe('ready');
-    expect(recovered.savedRevision?.revision).toBe(1);
-    expect(generator.generate).toHaveBeenCalledTimes(1);
-    expect(order).toEqual([
-      'generate:1',
-      'commit:1',
-      'loadCurrent',
-      'commit:1',
-      'loadCurrent',
-    ]);
+    expect(result.status).toBe('save_unknown');
+    expect(result.error).toBe('save_unknown');
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
   });
 
-  it('retries the same r2 candidate when an unknown commit leaves the exact parent current', async () => {
-    const baseOrder: string[] = [];
-    const baseRepository = repositoryHarness(baseOrder);
-    const base = createBuilderProjectController({
-      generator: generatorHarness(baseOrder),
-      repository: baseRepository.repository,
-      createProjectId: () => PROJECT_ID,
+  it('recovers a lost Save response by reading the matching Git/SQLite current revision', async () => {
+    const readWire = await createReadWire();
+    let draft = await createGenerationDraft();
+    const { controller, saveDraft, loadCurrent, open } = setup({
+      generate: async (request) => {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
+      saveDraft: async () => {
+        throw new Error('response lost after commit');
+      },
+      open: async (request) => (
+        request.project_id === null
+          ? {
+            result_version: 'builder-project-selection-result.v1',
+            operation: 'new_selected',
+            project_id: null,
+          }
+          : readWire
+      ),
     });
-    const revisionOne = (await base.generate('Make a timer')).savedRevision as BuilderProjectRevision;
-
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    repository.setCurrent(revisionOne);
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: repository.repository,
-    });
-    await controller.open(PROJECT_ID);
-    repository.failCommit();
-
-    const uncertain = await controller.generate('Make it calmer');
-    expect(uncertain).toMatchObject({
-      status: 'save_unverified',
-      savedRevision: revisionOne,
-      error: 'save_unverified',
-    });
-    expect(uncertain.savedRevision?.revision).toBe(1);
-    expect(generator.generate).toHaveBeenCalledTimes(1);
-
-    const recovered = await controller.retrySave();
-    expect(recovered.status).toBe('ready');
-    expect(recovered.savedRevision?.revision).toBe(2);
-    expect(generator.generate).toHaveBeenCalledTimes(1);
-    expect(order).toEqual([
-      'loadCurrent',
-      'generate:2',
-      'commit:2',
-      'loadCurrent',
-      'commit:2',
-      'loadCurrent',
-    ]);
-  });
-
-  it('fails closed on a competing current head and never exposes the candidate', async () => {
-    const baseOrder: string[] = [];
-    const baseRepository = repositoryHarness(baseOrder);
-    const base = createBuilderProjectController({
-      generator: generatorHarness(baseOrder),
-      repository: baseRepository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    const revisionOne = (await base.generate('Make a timer')).savedRevision as BuilderProjectRevision;
-
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    repository.setCurrent(revisionOne);
-    const controller = createBuilderProjectController({
-      generator: generatorHarness(order),
-      repository: repository.repository,
-    });
-    await controller.open(PROJECT_ID);
-    repository.failCommit();
-    const competingRequest = await prepareBuilderGeneration({
-      idea: 'Make a competing version',
-      currentProject: revisionOne,
-    });
-    const competing = await projectBuilderGeneration({
-      request: competingRequest,
-      result: await resultFor(competingRequest, 'Competing version'),
-      currentProject: revisionOne,
-    });
-    repository.setLoadOverride(competing);
-
-    const result = await controller.generate('Make it blue');
-    expect(result.status).toBe('conflict');
-    expect(result.savedRevision).toEqual(revisionOne);
-    expect(result.error).toBe('conflict');
-  });
-
-  it('classifies a competing current head after a verified commit as conflict', async () => {
-    const baseOrder: string[] = [];
-    const baseRepository = repositoryHarness(baseOrder);
-    const base = createBuilderProjectController({
-      generator: generatorHarness(baseOrder),
-      repository: baseRepository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    const revisionOne = (await base.generate('Make a timer')).savedRevision as BuilderProjectRevision;
-    const competingRequest = await prepareBuilderGeneration({
-      idea: 'Make a competing version',
-      currentProject: revisionOne,
-    });
-    const competing = await projectBuilderGeneration({
-      request: competingRequest,
-      result: await resultFor(competingRequest, 'Competing version'),
-      currentProject: revisionOne,
-    });
-
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    repository.setCurrent(revisionOne);
-    const controller = createBuilderProjectController({
-      generator: generatorHarness(order),
-      repository: repository.repository,
-    });
-    await controller.open(PROJECT_ID);
-    repository.setLoadOverride(competing);
-
-    const result = await controller.generate('Make it blue');
-    expect(result).toMatchObject({ status: 'conflict', error: 'conflict' });
-    expect(result.savedRevision).toEqual(revisionOne);
-    expect(await controller.retrySave()).toBe(result);
-  });
-
-  it('classifies an exact parent head after a verified commit as conflict', async () => {
-    const baseOrder: string[] = [];
-    const baseRepository = repositoryHarness(baseOrder);
-    const base = createBuilderProjectController({
-      generator: generatorHarness(baseOrder),
-      repository: baseRepository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    const revisionOne = (await base.generate('Make a timer')).savedRevision as BuilderProjectRevision;
-
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    repository.setCurrent(revisionOne);
-    const controller = createBuilderProjectController({
-      generator: generatorHarness(order),
-      repository: repository.repository,
-    });
-    await controller.open(PROJECT_ID);
-    repository.setLoadOverride(revisionOne);
-
-    const result = await controller.generate('Make it blue');
-    expect(result).toMatchObject({ status: 'conflict', error: 'conflict' });
-    expect(result.savedRevision).toEqual(revisionOne);
-    expect(await controller.retrySave()).toBe(result);
-  });
-
-  it('keeps a verified saved revision when preview construction fails', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const controller = createBuilderProjectController({
-      generator: generatorHarness(order),
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-      createPreview: vi.fn().mockRejectedValue(new Error('private preview detail')),
-    });
-
-    const result = await controller.generate('Make a timer');
+    await controller.generate('Make a timer.');
+    const result = await controller.save();
+    expect(saveDraft).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(loadCurrent).not.toHaveBeenCalled();
     expect(result).toMatchObject({
-      status: 'preview_unavailable',
-      error: 'preview_unavailable',
-      preview: null,
+      status: 'ready',
+      draft: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
     });
-    expect(result.savedRevision).toEqual(repository.current());
-    expect(await controller.retrySave()).toBe(result);
-    expect(order).toEqual(['generate:1', 'commit:1', 'loadCurrent']);
-    expect(JSON.stringify(result)).not.toContain('private preview detail');
   });
 
-  it('rejects an injected preview that was not created by the trusted projection authority', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const controller = createBuilderProjectController({
-      generator: generatorHarness(order),
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-      createPreview: vi.fn().mockResolvedValue({
-        version: 'builder-static-preview.v1',
-        preview_script_admission: 'not_authorized',
+  it('fails closed when Save receipt and reopened Git/SQLite facts disagree', async () => {
+    const readWire = await createReadWire();
+    let draftWire = await createGenerationDraft();
+    const { controller } = setup({
+      generate: async (request) => {
+        draftWire = await createGenerationDraft(request, readWire.source_tree);
+        return draftWire;
+      },
+      saveDraft: async () => createSaveResult(draftWire, readWire),
+      loadCurrent: async () => ({
+        ...readWire,
+        product_revision_receipt: {
+          ...readWire.product_revision_receipt,
+          candidate_id: `builder-code-change-candidate:${'9'.repeat(64)}`,
+        },
       }),
     });
-
-    const result = await controller.generate('Make a timer');
-    expect(result).toMatchObject({
-      status: 'preview_unavailable',
-      error: 'preview_unavailable',
-      preview: null,
-    });
-    expect(result.savedRevision).toEqual(repository.current());
+    await controller.generate('Make a timer.');
+    const result = await controller.save();
+    expect(result.status).toBe('save_unknown');
+    expect(result.draft).toEqual(draftWire);
   });
 
-  it('preserves the last verified snapshot on generation failure', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const workingGenerator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator: workingGenerator,
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    const ready = await controller.generate('Make a timer');
-    workingGenerator.generate.mockRejectedValueOnce(new Error('private provider detail'));
-
-    const failed = await controller.generate('Break privately');
-    expect(failed.status).toBe('generation_failed');
-    expect(failed.error).toBe('builder_generation_failed');
-    expect(failed.savedRevision).toBe(ready.savedRevision);
-    expect(failed.preview).toBe(ready.preview);
-    expect(JSON.stringify(failed)).not.toContain('private provider detail');
-  });
-
-  it.each([
-    'builder_generation_provider_unavailable',
-    'builder_generation_timeout',
-    'builder_generation_provider_http_error',
-    'builder_generation_structured_response_invalid',
-    'builder_generation_static_preview_contract_rejected',
-    'builder_generation_failed',
-  ] as const)('maps the typed %s diagnostic while preserving the verified project', async (code) => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    const ready = await controller.generate('Make a timer');
-    generator.generate.mockRejectedValueOnce(new BuilderDesktopCodeGeneratorPortError(code));
-
-    const failed = await controller.generate('Make it more complex');
-    expect(failed).toMatchObject({ status: 'generation_failed', error: code });
-    expect(failed.savedRevision).toBe(ready.savedRevision);
-    expect(failed.preview).toBe(ready.preview);
-    expect(JSON.stringify(failed)).not.toMatch(/stack|message|private|provider\.example/iu);
-  });
-
-  it('maps hostile, extra, accessor, proxy, and unknown diagnostics to generic failure', async () => {
-    const diagnostics: unknown[] = [];
-    const forged = new Error('private-forged-marker') as Error & {
-      code?: string;
-      retryable?: boolean;
-    };
-    forged.name = 'BuilderDesktopCodeGeneratorPortError';
-    forged.code = 'builder_generation_timeout';
-    forged.retryable = true;
-    diagnostics.push(forged);
-    const extra = new Error('private-extra-marker') as Error & {
-      code?: string;
-      retryable?: boolean;
-      private_marker?: string;
-    };
-    extra.name = 'BuilderDesktopCodeGeneratorPortError';
-    extra.code = 'builder_generation_timeout';
-    extra.retryable = true;
-    extra.private_marker = 'private-extra-marker';
-    diagnostics.push(extra);
-    const unknown = new Error('private-unknown-marker') as Error & {
-      code?: string;
-      retryable?: boolean;
-    };
-    unknown.name = 'BuilderDesktopCodeGeneratorPortError';
-    unknown.code = 'builder_generation_unknown';
-    unknown.retryable = true;
-    diagnostics.push(unknown);
-    const accessor = new Error('private-accessor-marker');
-    accessor.name = 'BuilderDesktopCodeGeneratorPortError';
-    Object.defineProperty(accessor, 'code', {
-      enumerable: true,
-      get() { throw new Error('private-code-marker'); },
-    });
-    Object.defineProperty(accessor, 'retryable', { enumerable: true, value: true });
-    diagnostics.push(accessor);
-    diagnostics.push(new Proxy(new BuilderDesktopCodeGeneratorPortError('builder_generation_timeout'), {
-      ownKeys() { throw new Error('private-proxy-marker'); },
-    }));
-
-    for (const diagnostic of diagnostics) {
-      const controller = createBuilderProjectController({
-        generator: { generate: vi.fn().mockRejectedValue(diagnostic) },
-        repository: repositoryHarness([]).repository,
-        createProjectId: () => PROJECT_ID,
-      });
-      const failed = await controller.generate('Make a timer');
-      expect(failed).toMatchObject({
-        status: 'generation_failed',
-        error: 'builder_generation_failed' satisfies BuilderGenerationDiagnosticCode,
-      });
-      expect(JSON.stringify(failed)).not.toMatch(/private|unknown|accessor|proxy/iu);
-    }
-  });
-
-  it('deduplicates concurrent generation and rejects invalid open identity before repository access', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    let release: ((value: unknown) => void) | undefined;
-    const generate = vi.fn((request: BuilderGenerationRequest) => new Promise((resolve) => {
-      release = async () => resolve(await resultFor(request));
-    }));
-    const controller = createBuilderProjectController({
-      generator: { generate },
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-
-    const first = controller.generate('Make a timer');
-    const second = controller.generate('Make another timer');
-    expect(first).toBe(second);
-    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
-    await release?.(undefined);
-    await first;
-
-    order.splice(0);
-    expect((await controller.open('not-a-project')).status).toBe('unavailable');
-    expect(order).toEqual([]);
-  });
-
-  it('invalidates stale generation completion when project authority changes', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    let release: ((value: unknown) => void) | undefined;
-    const controller = createBuilderProjectController({
-      generator: {
-        generate(request) {
-          return new Promise((resolve) => {
-            release = async () => resolve(await resultFor(request));
-          });
-        },
+  it('maps untrusted generation failures to one fixed diagnostic', async () => {
+    const { controller } = setup({
+      generate: async () => {
+        throw new Error('https://provider.invalid private token');
       },
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
     });
+    const result = await controller.generate('Make a timer.');
+    expect(result).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_failed',
+    });
+    expect(JSON.stringify(result)).not.toContain('provider.invalid');
+  });
 
-    const pending = controller.generate('Make a timer');
-    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  it('ignores stale async completion after switching to a new project', async () => {
+    let resolveGenerate!: (value: unknown) => void;
+    const pending = new Promise<unknown>((resolve) => {
+      resolveGenerate = resolve;
+    });
+    const { controller } = setup({ generate: async () => pending });
+    const generation = controller.generate('Make a timer.');
     await controller.open();
-    await release?.(undefined);
-    await pending;
-
+    resolveGenerate(await createGenerationDraft());
+    await generation;
     expect(controller.getSnapshot()).toMatchObject({
       status: 'new',
-      savedRevision: null,
-      preview: null,
+      draft: null,
+      savedProject: null,
     });
-    expect(order).toEqual([]);
-  });
-
-  it('isolates project authority from subscriber failures and runtime identity coercion', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const controller = createBuilderProjectController({
-      generator: generatorHarness(order),
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    controller.subscribe(() => { throw new Error('private observer detail'); });
-
-    expect((await controller.generate('Make a timer')).status).toBe('ready');
-    const coercingIdentity = { toString: () => { throw new Error('private coercion'); } };
-    expect((await controller.open(coercingIdentity as never)).status).toBe('unavailable');
-  });
-
-  it('does not call the generator after a generating subscriber changes authority', async () => {
-    const order: string[] = [];
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: repositoryHarness(order).repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    let invalidated = false;
-    controller.subscribe(() => {
-      if (!invalidated && controller.getSnapshot().status === 'generating') {
-        invalidated = true;
-        void controller.open();
-      }
-    });
-
-    await controller.generate('Make a timer');
-    expect(generator.generate).not.toHaveBeenCalled();
-    expect(order).toEqual([]);
-    expect(controller.getSnapshot().status).toBe('new');
-  });
-
-  it('does not commit after a committing subscriber changes authority', async () => {
-    const order: string[] = [];
-    const repository = repositoryHarness(order);
-    const generator = generatorHarness(order);
-    const controller = createBuilderProjectController({
-      generator,
-      repository: repository.repository,
-      createProjectId: () => PROJECT_ID,
-    });
-    let invalidated = false;
-    controller.subscribe(() => {
-      if (!invalidated && controller.getSnapshot().status === 'committing') {
-        invalidated = true;
-        void controller.open();
-      }
-    });
-
-    await controller.generate('Make a timer');
-    expect(generator.generate).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(['generate:1']);
-    expect(controller.getSnapshot().status).toBe('new');
   });
 });

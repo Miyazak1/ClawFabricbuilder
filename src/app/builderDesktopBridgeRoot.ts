@@ -1,19 +1,17 @@
 export type BuilderDesktopBridgeRoot = Readonly<{
   bridgeVersion: string;
   codeGenerator: unknown;
-  projectCatalog: unknown;
-  projectRevisions: unknown;
+  projectWorkspace: unknown;
   providerSettings: unknown;
   windowControls: unknown;
 }>;
 
-export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v1';
+export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v2';
 
 const ROOT_KEYS = new Set([
   'bridgeVersion',
   'codeGenerator',
-  'projectCatalog',
-  'projectRevisions',
+  'projectWorkspace',
   'providerSettings',
   'windowControls',
 ]);
@@ -62,8 +60,7 @@ export function sanitizeBuilderDesktopBridgeRoot(value: unknown): BuilderDesktop
     return Object.freeze({
       bridgeVersion,
       codeGenerator: descriptors.codeGenerator.value,
-      projectCatalog: descriptors.projectCatalog.value,
-      projectRevisions: descriptors.projectRevisions.value,
+      projectWorkspace: descriptors.projectWorkspace.value,
       providerSettings: descriptors.providerSettings.value,
       windowControls: descriptors.windowControls.value,
     });

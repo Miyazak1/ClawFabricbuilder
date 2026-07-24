@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v1';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v2';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
@@ -46,11 +46,24 @@ const SELECTORS = Object.freeze({
   projectPage: '[data-builder-page="true"]',
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
+  saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
   timeout: '#builder-provider-timeout',
+  unsavedDraft: '[data-builder-unsaved-draft="true"]',
 });
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const CSS_IDENTIFIER_PATTERN = /^[a-z][a-z0-9_-]*$/u;
+const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const BUILDER_ID_PATTERNS = Object.freeze({
+  candidate_id: /^builder-code-change-candidate:[0-9a-f]{64}$/u,
+  conversation_id: new RegExp(`^builder-conversation:${UUID_PATTERN}$`, 'u'),
+  request_id: new RegExp(`^builder-git-request:${UUID_PATTERN}$`, 'u'),
+  review_id: new RegExp(`^builder-review:${UUID_PATTERN}$`, 'u'),
+  run_id: new RegExp(`^builder-run:${UUID_PATTERN}$`, 'u'),
+  task_id: new RegExp(`^builder-task:${UUID_PATTERN}$`, 'u'),
+  turn_id: new RegExp(`^builder-turn:${UUID_PATTERN}$`, 'u'),
+});
 
 const ERROR_MESSAGES = Object.freeze({
   canary_input_invalid: 'Packaged canary input is invalid.',
@@ -63,10 +76,20 @@ const ERROR_MESSAGES = Object.freeze({
   canary_saved_profile_failed: 'Packaged canary saved profile setup failed.',
   canary_new_project_failed: 'Packaged canary new project failed.',
   canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
+  canary_draft_failed: 'Packaged canary unsaved draft evidence failed.',
+  canary_save_failed: 'Packaged canary draft save failed.',
+  canary_save_persistence_failed: 'Packaged canary draft was not persisted.',
+  canary_save_confirmation_failed: 'Packaged canary could not confirm the persisted draft in the UI.',
   canary_preview_failed: 'Packaged canary preview evidence failed.',
   canary_version_failed: 'Packaged canary revision version evidence failed.',
   canary_read_evidence_failed: 'Packaged canary read evidence failed.',
   canary_restart_failed: 'Packaged canary restart restore failed.',
+  canary_restart_open_failed: 'Packaged canary could not reopen the saved project.',
+  canary_restart_preview_failed: 'Packaged canary could not restore the saved preview.',
+  canary_restart_evidence_failed: 'Packaged canary restart evidence could not be verified.',
+  canary_restart_state_new: 'Packaged canary lost the saved project selection after restart.',
+  canary_restart_state_opening: 'Packaged canary project restore did not finish.',
+  canary_restart_state_unavailable: 'Packaged canary restored project is unavailable.',
   canary_custom_chrome_failed: 'Packaged canary custom window controls are unavailable.',
   canary_evidence_failed: 'Packaged canary evidence could not be verified.',
   canary_cleanup_failed: 'Packaged canary cleanup failed.',
@@ -82,53 +105,142 @@ const ERROR_STAGES = Object.freeze({
   canary_saved_profile_failed: 'saved_profile',
   canary_new_project_failed: 'new_project',
   canary_generation_terminal_failed: 'generation_terminal',
+  canary_draft_failed: 'draft',
+  canary_save_failed: 'save',
+  canary_save_persistence_failed: 'save_persistence',
+  canary_save_confirmation_failed: 'save_confirmation',
   canary_preview_failed: 'preview',
   canary_version_failed: 'version',
   canary_read_evidence_failed: 'read_evidence',
   canary_restart_failed: 'restart',
+  canary_restart_open_failed: 'restart_open',
+  canary_restart_preview_failed: 'restart_preview',
+  canary_restart_evidence_failed: 'restart_evidence',
+  canary_restart_state_new: 'restart_state_new',
+  canary_restart_state_opening: 'restart_state_opening',
+  canary_restart_state_unavailable: 'restart_state_unavailable',
   canary_custom_chrome_failed: 'custom_chrome',
   canary_evidence_failed: 'evidence',
   canary_cleanup_failed: 'cleanup',
 });
 
-const CATALOG_RESULT_KEYS = Object.freeze(['catalog_evidence', 'projects', 'result_version']);
-const CATALOG_PROJECT_KEYS = Object.freeze(['project_id', 'revision', 'revision_digest', 'summary', 'title']);
-const CURRENT_RESULT_KEYS = Object.freeze([
-  'head',
-  'persistence_evidence',
-  'record',
-  'restart_restore',
-  'result_version',
-]);
-const HEAD_KEYS = Object.freeze([
-  'head_digest',
+const BRIDGE_CONTRACT_KEYS = Object.freeze(['bridge_version', 'legacy_namespaces_absent']);
+const CATALOG_RESULT_KEYS = Object.freeze(['authority_evidence', 'operation', 'projects', 'result_version']);
+const CATALOG_PROJECT_KEYS = Object.freeze([
+  'commit_oid',
   'project_id',
-  'record_kind',
-  'revision',
-  'revision_digest',
-  'schema_version',
-]);
-const PROJECT_RECORD_KEYS = Object.freeze([
-  'execution_admission',
-  'files',
-  'parent_revision',
-  'preview_script_admission',
-  'project_id',
-  'proposal_evidence',
-  'record_kind',
-  'revision',
-  'revision_digest',
-  'schema_version',
+  'revision_number',
+  'revision_receipt_digest',
+  'selected_at_ms',
   'summary',
   'title',
+  'tree_oid',
 ]);
+const AUTHORITY_EVIDENCE_KEYS = Object.freeze([
+  'code_authority',
+  'current_selection',
+  'product_authority',
+  'source_read_admission',
+]);
+const CURRENT_RESULT_KEYS = Object.freeze([
+  'authority_evidence',
+  'current',
+  'git_candidate_receipt',
+  'git_verification_receipt',
+  'operation',
+  'product_revision_receipt',
+  'result_version',
+  'source_tree',
+]);
+const CURRENT_SUMMARY_KEYS = Object.freeze([
+  'commit_oid',
+  'object_format',
+  'parent_oid',
+  'project_id',
+  'revision_number',
+  'revision_receipt_digest',
+  'summary',
+  'title',
+  'tree_oid',
+]);
+const PRODUCT_RECEIPT_KEYS = Object.freeze([
+  'candidate_digest',
+  'candidate_id',
+  'commit_oid',
+  'conversation_id',
+  'object_format',
+  'parent_oid',
+  'previous_revision_receipt_digest',
+  'project_id',
+  'request_id',
+  'resulting_tree_digest',
+  'review_id',
+  'revision_number',
+  'revision_receipt_digest',
+  'run_id',
+  'selected_at_ms',
+  'semantic_identity_digest',
+  'summary',
+  'task_id',
+  'title',
+  'tree_oid',
+  'turn_id',
+  'verification_receipt_digest',
+]);
+const CANDIDATE_RECEIPT_KEYS = Object.freeze([
+  'candidate_digest',
+  'candidate_id',
+  'code_authority',
+  'commit_oid',
+  'conversation_id',
+  'expected_base_oid',
+  'object_format',
+  'parent_oid',
+  'product_revision_admission',
+  'project_id',
+  'receipt_version',
+  'replay',
+  'repository_version',
+  'request_id',
+  'resulting_tree_digest',
+  'run_id',
+  'semantic_identity_digest',
+  'task_id',
+  'tree_oid',
+  'turn_id',
+  'verification_receipt_digest',
+]);
+const VERIFICATION_RECEIPT_KEYS = Object.freeze([
+  'candidate_digest',
+  'candidate_id',
+  'candidate_tree_oid',
+  'commit_object_admission',
+  'commit_oid',
+  'commit_ref_admission',
+  'conversation_id',
+  'expected_base_oid',
+  'object_format',
+  'project_id',
+  'receipt_version',
+  'repository_version',
+  'request_id',
+  'request_ref_admission',
+  'resulting_tree_digest',
+  'run_id',
+  'semantic_identity_digest',
+  'task_id',
+  'turn_id',
+  'verification_admission',
+]);
+const SOURCE_TREE_KEYS = Object.freeze(['files', 'source_tree_digest', 'source_tree_version']);
+const SOURCE_ENTRY_KEYS = Object.freeze(['content', 'content_digest', 'entry_kind', 'path']);
 const STATUS_KEYS = Object.freeze([
   'config_digest',
   'configured',
   'credential_status',
   'status_version',
 ]);
-const READ_EVIDENCE_KEYS = Object.freeze(['catalog', 'current', 'status']);
+const READ_EVIDENCE_KEYS = Object.freeze(['bridge_contract', 'catalog', 'current', 'status']);
 const RUN_OPTION_KEYS = Object.freeze(['argv', 'electron', 'env', 'fs', 'os', 'userDataPath']);
 const FIRST_CONFIG_INPUT_KEYS = Object.freeze(['executable_path', 'idea', 'provider', 'schema_version']);
 const SAVED_PROFILE_INPUT_KEYS = Object.freeze([
@@ -384,6 +496,114 @@ function redactInput(input) {
 
 function digestText(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  if (value !== null && typeof value === 'object' && !isObjectProxy(value)) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) fail('canary_evidence_failed');
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+    ).join(',')}}`;
+  }
+  fail('canary_evidence_failed');
+}
+
+function digestCanonical(value) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
+}
+
+function hasUnpairedSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasUnsafeControl(value, allowFormatting = false) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0x7f && code <= 0x9f) return true;
+    if (code <= 0x1f && (!allowFormatting || ![0x09, 0x0a, 0x0d].includes(code))) return true;
+  }
+  return false;
+}
+
+function evidenceText(value, maximumCodePoints, maximumUtf8Bytes, allowEmpty = false, allowFormatting = false) {
+  if (
+    typeof value !== 'string'
+    || (!allowEmpty && value.length === 0)
+    || value.length > maximumCodePoints * 2
+    || Array.from(value).length > maximumCodePoints
+    || Buffer.byteLength(value, 'utf8') > maximumUtf8Bytes
+    || hasUnpairedSurrogate(value)
+    || hasUnsafeControl(value, allowFormatting)
+  ) fail('canary_evidence_failed');
+  return value;
+}
+
+function safeDigest(value) {
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) fail('canary_evidence_failed');
+  return value;
+}
+
+function safeOid(value, nullable = false) {
+  if (nullable && value === null) return null;
+  if (typeof value !== 'string' || !GIT_OID_PATTERN.test(value)) fail('canary_evidence_failed');
+  return value;
+}
+
+function safePositiveInteger(value) {
+  if (!Number.isSafeInteger(value) || value < 1) fail('canary_evidence_failed');
+  return value;
+}
+
+function safeNonNegativeInteger(value) {
+  if (!Number.isSafeInteger(value) || value < 0) fail('canary_evidence_failed');
+  return value;
+}
+
+function safeBuilderId(value, kind) {
+  const pattern = BUILDER_ID_PATTERNS[kind];
+  if (typeof value !== 'string' || !pattern || !pattern.test(value)) fail('canary_evidence_failed');
+  return value;
+}
+
+function denseEvidenceArray(value, maximum) {
+  if (
+    !Array.isArray(value)
+    || isObjectProxy(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || value.length > maximum
+  ) fail('canary_evidence_failed');
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== value.length + 1
+    || keys.some((key) => typeof key === 'symbol')
+    || !keys.includes('length')
+  ) fail('canary_evidence_failed');
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const output = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      fail('canary_evidence_failed');
+    }
+    output.push(descriptor.value);
+  }
+  return output;
 }
 
 function cssString(value) {
@@ -991,30 +1211,93 @@ async function generateProjectViaUi(page, idea) {
     fail('canary_new_project_failed');
   }
   try {
-    await clickByRole(page, 'button', 'Make it');
+    await clickByRole(page, 'button', 'Make draft');
     await waitForGenerationTerminal(page);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_generation_terminal_failed');
   }
   try {
-    await page.locator(SELECTORS.currentVersion).getByText('Version 1', { exact: true }).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.unsavedDraft)
+      .getByText('Unsaved draft', { exact: true })
+      .waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    const preSave = await readSanitizedBridgeEvidence(page);
+    if (preSave.catalog.projects.length !== 0 || preSave.current !== null) {
+      fail('canary_draft_failed');
+    }
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_draft_failed');
+  }
+  try {
+    await clickByRole(page, 'button', 'Save version');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_save_failed');
+  }
+  try {
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    try {
+      const evidence = await readSanitizedBridgeEvidence(page);
+      if (evidence.catalog.projects.length === 0) fail('canary_save_persistence_failed');
+      fail('canary_save_confirmation_failed');
+    } catch (evidenceError) {
+      if (evidenceError instanceof BuilderPackagedCanaryError) throw evidenceError;
+      fail('canary_save_failed');
+    }
+  }
+  await assertVisibleVersion(page, 1);
+  return Object.freeze({
+    pre_save_catalog_empty: true,
+    saved_via_ui: true,
+    unsaved_draft_observed: true,
+  });
+}
+
+async function assertVisibleVersion(page, revisionNumber) {
+  try {
+    const version = page.locator(SELECTORS.currentVersion);
+    await version.waitFor({ state: 'visible' });
+    if ((await version.textContent())?.trim() !== `Version ${revisionNumber}`) {
+      fail('canary_version_failed');
+    }
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_version_failed');
   }
 }
 
+async function failRestartVersion(page) {
+  try {
+    const status = await page.locator(SELECTORS.projectPage)
+      .getAttribute('data-builder-project-status');
+    if (status === 'new') fail('canary_restart_state_new');
+    if (status === 'opening') fail('canary_restart_state_opening');
+    if (status === 'unavailable') fail('canary_restart_state_unavailable');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+  }
+  fail('canary_version_failed');
+}
+
 async function readOnlyBridgeEvidence(page, projectId = null) {
   try {
     return await page.evaluate(async (request) => {
       const bridge = globalThis.clawfabricBuilder;
+      const bridge_contract = {
+        bridge_version: bridge.bridgeVersion,
+        legacy_namespaces_absent: !Object.hasOwn(bridge, 'projectCatalog')
+          && !Object.hasOwn(bridge, 'projectRevisions'),
+      };
       const status = await bridge.providerSettings.status();
-      const catalog = await bridge.projectCatalog.listCurrent();
+      const catalog = await bridge.projectWorkspace.listCurrent();
       const current = request.projectId === null
         ? null
-        : await bridge.projectRevisions.loadCurrent({ project_id: request.projectId });
-      return { catalog, current, status };
+        : await bridge.projectWorkspace.loadCurrent({ project_id: request.projectId });
+      return { bridge_contract, catalog, current, status };
     }, { projectId });
   } catch {
     fail('canary_read_evidence_failed');
@@ -1034,12 +1317,24 @@ async function readSanitizedBridgeEvidence(page, projectId = null) {
 
 function assertReadEvidence(value) {
   const evidenceDescriptors = exactDataObject(value, READ_EVIDENCE_KEYS);
+  const bridgeContractDescriptors = exactDataObject(
+    evidenceDescriptors.bridge_contract.value,
+    BRIDGE_CONTRACT_KEYS,
+  );
+  if (
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v2'
+    || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
+  ) fail('canary_evidence_failed');
+  const bridgeContract = Object.freeze({
+    bridge_version: 'builder-preload.v2',
+    legacy_namespaces_absent: true,
+  });
   const status = sanitizeStatus(evidenceDescriptors.status.value);
   const catalog = sanitizeCatalog(evidenceDescriptors.catalog.value);
   const current = evidenceDescriptors.current.value === null
     ? null
     : sanitizeCurrent(evidenceDescriptors.current.value);
-  return Object.freeze({ catalog, current, status });
+  return Object.freeze({ bridge_contract: bridgeContract, catalog, current, status });
 }
 
 function sanitizeStatus(value) {
@@ -1066,43 +1361,23 @@ function sanitizeStatus(value) {
 function sanitizeCatalog(value) {
   const descriptors = exactDataObject(value, CATALOG_RESULT_KEYS);
   const resultVersion = descriptors.result_version.value;
+  const operation = descriptors.operation.value;
   const projects = descriptors.projects.value;
   if (
-    resultVersion !== 'builder-project-catalog-result.v1'
+    resultVersion !== 'builder-project-read-result.v1'
+    || operation !== 'current_listed'
     || !Array.isArray(projects)
     || isObjectProxy(projects)
   ) fail('canary_evidence_failed');
-  let projectDescriptors;
-  try {
-    const keys = Reflect.ownKeys(projects);
-    const expectedKeys = ['length'];
-    for (let index = 0; index < projects.length; index += 1) expectedKeys.push(String(index));
-    if (
-      keys.length !== expectedKeys.length
-      || keys.some((key) => typeof key !== 'string' || !expectedKeys.includes(key))
-    ) fail('canary_evidence_failed');
-    projectDescriptors = Object.getOwnPropertyDescriptors(projects);
-    const lengthDescriptor = projectDescriptors.length;
-    if (
-      !lengthDescriptor
-      || lengthDescriptor.enumerable !== false
-      || !Object.hasOwn(lengthDescriptor, 'value')
-      || lengthDescriptor.value !== projects.length
-    ) fail('canary_evidence_failed');
-  } catch (error) {
-    if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_evidence_failed');
-  }
-  const sanitizedProjects = [];
-  for (let index = 0; index < projects.length; index += 1) {
-    const descriptor = projectDescriptors[String(index)];
-    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+  const sanitizedProjects = denseEvidenceArray(projects, 256).map(sanitizeCatalogProject);
+  for (let index = 1; index < sanitizedProjects.length; index += 1) {
+    if (sanitizedProjects[index - 1].project_id >= sanitizedProjects[index].project_id) {
       fail('canary_evidence_failed');
     }
-    sanitizedProjects.push(sanitizeCatalogProject(descriptor.value));
   }
   return Object.freeze({
-    catalog_evidence: descriptors.catalog_evidence.value,
+    authority_evidence: sanitizeAuthorityEvidence(descriptors.authority_evidence.value, true),
+    operation,
     projects: Object.freeze(sanitizedProjects),
     result_version: resultVersion,
   });
@@ -1111,19 +1386,15 @@ function sanitizeCatalog(value) {
 function sanitizeCatalogProject(value) {
   const descriptors = exactDataObject(value, CATALOG_PROJECT_KEYS);
   const project = Object.freeze({
+    commit_oid: safeOid(descriptors.commit_oid.value),
     project_id: safeProjectId(descriptors.project_id.value),
-    revision: descriptors.revision.value,
-    revision_digest: descriptors.revision_digest.value,
-    summary: descriptors.summary.value,
-    title: descriptors.title.value,
+    revision_number: safePositiveInteger(descriptors.revision_number.value),
+    revision_receipt_digest: safeDigest(descriptors.revision_receipt_digest.value),
+    selected_at_ms: safeNonNegativeInteger(descriptors.selected_at_ms.value),
+    summary: evidenceText(descriptors.summary.value, 400, 1_600),
+    title: evidenceText(descriptors.title.value, 80, 320),
+    tree_oid: safeOid(descriptors.tree_oid.value),
   });
-  if (
-    project.revision !== 1
-    || typeof project.revision_digest !== 'string'
-    || !DIGEST_PATTERN.test(project.revision_digest)
-    || typeof project.summary !== 'string'
-    || typeof project.title !== 'string'
-  ) fail('canary_evidence_failed');
   return project;
 }
 
@@ -1136,80 +1407,267 @@ function safeProjectId(value) {
   return value;
 }
 
-function sanitizeHead(value, expectedProject) {
-  const descriptors = exactDataObject(value, HEAD_KEYS);
-  const head = Object.freeze({
-    head_digest: descriptors.head_digest.value,
-    project_id: safeProjectId(descriptors.project_id.value),
-    record_kind: descriptors.record_kind.value,
-    revision: descriptors.revision.value,
-    revision_digest: descriptors.revision_digest.value,
-    schema_version: descriptors.schema_version.value,
+function sanitizeAuthorityEvidence(value, catalogOnly) {
+  const descriptors = exactDataObject(value, AUTHORITY_EVIDENCE_KEYS);
+  const evidence = Object.freeze({
+    code_authority: descriptors.code_authority.value,
+    current_selection: descriptors.current_selection.value,
+    product_authority: descriptors.product_authority.value,
+    source_read_admission: descriptors.source_read_admission.value,
   });
   if (
-    head.schema_version !== 1
-    || head.record_kind !== 'builder_project_head'
-    || head.project_id !== expectedProject.project_id
-    || head.revision !== expectedProject.revision
-    || head.revision_digest !== expectedProject.revision_digest
-    || typeof head.head_digest !== 'string'
-    || !DIGEST_PATTERN.test(head.head_digest)
+    evidence.product_authority !== 'sqlite_product_revision_receipt'
+    || evidence.current_selection !== 'sqlite_current_project_revision'
+    || evidence.code_authority !== (catalogOnly ? 'not_read_for_catalog' : 'git_commit_tree')
+    || evidence.source_read_admission !== (catalogOnly ? 'not_requested' : 'verified')
   ) fail('canary_evidence_failed');
-  return head;
+  return evidence;
 }
 
-function sanitizeProjectRecord(value) {
-  const descriptors = exactDataObject(value, PROJECT_RECORD_KEYS);
-  const record = Object.freeze({
-    execution_admission: descriptors.execution_admission.value,
-    files: descriptors.files.value,
-    parent_revision: descriptors.parent_revision.value,
-    preview_script_admission: descriptors.preview_script_admission.value,
+function safeSourcePath(value) {
+  const sourcePath = evidenceText(value, 240, 1_024);
+  if (
+    sourcePath.includes('\\')
+    || sourcePath.startsWith('/')
+    || /^[A-Za-z]:/u.test(sourcePath)
+    || sourcePath.split('/').some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) fail('canary_evidence_failed');
+  return sourcePath;
+}
+
+function sanitizeSourceEntry(value) {
+  const descriptors = exactDataObject(value, SOURCE_ENTRY_KEYS);
+  const entryKind = descriptors.entry_kind.value;
+  if (entryKind !== 'text_file') fail('canary_evidence_failed');
+  const entry = Object.freeze({
+    content: evidenceText(descriptors.content.value, 512 * 1024, 512 * 1024, true, true),
+    entry_kind: 'text_file',
+    path: safeSourcePath(descriptors.path.value),
+  });
+  const contentDigest = safeDigest(descriptors.content_digest.value);
+  if (digestCanonical(entry) !== contentDigest) fail('canary_evidence_failed');
+  return Object.freeze({ ...entry, content_digest: contentDigest });
+}
+
+function sanitizeSourceTree(value) {
+  const descriptors = exactDataObject(value, SOURCE_TREE_KEYS);
+  if (descriptors.source_tree_version.value !== 'builder-project-source-tree.v1') {
+    fail('canary_evidence_failed');
+  }
+  const files = denseEvidenceArray(descriptors.files.value, 512).map(sanitizeSourceEntry);
+  let totalBytes = 0;
+  for (let index = 0; index < files.length; index += 1) {
+    totalBytes += Buffer.byteLength(files[index].content, 'utf8');
+    if (totalBytes > 4 * 1024 * 1024) fail('canary_evidence_failed');
+    if (index > 0 && files[index - 1].path >= files[index].path) fail('canary_evidence_failed');
+  }
+  const unsigned = Object.freeze({
+    files: Object.freeze(files),
+    source_tree_version: 'builder-project-source-tree.v1',
+  });
+  const sourceTreeDigest = safeDigest(descriptors.source_tree_digest.value);
+  if (digestCanonical(unsigned) !== sourceTreeDigest) fail('canary_evidence_failed');
+  return Object.freeze({ ...unsigned, source_tree_digest: sourceTreeDigest });
+}
+
+function sanitizeProductRevisionReceipt(value) {
+  const descriptors = exactDataObject(value, PRODUCT_RECEIPT_KEYS);
+  const body = Object.freeze({
+    candidate_digest: safeDigest(descriptors.candidate_digest.value),
+    candidate_id: safeBuilderId(descriptors.candidate_id.value, 'candidate_id'),
+    commit_oid: safeOid(descriptors.commit_oid.value),
+    conversation_id: safeBuilderId(descriptors.conversation_id.value, 'conversation_id'),
+    object_format: descriptors.object_format.value,
+    parent_oid: safeOid(descriptors.parent_oid.value, true),
+    previous_revision_receipt_digest: descriptors.previous_revision_receipt_digest.value === null
+      ? null
+      : safeDigest(descriptors.previous_revision_receipt_digest.value),
     project_id: safeProjectId(descriptors.project_id.value),
-    proposal_evidence: descriptors.proposal_evidence.value,
-    record_kind: descriptors.record_kind.value,
-    revision: descriptors.revision.value,
-    revision_digest: descriptors.revision_digest.value,
-    schema_version: descriptors.schema_version.value,
-    summary: descriptors.summary.value,
-    title: descriptors.title.value,
+    request_id: safeBuilderId(descriptors.request_id.value, 'request_id'),
+    resulting_tree_digest: safeDigest(descriptors.resulting_tree_digest.value),
+    review_id: safeBuilderId(descriptors.review_id.value, 'review_id'),
+    revision_number: safePositiveInteger(descriptors.revision_number.value),
+    run_id: safeBuilderId(descriptors.run_id.value, 'run_id'),
+    selected_at_ms: safeNonNegativeInteger(descriptors.selected_at_ms.value),
+    semantic_identity_digest: safeDigest(descriptors.semantic_identity_digest.value),
+    summary: evidenceText(descriptors.summary.value, 400, 1_600),
+    task_id: safeBuilderId(descriptors.task_id.value, 'task_id'),
+    title: evidenceText(descriptors.title.value, 80, 320),
+    tree_oid: safeOid(descriptors.tree_oid.value),
+    turn_id: safeBuilderId(descriptors.turn_id.value, 'turn_id'),
+    verification_receipt_digest: safeDigest(descriptors.verification_receipt_digest.value),
   });
   if (
-    record.schema_version !== 1
-    || record.record_kind !== 'builder_project_revision'
-    || record.revision !== 1
-    || typeof record.revision_digest !== 'string'
-    || !DIGEST_PATTERN.test(record.revision_digest)
-    || record.parent_revision !== null
-    || typeof record.title !== 'string'
-    || typeof record.summary !== 'string'
-    || record.files === null
-    || typeof record.files !== 'object'
-    || record.proposal_evidence === null
-    || typeof record.proposal_evidence !== 'object'
-    || record.execution_admission !== 'not_evaluated'
-    || record.preview_script_admission !== 'not_authorized'
+    body.object_format !== 'sha1'
+    || (body.revision_number === 1) !== (body.previous_revision_receipt_digest === null)
+    || (body.revision_number === 1) !== (body.parent_oid === null)
   ) fail('canary_evidence_failed');
-  return record;
+  const revisionReceiptDigest = safeDigest(descriptors.revision_receipt_digest.value);
+  if (digestCanonical(body) !== revisionReceiptDigest) fail('canary_evidence_failed');
+  return Object.freeze({ ...body, revision_receipt_digest: revisionReceiptDigest });
+}
+
+function sanitizeCurrentSummary(value) {
+  const descriptors = exactDataObject(value, CURRENT_SUMMARY_KEYS);
+  if (descriptors.object_format.value !== 'sha1') fail('canary_evidence_failed');
+  return Object.freeze({
+    commit_oid: safeOid(descriptors.commit_oid.value),
+    object_format: 'sha1',
+    parent_oid: safeOid(descriptors.parent_oid.value, true),
+    project_id: safeProjectId(descriptors.project_id.value),
+    revision_number: safePositiveInteger(descriptors.revision_number.value),
+    revision_receipt_digest: safeDigest(descriptors.revision_receipt_digest.value),
+    summary: evidenceText(descriptors.summary.value, 400, 1_600),
+    title: evidenceText(descriptors.title.value, 80, 320),
+    tree_oid: safeOid(descriptors.tree_oid.value),
+  });
+}
+
+function sanitizeCandidateReceipt(value) {
+  const descriptors = exactDataObject(value, CANDIDATE_RECEIPT_KEYS);
+  if (
+    descriptors.receipt_version.value !== 'builder-git-candidate-receipt.v1'
+    || descriptors.repository_version.value !== 'builder-git-project-repository.v1'
+    || descriptors.object_format.value !== 'sha1'
+    || descriptors.code_authority.value !== 'git_commit_candidate'
+    || descriptors.product_revision_admission.value !== 'not_recorded'
+    || typeof descriptors.replay.value !== 'boolean'
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    candidate_digest: safeDigest(descriptors.candidate_digest.value),
+    candidate_id: safeBuilderId(descriptors.candidate_id.value, 'candidate_id'),
+    code_authority: 'git_commit_candidate',
+    commit_oid: safeOid(descriptors.commit_oid.value),
+    conversation_id: safeBuilderId(descriptors.conversation_id.value, 'conversation_id'),
+    expected_base_oid: safeOid(descriptors.expected_base_oid.value, true),
+    object_format: 'sha1',
+    parent_oid: safeOid(descriptors.parent_oid.value, true),
+    product_revision_admission: 'not_recorded',
+    project_id: safeProjectId(descriptors.project_id.value),
+    receipt_version: 'builder-git-candidate-receipt.v1',
+    replay: descriptors.replay.value,
+    repository_version: 'builder-git-project-repository.v1',
+    request_id: safeBuilderId(descriptors.request_id.value, 'request_id'),
+    resulting_tree_digest: safeDigest(descriptors.resulting_tree_digest.value),
+    run_id: safeBuilderId(descriptors.run_id.value, 'run_id'),
+    semantic_identity_digest: safeDigest(descriptors.semantic_identity_digest.value),
+    task_id: safeBuilderId(descriptors.task_id.value, 'task_id'),
+    tree_oid: safeOid(descriptors.tree_oid.value),
+    turn_id: safeBuilderId(descriptors.turn_id.value, 'turn_id'),
+    verification_receipt_digest: safeDigest(descriptors.verification_receipt_digest.value),
+  });
+}
+
+function sanitizeVerificationReceipt(value) {
+  const descriptors = exactDataObject(value, VERIFICATION_RECEIPT_KEYS);
+  if (
+    descriptors.receipt_version.value !== 'builder-git-candidate-verification-receipt.v1'
+    || descriptors.repository_version.value !== 'builder-git-project-repository.v1'
+    || descriptors.object_format.value !== 'sha1'
+    || descriptors.commit_ref_admission.value !== 'verified'
+    || descriptors.request_ref_admission.value !== 'verified'
+    || descriptors.commit_object_admission.value !== 'verified'
+    || descriptors.verification_admission.value !== 'accepted'
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    candidate_digest: safeDigest(descriptors.candidate_digest.value),
+    candidate_id: safeBuilderId(descriptors.candidate_id.value, 'candidate_id'),
+    candidate_tree_oid: safeOid(descriptors.candidate_tree_oid.value),
+    commit_object_admission: 'verified',
+    commit_oid: safeOid(descriptors.commit_oid.value),
+    commit_ref_admission: 'verified',
+    conversation_id: safeBuilderId(descriptors.conversation_id.value, 'conversation_id'),
+    expected_base_oid: safeOid(descriptors.expected_base_oid.value, true),
+    object_format: 'sha1',
+    project_id: safeProjectId(descriptors.project_id.value),
+    receipt_version: 'builder-git-candidate-verification-receipt.v1',
+    repository_version: 'builder-git-project-repository.v1',
+    request_id: safeBuilderId(descriptors.request_id.value, 'request_id'),
+    request_ref_admission: 'verified',
+    resulting_tree_digest: safeDigest(descriptors.resulting_tree_digest.value),
+    run_id: safeBuilderId(descriptors.run_id.value, 'run_id'),
+    semantic_identity_digest: safeDigest(descriptors.semantic_identity_digest.value),
+    task_id: safeBuilderId(descriptors.task_id.value, 'task_id'),
+    turn_id: safeBuilderId(descriptors.turn_id.value, 'turn_id'),
+    verification_admission: 'accepted',
+  });
+}
+
+function assertCandidateEvidence(candidate, verification) {
+  if (
+    candidate.project_id !== verification.project_id
+    || candidate.conversation_id !== verification.conversation_id
+    || candidate.turn_id !== verification.turn_id
+    || candidate.task_id !== verification.task_id
+    || candidate.run_id !== verification.run_id
+    || candidate.request_id !== verification.request_id
+    || candidate.candidate_id !== verification.candidate_id
+    || candidate.candidate_digest !== verification.candidate_digest
+    || candidate.expected_base_oid !== verification.expected_base_oid
+    || candidate.parent_oid !== verification.expected_base_oid
+    || candidate.commit_oid !== verification.commit_oid
+    || candidate.tree_oid !== verification.candidate_tree_oid
+    || candidate.resulting_tree_digest !== verification.resulting_tree_digest
+    || candidate.semantic_identity_digest !== verification.semantic_identity_digest
+    || candidate.verification_receipt_digest !== digestCanonical(verification)
+  ) fail('canary_evidence_failed');
+}
+
+function assertRevisionEvidence(receipt, current, sourceTree, candidate, verification) {
+  if (
+    receipt.project_id !== current.project_id
+    || receipt.title !== current.title
+    || receipt.summary !== current.summary
+    || receipt.revision_receipt_digest !== current.revision_receipt_digest
+    || receipt.revision_number !== current.revision_number
+    || receipt.object_format !== current.object_format
+    || receipt.commit_oid !== current.commit_oid
+    || receipt.tree_oid !== current.tree_oid
+    || receipt.parent_oid !== current.parent_oid
+    || receipt.project_id !== candidate.project_id
+    || receipt.conversation_id !== candidate.conversation_id
+    || receipt.turn_id !== candidate.turn_id
+    || receipt.task_id !== candidate.task_id
+    || receipt.run_id !== candidate.run_id
+    || receipt.request_id !== candidate.request_id
+    || receipt.candidate_id !== candidate.candidate_id
+    || receipt.candidate_digest !== candidate.candidate_digest
+    || receipt.resulting_tree_digest !== candidate.resulting_tree_digest
+    || receipt.resulting_tree_digest !== sourceTree.source_tree_digest
+    || receipt.semantic_identity_digest !== candidate.semantic_identity_digest
+    || receipt.verification_receipt_digest !== candidate.verification_receipt_digest
+    || receipt.commit_oid !== candidate.commit_oid
+    || receipt.tree_oid !== candidate.tree_oid
+    || receipt.parent_oid !== candidate.parent_oid
+    || receipt.project_id !== verification.project_id
+    || receipt.commit_oid !== verification.commit_oid
+    || receipt.tree_oid !== verification.candidate_tree_oid
+  ) fail('canary_evidence_failed');
 }
 
 function sanitizeCurrent(value) {
   const descriptors = exactDataObject(value, CURRENT_RESULT_KEYS);
-  const record = sanitizeProjectRecord(descriptors.record.value);
-  const current = Object.freeze({
-    head: sanitizeHead(descriptors.head.value, record),
-    persistence_evidence: descriptors.persistence_evidence.value,
-    record,
-    restart_restore: descriptors.restart_restore.value,
-    result_version: descriptors.result_version.value,
-  });
   if (
-    current.result_version !== 'builder-project-repository-result.v1'
-    || current.restart_restore !== true
-    || current.persistence_evidence === null
-    || typeof current.persistence_evidence !== 'object'
+    descriptors.result_version.value !== 'builder-project-read-result.v1'
+    || descriptors.operation.value !== 'current_loaded'
   ) fail('canary_evidence_failed');
-  return current;
+  const receipt = sanitizeProductRevisionReceipt(descriptors.product_revision_receipt.value);
+  const current = sanitizeCurrentSummary(descriptors.current.value);
+  const sourceTree = sanitizeSourceTree(descriptors.source_tree.value);
+  const candidate = sanitizeCandidateReceipt(descriptors.git_candidate_receipt.value);
+  const verification = sanitizeVerificationReceipt(descriptors.git_verification_receipt.value);
+  assertCandidateEvidence(candidate, verification);
+  assertRevisionEvidence(receipt, current, sourceTree, candidate, verification);
+  return Object.freeze({
+    authority_evidence: sanitizeAuthorityEvidence(descriptors.authority_evidence.value, false),
+    current,
+    git_candidate_receipt: candidate,
+    git_verification_receipt: verification,
+    operation: 'current_loaded',
+    product_revision_receipt: receipt,
+    result_version: 'builder-project-read-result.v1',
+    source_tree: sourceTree,
+  });
 }
 
 function projectFromCatalog(evidence) {
@@ -1220,9 +1678,13 @@ function projectFromCatalog(evidence) {
     project === null
     || typeof project !== 'object'
     || typeof project.project_id !== 'string'
-    || project.revision !== 1
-    || typeof project.revision_digest !== 'string'
-    || !DIGEST_PATTERN.test(project.revision_digest)
+    || project.revision_number !== 1
+    || typeof project.revision_receipt_digest !== 'string'
+    || !DIGEST_PATTERN.test(project.revision_receipt_digest)
+    || typeof project.commit_oid !== 'string'
+    || !GIT_OID_PATTERN.test(project.commit_oid)
+    || typeof project.tree_oid !== 'string'
+    || !GIT_OID_PATTERN.test(project.tree_oid)
   ) fail('canary_evidence_failed');
   return project;
 }
@@ -1241,11 +1703,17 @@ function assertExactRevision(evidence, expectedProject) {
   const current = sanitized.current;
   if (
     current === null
-    || current.record.project_id !== expectedProject.project_id
-    || current.record.revision !== 1
-    || current.record.revision_digest !== expectedProject.revision_digest
+    || current.product_revision_receipt.project_id !== expectedProject.project_id
+    || current.product_revision_receipt.revision_number !== 1
+    || current.product_revision_receipt.revision_receipt_digest
+      !== expectedProject.revision_receipt_digest
+    || current.product_revision_receipt.commit_oid !== expectedProject.commit_oid
+    || current.product_revision_receipt.tree_oid !== expectedProject.tree_oid
+    || current.product_revision_receipt.title !== expectedProject.title
+    || current.product_revision_receipt.summary !== expectedProject.summary
+    || current.product_revision_receipt.selected_at_ms !== expectedProject.selected_at_ms
   ) fail('canary_evidence_failed');
-  return current.record;
+  return current.product_revision_receipt;
 }
 
 function exactRevisionFromReadEvidence(evidence, expectedProject) {
@@ -1284,8 +1752,8 @@ function networkRecorder() {
     },
     snapshot() {
       return Object.freeze({
-        application_observer_count: attachedApplicationCount,
-        unexpected_network_count: unexpected.length,
+        renderer_context_observer_count: attachedApplicationCount,
+        renderer_unexpected_network_count: unexpected.length,
       });
     },
   });
@@ -1352,7 +1820,7 @@ async function capturePreviewEvidence(page, gate) {
   }
 }
 
-async function openProjectFromCatalogById(page, project) {
+async function openProjectFromCatalogById(page, project, failureCode = 'canary_restart_failed') {
   try {
     const projectId = safeProjectId(project.project_id);
     const catalog = page.locator(SELECTORS.projectCatalog);
@@ -1361,11 +1829,11 @@ async function openProjectFromCatalogById(page, project) {
     await projectButton.waitFor({ state: 'visible' });
     await projectButton.getByText(project.title, { exact: true }).waitFor({ state: 'visible' });
     await projectButton.getByText(project.summary, { exact: true }).waitFor({ state: 'visible' });
-    await projectButton.getByText(`Version ${project.revision}`, { exact: true }).waitFor({ state: 'visible' });
+    await projectButton.getByText(`Version ${project.revision_number}`, { exact: true }).waitFor({ state: 'visible' });
     await projectButton.click();
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_restart_failed');
+    fail(failureCode);
   }
 }
 
@@ -1507,7 +1975,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       await readSanitizedBridgeEvidence(page);
       gate.allow();
     }
-    await generateProjectViaUi(page, input.idea);
+    const draft = await generateProjectViaUi(page, input.idea);
     const firstEvidence = await readSanitizedBridgeEvidence(page);
     const project = projectFromReadEvidence(firstEvidence);
     const currentEvidence = await readSanitizedBridgeEvidence(page, project.project_id);
@@ -1521,37 +1989,36 @@ async function runPackagedCanary(rawInput, options = {}) {
     const restartedPage = await app.firstWindow();
     if (restartApplicationObserver !== true) recorder.attachPage(restartedPage);
     await assertCustomChromeControls(restartedPage);
-    await openProjectFromCatalogById(restartedPage, revision);
+    await openProjectFromCatalogById(restartedPage, revision, 'canary_restart_open_failed');
+    let restartEvidence;
+    try {
+      restartEvidence = await readSanitizedBridgeEvidence(restartedPage, project.project_id);
+      assertExactRevision(restartEvidence, project);
+    } catch {
+      fail('canary_restart_evidence_failed');
+    }
+    try {
+      await assertVisibleVersion(restartedPage, 1);
+    } catch {
+      await failRestartVersion(restartedPage);
+    }
     try {
       await restartedPage.locator(SELECTORS.preview).waitFor({ state: 'visible' });
     } catch (error) {
       if (error instanceof BuilderPackagedCanaryError) throw error;
-      fail('canary_restart_failed');
-    }
-    try {
-      await restartedPage.locator(SELECTORS.currentVersion)
-        .getByText('Version 1', { exact: true })
-        .waitFor({ state: 'visible' });
-    } catch (error) {
-      if (error instanceof BuilderPackagedCanaryError) throw error;
-      fail('canary_version_failed');
-    }
-    const restartEvidence = await readSanitizedBridgeEvidence(restartedPage, project.project_id);
-    try {
-      assertExactRevision(restartEvidence, project);
-    } catch (error) {
-      if (error instanceof BuilderPackagedCanaryError) fail('canary_restart_failed');
-      throw error;
+      fail('canary_restart_preview_failed');
     }
     const restartProject = projectFromReadEvidence(restartEvidence);
     const restartPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     const network = recorder.snapshot();
-    if (network.unexpected_network_count !== 0) fail('canary_evidence_failed');
+    if (network.renderer_unexpected_network_count !== 0) fail('canary_evidence_failed');
     const restartRevisionUnchanged = (
       restartEvidence.catalog.projects.length === firstEvidence.catalog.projects.length
       && restartProject.project_id === project.project_id
-      && restartProject.revision === project.revision
-      && restartProject.revision_digest === project.revision_digest
+      && restartProject.revision_number === project.revision_number
+      && restartProject.revision_receipt_digest === project.revision_receipt_digest
+      && restartProject.commit_oid === project.commit_oid
+      && restartProject.tree_oid === project.tree_oid
       && restartPreviewEvidence.srcdoc_digest === firstPreviewEvidence.srcdoc_digest
     );
     if (!restartRevisionUnchanged) fail('canary_evidence_failed');
@@ -1560,6 +2027,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       result_version: CANARY_RESULT_VERSION,
       artifacts_after_password_clear: gate.allowed,
       custom_chrome: customChrome,
+      draft,
       input: redactInput(input),
       network,
       preview: Object.freeze({
@@ -1574,8 +2042,10 @@ async function runPackagedCanary(rawInput, options = {}) {
         restart_revision_unchanged: true,
         project_id: project.project_id,
         restart_restored: true,
-        revision: 1,
-        revision_digest: project.revision_digest,
+        revision_number: 1,
+        revision_receipt_digest: project.revision_receipt_digest,
+        commit_oid: project.commit_oid,
+        tree_oid: project.tree_oid,
       }),
       safe_storage: Object.freeze({
         credential_status: restartEvidence.status.credential_status,

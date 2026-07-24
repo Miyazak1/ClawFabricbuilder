@@ -56,11 +56,13 @@ for (const expected of [
   '/electron/builder-git-command-runner.cjs',
   '/electron/builder-git-receipt-contract.cjs',
   '/electron/builder-git-project-repository.cjs',
-  '/electron/builder-project-revision-record.cjs',
-  '/electron/builder-project-revision-repository.cjs',
-  '/electron/builder-project-revision-ipc-adapter.cjs',
-  '/electron/builder-project-catalog-ipc-adapter.cjs',
-  '/electron/builder-project-ipc-runtime.cjs',
+  '/electron/builder-product-metadata-schema.cjs',
+  '/electron/builder-product-metadata-database.cjs',
+  '/electron/builder-project-source-tree.cjs',
+  '/electron/builder-project-read-authority.cjs',
+  '/electron/builder-project-main-authority.cjs',
+  '/electron/builder-project-save-authority.cjs',
+  '/electron/builder-project-workspace-ipc-adapter.cjs',
   '/electron/builder-provider-config.cjs',
   '/electron/builder-provider-config-repository.cjs',
   '/electron/builder-provider-secret-store.cjs',
@@ -76,12 +78,22 @@ for (const expected of [
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
 }
+for (const retired of [
+  '/electron/builder-project-revision-record.cjs',
+  '/electron/builder-project-revision-repository.cjs',
+  '/electron/builder-project-revision-ipc-adapter.cjs',
+  '/electron/builder-project-catalog-ipc-adapter.cjs',
+  '/electron/builder-project-ipc-runtime.cjs',
+]) {
+  assert.equal(packagedFiles.includes(retired), false, retired);
+}
 assert.equal(packagedFiles.some((entry) => forbidden.test(entry)), false);
 assert.equal(packagedFiles.some((entry) => /\.test\.(?:cjs|js|ts|tsx)$/u.test(entry)), false);
 for (const forbiddenTest of [
   '/tests/builder-generation-ipc-adapter.test.cjs',
   '/tests/builder-generation-ipc-runtime.test.cjs',
   '/tests/builder-generation-main-service.test.cjs',
+  '/tests/builder-project-workspace-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-runtime.test.cjs',
   '/tests/builder-window-controls-ipc-runtime.test.cjs',
@@ -184,9 +196,7 @@ const packagedPreload = packagedSource('electron/preload.cjs');
 const packagedGitRunner = packagedSource('electron/builder-git-command-runner.cjs');
 const packagedGitReceiptContract = packagedSource('electron/builder-git-receipt-contract.cjs');
 const packagedGitRepository = packagedSource('electron/builder-git-project-repository.cjs');
-const packagedRuntime = packagedSource('electron/builder-project-ipc-runtime.cjs');
-const packagedRevisionAdapter = packagedSource('electron/builder-project-revision-ipc-adapter.cjs');
-const packagedCatalogAdapter = packagedSource('electron/builder-project-catalog-ipc-adapter.cjs');
+const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
 const packagedProviderSettingsIpcAdapter = packagedSource('electron/builder-provider-settings-ipc-adapter.cjs');
@@ -197,9 +207,10 @@ const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
-  'clawfabric-builder:project-revisions:commit',
-  'clawfabric-builder:project-revisions:load-current',
-  'clawfabric-builder:project-catalog:list-current',
+  'clawfabric-builder:project-workspace:open',
+  'clawfabric-builder:project-workspace:save-draft',
+  'clawfabric-builder:project-workspace:load-current',
+  'clawfabric-builder:project-workspace:list-current',
 ];
 const generationChannels = [
   'clawfabric-builder:code-generator:generate',
@@ -285,33 +296,29 @@ assert.equal(exposeCalls[0].arguments[0].text, 'clawfabricBuilder');
 const preloadRoot = frozenObjectLiteral(exposeCalls[0].arguments[1]);
 exactObjectKeys(preloadRoot, [
   'bridgeVersion',
-  'projectRevisions',
-  'projectCatalog',
+  'projectWorkspace',
   'codeGenerator',
   'providerSettings',
   'windowControls',
 ]);
-const revisionProperty = preloadRoot.properties.find((property) => property.name.text === 'projectRevisions');
-const catalogProperty = preloadRoot.properties.find((property) => property.name.text === 'projectCatalog');
+const workspaceProperty = preloadRoot.properties.find((property) => property.name.text === 'projectWorkspace');
 const generationProperty = preloadRoot.properties.find((property) => property.name.text === 'codeGenerator');
 const providerSettingsProperty = preloadRoot.properties.find((property) => property.name.text === 'providerSettings');
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
-assert.equal(ts.isPropertyAssignment(revisionProperty), true);
-assert.equal(ts.isPropertyAssignment(catalogProperty), true);
+assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
 assert.equal(ts.isPropertyAssignment(generationProperty), true);
 assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
-const revisionBridge = frozenObjectLiteral(revisionProperty.initializer);
-const catalogBridge = frozenObjectLiteral(catalogProperty.initializer);
+const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
-exactObjectKeys(revisionBridge, ['commit', 'loadCurrent']);
-exactObjectKeys(catalogBridge, ['listCurrent']);
+exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'listCurrent']);
 exactObjectKeys(generationBridge, ['generate', 'cancel', 'availability']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -350,9 +357,10 @@ function exactInvokeMethod(object, methodName, channelName, expectedParameters) 
   );
 }
 
-assert.equal(preloadConstants.get('COMMIT_CHANNEL'), channels[0]);
-assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[1]);
-assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[2]);
+assert.equal(preloadConstants.get('OPEN_PROJECT_CHANNEL'), channels[0]);
+assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[1]);
+assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[2]);
+assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[3]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[1]);
 assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[2]);
@@ -363,9 +371,10 @@ assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChan
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
 assert.equal(preloadConstants.get('READ_WINDOW_STATE_CHANNEL'), windowControlsChannels[3]);
-exactInvokeMethod(revisionBridge, 'commit', 'COMMIT_CHANNEL', ['request']);
-exactInvokeMethod(revisionBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
-exactInvokeMethod(catalogBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
+exactInvokeMethod(workspaceBridge, 'open', 'OPEN_PROJECT_CHANNEL', ['request']);
+exactInvokeMethod(workspaceBridge, 'saveDraft', 'SAVE_DRAFT_CHANNEL', ['request']);
+exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
+exactInvokeMethod(workspaceBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
 exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'cancel', 'CANCEL_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
@@ -377,11 +386,9 @@ exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDO
 exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'readState', 'READ_WINDOW_STATE_CHANNEL', []);
 
-assert.match(packagedMain, /require\(['"]\.\/builder-project-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-provider-settings-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-window-controls-ipc-runtime\.cjs['"]\)/u);
-assert.match(packagedMain, /createBuilderProjectIpcRuntime/u);
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
 assert.match(packagedMain, /createBuilderWindowControlsIpcRuntime/u);
@@ -405,9 +412,9 @@ assert.match(packagedMain, /ipcRuntimes = runtimes/u);
 assert.match(packagedMain, /disposeIpcRuntimes/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
 assert.doesNotMatch(packagedMain, /clawfabric-builder:provider-settings:|clawfabric-builder:code-generator:|credential|safeStorage|local-provider-executor/iu);
-assert.match(packagedRuntime, /createBuilderProjectRevisionIpcAdapter/u);
-assert.match(packagedRuntime, /createBuilderProjectCatalogIpcAdapter/u);
-assert.doesNotMatch(packagedRuntime, /provider|secret|safeStorage/iu);
+assert.match(packagedWorkspaceAdapter, /createBuilderProjectWorkspaceIpcAdapter/u);
+assert.match(packagedWorkspaceAdapter, /renderer_authority:\s*'project_selection_or_draft_id_only'/u);
+assert.doesNotMatch(packagedWorkspaceAdapter, /provider|secret|safeStorage/iu);
 assert.match(packagedGitRunner, /resolveGitBinary\(['"]['"]\)/u);
 assert.match(packagedGitRunner, /GIT_NO_REPLACE_OBJECTS:\s*['"]1['"]/u);
 assert.match(packagedGitRunner, /--no-replace-objects/u);
@@ -431,16 +438,17 @@ assert.doesNotMatch(
   packagedGitRepository,
   /builder-project-revision-repository|head\.json|read_current|load_current|refs\/heads\/main|ipcMain|ipcRenderer|preload|BrowserWindow|sqlite|better-sqlite|fetch\s*\(|https?:|child_process|execFile|shell/iu,
 );
-assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*COMMIT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.commit\.invoke,?\s*\}\)/u);
-assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LOAD_CURRENT_CHANNEL,\s*invoke:\s*revisionAdapter\.channels\.loadCurrent\.invoke,?\s*\}\)/u);
-assert.match(packagedRuntime, /Object\.freeze\(\{\s*channel:\s*LIST_CURRENT_CHANNEL,\s*invoke:\s*catalogAdapter\.channels\.listCurrent\.invoke,?\s*\}\)/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*SAVE_DRAFT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*LOAD_CURRENT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_CURRENT_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
-assert.match(packagedPreload, /projectRevisions/u);
-assert.match(packagedPreload, /projectCatalog/u);
+assert.match(packagedPreload, /projectWorkspace/u);
+assert.doesNotMatch(packagedPreload, /projectRevisions|projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
 assert.match(packagedPreload, /providerSettings/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 13);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 14);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -504,11 +512,7 @@ for (const channel of preloadChannels) {
   assert.equal(packagedPreload.includes(channel), true, channel);
 }
 for (const channel of channels) {
-  assert.equal(
-    packagedRevisionAdapter.includes(channel) || packagedCatalogAdapter.includes(channel),
-    true,
-    channel,
-  );
+  assert.equal(packagedWorkspaceAdapter.includes(channel), true, channel);
 }
 for (const channel of generationChannels) {
   assert.equal(

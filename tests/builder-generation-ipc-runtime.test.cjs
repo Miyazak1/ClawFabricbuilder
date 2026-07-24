@@ -14,6 +14,12 @@ const {
   GENERATE_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
 const {
+  OPEN_PROJECT_CHANNEL,
+  SAVE_DRAFT_CHANNEL,
+  LOAD_CURRENT_CHANNEL,
+  LIST_CURRENT_CHANNEL,
+} = require('../electron/builder-project-workspace-ipc-adapter.cjs');
+const {
   BuilderGenerationIpcRuntimeError,
   createBuilderGenerationIpcRuntime,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
@@ -35,13 +41,14 @@ function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
-function request() {
-  const body = {
+const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+
+function hostRequestDigest(instruction = 'Make a timer.', existingProjectId = null) {
+  return digest({
     version: 'builder-generation-request.v2',
-    instruction: 'Make a timer.',
-    existing_project_id: null,
-  };
-  return { ...body, request_digest: digest(body) };
+    instruction,
+    existing_project_id: existingProjectId,
+  });
 }
 
 function activeWindow() {
@@ -71,6 +78,14 @@ function fakeIpcMain(failOnChannel = null, failRemoveOnChannel = null) {
     },
   };
   return authority;
+}
+
+async function waitForProbe(predicate) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail('expected runtime probe was not observed');
 }
 
 function runtimeWithService(service, probes = {}) {
@@ -108,6 +123,35 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-project-save-authority.cjs') {
+        return {
+          createBuilderProjectSaveAuthority: (options) => {
+            probes.saveOptions = options;
+            return {
+              save: async (body) => {
+                if (typeof probes.saveDraft === 'function') return probes.saveDraft(body);
+                return { result_version: 'builder-project-save-result.v1' };
+              },
+            };
+          },
+        };
+      }
+      if (specifier === './builder-project-workspace-ipc-adapter.cjs') {
+        return {
+          OPEN_PROJECT_CHANNEL,
+          SAVE_DRAFT_CHANNEL,
+          LOAD_CURRENT_CHANNEL,
+          LIST_CURRENT_CHANNEL,
+          createBuilderProjectWorkspaceIpcAdapter: (options) => ({
+            channels: {
+              open: { invoke: (_event, body) => options.openProject(body) },
+              saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
+              loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
+              listCurrent: { invoke: () => options.listCurrent() },
+            },
+          }),
+        };
+      }
       if (specifier === './builder-openai-compatible-transport.cjs') {
         return {
           createBuilderOpenAICompatibleTransport: (options) => {
@@ -118,6 +162,18 @@ function runtimeWithService(service, probes = {}) {
       }
       if (specifier === './builder-provider-config-repository.cjs') {
         return { createBuilderProviderConfigRepository: () => ({ bind_current_authority() {} }) };
+      }
+      if (specifier === './builder-generation-kernel.cjs') {
+        const actual = require('../electron/builder-generation-kernel.cjs');
+        return {
+          ...actual,
+          createBuilderGenerationRequest(body) {
+            return actual.createBuilderGenerationRequest({
+              instruction: body.instruction,
+              existing_project_id: body.existing_project_id,
+            });
+          },
+        };
       }
       if (specifier === './builder-project-main-authority.cjs') {
         return {
@@ -131,7 +187,20 @@ function runtimeWithService(service, probes = {}) {
               closed: false,
               git_authority: { persist_candidate_commit() {}, verify_candidate_receipt() {} },
               metadata_authority: { load_project_identity() {}, record_project_revision_receipt() {} },
-              project_read_authority: { load_current() {}, load_revision() {}, list_current() {} },
+              project_read_authority: {
+                load_current(body) {
+                  probes.loadCurrentRequests ??= [];
+                  probes.loadCurrentRequests.push({ project_id: body.project_id });
+                  if (typeof probes.loadCurrent === 'function') return probes.loadCurrent(body);
+                  context.__readProjectId = body.project_id;
+                  return vm.runInContext(
+                    '({ product_revision_receipt: { project_id: __readProjectId } })',
+                    context,
+                  );
+                },
+                load_revision() {},
+                list_current() { return { projects: [] }; },
+              },
               close() { this.closed = true; return true; },
             };
             return context.__projectMainAuthority;
@@ -177,7 +246,15 @@ test('registers exactly the controlled generation channels and keeps provider st
   });
 
   assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v2');
-  assert.deepEqual(runtime.channels, [GENERATE_CHANNEL, CANCEL_CHANNEL, AVAILABILITY_CHANNEL]);
+  assert.deepEqual(runtime.channels, [
+    GENERATE_CHANNEL,
+    CANCEL_CHANNEL,
+    AVAILABILITY_CHANNEL,
+    OPEN_PROJECT_CHANNEL,
+    SAVE_DRAFT_CHANNEL,
+    LOAD_CURRENT_CHANNEL,
+    LIST_CURRENT_CHANNEL,
+  ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v2', 'builder.sqlite')), true);
@@ -342,8 +419,169 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.deepEqual(Object.keys(probes.projectMainAuthorityOptions), ['userDataPath']);
   assert.equal(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
+  assert.equal(probes.saveOptions.generationDrafts, service);
+  assert.equal(probes.saveOptions.gitAuthority,
+    runtimeModule.context.__projectMainAuthority.git_authority);
+  assert.equal(probes.saveOptions.metadataAuthority,
+    runtimeModule.context.__projectMainAuthority.metadata_authority);
+  assert.equal(probes.saveOptions.projectReadAuthority,
+    runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(runtime.dispose(), false);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
+});
+
+test('keeps selected project identity in main and accepts only instruction over generation IPC', async (t) => {
+  const generated = [];
+  const probes = {};
+  const service = {
+    generate(body) {
+      generated.push(body);
+      return Promise.resolve({ request_id: body.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const runtimeModule = runtimeWithService(service, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const selected = vm.runInContext(
+    `({ project_id: ${JSON.stringify(PROJECT_ID)} })`,
+    runtimeModule.context,
+  );
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)({ sender: mainWindow.webContents }, selected);
+  await ipcMain.handlers.get(GENERATE_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Revise the timer." })', runtimeModule.context),
+  );
+  assert.equal(generated[0].existing_project_id, PROJECT_ID);
+  assert.equal(generated[0].instruction, 'Revise the timer.');
+  assert.equal(generated[0].request_digest, hostRequestDigest('Revise the timer.', PROJECT_ID));
+  assert.deepEqual(probes.loadCurrentRequests, [{ project_id: PROJECT_ID }]);
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ project_id: null })', runtimeModule.context),
+  );
+  await ipcMain.handlers.get(GENERATE_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Make a fresh timer." })', runtimeModule.context),
+  );
+  assert.equal(generated[1].existing_project_id, null);
+  assert.equal(generated[1].request_digest, hostRequestDigest('Make a fresh timer.', null));
+
+  await assert.rejects(
+    async () => ipcMain.handlers.get(GENERATE_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        instruction: "forged",
+        existing_project_id: ${JSON.stringify(PROJECT_ID)}
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_request_invalid' },
+  );
+  runtime.dispose();
+});
+
+test('ignores stale Open and Save completions when a newer project selection wins', async (t) => {
+  const projectB = 'builder-project:223e4567-e89b-42d3-a456-426614174000';
+  const generated = [];
+  const reads = new Map();
+  let resolveSave;
+  const probes = {
+    loadCurrent(body) {
+      return new Promise((resolve) => {
+        reads.set(body.project_id, resolve);
+      });
+    },
+    saveDraft() {
+      return new Promise((resolve) => {
+        resolveSave = resolve;
+      });
+    },
+  };
+  const runtimeModule = runtimeWithService({
+    generate(body) {
+      generated.push(body);
+      return Promise.resolve({ request_id: body.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  const invoke = (channel, body) => ipcMain.handlers.get(channel)({ sender: mainWindow.webContents }, body);
+  const body = (source) => vm.runInContext(source, runtimeModule.context);
+
+  const openA = invoke(OPEN_PROJECT_CHANNEL, body(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`))
+    .then((value) => ({ value }), (error) => ({ error }));
+  const openB = invoke(OPEN_PROJECT_CHANNEL, body(`({ project_id: ${JSON.stringify(projectB)} })`))
+    .then((value) => ({ value }), (error) => ({ error }));
+  await waitForProbe(() => reads.has(PROJECT_ID) && reads.has(projectB));
+  await assert.rejects(
+    async () => invoke(
+      GENERATE_CHANNEL,
+      body('({ instruction: "Must not use the previous selection." })'),
+    ),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
+  await assert.rejects(
+    async () => invoke(
+      SAVE_DRAFT_CHANNEL,
+      body(`({ draft_id: "builder-generation-draft:${'f'.repeat(64)}" })`),
+    ),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
+  assert.deepEqual(generated, []);
+  assert.equal(resolveSave, undefined);
+  runtimeModule.context.__projectB = projectB;
+  reads.get(projectB)(vm.runInContext(
+    '({ product_revision_receipt: { project_id: __projectB } })',
+    runtimeModule.context,
+  ));
+  assert.equal((await openB).error, undefined);
+  runtimeModule.context.__projectA = PROJECT_ID;
+  reads.get(PROJECT_ID)(vm.runInContext(
+    '({ product_revision_receipt: { project_id: __projectA } })',
+    runtimeModule.context,
+  ));
+  assert.equal((await openA).error, undefined);
+  await invoke(GENERATE_CHANNEL, body('({ instruction: "Continue B." })'));
+  assert.equal(generated.at(-1).existing_project_id, projectB);
+
+  const save = invoke(
+    SAVE_DRAFT_CHANNEL,
+    body(`({ draft_id: "builder-generation-draft:${'a'.repeat(64)}" })`),
+  )
+    .then((value) => ({ value }), (error) => ({ error }));
+  await waitForProbe(() => typeof resolveSave === 'function');
+  await invoke(OPEN_PROJECT_CHANNEL, body('({ project_id: null })'));
+  resolveSave(vm.runInContext(`({
+    result_version: "builder-project-save-result.v1",
+    project_id: __projectB
+  })`, runtimeModule.context));
+  assert.equal((await save).error, undefined);
+  await invoke(GENERATE_CHANNEL, body('({ instruction: "Make a fresh project." })'));
+  assert.equal(generated.at(-1).existing_project_id, null);
+  runtime.dispose();
 });
 
 test('cancels every accepted generation before removing its cancel channel', async (t) => {
@@ -374,13 +612,13 @@ test('cancels every accepted generation before removing its cancel channel', asy
     userDataPath: temporaryUserData(t),
   });
   runtime.register();
-  const body = request();
+  const body = vm.runInContext('({ instruction: "Make a timer." })', runtimeModule.context);
   const operation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, body);
   const cancelled = assert.rejects(operation, { code: 'builder_generation_cancelled' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.dispose(), true);
   assert.equal(cancelRequests.length, 1);
-  assert.equal(cancelRequests[0].request_id, body.request_digest);
+  assert.equal(cancelRequests[0].request_id, hostRequestDigest());
   await cancelled;
   assert.deepEqual([...ipcMain.handlers.keys()], []);
 });

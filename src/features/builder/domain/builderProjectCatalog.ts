@@ -1,28 +1,25 @@
-export const BUILDER_PROJECT_CATALOG_RESULT_VERSION = 'builder-project-catalog-result.v1' as const;
+import { BUILDER_PROJECT_READ_RESULT_VERSION } from './builderProjectSnapshot';
 
 export type BuilderProjectCatalogItem = Readonly<{
   project_id: string;
   title: string;
   summary: string;
-  revision: number;
-  revision_digest: string;
+  revision_number: number;
+  revision_receipt_digest: string;
+  commit_oid: string;
+  tree_oid: string;
+  selected_at_ms: number;
 }>;
 
 export type BuilderProjectCatalogResult = Readonly<{
-  result_version: typeof BUILDER_PROJECT_CATALOG_RESULT_VERSION;
+  result_version: typeof BUILDER_PROJECT_READ_RESULT_VERSION;
+  operation: 'current_listed';
   projects: readonly BuilderProjectCatalogItem[];
-  catalog_evidence: Readonly<{
-    source_authority: 'verified_project_head_and_revision_chain';
-    ordering: 'project_id_ascending';
-    recency: 'not_available';
-    global_atomic_snapshot: 'not_proven';
-    headless_orphans: 'excluded';
-    write_activity: 'none';
-    resource_bounds: Readonly<{
-      max_project_directories: 256;
-      max_file_reads: 1024;
-      max_bytes: 33554432;
-    }>;
+  authority_evidence: Readonly<{
+    product_authority: 'sqlite_product_revision_receipt';
+    code_authority: 'not_read_for_catalog';
+    source_read_admission: 'not_requested';
+    current_selection: 'sqlite_current_project_revision';
   }>;
 }>;
 
@@ -35,189 +32,139 @@ export class BuilderProjectCatalogError extends Error {
   }
 }
 
-const RESULT_KEYS = new Set(['result_version', 'projects', 'catalog_evidence']);
-const ITEM_KEYS = new Set(['project_id', 'title', 'summary', 'revision', 'revision_digest']);
-const EVIDENCE_KEYS = new Set([
-  'source_authority',
-  'ordering',
-  'recency',
-  'global_atomic_snapshot',
-  'headless_orphans',
-  'write_activity',
-  'resource_bounds',
+const RESULT_KEYS = Object.freeze(['result_version', 'operation', 'projects', 'authority_evidence']);
+const ITEM_KEYS = Object.freeze([
+  'project_id',
+  'title',
+  'summary',
+  'revision_number',
+  'revision_receipt_digest',
+  'commit_oid',
+  'tree_oid',
+  'selected_at_ms',
 ]);
-const BOUNDS_KEYS = new Set(['max_project_directories', 'max_file_reads', 'max_bytes']);
-const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const EVIDENCE_KEYS = Object.freeze([
+  'product_authority',
+  'code_authority',
+  'source_read_admission',
+  'current_selection',
+]);
+const PROJECT_ID_PATTERN =
+  /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const MAX_PROJECTS = 256;
-const UTF8_ENCODER = new TextEncoder();
-const UNSAFE_FORMAT_PATTERN = /[\p{Cf}\p{Bidi_Control}]/u;
 
 function invalid(): BuilderProjectCatalogError {
   return new BuilderProjectCatalogError();
 }
 
-function exactRecord(value: unknown, keys: ReadonlySet<string>): Record<string, unknown> {
+function exactRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
   try {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw invalid();
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) throw invalid();
     const ownKeys = Reflect.ownKeys(value);
     if (
-      ownKeys.length !== keys.size
-      || ownKeys.some((key) => typeof key !== 'string' || !keys.has(key))
+      ownKeys.length !== keys.length
+      || ownKeys.some((key) => typeof key !== 'string' || !keys.includes(key))
     ) throw invalid();
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const snapshot: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
     for (const key of keys) {
       const descriptor = descriptors[key];
-      if (
-        descriptor === undefined
-        || !descriptor.enumerable
-        || 'get' in descriptor
-        || 'set' in descriptor
-      ) throw invalid();
-      snapshot[key] = descriptor.value;
+      if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) throw invalid();
+      result[key] = descriptor.value;
     }
-    return snapshot;
+    return result;
   } catch {
     throw invalid();
   }
 }
 
-function hasUnpairedSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
+function denseArray(value: unknown): unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > MAX_PROJECTS) {
+    throw invalid();
   }
-  return false;
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== value.length + 1
+    || keys.some((key) => typeof key === 'symbol')
+    || !keys.includes('length')
+  ) throw invalid();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) throw invalid();
+  }
+  return value;
 }
 
-function hasDisallowedControl(value: string): boolean {
-  if (UNSAFE_FORMAT_PATTERN.test(value)) return true;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
-  }
-  return false;
-}
-
-function displayText(value: unknown, maxCodePoints: number, maxUtf8Bytes: number): string {
+function displayText(value: unknown, maximum: number): string {
   if (
     typeof value !== 'string'
     || value.length === 0
     || value.trim() !== value
-    || value.length > maxCodePoints * 2
-    || Array.from(value).length > maxCodePoints
-    || value.normalize('NFC') !== value
-    || hasUnpairedSurrogate(value)
-    || hasDisallowedControl(value)
-    || UTF8_ENCODER.encode(value).byteLength > maxUtf8Bytes
+    || value.length > maximum * 2
+    || Array.from(value).length > maximum
   ) throw invalid();
   return value;
 }
 
-function catalogItem(value: unknown): BuilderProjectCatalogItem {
+function item(value: unknown): BuilderProjectCatalogItem {
   const source = exactRecord(value, ITEM_KEYS);
   if (
     typeof source.project_id !== 'string'
     || !PROJECT_ID_PATTERN.test(source.project_id)
-    || !Number.isSafeInteger(source.revision)
-    || Number(source.revision) < 1
-    || typeof source.revision_digest !== 'string'
-    || !DIGEST_PATTERN.test(source.revision_digest)
+    || !Number.isSafeInteger(source.revision_number)
+    || Number(source.revision_number) < 1
+    || typeof source.revision_receipt_digest !== 'string'
+    || !DIGEST_PATTERN.test(source.revision_receipt_digest)
+    || typeof source.commit_oid !== 'string'
+    || !OID_PATTERN.test(source.commit_oid)
+    || typeof source.tree_oid !== 'string'
+    || !OID_PATTERN.test(source.tree_oid)
+    || !Number.isSafeInteger(source.selected_at_ms)
+    || Number(source.selected_at_ms) < 0
   ) throw invalid();
   return Object.freeze({
     project_id: source.project_id,
-    title: displayText(source.title, 80, 320),
-    summary: displayText(source.summary, 400, 1600),
-    revision: Number(source.revision),
-    revision_digest: source.revision_digest,
+    title: displayText(source.title, 80),
+    summary: displayText(source.summary, 400),
+    revision_number: Number(source.revision_number),
+    revision_receipt_digest: source.revision_receipt_digest,
+    commit_oid: source.commit_oid,
+    tree_oid: source.tree_oid,
+    selected_at_ms: Number(source.selected_at_ms),
   });
 }
 
-export function sanitizeBuilderProjectCatalogResult(
-  value: unknown,
-): BuilderProjectCatalogResult {
-  try {
-    const source = exactRecord(value, RESULT_KEYS);
-    const projectArray = source.projects;
-    if (!Array.isArray(projectArray) || Object.getPrototypeOf(projectArray) !== Array.prototype) {
-      throw invalid();
-    }
-    const projectKeys = Reflect.ownKeys(projectArray);
-    const projectDescriptors = Object.getOwnPropertyDescriptors(projectArray) as unknown as Record<
-      string,
-      PropertyDescriptor
-    >;
-    const lengthDescriptor = projectDescriptors.length;
-    if (
-      !lengthDescriptor
-      || 'get' in lengthDescriptor
-      || 'set' in lengthDescriptor
-      || !Number.isSafeInteger(lengthDescriptor.value)
-      || Number(lengthDescriptor.value) < 0
-      || Number(lengthDescriptor.value) > MAX_PROJECTS
-      || projectKeys.length !== Number(lengthDescriptor.value) + 1
-    ) throw invalid();
-    const projectCount = Number(lengthDescriptor.value);
-    if (
-      source.result_version !== BUILDER_PROJECT_CATALOG_RESULT_VERSION
-      || projectKeys.some((key) => (
-        key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(key))
-      ))
-    ) throw invalid();
-    const projects: BuilderProjectCatalogItem[] = [];
-    for (let index = 0; index < projectCount; index += 1) {
-      const descriptor = projectDescriptors[String(index)];
-      if (!descriptor || !descriptor.enumerable || 'get' in descriptor || 'set' in descriptor) {
-        throw invalid();
-      }
-      projects.push(catalogItem(descriptor.value));
-    }
-    for (let index = 0; index < projects.length; index += 1) {
-      if (
-        (index > 0 && projects[index - 1].project_id >= projects[index].project_id)
-        || (index > 0 && projects[index - 1].project_id === projects[index].project_id)
-      ) throw invalid();
-    }
-
-    const evidence = exactRecord(source.catalog_evidence, EVIDENCE_KEYS);
-    const bounds = exactRecord(evidence.resource_bounds, BOUNDS_KEYS);
-    if (
-      evidence.source_authority !== 'verified_project_head_and_revision_chain'
-      || evidence.ordering !== 'project_id_ascending'
-      || evidence.recency !== 'not_available'
-      || evidence.global_atomic_snapshot !== 'not_proven'
-      || evidence.headless_orphans !== 'excluded'
-      || evidence.write_activity !== 'none'
-      || bounds.max_project_directories !== 256
-      || bounds.max_file_reads !== 1024
-      || bounds.max_bytes !== 33554432
-    ) throw invalid();
-
-    return Object.freeze({
-      result_version: BUILDER_PROJECT_CATALOG_RESULT_VERSION,
-      projects: Object.freeze(projects),
-      catalog_evidence: Object.freeze({
-        source_authority: 'verified_project_head_and_revision_chain',
-        ordering: 'project_id_ascending',
-        recency: 'not_available',
-        global_atomic_snapshot: 'not_proven',
-        headless_orphans: 'excluded',
-        write_activity: 'none',
-        resource_bounds: Object.freeze({
-          max_project_directories: 256,
-          max_file_reads: 1024,
-          max_bytes: 33554432,
-        }),
-      }),
-    });
-  } catch {
-    throw invalid();
+export function sanitizeBuilderProjectCatalogResult(value: unknown): BuilderProjectCatalogResult {
+  const source = exactRecord(value, RESULT_KEYS);
+  if (
+    source.result_version !== BUILDER_PROJECT_READ_RESULT_VERSION
+    || source.operation !== 'current_listed'
+  ) throw invalid();
+  const projects = denseArray(source.projects).map(item);
+  for (let index = 1; index < projects.length; index += 1) {
+    if (projects[index - 1].project_id >= projects[index].project_id) throw invalid();
   }
+  const evidence = exactRecord(source.authority_evidence, EVIDENCE_KEYS);
+  if (
+    evidence.product_authority !== 'sqlite_product_revision_receipt'
+    || evidence.code_authority !== 'not_read_for_catalog'
+    || evidence.source_read_admission !== 'not_requested'
+    || evidence.current_selection !== 'sqlite_current_project_revision'
+  ) throw invalid();
+  return Object.freeze({
+    result_version: BUILDER_PROJECT_READ_RESULT_VERSION,
+    operation: 'current_listed',
+    projects: Object.freeze(projects),
+    authority_evidence: Object.freeze({
+      product_authority: 'sqlite_product_revision_receipt',
+      code_authority: 'not_read_for_catalog',
+      source_read_admission: 'not_requested',
+      current_selection: 'sqlite_current_project_revision',
+    }),
+  });
 }

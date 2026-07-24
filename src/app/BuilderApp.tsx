@@ -23,11 +23,15 @@ import {
   sanitizeBuilderDesktopBridgeRoot,
   type BuilderDesktopBridgeRoot,
 } from './builderDesktopBridgeRoot';
-import type { BuilderProjectCatalogPort } from '../features/builder/application/builderProjectCatalogController';
-import type { BuilderCodeGeneratorPort, BuilderProjectRepositoryPort } from '../features/builder/application/builderPorts';
+import type {
+  BuilderCodeGeneratorPort,
+  BuilderProjectWorkspacePort,
+} from '../features/builder/application/builderPorts';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
-import { BuilderDesktopProjectCatalogPortError, createBuilderDesktopProjectCatalogPort } from '../features/builder/infrastructure/builderDesktopProjectCatalogPort';
-import { BuilderDesktopRepositoryPortError, createBuilderDesktopRepositoryPort } from '../features/builder/infrastructure/builderDesktopRepositoryPort';
+import {
+  BuilderDesktopProjectWorkspacePortError,
+  createBuilderDesktopProjectWorkspacePort,
+} from '../features/builder/infrastructure/builderDesktopProjectWorkspacePort';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
 import { BuilderPage, type BuilderFileName } from '../features/builder/presentation/BuilderPage';
@@ -72,8 +76,7 @@ const BUILDER_RAIL_ITEMS: readonly BuilderRailItem[] = Object.freeze([
 const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   bridgeVersion: 'builder-preload.v0',
   codeGenerator: null,
-  projectCatalog: null,
-  projectRevisions: null,
+  projectWorkspace: null,
   providerSettings: null,
   windowControls: null,
 });
@@ -147,20 +150,21 @@ function safeMaximizedState(value: unknown): boolean | null {
   return descriptors.maximized.value as boolean;
 }
 
-const UNAVAILABLE_REPOSITORY: BuilderProjectRepositoryPort = Object.freeze({
-  commit(request: Parameters<BuilderProjectRepositoryPort['commit']>[0]) {
+const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
+  open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
     void request;
-    return Promise.reject(new BuilderDesktopRepositoryPortError());
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
-  loadCurrent(request: Parameters<BuilderProjectRepositoryPort['loadCurrent']>[0]) {
+  saveDraft(request: Parameters<BuilderProjectWorkspacePort['saveDraft']>[0]) {
     void request;
-    return Promise.reject(new BuilderDesktopRepositoryPortError());
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
-});
-
-const UNAVAILABLE_CATALOG: BuilderProjectCatalogPort = Object.freeze({
+  loadCurrent(request: Parameters<BuilderProjectWorkspacePort['loadCurrent']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
+  },
   listCurrent() {
-    return Promise.reject(new BuilderDesktopProjectCatalogPortError());
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
 });
 
@@ -182,32 +186,26 @@ function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
 }
 
 function safePorts(root: BuilderDesktopBridgeRoot) {
-  let repository = UNAVAILABLE_REPOSITORY;
-  let catalog = UNAVAILABLE_CATALOG;
+  let workspace = UNAVAILABLE_WORKSPACE;
   let generator = UNAVAILABLE_GENERATOR;
   try {
-    repository = createBuilderDesktopRepositoryPort(root.projectRevisions);
+    workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
-    repository = UNAVAILABLE_REPOSITORY;
-  }
-  try {
-    catalog = createBuilderDesktopProjectCatalogPort(root.projectCatalog);
-  } catch {
-    catalog = UNAVAILABLE_CATALOG;
+    workspace = UNAVAILABLE_WORKSPACE;
   }
   try {
     generator = createBuilderDesktopCodeGeneratorPort(root.codeGenerator);
   } catch {
     generator = UNAVAILABLE_GENERATOR;
   }
-  return Object.freeze({ catalog, generator, repository });
+  return Object.freeze({ generator, workspace });
 }
 
 function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): string | null {
   if (
-    snapshot.savedRevision !== null
+    snapshot.savedProject !== null
     && (snapshot.status === 'ready' || snapshot.status === 'preview_unavailable')
-  ) return snapshot.savedRevision.project_id;
+  ) return snapshot.savedProject.target.project_id;
   return null;
 }
 
@@ -215,12 +213,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
   const windowControls = useMemo(() => safeWindowControls(root.windowControls), [root]);
-  const catalog = useBuilderProjectCatalogController(ports.catalog);
+  const catalog = useBuilderProjectCatalogController(ports.workspace);
   const [view, setView] = useState<BuilderAppView>('project');
   const [projectId, setProjectId] = useState<string | undefined>();
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [idea, setIdea] = useState('');
-  const [activeFile, setActiveFile] = useState<BuilderFileName>('index.html');
+  const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
@@ -231,19 +229,23 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return ports.generator.generate(request);
       },
     });
-    const repository: BuilderProjectRepositoryPort = Object.freeze({
-      commit(request: Parameters<BuilderProjectRepositoryPort['commit']>[0]) {
-        return ports.repository.commit(request);
+    const workspace: BuilderProjectWorkspacePort = Object.freeze({
+      open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
+        return ports.workspace.open(request);
       },
-      loadCurrent(request: Parameters<BuilderProjectRepositoryPort['loadCurrent']>[0]) {
-        return ports.repository.loadCurrent(request);
+      saveDraft(request: Parameters<BuilderProjectWorkspacePort['saveDraft']>[0]) {
+        return ports.workspace.saveDraft(request);
       },
+      loadCurrent(request: Parameters<BuilderProjectWorkspacePort['loadCurrent']>[0]) {
+        return ports.workspace.loadCurrent(request);
+      },
+      listCurrent() { return ports.workspace.listCurrent(); },
     });
-    return Object.freeze({ generator, repository });
+    return Object.freeze({ generator, workspace });
   }, [ports, workspaceEpoch]);
   const project = useBuilderProjectController({
     generator: workspacePorts.generator,
-    repository: workspacePorts.repository,
+    workspace: workspacePorts.workspace,
     projectId,
   });
 
@@ -252,7 +254,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setWorkspaceEpoch(workspaceEpochRef.current);
     setProjectId(nextProjectId);
     setIdea('');
-    setActiveFile('index.html');
+    setActiveFile(null);
     setView('project');
   }, []);
 
@@ -270,18 +272,17 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const generate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
-    const result = await project.generate(idea);
+    await project.generate(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
-    if (durableProjectId(result) !== null) {
-      await catalog.refresh().catch(() => undefined);
-    }
-  }, [catalog, idea, project]);
+  }, [idea, project]);
 
-  const retrySave = useCallback(async () => {
+  const save = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
-    const result = await project.retrySave();
+    const result = await project.save();
     if (workspaceEpochRef.current !== commandEpoch) return;
-    if (durableProjectId(result) !== null) {
+    const savedProjectId = durableProjectId(result);
+    if (savedProjectId !== null) {
+      setProjectId(savedProjectId);
       await catalog.refresh().catch(() => undefined);
     }
   }, [catalog, project]);
@@ -460,11 +461,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           ) : (
             <BuilderPage
               activeFile={activeFile}
-              idea={idea}
+              instruction={idea}
               onGenerate={generate}
-              onIdeaChange={setIdea}
+              onInstructionChange={setIdea}
               onOpenSettings={() => setView('settings')}
-              onRetrySave={retrySave}
+              onSave={save}
               onSelectFile={setActiveFile}
               snapshot={project.snapshot}
             />

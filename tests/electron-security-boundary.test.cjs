@@ -21,7 +21,6 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /app\.isPackaged/u);
   assert.match(main, /setPermissionRequestHandler/u);
   assert.match(main, /setPermissionCheckHandler/u);
-  assert.match(main, /createBuilderProjectIpcRuntime/u);
   assert.match(main, /app\.getPath\(['"]userData['"]\)/u);
   assert.match(main, /BUILDER_PACKAGED_CANARY/u);
   assert.match(main, /BUILDER_PACKAGED_CANARY_USER_DATA_PATH/u);
@@ -34,7 +33,6 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /stat\.isSymbolicLink\(\)/u);
   assert.match(main, /requestSingleInstanceLock/u);
   assert.match(main, /app\.on\(['"]second-instance['"]/u);
-  assert.match(main, /createBuilderProjectIpcRuntime/u);
   assert.match(main, /createBuilderProviderSettingsIpcRuntime/u);
   assert.match(main, /createBuilderGenerationIpcRuntime/u);
   assert.match(main, /createBuilderWindowControlsIpcRuntime/u);
@@ -45,9 +43,11 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v1/u);
-  assert.match(preload, /projectRevisions/u);
-  assert.match(preload, /projectCatalog/u);
+  assert.match(preload, /builder-preload\.v2/u);
+  assert.match(preload, /projectWorkspace/u);
+  assert.match(preload, /\bopen\b/u);
+  assert.match(preload, /saveDraft/u);
+  assert.match(preload, /listCurrent/u);
   assert.match(preload, /codeGenerator/u);
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /windowControls/u);
@@ -55,7 +55,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 13);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 14);
   assert.doesNotMatch(
     preload,
     /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,

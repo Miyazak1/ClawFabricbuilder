@@ -11,6 +11,7 @@ const {
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
+  createBuilderGenerationRequest,
   createBuilderGenerationPromptDescriptor,
   projectBuilderGenerationResult,
   sanitizeBuilderGenerationRequest,
@@ -164,6 +165,31 @@ test('sanitizes a v2 renderer request with only instruction, nullable project, a
   assert.equal(safe.existing_project_id, PROJECT_ID);
   raw.instruction = 'changed';
   assert.equal(safe.instruction, 'Make a calm focus timer.');
+});
+
+test('creates the full deterministic v2 request only from host-owned project selection', () => {
+  const first = createBuilderGenerationRequest({
+    instruction: 'Make a calm focus timer.',
+    existing_project_id: PROJECT_ID,
+  });
+  const second = createBuilderGenerationRequest({
+    instruction: 'Make a calm focus timer.',
+    existing_project_id: PROJECT_ID,
+  });
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, request({ existingProjectId: PROJECT_ID }));
+  assert.ok(Object.isFrozen(first));
+  for (const invalid of [
+    { instruction: 'Make a timer.' },
+    { instruction: 'Make a timer.', existing_project_id: null, request_digest: ZERO_DIGEST },
+    { instruction: 'Make a timer.', existing_project_id: 'builder-project:bad' },
+  ]) {
+    expectKernelError(
+      () => createBuilderGenerationRequest(invalid),
+      'builder_generation_request_invalid',
+    );
+  }
 });
 
 test('builds a deterministic operations prompt without exposing host identities', () => {

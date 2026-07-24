@@ -1,7 +1,3 @@
-import type {
-  BuilderProjectParentRevision,
-  BuilderProjectRevision,
-} from '../domain/builderProject';
 import type { BuilderGenerationRequest } from './builderGeneration';
 
 export type BuilderGenerationDiagnosticCode =
@@ -9,7 +5,6 @@ export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_timeout'
   | 'builder_generation_provider_http_error'
   | 'builder_generation_structured_response_invalid'
-  | 'builder_generation_static_preview_contract_rejected'
   | 'builder_generation_failed';
 
 export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
@@ -19,7 +14,6 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
   builder_generation_structured_response_invalid: true,
-  builder_generation_static_preview_contract_rejected: true,
   builder_generation_failed: true,
 });
 
@@ -28,7 +22,6 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, stri
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
-  builder_generation_static_preview_contract_rejected: 'The generated project is not supported by this version.',
   builder_generation_failed: 'The project draft could not be generated.',
 });
 
@@ -62,10 +55,9 @@ export interface BuilderCodeGeneratorPort {
   generate(request: BuilderGenerationRequest): Promise<unknown>;
 }
 
-export interface BuilderProjectRepositoryPort {
-  commit(request: {
-    revision: BuilderProjectRevision;
-    expected_previous: BuilderProjectParentRevision | null;
-  }): Promise<unknown>;
-  loadCurrent(request: { project_id: string }): Promise<unknown>;
+export interface BuilderProjectWorkspacePort {
+  open(request: Readonly<{ project_id: string | null }>): Promise<unknown>;
+  saveDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
+  loadCurrent(request: Readonly<{ project_id: string }>): Promise<unknown>;
+  listCurrent(): Promise<unknown>;
 }

@@ -2,9 +2,10 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-const COMMIT_CHANNEL = 'clawfabric-builder:project-revisions:commit';
-const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-revisions:load-current';
-const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-catalog:list-current';
+const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
+const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
+const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
+const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
@@ -17,16 +18,17 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v1',
-  projectRevisions: Object.freeze({
-    commit(request) {
-      return ipcRenderer.invoke(COMMIT_CHANNEL, request);
+  bridgeVersion: 'builder-preload.v2',
+  projectWorkspace: Object.freeze({
+    open(request) {
+      return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
+    },
+    saveDraft(request) {
+      return ipcRenderer.invoke(SAVE_DRAFT_CHANNEL, request);
     },
     loadCurrent(request) {
       return ipcRenderer.invoke(LOAD_CURRENT_CHANNEL, request);
     },
-  }),
-  projectCatalog: Object.freeze({
     listCurrent() {
       return ipcRenderer.invoke(LIST_CURRENT_CHANNEL);
     },

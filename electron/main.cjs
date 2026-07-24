@@ -5,7 +5,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow, Menu, ipcMain, net, session } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
-const { createBuilderProjectIpcRuntime } = require('./builder-project-ipc-runtime.cjs');
 const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
 const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
 const { createBuilderWindowControlsIpcRuntime } = require('./builder-window-controls-ipc-runtime.cjs');
@@ -149,11 +148,6 @@ function disposeIpcRuntimes() {
 
 function createIpcRuntimes(userDataPath) {
   return Object.freeze([
-    createBuilderProjectIpcRuntime({
-      ipcMain,
-      mainWindowRef: () => mainWindow,
-      userDataPath,
-    }),
     createBuilderProviderSettingsIpcRuntime({
       ipcMain,
       mainWindowRef: () => mainWindow,

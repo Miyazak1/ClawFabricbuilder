@@ -102,7 +102,7 @@ export function BuilderProjectCatalog({
                     {project.summary}
                   </span>
                 </span>
-                <span className="text-xs text-muted-foreground">Version {project.revision}</span>
+                <span className="text-xs text-muted-foreground">Version {project.revision_number}</span>
               </button>
             </li>
           ))}

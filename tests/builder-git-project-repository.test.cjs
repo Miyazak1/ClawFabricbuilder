@@ -284,6 +284,27 @@ test('prepare_change creates only Git candidate objects, diff, and pending refs'
   }
 });
 
+test('keeps scratch index paths bounded under packaged-canary length roots', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-canary-'));
+  const projectsRoot = path.join(root, 'builder-projects-v2');
+  const runtimeRoot = path.join(root, 'builder-git-runtime-v2');
+  try {
+    const repository = createDefaultBuilderGitProjectRepository({
+      projects_root: projectsRoot,
+      runtime_root: runtimeRoot,
+      now_seconds: () => 1_750_000_000,
+    });
+    const receipt = await repository.persist_candidate_commit(request(initialCandidate(), 1));
+    assert.match(receipt.commit_oid, OID_PATTERN);
+    assert.deepEqual(
+      fs.readdirSync(path.join(projectsRoot, UUID, '.git', 'clawfabric', 'indexes')),
+      [],
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('retries safely when pending refs exist with a crash-partial worktree projection', async () => {
   const value = fixture();
   try {
@@ -992,6 +1013,8 @@ test('source boundary is main-only candidate Git authority with no current, IPC,
   assert.match(source, /product_revision_admission:\s*PRODUCT_REVISION_ADMISSION/u);
   assert.match(source, /const scheduled = next\.catch\(\(\) => undefined\)\.finally/u);
   assert.match(source, /queues\.get\(key\) === scheduled/u);
+  assert.match(source, /sha256Hex\(semanticHash\)\.slice\(0,\s*16\)/u);
+  assert.doesNotMatch(source, /`\$\{semanticHash\}-\$\{operationId\}\.index`/u);
   assert.doesNotMatch(source, /verification_receipt_digest:\s*`sha256:\$\{'0'\.repeat\(64\)\}`/u);
   assert.doesNotMatch(
     source,

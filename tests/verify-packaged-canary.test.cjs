@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { PassThrough } = require('node:stream');
@@ -13,6 +14,7 @@ const {
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
   assertCustomChromeControls,
+  assertExactRevision,
   assertReadEvidence,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
@@ -34,6 +36,7 @@ const {
 } = require('../scripts/verify-packaged-canary.cjs');
 
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
+const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs');
 
 function input(overrides = {}) {
   return JSON.stringify({
@@ -94,6 +97,9 @@ class FakeLocator {
 
   async getAttribute(name) {
     this.page.events.push(['getAttribute', this.selector, name]);
+    if (this.selector === SELECTORS.projectPage && name === 'data-builder-project-status') {
+      return this.page.projectStatus;
+    }
     if (this.selector === SELECTORS.previewFrame && name === 'sandbox') return '';
     if (this.page.failPreviewAttributes) return 'unsafe';
     if (this.selector === SELECTORS.previewFrame && name === 'srcdoc') {
@@ -115,6 +121,12 @@ class FakeLocator {
   async inputValue() {
     if (this.page.keepPasswordValue && this.selector === SELECTORS.apiKey) return 'secret-marker';
     return this.page.values.get(this.selector) ?? '';
+  }
+
+  async textContent() {
+    this.page.events.push(['textContent', this.selector]);
+    if (this.selector === SELECTORS.currentVersion) return this.page.versionLabel;
+    return null;
   }
 
   async screenshot() {
@@ -147,6 +159,7 @@ class FakeRole {
     this.page.events.push(['roleClick', this.role, this.name]);
     if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
+    if (this.name === 'Save version' && this.page.persistSave) this.page.draftSaved = true;
   }
 
   async waitFor(options) {
@@ -187,6 +200,8 @@ class FakePage {
   constructor() {
     this.artifactsAllowed = false;
     this.alertVisible = false;
+    this.draftSaved = false;
+    this.persistSave = true;
     this.events = [];
     this.failAlertWait = false;
     this.failClicks = new Set();
@@ -199,6 +214,8 @@ class FakePage {
     this.disabledRoles = new Set();
     this.keepPasswordValue = false;
     this.previewVisible = true;
+    this.projectStatus = 'ready';
+    this.versionLabel = 'Version 1';
     this.values = new Map();
     this.listeners = new Map();
   }
@@ -233,62 +250,205 @@ class FakePage {
   }
 }
 
-function bridgeEvidence(projectId = null) {
-  const project = {
-    project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
-    revision: 1,
-    revision_digest: `sha256:${'a'.repeat(64)}`,
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  return `{${Object.keys(value).sort().map(
+    (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+  ).join(',')}}`;
+}
+
+function digestCanonical(value) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
+}
+
+function sourceEntry(pathValue, content) {
+  const body = {
+    content,
+    entry_kind: 'text_file',
+    path: pathValue,
+  };
+  return { ...body, content_digest: digestCanonical(body) };
+}
+
+function bridgeEvidence(projectId = null, saved = true) {
+  const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const selectedProjectId = projectId ?? canonicalProjectId;
+  const conversationId = 'builder-conversation:11111111-1111-4111-8111-111111111111';
+  const turnId = 'builder-turn:22222222-2222-4222-8222-222222222222';
+  const taskId = 'builder-task:33333333-3333-4333-8333-333333333333';
+  const runId = 'builder-run:44444444-4444-4444-8444-444444444444';
+  const requestId = 'builder-git-request:55555555-5555-4555-8555-555555555555';
+  const reviewId = 'builder-review:66666666-6666-4666-8666-666666666666';
+  const candidateId = `builder-code-change-candidate:${'7'.repeat(64)}`;
+  const candidateDigest = `sha256:${'8'.repeat(64)}`;
+  const semanticIdentityDigest = `sha256:${'9'.repeat(64)}`;
+  const commitOid = 'a'.repeat(40);
+  const treeOid = 'b'.repeat(40);
+  const files = [
+    sourceEntry('app.js', ''),
+    sourceEntry('index.html', '<main>Focus timer</main>'),
+    sourceEntry('styles.css', 'main { color: black; }'),
+  ];
+  const sourceTreeBody = {
+    files,
+    source_tree_version: 'builder-project-source-tree.v1',
+  };
+  const sourceTree = {
+    ...sourceTreeBody,
+    source_tree_digest: digestCanonical(sourceTreeBody),
+  };
+  const verification = {
+    candidate_digest: candidateDigest,
+    candidate_id: candidateId,
+    candidate_tree_oid: treeOid,
+    commit_object_admission: 'verified',
+    commit_oid: commitOid,
+    commit_ref_admission: 'verified',
+    conversation_id: conversationId,
+    expected_base_oid: null,
+    object_format: 'sha1',
+    project_id: selectedProjectId,
+    receipt_version: 'builder-git-candidate-verification-receipt.v1',
+    repository_version: 'builder-git-project-repository.v1',
+    request_id: requestId,
+    request_ref_admission: 'verified',
+    resulting_tree_digest: sourceTree.source_tree_digest,
+    run_id: runId,
+    semantic_identity_digest: semanticIdentityDigest,
+    task_id: taskId,
+    turn_id: turnId,
+    verification_admission: 'accepted',
+  };
+  const verificationReceiptDigest = digestCanonical(verification);
+  const candidate = {
+    candidate_digest: candidateDigest,
+    candidate_id: candidateId,
+    code_authority: 'git_commit_candidate',
+    commit_oid: commitOid,
+    conversation_id: conversationId,
+    expected_base_oid: null,
+    object_format: 'sha1',
+    parent_oid: null,
+    product_revision_admission: 'not_recorded',
+    project_id: selectedProjectId,
+    receipt_version: 'builder-git-candidate-receipt.v1',
+    replay: false,
+    repository_version: 'builder-git-project-repository.v1',
+    request_id: requestId,
+    resulting_tree_digest: sourceTree.source_tree_digest,
+    run_id: runId,
+    semantic_identity_digest: semanticIdentityDigest,
+    task_id: taskId,
+    tree_oid: treeOid,
+    turn_id: turnId,
+    verification_receipt_digest: verificationReceiptDigest,
+  };
+  const receiptBody = {
+    candidate_digest: candidateDigest,
+    candidate_id: candidateId,
+    commit_oid: commitOid,
+    conversation_id: conversationId,
+    object_format: 'sha1',
+    parent_oid: null,
+    previous_revision_receipt_digest: null,
+    project_id: selectedProjectId,
+    request_id: requestId,
+    resulting_tree_digest: sourceTree.source_tree_digest,
+    review_id: reviewId,
+    revision_number: 1,
+    run_id: runId,
+    selected_at_ms: 1000,
+    semantic_identity_digest: semanticIdentityDigest,
     summary: 'A timer.',
+    task_id: taskId,
     title: 'Focus timer',
+    tree_oid: treeOid,
+    turn_id: turnId,
+    verification_receipt_digest: verificationReceiptDigest,
+  };
+  const receipt = {
+    ...receiptBody,
+    revision_receipt_digest: digestCanonical(receiptBody),
+  };
+  const current = {
+    commit_oid: commitOid,
+    object_format: 'sha1',
+    parent_oid: null,
+    project_id: selectedProjectId,
+    revision_number: 1,
+    revision_receipt_digest: receipt.revision_receipt_digest,
+    summary: receipt.summary,
+    title: receipt.title,
+    tree_oid: treeOid,
+  };
+  const project = {
+    commit_oid: commitOid,
+    project_id: canonicalProjectId,
+    revision_number: 1,
+    revision_receipt_digest: receipt.revision_receipt_digest,
+    selected_at_ms: 1000,
+    summary: receipt.summary,
+    title: receipt.title,
+    tree_oid: treeOid,
   };
   return {
-    catalog: {
-      catalog_evidence: {
-        ordering: 'project_id_ascending',
-      },
-      result_version: 'builder-project-catalog-result.v1',
-      projects: [project],
+    bridge_contract: {
+      bridge_version: 'builder-preload.v2',
+      legacy_namespaces_absent: true,
     },
-    current: projectId === null ? null : {
-      head: {
-        head_digest: `sha256:${'c'.repeat(64)}`,
-        project_id: projectId,
-        record_kind: 'builder_project_head',
-        revision: 1,
-        revision_digest: project.revision_digest,
-        schema_version: 1,
+    catalog: {
+      authority_evidence: {
+        code_authority: 'not_read_for_catalog',
+        current_selection: 'sqlite_current_project_revision',
+        product_authority: 'sqlite_product_revision_receipt',
+        source_read_admission: 'not_requested',
       },
-      persistence_evidence: {
-        operation: 'current_loaded',
+      operation: 'current_listed',
+      result_version: 'builder-project-read-result.v1',
+      projects: saved ? [project] : [],
+    },
+    current: projectId === null || !saved ? null : {
+      authority_evidence: {
+        code_authority: 'git_commit_tree',
+        current_selection: 'sqlite_current_project_revision',
+        product_authority: 'sqlite_product_revision_receipt',
+        source_read_admission: 'verified',
       },
-      result_version: 'builder-project-repository-result.v1',
-      restart_restore: true,
-      record: {
-        execution_admission: 'not_evaluated',
-        files: {
-          'app.js': '',
-          'index.html': '<main>Focus timer</main>',
-          'styles.css': 'main { color: black; }',
-        },
-        parent_revision: null,
-        preview_script_admission: 'not_authorized',
-        project_id: projectId,
-        proposal_evidence: {
-          authority: 'builder_code_project_generator',
-        },
-        record_kind: 'builder_project_revision',
-        revision: 1,
-        revision_digest: project.revision_digest,
-        schema_version: 1,
-        summary: project.summary,
-        title: 'Focus timer',
-      },
+      current,
+      git_candidate_receipt: candidate,
+      git_verification_receipt: verification,
+      operation: 'current_loaded',
+      product_revision_receipt: receipt,
+      result_version: 'builder-project-read-result.v1',
+      source_tree: sourceTree,
     },
     status: {
       status_version: 'builder-provider-settings-status.v1',
       configured: true,
       config_digest: `sha256:${'b'.repeat(64)}`,
       credential_status: 'stored',
+    },
+  };
+}
+
+function installBridge(page) {
+  globalThis.clawfabricBuilder = {
+    bridgeVersion: 'builder-preload.v2',
+    codeGenerator: {
+      generate() { throw new Error('must not write through bridge'); },
+    },
+    projectWorkspace: {
+      async listCurrent() { return bridgeEvidence(null, page.draftSaved).catalog; },
+      async loadCurrent(request) { return bridgeEvidence(request.project_id, page.draftSaved).current; },
+      async saveDraft() { throw new Error('must not write through bridge'); },
+    },
+    providerSettings: {
+      async replaceCurrent() { throw new Error('must not write through bridge'); },
+      async status() { return bridgeEvidence().status; },
     },
   };
 }
@@ -318,7 +478,7 @@ function fakeElectron(page) {
           fake.appEvents.push(['firstWindow']);
           page.evaluate = async (callback, argument) => {
             page.events.push(['evaluate', callback.toString(), argument]);
-            return bridgeEvidence(argument.projectId);
+            return bridgeEvidence(argument.projectId, page.draftSaved);
           };
           page.artifactsAllowed = true;
           return page;
@@ -650,36 +810,43 @@ test('observes custom chrome controls without clicking window actions', async ()
   );
 });
 
-test('generates only through real Make UI and reads bridge evidence without write commands', async () => {
+test('observes an unsaved draft before saving Version 1 through the real UI', async (t) => {
   const page = new FakePage();
-  await generateProjectViaUi(page, 'Make a focus timer.');
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
+  assert.deepEqual(draftEvidence, {
+    pre_save_catalog_empty: true,
+    saved_via_ui: true,
+    unsaved_draft_observed: true,
+  });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Make it']);
+  assert.deepEqual(roleClicks, ['New project', 'Make draft', 'Save version']);
   assert.equal(page.events.some((event) => event[0] === 'roleFirst'), false);
 
-  globalThis.clawfabricBuilder = {
-    codeGenerator: {
-      generate() { throw new Error('must not write through bridge'); },
-    },
-    projectCatalog: {
-      async listCurrent() { return bridgeEvidence().catalog; },
-    },
-    projectRevisions: {
-      async loadCurrent(request) { return bridgeEvidence(request.project_id).current; },
-    },
-    providerSettings: {
-      async replaceCurrent() { throw new Error('must not write through bridge'); },
-      async status() { return bridgeEvidence().status; },
-    },
-  };
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  const source = page.events.find((event) => event[0] === 'evaluate')[1];
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v2');
+  const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
+  const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
-  assert.match(source, /projectCatalog\.listCurrent/u);
-  assert.match(source, /projectRevisions\.loadCurrent/u);
-  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.generate|projectRevisions\.commit|cancel/u);
-  delete globalThis.clawfabricBuilder;
+  assert.match(source, /projectWorkspace\.listCurrent/u);
+  assert.match(source, /projectWorkspace\.loadCurrent/u);
+  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.generate|projectWorkspace\.saveDraft|cancel/u);
+  const unsavedWait = page.events.findIndex(
+    (event) => event[0] === 'scopedText' && event[2] === 'Unsaved draft',
+  );
+  const preSaveRead = page.events.findIndex((event) => event[0] === 'evaluate');
+  const saveClick = page.events.findIndex(
+    (event) => event[0] === 'roleClick' && event[2] === 'Save version',
+  );
+  const versionWait = page.events.findIndex(
+    (event) => event[0] === 'textContent' && event[1] === SELECTORS.currentVersion,
+  );
+  assert.ok(unsavedWait >= 0 && unsavedWait < preSaveRead);
+  assert.ok(preSaveRead < saveClick);
+  assert.ok(saveClick < versionWait);
 });
 
 test('reports fixed redacted UI stages without raw provider, prompt, or DOM details', async () => {
@@ -742,10 +909,61 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       stage: 'preview',
     },
     {
+      code: 'canary_draft_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failTextWaitFor.add('Unsaved draft');
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'draft',
+    },
+    {
+      code: 'canary_draft_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'draft',
+    },
+    {
+      code: 'canary_save_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.failRoleClicks.add('button:Save version');
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'save',
+    },
+    {
+      code: 'canary_save_persistence_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.persistSave = false;
+        page.failWaitFor.add(SELECTORS.unsavedDraft);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'save_persistence',
+    },
+    {
+      code: 'canary_save_confirmation_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.failWaitFor.add(SELECTORS.unsavedDraft);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'save_confirmation',
+    },
+    {
       code: 'canary_version_failed',
       run: async () => {
         const page = new FakePage();
-        page.failTextWaitFor.add('Version 1');
+        installBridge(page);
+        page.versionLabel = 'Version 2';
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'version',
@@ -771,26 +989,33 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       stage: 'read_evidence',
     },
     {
-      code: 'canary_restart_failed',
+      code: 'canary_restart_open_failed',
       run: async () => {
         const page = new FakePage();
         page.failWaitFor.add(SELECTORS.projectCatalog);
         await openProjectFromCatalogById(page, {
+          commit_oid: 'a'.repeat(40),
           project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
-          revision: 1,
+          revision_number: 1,
+          revision_receipt_digest: `sha256:${'a'.repeat(64)}`,
           summary: 'A timer.',
           title: 'Focus timer',
-        });
+          tree_oid: 'b'.repeat(40),
+        }, 'canary_restart_open_failed');
       },
-      stage: 'restart',
+      stage: 'restart_open',
     },
   ];
 
   for (const item of stages) {
-    await assert.rejects(item.run(), (error) => {
-      assertFixedCanaryError(error, item.code, item.stage);
-      return true;
-    });
+    try {
+      await assert.rejects(item.run(), (error) => {
+        assertFixedCanaryError(error, item.code, item.stage);
+        return true;
+      });
+    } finally {
+      delete globalThis.clawfabricBuilder;
+    }
   }
 });
 
@@ -844,6 +1069,60 @@ test('sanitizes read evidence before dereferencing renderer-returned shapes', ()
   assert.equal(trapCalls, 0);
 });
 
+test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+
+  const legacyCatalog = bridgeEvidence(projectId);
+  legacyCatalog.catalog.result_version = 'builder-project-catalog-result.v1';
+  assert.throws(
+    () => assertReadEvidence(legacyCatalog),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const legacyCurrent = bridgeEvidence(projectId);
+  legacyCurrent.current.result_version = 'builder-project-repository-result.v1';
+  assert.throws(
+    () => assertReadEvidence(legacyCurrent),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const commitDrift = bridgeEvidence(projectId);
+  commitDrift.current.current.commit_oid = 'c'.repeat(40);
+  assert.throws(
+    () => assertReadEvidence(commitDrift),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const treeDrift = bridgeEvidence(projectId);
+  treeDrift.current.git_verification_receipt.candidate_tree_oid = 'c'.repeat(40);
+  assert.throws(
+    () => assertReadEvidence(treeDrift),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const receiptDrift = bridgeEvidence(projectId);
+  receiptDrift.catalog.projects[0].revision_receipt_digest = `sha256:${'f'.repeat(64)}`;
+  const sanitized = assertReadEvidence(receiptDrift);
+  assert.throws(
+    () => assertExactRevision(sanitized, sanitized.catalog.projects[0]),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const sourceDrift = bridgeEvidence(projectId);
+  sourceDrift.current.source_tree.files[0].content = 'changed';
+  assert.throws(
+    () => assertReadEvidence(sourceDrift),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const oldNamespace = bridgeEvidence(projectId);
+  oldNamespace.bridge_contract.legacy_namespaces_absent = false;
+  assert.throws(
+    () => assertReadEvidence(oldNamespace),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+});
+
 test('summarizes nonblank preview pixels and tracks unexpected renderer network', () => {
   const summary = summarizePng(pngFixture());
   assert.equal(summary.width, 5);
@@ -865,15 +1144,15 @@ test('summarizes nonblank preview pixels and tracks unexpected renderer network'
   page.emitRequest('https://provider.example/v1/chat/completions');
   page.emitRequest('https://unexpected.example/script.js');
   assert.deepEqual(recorder.snapshot(), {
-    application_observer_count: 1,
-    unexpected_network_count: 2,
+    renderer_context_observer_count: 1,
+    renderer_unexpected_network_count: 2,
   });
   const fallback = networkRecorder();
   fallback.attachPage(page);
   page.emitRequest('wss://unexpected.example/socket');
   assert.deepEqual(fallback.snapshot(), {
-    application_observer_count: 0,
-    unexpected_network_count: 1,
+    renderer_context_observer_count: 0,
+    renderer_unexpected_network_count: 1,
   });
 });
 
@@ -945,9 +1224,17 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v1');
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v2');
   assert.equal(result.safe_storage.credential_status, 'stored');
-  assert.equal(result.project.revision, 1);
+  assert.deepEqual(result.draft, {
+    pre_save_catalog_empty: true,
+    saved_via_ui: true,
+    unsaved_draft_observed: true,
+  });
+  assert.equal(result.project.revision_number, 1);
+  assert.match(result.project.revision_receipt_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.match(result.project.commit_oid, /^[0-9a-f]{40}$/u);
+  assert.match(result.project.tree_oid, /^[0-9a-f]{40}$/u);
   assert.equal(result.project.restart_revision_unchanged, true);
   assert.equal(result.project.restart_new_revision_observed, false);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
@@ -957,6 +1244,17 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(JSON.stringify(result).includes(parsed.provider.model), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.base_url), false);
   assert.equal(JSON.stringify(result).includes(parsed.executable_path), false);
+  const resultPacket = JSON.stringify(result);
+  for (const forbidden of [
+    '"head_digest"',
+    '"record_kind":"builder_project_head"',
+    '"record_kind":"builder_project_revision"',
+    '"revision_digest"',
+    '"builder-project-catalog-result.v1"',
+    '"builder-project-repository-result.v1"',
+  ]) {
+    assert.equal(resultPacket.includes(forbidden), false);
+  }
   assert.deepEqual(Object.keys(result.input).sort(), ['credential_source', 'idea_digest', 'schema_version']);
   assert.equal(electron.launches.length, 2);
   assert.deepEqual(electron.appEvents, [
@@ -983,10 +1281,9 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   );
   const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
-    ['Version 1', { exact: true }],
+    ['Unsaved draft', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
-    ['Version 1', { exact: true }],
     ['Version 1', { exact: true }],
   ]);
   assert.deepEqual(removed, [userDataPath]);
@@ -1028,7 +1325,7 @@ test('copies only saved provider profile files and runs without provider input o
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v1');
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v2');
   assert.deepEqual(result.input, {
     credential_source: 'saved_profile',
     idea_digest: result.input.idea_digest,
@@ -1053,7 +1350,7 @@ test('copies only saved provider profile files and runs without provider input o
   ]);
   assert.deepEqual(copied.map(([source]) => source), [localState, localState, current, secret]);
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Make it']);
+  assert.deepEqual(roleClicks, ['New project', 'Make draft', 'Save version']);
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), false);
@@ -1249,10 +1546,13 @@ test('rechecks saved profile target directory immediately before exclusive file 
 test('opens restart project only for canonical project id selectors and visible catalog facts', async () => {
   const page = new FakePage();
   await openProjectFromCatalogById(page, {
+    commit_oid: 'a'.repeat(40),
     project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
-    revision: 1,
+    revision_number: 1,
+    revision_receipt_digest: `sha256:${'a'.repeat(64)}`,
     summary: 'A timer.',
     title: 'Focus timer',
+    tree_oid: 'b'.repeat(40),
   });
 
   const scopedLocators = page.events.filter((event) => event[0] === 'scopedLocator');
@@ -1508,7 +1808,7 @@ test('cleanup attempts guarded remove when app close fails', async (t) => {
       return {
         async close() { throw new Error('close failed'); },
         async firstWindow() {
-          page.evaluate = async (callback, argument) => bridgeEvidence(argument.projectId);
+          page.evaluate = async (callback, argument) => bridgeEvidence(argument.projectId, page.draftSaved);
           page.artifactsAllowed = true;
           return page;
         },
@@ -1546,7 +1846,7 @@ test('cleanup refuses user data replacement before recursive remove', async (t) 
           if (closeCount === 2) state.stats.set(userDataPath, fakeDirectoryStat(1n, 12n));
         },
         async firstWindow() {
-          page.evaluate = async (callback, argument) => bridgeEvidence(argument.projectId);
+          page.evaluate = async (callback, argument) => bridgeEvidence(argument.projectId, page.draftSaved);
           page.artifactsAllowed = true;
           return page;
         },
@@ -1597,10 +1897,17 @@ test('bounds stdin and requires explicit CLI execute before launch', async () =>
 
 test('script source keeps credential out of argv/env/output and cannot enter ASAR authority', () => {
   const source = fs.readFileSync(SOURCE_PATH, 'utf8');
+  const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
-  assert.doesNotMatch(source, /providerSettings\.replaceCurrent|codeGenerator\.generate|projectRevisions\.commit/u);
+  assert.doesNotMatch(source, /providerSettings\.replaceCurrent|codeGenerator\.generate|projectWorkspace\.saveDraft/u);
+  assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
+  assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);
-  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make it['"]\)/u);
+  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make draft['"]\)/u);
+  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
   assert.match(source, /artifacts_after_password_clear/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v2['"]/u);
+  assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
+  assert.doesNotMatch(preloadSource, /projectRevisions|projectCatalog/u);
 });

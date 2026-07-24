@@ -209,7 +209,9 @@ export function createBuilderDesktopCodeGeneratorPort(
   const bridge = sanitizeBridge(value);
   return Object.freeze({
     generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
-      return callBridge(bridge, bridge.generate, [request]).then(unwrapGenerationEnvelope);
+      return callBridge(bridge, bridge.generate, [{
+        instruction: request.instruction,
+      }]).then(unwrapGenerationEnvelope);
     },
   });
 }

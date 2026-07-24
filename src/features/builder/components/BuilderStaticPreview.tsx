@@ -1,14 +1,14 @@
 import {
-  isTrustedBuilderStaticPreviewProjection,
-  type BuilderStaticPreviewProjection,
-} from '../preview/builderStaticPreview';
+  isTrustedBuilderSourceTreePreviewProjection,
+  type BuilderSourceTreePreviewProjection,
+} from '../preview/builderSourceTreePreview';
 
 export type BuilderStaticPreviewProps = {
-  projection: BuilderStaticPreviewProjection | unknown;
+  projection: BuilderSourceTreePreviewProjection | unknown;
 };
 
 export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
-  if (!isTrustedBuilderStaticPreviewProjection(projection)) {
+  if (!isTrustedBuilderSourceTreePreviewProjection(projection)) {
     return <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">Preview unavailable.</p>;
   }
 
@@ -20,7 +20,7 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
     >
       <header className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold">{projection.title}</h2>
-        <span className="text-xs text-muted-foreground">Version {projection.revision}</span>
+        <span className="text-xs text-muted-foreground">Safe preview</span>
       </header>
       <iframe
         className="cf-builder-preview-frame min-h-80 w-full"

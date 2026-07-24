@@ -2,10 +2,9 @@ import {
   sanitizeBuilderProjectCatalogResult,
   type BuilderProjectCatalogItem,
 } from '../domain/builderProjectCatalog';
+import type { BuilderProjectWorkspacePort } from './builderPorts';
 
-export interface BuilderProjectCatalogPort {
-  listCurrent(): Promise<unknown>;
-}
+export type BuilderProjectCatalogPort = Pick<BuilderProjectWorkspacePort, 'listCurrent'>;
 
 export type BuilderProjectCatalogStatus =
   | 'loading'

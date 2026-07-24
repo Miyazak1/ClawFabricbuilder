@@ -34,10 +34,4 @@ export default tseslint.config(
       '@typescript-eslint/no-require-imports': 'off',
     },
   },
-  {
-    files: ['electron/builder-project-revision-repository.cjs'],
-    rules: {
-      'no-control-regex': 'off',
-    },
-  },
 );

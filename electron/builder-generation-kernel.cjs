@@ -36,6 +36,7 @@ const CREDENTIAL_URL_PATTERN = /https?:\/\/[^\s/:@]+:[^\s/@]+@/iu;
 const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{20,})\b/u;
 
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
+const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
 const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree']);
 const RESULT_INPUT_KEYS = Object.freeze([
   'request',
@@ -254,6 +255,33 @@ function sanitizeBuilderGenerationRequest(value) {
   }
 }
 
+function createBuilderGenerationRequest(value) {
+  try {
+    assertExactObject(value, REQUEST_INPUT_KEYS, 'builder_generation_request_invalid');
+    const unsigned = {
+      version: BUILDER_GENERATION_REQUEST_PROTOCOL,
+      instruction: safeText(
+        valueAt(value, 'instruction', 'builder_generation_request_invalid'),
+        MAX_INSTRUCTION_CODE_POINTS,
+        MAX_INSTRUCTION_UTF8_BYTES,
+        true,
+        'builder_generation_request_invalid',
+      ),
+      existing_project_id: safeProjectId(
+        valueAt(value, 'existing_project_id', 'builder_generation_request_invalid'),
+        'builder_generation_request_invalid',
+      ),
+    };
+    return freezeDeep({
+      ...unsigned,
+      request_digest: sha256Canonical(unsigned, 'builder_generation_request_invalid'),
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationKernelError) throw error;
+    fail('builder_generation_request_invalid');
+  }
+}
+
 function sanitizePromptInput(value) {
   assertExactObject(value, PROMPT_INPUT_KEYS, 'builder_generation_request_invalid');
   const request = sanitizeBuilderGenerationRequestInternal(
@@ -423,6 +451,7 @@ module.exports = Object.freeze({
   BUILDER_GENERATION_RESULT_PROTOCOL,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
+  createBuilderGenerationRequest,
   sanitizeBuilderGenerationRequest,
   createBuilderGenerationPromptDescriptor,
   projectBuilderGenerationResult,

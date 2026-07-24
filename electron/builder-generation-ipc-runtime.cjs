@@ -1,5 +1,6 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
@@ -13,10 +14,21 @@ const {
   createBuilderGenerationMainService,
 } = require('./builder-generation-main-service.cjs');
 const {
+  createBuilderProjectSaveAuthority,
+} = require('./builder-project-save-authority.cjs');
+const {
+  OPEN_PROJECT_CHANNEL,
+  SAVE_DRAFT_CHANNEL,
+  LOAD_CURRENT_CHANNEL,
+  LIST_CURRENT_CHANNEL,
+  createBuilderProjectWorkspaceIpcAdapter,
+} = require('./builder-project-workspace-ipc-adapter.cjs');
+const {
   createBuilderOpenAICompatibleTransport,
 } = require('./builder-openai-compatible-transport.cjs');
 const {
-  sanitizeBuilderGenerationRequest,
+  BuilderGenerationKernelError,
+  createBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
   GIT_RUNTIME_DIRECTORY,
@@ -32,6 +44,7 @@ const {
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
+const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -70,6 +83,71 @@ function stableMethod(value, key) {
     cursor = Object.getPrototypeOf(cursor);
   }
   fail();
+}
+
+function exactDataValue(value, keys, key) {
+  if (!isPlainObject(value)) fail();
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.length !== keys.length
+    || ownKeys.some((ownKey) => typeof ownKey !== 'string' || !keys.includes(ownKey))
+  ) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const expectedKey of keys) {
+    const descriptor = descriptors[expectedKey];
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return descriptors[key].value;
+}
+
+function publicInstruction(rawRequest) {
+  try {
+    if (!isPlainObject(rawRequest)) throw new Error();
+    const ownKeys = Reflect.ownKeys(rawRequest);
+    if (
+      ownKeys.length !== 1
+      || ownKeys[0] !== 'instruction'
+    ) throw new Error();
+    const descriptor = Object.getOwnPropertyDescriptor(rawRequest, 'instruction');
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      throw new Error();
+    }
+    return descriptor.value;
+  } catch {
+    throw new BuilderGenerationKernelError('builder_generation_request_invalid');
+  }
+}
+
+function openProjectId(rawRequest) {
+  const projectId = exactDataValue(rawRequest, ['project_id'], 'project_id');
+  if (projectId !== null && (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId))) fail();
+  return projectId;
+}
+
+function readResultProjectId(value) {
+  if (!isPlainObject(value)) fail();
+  const receipt = Object.getOwnPropertyDescriptor(value, 'product_revision_receipt');
+  if (!receipt || !Object.hasOwn(receipt, 'value') || !isPlainObject(receipt.value)) fail();
+  const projectId = Object.getOwnPropertyDescriptor(receipt.value, 'project_id');
+  if (
+    !projectId
+    || !Object.hasOwn(projectId, 'value')
+    || typeof projectId.value !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId.value)
+  ) fail();
+  return projectId.value;
+}
+
+function saveResultProjectId(value) {
+  if (!isPlainObject(value)) fail();
+  const projectId = Object.getOwnPropertyDescriptor(value, 'project_id');
+  if (
+    !projectId
+    || !Object.hasOwn(projectId, 'value')
+    || typeof projectId.value !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId.value)
+  ) fail();
+  return projectId.value;
 }
 
 function safeOptions(value) {
@@ -123,6 +201,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let projectMainAuthority = null;
   let service;
   let adapter;
+  let workspaceAdapter;
+  let selectedProjectId = null;
+  let selectionEpoch = 0;
+  let selectionPending = false;
   let activeRequestIds = () => Object.freeze([]);
   try {
     projectMainAuthority = createBuilderProjectMainAuthority({
@@ -141,15 +223,22 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       projectReadAuthority: projectMainAuthority.project_read_authority,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
     });
+    const saveAuthority = createBuilderProjectSaveAuthority({
+      generationDrafts: service,
+      gitAuthority: projectMainAuthority.git_authority,
+      metadataAuthority: projectMainAuthority.metadata_authority,
+      projectReadAuthority: projectMainAuthority.project_read_authority,
+      createUuid: randomUUID,
+      nowMs: () => Date.now(),
+    });
     const activeRequests = new Map();
 
     function trackedGenerate(rawRequest) {
-      let request;
-      try {
-        request = sanitizeBuilderGenerationRequest(rawRequest);
-      } catch {
-        return service.generate(rawRequest);
-      }
+      if (selectionPending) fail();
+      const request = createBuilderGenerationRequest({
+        instruction: publicInstruction(rawRequest),
+        existing_project_id: selectedProjectId,
+      });
       const requestId = request.request_digest;
       activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
       let operation;
@@ -174,6 +263,53 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       availability: service.availability,
       mainWindowRef: options.mainWindowRef,
     });
+    async function openProject(rawRequest) {
+      const projectId = openProjectId(rawRequest);
+      const operationEpoch = ++selectionEpoch;
+      selectionPending = projectId !== null;
+      selectedProjectId = null;
+      if (projectId === null) {
+        return Object.freeze({
+          result_version: 'builder-project-selection-result.v1',
+          operation: 'new_selected',
+          project_id: null,
+        });
+      }
+      let result;
+      try {
+        result = await projectMainAuthority.project_read_authority.load_current({
+          project_id: projectId,
+        });
+      } catch (error) {
+        if (operationEpoch === selectionEpoch) selectionPending = false;
+        throw error;
+      }
+      if (readResultProjectId(result) !== projectId) fail();
+      if (operationEpoch === selectionEpoch) {
+        selectedProjectId = projectId;
+        selectionPending = false;
+      }
+      return result;
+    }
+    async function saveDraft(rawRequest) {
+      if (selectionPending) fail();
+      const operationEpoch = selectionEpoch;
+      const expectedProjectId = selectedProjectId;
+      const result = await saveAuthority.save(rawRequest);
+      const savedProjectId = saveResultProjectId(result);
+      if (operationEpoch === selectionEpoch && selectedProjectId === expectedProjectId) {
+        selectedProjectId = savedProjectId;
+        selectionEpoch += 1;
+      }
+      return result;
+    }
+    workspaceAdapter = createBuilderProjectWorkspaceIpcAdapter({
+      openProject,
+      saveDraft,
+      loadCurrent: projectMainAuthority.project_read_authority.load_current,
+      listCurrent: () => projectMainAuthority.project_read_authority.list_current({ limit: 256 }),
+      mainWindowRef: options.mainWindowRef,
+    });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
     try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
@@ -184,6 +320,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
     Object.freeze({ channel: CANCEL_CHANNEL, invoke: adapter.channels.cancel.invoke }),
     Object.freeze({ channel: AVAILABILITY_CHANNEL, invoke: adapter.channels.availability.invoke }),
+    Object.freeze({ channel: OPEN_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.open.invoke }),
+    Object.freeze({ channel: SAVE_DRAFT_CHANNEL, invoke: workspaceAdapter.channels.saveDraft.invoke }),
+    Object.freeze({ channel: LOAD_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.loadCurrent.invoke }),
+    Object.freeze({ channel: LIST_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.listCurrent.invoke }),
   ]);
   const installed = [];
   let state = 'idle';

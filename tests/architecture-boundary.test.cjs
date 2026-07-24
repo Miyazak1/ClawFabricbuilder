@@ -30,6 +30,21 @@ test('standalone sources do not import legacy product authorities or the old rep
   }
 });
 
+test('retired JSON revision storage and renderer write IPC are absent', () => {
+  for (const retired of [
+    'builder-project-revision-record.cjs',
+    'builder-project-revision-repository.cjs',
+    'builder-project-revision-ipc-adapter.cjs',
+    'builder-project-catalog-ipc-adapter.cjs',
+    'builder-project-ipc-runtime.cjs',
+  ]) {
+    assert.equal(fs.existsSync(path.join(root, 'electron', retired)), false, retired);
+  }
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
+  assert.doesNotMatch(preload, /projectRevisions|projectCatalog|expected_previous|\brevision:\s*/u);
+  assert.match(preload, /saveDraft/u);
+});
+
 test('provider settings storage is main-only and safeStorage is isolated to the secret store', () => {
   const files = [
     ...sourceFiles(path.join(root, 'electron')),
@@ -46,12 +61,16 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   }
 
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf8');
-  assert.match(preload, /projectRevisions/u);
-  assert.match(preload, /projectCatalog/u);
+  assert.match(preload, /projectWorkspace/u);
+  assert.match(preload, /\bopen\b/u);
+  assert.match(preload, /saveDraft/u);
+  assert.match(preload, /loadCurrent/u);
+  assert.match(preload, /listCurrent/u);
+  assert.doesNotMatch(preload, /projectRevisions|projectCatalog/u);
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /windowControls/u);
   assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 13);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 14);
 });
 
 test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {
@@ -161,8 +180,16 @@ test('frontend extraction provenance is pinned without creating an old-repositor
     for (const targetRoot of targetRoots) {
       assert.equal(fs.statSync(path.join(root, targetRoot)).isDirectory(), true);
     }
-    for (const targetFile of entry.target_files || []) {
-      assert.equal(fs.statSync(path.join(root, targetFile)).isFile(), true);
+    if (entry.current_status === 'retired_after_git_sqlite_cutover') {
+      assert.equal(Array.isArray(entry.replacement_authorities), true);
+      assert.equal(entry.replacement_authorities.length > 0, true);
+      for (const replacement of entry.replacement_authorities) {
+        assert.equal(fs.statSync(path.join(root, replacement)).isFile(), true);
+      }
+    } else {
+      for (const targetFile of entry.target_files || []) {
+        assert.equal(fs.statSync(path.join(root, targetFile)).isFile(), true);
+      }
     }
   }
 });

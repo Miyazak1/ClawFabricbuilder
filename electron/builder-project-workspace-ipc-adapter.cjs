@@ -1,0 +1,283 @@
+'use strict';
+
+const { types: utilTypes } = require('node:util');
+
+const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
+const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
+const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
+const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
+const OPTION_KEYS = Object.freeze([
+  'openProject',
+  'saveDraft',
+  'loadCurrent',
+  'listCurrent',
+  'mainWindowRef',
+]);
+const MAX_PLAIN_DATA_NODES = 20_000;
+const MAX_PLAIN_DATA_ENTRIES = 20_000;
+const MAX_PLAIN_DATA_UTF8_BYTES = 16 * 1024 * 1024;
+const MAX_PLAIN_DATA_DEPTH = 64;
+const ERROR_MESSAGES = Object.freeze({
+  builder_project_workspace_forbidden: 'Builder projects are unavailable.',
+  builder_project_workspace_invalid: 'The Builder project request could not be verified.',
+  builder_project_workspace_not_found: 'The Builder project is unavailable.',
+  builder_project_workspace_conflict: 'The Builder project changed before this action completed.',
+  builder_project_workspace_resource_exceeded: 'The Builder project is too large to read safely.',
+  builder_project_workspace_integrity_failed: 'The Builder project could not be verified.',
+  builder_project_workspace_unavailable: 'Builder projects are unavailable.',
+});
+const SOURCE_CODE_MAP = Object.freeze({
+  builder_project_save_invalid: 'builder_project_workspace_invalid',
+  builder_project_save_not_found: 'builder_project_workspace_not_found',
+  builder_project_save_conflict: 'builder_project_workspace_conflict',
+  builder_project_save_unavailable: 'builder_project_workspace_unavailable',
+  builder_project_read_invalid: 'builder_project_workspace_invalid',
+  builder_project_read_not_found: 'builder_project_workspace_not_found',
+  builder_project_read_resource_exceeded: 'builder_project_workspace_resource_exceeded',
+  builder_project_read_integrity_failed: 'builder_project_workspace_integrity_failed',
+  builder_project_read_unavailable: 'builder_project_workspace_unavailable',
+});
+
+class BuilderProjectWorkspaceIpcError extends Error {
+  constructor(code = 'builder_project_workspace_unavailable') {
+    const selected = Object.hasOwn(ERROR_MESSAGES, code)
+      ? code
+      : 'builder_project_workspace_unavailable';
+    super(ERROR_MESSAGES[selected]);
+    this.name = 'BuilderProjectWorkspaceIpcError';
+    this.code = selected;
+    this.retryable = ![
+      'builder_project_workspace_forbidden',
+      'builder_project_workspace_invalid',
+      'builder_project_workspace_integrity_failed',
+    ].includes(selected);
+    this.stack = `${this.name}: ${this.message}`;
+  }
+}
+
+function ipcError(code) {
+  return new BuilderProjectWorkspaceIpcError(code);
+}
+
+function safeErrorCode(error) {
+  try {
+    if (
+      error === null
+      || (typeof error !== 'object' && typeof error !== 'function')
+      || utilTypes.isProxy(error)
+    ) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    return descriptor
+      && Object.hasOwn(descriptor, 'value')
+      && typeof descriptor.value === 'string'
+      ? descriptor.value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeError(error) {
+  const sourceCode = safeErrorCode(error);
+  if (sourceCode !== null && Object.hasOwn(ERROR_MESSAGES, sourceCode)) {
+    return new BuilderProjectWorkspaceIpcError(sourceCode);
+  }
+  return ipcError(SOURCE_CODE_MAP[sourceCode] ?? 'builder_project_workspace_unavailable');
+}
+
+function isPlainObject(value) {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || utilTypes.isProxy(value)
+  ) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function stableMethod(value, key) {
+  if (!isPlainObject(value)) throw ipcError();
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (
+    !descriptor
+    || descriptor.enumerable !== true
+    || !Object.hasOwn(descriptor, 'value')
+    || typeof descriptor.value !== 'function'
+    || utilTypes.isProxy(descriptor.value)
+  ) throw ipcError();
+  return descriptor.value;
+}
+
+function safeOptions(value) {
+  try {
+    if (!isPlainObject(value)) throw ipcError();
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length !== OPTION_KEYS.length
+      || keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.includes(key))
+    ) throw ipcError();
+    return Object.freeze({
+      openProject: stableMethod(value, 'openProject'),
+      saveDraft: stableMethod(value, 'saveDraft'),
+      loadCurrent: stableMethod(value, 'loadCurrent'),
+      listCurrent: stableMethod(value, 'listCurrent'),
+      mainWindowRef: stableMethod(value, 'mainWindowRef'),
+    });
+  } catch {
+    throw ipcError();
+  }
+}
+
+function accountUtf8(value, state) {
+  if (value.length > MAX_PLAIN_DATA_UTF8_BYTES - state.utf8Bytes) throw ipcError();
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes > MAX_PLAIN_DATA_UTF8_BYTES - state.utf8Bytes) throw ipcError();
+  state.utf8Bytes += bytes;
+}
+
+function clonePlainData(value, state = {
+  entries: 0,
+  nodes: 0,
+  seen: new WeakSet(),
+  utf8Bytes: 0,
+}, depth = 0) {
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    accountUtf8(value, state);
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (
+    typeof value !== 'object'
+    || utilTypes.isProxy(value)
+    || state.seen.has(value)
+    || depth > MAX_PLAIN_DATA_DEPTH
+    || state.nodes >= MAX_PLAIN_DATA_NODES
+  ) throw ipcError();
+  state.seen.add(value);
+  state.nodes += 1;
+  const isArray = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    (isArray && prototype !== Array.prototype)
+    || (!isArray && prototype !== Object.prototype && prototype !== null)
+    || (isArray && value.length > MAX_PLAIN_DATA_ENTRIES - state.entries)
+  ) throw ipcError();
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string')) throw ipcError();
+  const entryCount = keys.length - (isArray ? 1 : 0);
+  if (entryCount > MAX_PLAIN_DATA_ENTRIES - state.entries) throw ipcError();
+  state.entries += entryCount;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (
+    Reflect.ownKeys(descriptors).length !== keys.length
+    || (isArray && (keys.length !== value.length + 1 || !Object.hasOwn(descriptors, 'length')))
+  ) throw ipcError();
+  const output = isArray ? [] : {};
+  for (const key of keys) {
+    accountUtf8(key, state);
+    const descriptor = descriptors[key];
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw ipcError();
+    if (isArray && key === 'length') continue;
+    if (
+      !descriptor.enumerable
+      || (isArray && !/^(?:0|[1-9][0-9]*)$/u.test(key))
+      || (!isArray && ['__proto__', 'prototype', 'constructor'].includes(key))
+    ) throw ipcError();
+    output[key] = clonePlainData(descriptor.value, state, depth + 1);
+  }
+  return Object.freeze(output);
+}
+
+function activeWebContents(mainWindowRef) {
+  try {
+    const windowRef = Reflect.apply(mainWindowRef, undefined, []);
+    if (!windowRef || (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed())) {
+      return null;
+    }
+    const webContents = windowRef.webContents;
+    if (!webContents || (typeof webContents.isDestroyed === 'function' && webContents.isDestroyed())) {
+      return null;
+    }
+    return webContents;
+  } catch {
+    return null;
+  }
+}
+
+function assertActiveSender(event, mainWindowRef) {
+  if (!event || event.sender !== activeWebContents(mainWindowRef)) {
+    throw ipcError('builder_project_workspace_forbidden');
+  }
+}
+
+function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
+  const options = safeOptions(rawOptions);
+
+  async function invoke(event, rawArguments, method, expectedArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== expectedArguments) {
+        throw ipcError('builder_project_workspace_invalid');
+      }
+      return clonePlainData(await Reflect.apply(method, undefined, rawArguments));
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
+  return Object.freeze({
+    adapter_id: 'builder_project_workspace.controlled_ipc_adapter.v1',
+    namespace: 'builderProjectWorkspace',
+    preload_namespace: 'window.clawfabricBuilder.projectWorkspace',
+    channels: Object.freeze({
+      open: Object.freeze({
+        channel: OPEN_PROJECT_CHANNEL,
+        method: 'open',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.openProject, 1);
+        },
+      }),
+      saveDraft: Object.freeze({
+        channel: SAVE_DRAFT_CHANNEL,
+        method: 'saveDraft',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.saveDraft, 1);
+        },
+      }),
+      loadCurrent: Object.freeze({
+        channel: LOAD_CURRENT_CHANNEL,
+        method: 'loadCurrent',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.loadCurrent, 1);
+        },
+      }),
+      listCurrent: Object.freeze({
+        channel: LIST_CURRENT_CHANNEL,
+        method: 'listCurrent',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.listCurrent, 0);
+        },
+      }),
+    }),
+    exposed_methods: Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent']),
+    authority: Object.freeze({
+      renderer_authority: 'project_selection_or_draft_id_only',
+      main_owned_git_authority: true,
+      main_owned_sqlite_authority: true,
+      active_renderer_required: true,
+      direct_electron_registration: false,
+      direct_preload_exposure: false,
+    }),
+  });
+}
+
+module.exports = Object.freeze({
+  OPEN_PROJECT_CHANNEL,
+  SAVE_DRAFT_CHANNEL,
+  LOAD_CURRENT_CHANNEL,
+  LIST_CURRENT_CHANNEL,
+  BuilderProjectWorkspaceIpcError,
+  createBuilderProjectWorkspaceIpcAdapter,
+});

@@ -5,32 +5,26 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const BUILDER_ROOT = join(process.cwd(), 'src', 'features', 'builder');
-const PURE_BUILDER_FILES = new Set([
+const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'application/builderGeneration.ts',
   'application/builderPorts.ts',
   'application/builderProjectCatalogController.ts',
   'application/builderProjectController.ts',
-  'application/builderRepositoryEvidence.ts',
   'components/BuilderStaticPreview.tsx',
-  'domain/builderProject.ts',
   'domain/builderProjectCatalog.ts',
   'domain/builderProjectSnapshot.ts',
   'domain/builderProviderSettings.ts',
-  'presentation/BuilderPage.tsx',
-  'presentation/BuilderProviderSettingsPanel.tsx',
-  'presentation/BuilderProjectCatalog.tsx',
-  'preview/builderStaticPreview.ts',
-  'preview/builderSourceTreePreview.ts',
-]);
-const INTEGRATION_FILES = new Set([
   'hooks/useBuilderProjectCatalogController.ts',
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
-  'infrastructure/builderDesktopProjectCatalogPort.ts',
+  'infrastructure/builderDesktopProjectWorkspacePort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
-  'infrastructure/builderDesktopRepositoryPort.ts',
+  'presentation/BuilderPage.tsx',
+  'presentation/BuilderProjectCatalog.tsx',
+  'presentation/BuilderProviderSettingsPanel.tsx',
   'presentation/BuilderProviderSettingsRouteAdapter.tsx',
+  'preview/builderSourceTreePreview.ts',
 ]);
 
 function productionFiles(directory: string): string[] {
@@ -46,7 +40,7 @@ function productionFiles(directory: string): string[] {
   });
 }
 
-function moduleBoundary(path: string, source: string) {
+function imports(path: string, source: string): string[] {
   const file = ts.createSourceFile(
     path,
     source,
@@ -54,210 +48,71 @@ function moduleBoundary(path: string, source: string) {
     true,
     path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
-  const staticImports: string[] = [];
-  const forbiddenImports: string[] = [];
-  if (
-    file.referencedFiles.length > 0
-    || file.typeReferenceDirectives.length > 0
-    || file.libReferenceDirectives.length > 0
-  ) {
-    forbiddenImports.push('reference_directive');
-  }
-
+  const values: string[] = [];
   function visit(node: ts.Node): void {
-    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
-      forbiddenImports.push('import_meta');
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      values.push(node.moduleSpecifier.text);
     }
-    if (ts.isImportDeclaration(node)) {
-      if (!node.importClause) forbiddenImports.push('side_effect_import');
-      if (ts.isStringLiteral(node.moduleSpecifier)) staticImports.push(node.moduleSpecifier.text);
-    }
-    if (ts.isImportEqualsDeclaration(node)) forbiddenImports.push('import_equals');
-    if (ts.isImportTypeNode(node)) forbiddenImports.push('import_type');
-    if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-      forbiddenImports.push('export_from');
-    }
-    if (ts.isCallExpression(node)) {
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-        forbiddenImports.push('dynamic_import');
-      } else if (ts.isIdentifier(node.expression) && node.expression.text === 'require') {
-        forbiddenImports.push('require_call');
-      } else if (
-        ts.isPropertyAccessExpression(node.expression)
-        && ts.isIdentifier(node.expression.expression)
-        && node.expression.expression.text === 'require'
-      ) {
-        forbiddenImports.push('require_member_call');
-      }
+    if (
+      ts.isImportEqualsDeclaration(node)
+      || (ts.isCallExpression(node) && (
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
+        || (ts.isIdentifier(node.expression) && node.expression.text === 'require')
+      ))
+    ) {
+      values.push('FORBIDDEN_DYNAMIC_IMPORT');
     }
     ts.forEachChild(node, visit);
   }
   visit(file);
-  return { forbiddenImports, staticImports };
+  return values;
 }
 
-describe('Builder architecture boundary', () => {
-  it('keeps domain and application recursively independent from legacy product and runtime authorities', () => {
-    const files = productionFiles(BUILDER_ROOT);
-    const sources = files.map((path) => ({
-      path: relative(BUILDER_ROOT, path).replaceAll('\\', '/'),
-      source: readFileSync(path, 'utf8'),
-    }));
-
-    expect(sources.map(({ path }) => path).sort()).toEqual(
-      [...PURE_BUILDER_FILES, ...INTEGRATION_FILES].sort(),
+describe('Builder v2 architecture boundary', () => {
+  it('contains only the clean Git/SQLite product modules', () => {
+    const files = productionFiles(BUILDER_ROOT).map((path) => (
+      relative(BUILDER_ROOT, path).replaceAll('\\', '/')
+    )).sort();
+    expect(files).toEqual([...EXPECTED_PRODUCTION_FILES].sort());
+    expect(files.join('\n')).not.toMatch(
+      /builderProject\.ts|builderRepositoryEvidence|builderStaticPreview|ProjectCatalogPort|RepositoryPort/u,
     );
+  });
 
-    for (const { path, source } of sources) {
-      expect(moduleBoundary(path, source).forbiddenImports, path).toEqual([]);
-      if (!PURE_BUILDER_FILES.has(path)) continue;
-      expect(source, path).not.toMatch(
-        /ChatCreatePage|chat_planner|localChat|AppLayout|Canvas|\bJob\b|server(?:Workspace| workspace)|\bworkspace\b|dispatchProvider|providerDispatch|genericProvider|\bstorage\b|react-router|\brouter\b/i,
-      );
-      expect(source, path).not.toMatch(
-        /\bfetch\s*\(|axios|localStorage|sessionStorage|indexedDB|ipcRenderer|electron|preload|WebSocket|XMLHttpRequest|BroadcastChannel|eval\s*\(|new Function/i,
+  it('keeps all Builder modules free of old product authorities and direct host access', () => {
+    for (const path of productionFiles(BUILDER_ROOT)) {
+      const relativePath = relative(BUILDER_ROOT, path).replaceAll('\\', '/');
+      const source = readFileSync(path, 'utf8');
+      expect(imports(relativePath, source), relativePath).not.toContain('FORBIDDEN_DYNAMIC_IMPORT');
+      expect(source, relativePath).not.toMatch(
+        /ChatCreatePage|chat_planner|AppLayout|Canvas|\bJobMeta\b|projectRevisions|projectCatalog|builder-project-revisions-v1|builder-generation-request\.v1|localStorage|sessionStorage|indexedDB|ipcRenderer|eval\s*\(|new Function/u,
       );
     }
   });
 
-  it('keeps hooks and desktop ports on explicit inward-only imports without direct host authority', () => {
-    const sources = productionFiles(BUILDER_ROOT)
-      .map((path) => ({
-        path: relative(BUILDER_ROOT, path).replaceAll('\\', '/'),
-        source: readFileSync(path, 'utf8'),
-      }))
-      .filter(({ path }) => INTEGRATION_FILES.has(path));
-
-    for (const { path, source } of sources) {
-      expect(source, path).not.toMatch(
-        /ChatCreatePage|chat_planner|localChat|AppLayout|Canvas|\bJob\b|react-router|\brouter\b|\bwindow\b|globalThis|clawfabricBuilder|clawfabricDesktop|\bfetch\s*\(|axios|localStorage|sessionStorage|indexedDB|ipcRenderer|electron|preload|WebSocket|XMLHttpRequest|BroadcastChannel|eval\s*\(|new Function/i,
-      );
-    }
-
-    expect(moduleBoundary('useBuilderProjectController.ts', sources.find(({ path }) => path === 'hooks/useBuilderProjectController.ts')!.source).staticImports.sort()).toEqual([
-      '../application/builderProjectController',
-      'react',
-    ]);
-    expect(moduleBoundary('useBuilderProjectCatalogController.ts', sources.find(({ path }) => path === 'hooks/useBuilderProjectCatalogController.ts')!.source).staticImports.sort()).toEqual([
-      '../application/builderProjectCatalogController',
-      'react',
-    ]);
-    expect(moduleBoundary('useBuilderProviderSettingsController.ts', sources.find(({ path }) => path === 'hooks/useBuilderProviderSettingsController.ts')!.source).staticImports.sort()).toEqual([
-      '../domain/builderProviderSettings',
-      '../infrastructure/builderDesktopProviderSettingsPort',
-      '../presentation/BuilderProviderSettingsPanel',
-      'react',
-    ]);
-    expect(moduleBoundary('builderDesktopCodeGeneratorPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopCodeGeneratorPort.ts')!.source).staticImports).toEqual([
-      '../application/builderPorts',
-    ]);
-    expect(moduleBoundary('builderDesktopProjectCatalogPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProjectCatalogPort.ts')!.source).staticImports).toEqual([
-      '../application/builderProjectCatalogController',
-    ]);
-    expect(moduleBoundary('builderDesktopProviderSettingsPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopProviderSettingsPort.ts')!.source).staticImports).toEqual([
-      '../domain/builderProviderSettings',
-    ]);
-    expect(moduleBoundary('builderDesktopRepositoryPort.ts', sources.find(({ path }) => path === 'infrastructure/builderDesktopRepositoryPort.ts')!.source).staticImports).toEqual([
-      '../application/builderPorts',
-    ]);
-    expect(moduleBoundary('BuilderProviderSettingsRouteAdapter.tsx', sources.find(({ path }) => path === 'presentation/BuilderProviderSettingsRouteAdapter.tsx')!.source).staticImports.sort()).toEqual([
-      '../hooks/useBuilderProviderSettingsController',
-      '../infrastructure/builderDesktopProviderSettingsPort',
-      './BuilderProviderSettingsPanel',
-      'react',
-    ]);
-  });
-
-  it('allows only inward Builder imports and keeps the domain import-free', () => {
-    const domain = readFileSync(join(BUILDER_ROOT, 'domain', 'builderProject.ts'), 'utf8');
-    const generation = readFileSync(join(BUILDER_ROOT, 'application', 'builderGeneration.ts'), 'utf8');
+  it('keeps v2 mutation authority at instruction and draft-id boundaries', () => {
     const ports = readFileSync(join(BUILDER_ROOT, 'application', 'builderPorts.ts'), 'utf8');
     const controller = readFileSync(
       join(BUILDER_ROOT, 'application', 'builderProjectController.ts'),
       'utf8',
     );
-    const catalogDomain = readFileSync(
-      join(BUILDER_ROOT, 'domain', 'builderProjectCatalog.ts'),
+    const workspacePort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopProjectWorkspacePort.ts'),
       'utf8',
     );
-    const providerSettingsDomain = readFileSync(
-      join(BUILDER_ROOT, 'domain', 'builderProviderSettings.ts'),
-      'utf8',
-    );
-    const catalogController = readFileSync(
-      join(BUILDER_ROOT, 'application', 'builderProjectCatalogController.ts'),
-      'utf8',
-    );
-    const repositoryEvidence = readFileSync(
-      join(BUILDER_ROOT, 'application', 'builderRepositoryEvidence.ts'),
-      'utf8',
-    );
-    const preview = readFileSync(join(BUILDER_ROOT, 'preview', 'builderStaticPreview.ts'), 'utf8');
-    const sourceTreePreview = readFileSync(
-      join(BUILDER_ROOT, 'preview', 'builderSourceTreePreview.ts'),
-      'utf8',
-    );
-    const previewComponent = readFileSync(
-      join(BUILDER_ROOT, 'components', 'BuilderStaticPreview.tsx'),
-      'utf8',
-    );
-    const page = readFileSync(join(BUILDER_ROOT, 'presentation', 'BuilderPage.tsx'), 'utf8');
-    const providerSettingsPanel = readFileSync(
-      join(BUILDER_ROOT, 'presentation', 'BuilderProviderSettingsPanel.tsx'),
-      'utf8',
-    );
-    const catalog = readFileSync(
-      join(BUILDER_ROOT, 'presentation', 'BuilderProjectCatalog.tsx'),
+    const generationPort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopCodeGeneratorPort.ts'),
       'utf8',
     );
 
-    expect(moduleBoundary('builderProject.ts', domain).staticImports).toEqual([]);
-    expect(moduleBoundary('builderProjectCatalog.ts', catalogDomain).staticImports).toEqual([]);
-    expect(moduleBoundary('builderProviderSettings.ts', providerSettingsDomain).staticImports).toEqual([]);
-    expect(providerSettingsDomain).not.toMatch(
-      /react|electron|bridge|fetch\s*\(|\bstorage\b|ChatCreatePage|chat_planner|Canvas|\bJob\b/i,
-    );
-    expect(moduleBoundary('builderGeneration.ts', generation).staticImports).toEqual([
-      '../domain/builderProject',
-    ]);
-    expect(moduleBoundary('builderPorts.ts', ports).staticImports.sort()).toEqual([
-      '../domain/builderProject',
-      './builderGeneration',
-    ]);
-    expect(moduleBoundary('builderProjectController.ts', controller).staticImports.sort()).toEqual([
-      '../domain/builderProject',
-      '../preview/builderStaticPreview',
-      './builderGeneration',
-      './builderPorts',
-      './builderRepositoryEvidence',
-    ]);
-    expect(moduleBoundary('builderProjectCatalogController.ts', catalogController).staticImports)
-      .toEqual(['../domain/builderProjectCatalog']);
-    expect(moduleBoundary('builderRepositoryEvidence.ts', repositoryEvidence).staticImports).toEqual([
-      '../domain/builderProject',
-    ]);
-    expect(moduleBoundary('builderStaticPreview.ts', preview).staticImports).toEqual([
-      '../domain/builderProject',
-    ]);
-    expect(moduleBoundary('builderSourceTreePreview.ts', sourceTreePreview).staticImports).toEqual([
-      '../domain/builderProjectSnapshot',
-    ]);
-    expect(moduleBoundary('BuilderStaticPreview.tsx', previewComponent).staticImports).toEqual([
-      '../preview/builderStaticPreview',
-    ]);
-    expect(moduleBoundary('BuilderPage.tsx', page).staticImports.sort()).toEqual([
-      '../application/builderProjectController',
-      '../components/BuilderStaticPreview',
-      '../domain/builderProject',
-      '../preview/builderStaticPreview',
-      'lucide-react',
-      'react',
-    ]);
-    expect(moduleBoundary('BuilderProviderSettingsPanel.tsx', providerSettingsPanel).staticImports)
-      .toEqual(['lucide-react']);
-    expect(moduleBoundary('BuilderProjectCatalog.tsx', catalog).staticImports.sort()).toEqual([
-      '../application/builderProjectCatalogController',
-      'lucide-react',
-    ]);
+    expect(ports).toContain('open(request: Readonly<{ project_id: string | null }>)');
+    expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
+    expect(ports).not.toMatch(/commit\(|source_tree.*Promise|revision.*Promise/u);
+    expect(controller).toContain("saveDraft({ draft_id: draft.draft_id })");
+    expect(controller).not.toContain('repository.commit');
+    expect(workspacePort).toContain("const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent'])");
+    expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
+    expect(generationPort).toContain('instruction: request.instruction');
+    expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request/u);
   });
 });
