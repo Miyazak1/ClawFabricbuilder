@@ -50,6 +50,7 @@ const SELECTORS = Object.freeze({
   projectPage: '[data-builder-page="true"]',
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
+  retryDraft: '[data-builder-retry-draft="true"]',
   saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
   timeout: '#builder-provider-timeout',
@@ -84,6 +85,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_question_failed: 'Packaged canary question did not produce a visible answer.',
   canary_question_evidence_failed: 'Packaged canary question evidence failed.',
   canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
+  canary_retry_failed: 'Packaged canary retry did not recover a failed draft.',
   canary_update_generation_terminal_failed: 'Packaged canary update generation did not reach a terminal preview state.',
   canary_draft_failed: 'Packaged canary unsaved draft evidence failed.',
   canary_update_draft_failed: 'Packaged canary update draft evidence failed.',
@@ -121,6 +123,7 @@ const ERROR_STAGES = Object.freeze({
   canary_question_failed: 'question',
   canary_question_evidence_failed: 'question_evidence',
   canary_generation_terminal_failed: 'generation_terminal',
+  canary_retry_failed: 'retry',
   canary_update_generation_terminal_failed: 'update_generation_terminal',
   canary_draft_failed: 'draft',
   canary_update_draft_failed: 'update_draft',
@@ -1370,6 +1373,47 @@ async function generateProjectViaUi(page, idea) {
     pre_save_catalog_empty: true,
     saved_via_ui: true,
     unsaved_draft_observed: true,
+  });
+}
+
+async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE_INSTRUCTION) {
+  try {
+    await clickByRole(page, 'button', 'New project');
+    await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.idea).fill(idea);
+    await clickByRole(page, 'button', 'Make draft');
+    await page.getByRole('alert').waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.retryDraft).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_retry_failed');
+  }
+  try {
+    await page.locator(SELECTORS.idea).fill(replacementIdea);
+    await clickByRole(page, 'button', 'Retry');
+    await waitForGenerationTerminal(page);
+  } catch {
+    fail('canary_retry_failed');
+  }
+  try {
+    await page.locator(SELECTORS.unsavedDraft)
+      .getByText('Unsaved draft', { exact: true })
+      .waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    const preSave = await readSanitizedBridgeEvidence(page);
+    if (preSave.catalog.projects.length !== 0 || preSave.current !== null) {
+      fail('canary_retry_failed');
+    }
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_retry_failed');
+  }
+  return Object.freeze({
+    retry_button_observed: true,
+    retry_recovered_draft: true,
+    save_remained_explicit: true,
   });
 }
 
@@ -3235,6 +3279,7 @@ module.exports = {
   readStdin,
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
+  retryFailedDraftViaUi,
   runCli,
   runPackagedCanary,
   sanitizeInput,

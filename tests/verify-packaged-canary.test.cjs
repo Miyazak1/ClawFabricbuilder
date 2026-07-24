@@ -37,6 +37,7 @@ const {
   readStdin,
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
+  retryFailedDraftViaUi,
   runCli,
   runPackagedCanary,
   sanitizeLaunchEnvironment,
@@ -155,6 +156,14 @@ class FakeLocator {
   async waitFor(options) {
     this.page.events.push(['waitFor', this.selector, options?.state ?? null]);
     if (this.page.failWaitFor.has(this.selector)) throw new Error('secret-marker');
+    if (this.selector === SELECTORS.retryDraft) {
+      this.page.assertSelectorVisibility(this.selector, this.page.retryDraftVisible, options?.state ?? 'visible');
+      return;
+    }
+    if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
+      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, options?.state ?? 'visible');
+      return;
+    }
     if (this.selector === SELECTORS.preview && this.page.previewVisible === false) {
       return new Promise(() => {});
     }
@@ -177,8 +186,9 @@ class FakeRole {
     this.page.events.push(['roleClick', this.role, this.name]);
     if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
-    if (this.name === 'Make draft') this.page.recordCandidateDraft(1);
-    if (this.name === 'Make change') this.page.recordCandidateDraft(this.page.savedRevision + 1);
+    if (this.name === 'Make draft') this.page.recordCandidateAttempt(1);
+    if (this.name === 'Make change') this.page.recordCandidateAttempt(this.page.savedRevision + 1);
+    if (this.name === 'Retry') this.page.retryCandidateAttempt();
     if (this.name === 'Ask') this.page.recordQuestion();
     if (this.name === 'Save version' && this.page.persistSave) {
       const revision = await this.page.commitSave();
@@ -241,19 +251,57 @@ class FakePage {
     this.failWaitFor = new Set();
     this.forcedVersionLabel = null;
     this.disabledRoles = new Set();
+    this.draftFailuresRemaining = 0;
     this.keepPasswordValue = false;
+    this.lastFailedDraftTarget = null;
     this.previewVisible = true;
     this.projectStatus = 'ready';
     this.questionTurns = 0;
+    this.retryDraftVisible = false;
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
     this.savedRevision = 0;
+    this.unsavedDraftVisible = false;
     this.versionLabel = 'Version 1';
     this.values = new Map();
     this.listeners = new Map();
-    this.commitSave = async () => Math.max(this.savedRevision + 1, this.candidateTurns);
+    this.assertSelectorVisibility = (_selector, visible, state) => {
+      const expectedVisible = state !== 'hidden';
+      if (visible !== expectedVisible) throw new Error('selector visibility mismatch');
+    };
+    this.commitSave = async () => {
+      const revision = Math.max(this.savedRevision + 1, this.candidateTurns);
+      this.retryDraftVisible = false;
+      this.unsavedDraftVisible = false;
+      return revision;
+    };
+    this.recordCandidateAttempt = (candidateTurns) => {
+      if (this.draftFailuresRemaining > 0) {
+        this.draftFailuresRemaining -= 1;
+        this.alertVisible = true;
+        this.lastFailedDraftTarget = candidateTurns;
+        this.retryDraftVisible = true;
+        this.unsavedDraftVisible = false;
+        return;
+      }
+      if (this.alertVisible === true) {
+        this.lastFailedDraftTarget = candidateTurns;
+        this.retryDraftVisible = true;
+        this.unsavedDraftVisible = false;
+        return;
+      }
+      this.alertVisible = false;
+      this.recordCandidateDraft(candidateTurns);
+    };
     this.recordCandidateDraft = (candidateTurns) => {
       this.candidateTurns = Math.max(this.candidateTurns, candidateTurns);
+      this.retryDraftVisible = false;
+      this.unsavedDraftVisible = true;
+    };
+    this.retryCandidateAttempt = () => {
+      this.alertVisible = false;
+      this.recordCandidateDraft(this.lastFailedDraftTarget ?? Math.max(this.savedRevision + 1, 1));
+      this.lastFailedDraftTarget = null;
     };
     this.recordQuestion = () => {
       this.questionTurns += 1;
@@ -813,15 +861,21 @@ function fakeElectron(page) {
       activePage.savedRevision = durableStore.revision;
       activePage.savedActivityRevision = durableStore.revision;
       activePage.draftSaved = durableStore.revision > 0;
+      activePage.retryDraftVisible = false;
+      activePage.unsavedDraftVisible = durableStore.candidateTurns > durableStore.revision;
       activePage.versionLabel = `Version ${Math.max(1, durableStore.revision)}`;
       activePage.commitSave = async () => {
         durableStore.revision = Math.max(durableStore.revision + 1, durableStore.candidateTurns);
         durableStore.candidateTurns = Math.max(durableStore.candidateTurns, durableStore.revision);
+        activePage.retryDraftVisible = false;
+        activePage.unsavedDraftVisible = false;
         return durableStore.revision;
       };
       activePage.recordCandidateDraft = (candidateTurns) => {
         durableStore.candidateTurns = Math.max(durableStore.candidateTurns, candidateTurns);
         activePage.candidateTurns = durableStore.candidateTurns;
+        activePage.retryDraftVisible = false;
+        activePage.unsavedDraftVisible = true;
       };
       activePage.recordQuestion = () => {
         durableStore.questionTurns += 1;
@@ -1225,6 +1279,47 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('retries a failed draft through visible UI without saving or leaking write authority', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+  page.draftFailuresRemaining = 1;
+
+  assert.deepEqual(
+    await retryFailedDraftViaUi(
+      page,
+      'Make a focus timer.',
+      'Change this text after the first failure.',
+    ),
+    {
+      retry_button_observed: true,
+      retry_recovered_draft: true,
+      save_remained_explicit: true,
+    },
+  );
+
+  assert.equal(page.savedRevision, 0);
+  assert.equal(page.candidateTurns, 1);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['New project', 'Make draft', 'Retry'],
+  );
+  assert.equal(
+    page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
+    false,
+  );
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'fill').map((event) => event[2]),
+    ['Make a focus timer.', 'Change this text after the first failure.'],
+  );
+  const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
+  assert.equal(evaluateEvents.length, 1);
+  assert.doesNotMatch(
+    evaluateEvents[0][1],
+    /codeGenerator\.(?:generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent/u,
+  );
+});
+
 test('captures saved activity without exposing internal evidence', async () => {
   const page = new FakePage();
   page.savedActivityRevision = 1;
@@ -1463,6 +1558,29 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'draft',
+    },
+    {
+      code: 'canary_retry_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftFailuresRemaining = 1;
+        page.failRoleClicks.add('button:Retry');
+        await retryFailedDraftViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'retry',
+    },
+    {
+      code: 'canary_retry_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftFailuresRemaining = 1;
+        page.failAlertWait = true;
+        page.failWaitFor.add(SELECTORS.preview);
+        await retryFailedDraftViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'retry',
     },
     {
       code: 'canary_save_failed',
