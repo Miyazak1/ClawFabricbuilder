@@ -154,7 +154,19 @@ function activityBody(item: BuilderConversationItem): string {
   return `${outcomeLabel(item.outcome)}.`;
 }
 
-function ActivityItem({ item }: Readonly<{ item: BuilderConversationItem }>) {
+function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
+  return hasUnsavedDraft
+    ? 'Review the draft files in Result before saving this version.'
+    : 'Activity keeps this draft summary only and cannot reopen unsaved files.';
+}
+
+function ActivityItem({
+  hasUnsavedDraft,
+  item,
+}: Readonly<{
+  hasUnsavedDraft: boolean;
+  item: BuilderConversationItem;
+}>) {
   return (
     <li
       className="cf-builder-activity-item"
@@ -167,9 +179,14 @@ function ActivityItem({ item }: Readonly<{ item: BuilderConversationItem }>) {
         <div className="cf-builder-activity-title">{activityTitle(item)}</div>
         <p className="cf-builder-activity-body">{activityBody(item)}</p>
         {item.item_kind === 'run_completed' && item.candidate !== null ? (
-          <p className="cf-builder-activity-note">
-            {item.candidate.title}: {item.candidate.summary}
-          </p>
+          <>
+            <p className="cf-builder-activity-note">
+              {item.candidate.title}: {item.candidate.summary}
+            </p>
+            <p className="cf-builder-activity-note">
+              {candidateAvailabilityNote(hasUnsavedDraft)}
+            </p>
+          </>
         ) : null}
       </div>
     </li>
@@ -177,9 +194,11 @@ function ActivityItem({ item }: Readonly<{ item: BuilderConversationItem }>) {
 }
 
 function ActivityPanel({
+  hasUnsavedDraft,
   snapshot,
   onRefresh,
 }: Readonly<{
+  hasUnsavedDraft: boolean;
   snapshot: BuilderConversationControllerSnapshot | null;
   onRefresh?: () => Promise<unknown> | void;
 }>) {
@@ -223,7 +242,13 @@ function ActivityPanel({
           </div>
         ) : (
           <ol className="cf-builder-activity-list">
-            {items.map((item) => <ActivityItem item={item} key={item.sequence} />)}
+            {items.map((item) => (
+              <ActivityItem
+                hasUnsavedDraft={hasUnsavedDraft}
+                item={item}
+                key={item.sequence}
+              />
+            ))}
           </ol>
         )}
         {items.length > 0 && message !== null ? (
@@ -447,7 +472,11 @@ export function BuilderPage({
                 </pre>
               </section>
             </div>
-            <ActivityPanel onRefresh={onRefreshConversation} snapshot={activity} />
+            <ActivityPanel
+              hasUnsavedDraft={hasUnsavedDraft}
+              onRefresh={onRefreshConversation}
+              snapshot={activity}
+            />
           </div>
         </section>
 

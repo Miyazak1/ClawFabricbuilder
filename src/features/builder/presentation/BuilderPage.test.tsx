@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBuilderProjectController } from '../application/builderProjectController';
+import { createBuilderConversationController } from '../application/builderConversationController';
 import { BuilderPage } from './BuilderPage';
 import {
   DRAFT_ID,
@@ -11,6 +12,7 @@ import {
   createGenerationDraft,
   createReadWire,
   createSaveResult,
+  createTaskStreamWire,
 } from '../../../test/builderV2Fixtures';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,6 +71,13 @@ async function snapshots() {
   return { draftReady, fresh, saved };
 }
 
+async function candidateActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => createTaskStreamWire(),
+  });
+  return controller.load(PROJECT_ID);
+}
+
 function click(container: HTMLElement, selector: string): void {
   const button = container.querySelector<HTMLButtonElement>(selector);
   expect(button).not.toBeNull();
@@ -102,10 +111,12 @@ describe('BuilderPage v2', () => {
 
   it('shows an unsaved draft and requires the explicit Save version command', async () => {
     const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
     const onSave = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
+        conversationSnapshot={activity}
         instruction="Add a timer."
         onSave={onSave}
         snapshot={draftReady}
@@ -116,6 +127,7 @@ describe('BuilderPage v2', () => {
       .toContain('Unsaved draft');
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.textContent).toContain('Save this draft before asking for another change');
+    expect(container.textContent).toContain('Review the draft files in Result before saving this version.');
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
   });
@@ -128,6 +140,27 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+  });
+
+  it('does not treat a restored activity candidate as an available unsaved draft', async () => {
+    const { saved } = await snapshots();
+    const activity = await candidateActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
+      .toContain('Activity keeps this draft summary only and cannot reopen unsaved files.');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
+      .toContain('Version 1');
+    expect(container.textContent).not.toContain(DRAFT_ID);
   });
 
   it('lists arbitrary source-tree paths and reveals their code without assuming three web files', async () => {
