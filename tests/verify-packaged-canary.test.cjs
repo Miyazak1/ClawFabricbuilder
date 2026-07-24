@@ -158,6 +158,11 @@ class FakeLocator {
     return new FakeLocator(this.page, this.selector, hasText);
   }
 
+  first() {
+    this.page.events.push(['first', this.selector]);
+    return new FakeLocator(this.page, this.selector, this.filterText);
+  }
+
   async inputValue() {
     if (this.page.keepPasswordValue && this.selector === SELECTORS.apiKey) return 'secret-marker';
     return this.page.values.get(this.selector) ?? '';
@@ -1391,6 +1396,10 @@ test('observes draft review diff before Save without leaking internal evidence',
     event[0] === 'click'
     && event[1] === SELECTORS.reviewOpenChanges
   )), true);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'first').map((event) => event[1]),
+    [SELECTORS.changeCard, SELECTORS.changeDiff, SELECTORS.changeDiffLine],
+  );
   page.reviewTextOverride = 'Review before saving sha256:secret';
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -2146,6 +2155,27 @@ test('summarizes nonblank preview pixels and tracks unexpected renderer network'
     renderer_context_observer_count: 0,
     renderer_unexpected_network_count: 1,
   });
+});
+
+test('selects the preview tab before capturing isolated preview evidence', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+
+  const evidence = await capturePreviewEvidence(page, gate);
+
+  assert.equal(evidence.sandbox, 'empty');
+  assert.equal(evidence.script_src, 'none');
+  assert.equal(evidence.frame_body_nonempty, true);
+  const previewTabClick = page.events.findIndex((event) => (
+    event[0] === 'click' && event[1] === SELECTORS.previewTab
+  ));
+  const previewWait = page.events.findIndex((event) => (
+    event[0] === 'waitFor' && event[1] === SELECTORS.preview
+  ));
+  assert.equal(previewTabClick >= 0, true);
+  assert.equal(previewWait > previewTabClick, true);
 });
 
 test('sanitizes launch environment and canary root identity without following drift', () => {

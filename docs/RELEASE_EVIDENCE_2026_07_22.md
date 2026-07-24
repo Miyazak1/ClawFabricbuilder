@@ -47,6 +47,27 @@ The installer is not code signed. Windows may display SmartScreen warnings. This
 checkpoint is suitable for controlled trial distribution, not a claim of public
 release readiness.
 
+## 2026-07-25 Packaged Canary Refresh
+
+This addendum records a fresh packaged-app canary after the Builder saved-profile
+DeepSeek path was extended to cover explicit unsaved draft restore, review
+diff/preview evidence, saved-history return, and restart continuation. It is
+canary evidence only; it does not extend installer evidence, code-signing status,
+or public release readiness.
+
+- `npm run pack` passed on the refreshed source tree; package verification
+  reported 720 ASAR entries.
+- The packaged app was exercised with the saved DeepSeek profile through the
+  visible Builder UI, without moving provider credentials into argv, env, logs,
+  or renderer-readable evidence.
+- The canary saved revision 1, produced an unsaved update draft, restored that
+  pending draft after restart with Save still explicit, saved revision 2, returned
+  from historical preview to current, and continued generation after restart.
+- Draft review evidence was visible before Save for the initial draft, update
+  draft, pending update after restart, and restart-continuation draft.
+- Static preview evidence stayed nonblank with script-denying preview policy, and
+  no unexpected renderer network request was observed during the canary scope.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

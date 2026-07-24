@@ -58,6 +58,7 @@ const SELECTORS = Object.freeze({
   projectPage: '[data-builder-page="true"]',
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
+  previewTab: '#builder-tool-tab-preview',
   retryDraft: '[data-builder-retry-draft="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   reviewOpenChanges: '[data-builder-review-open-changes="true"]',
@@ -1420,9 +1421,9 @@ async function inspectDraftReviewDiffViaUi(page) {
     await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.reviewOpenChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.changeCard).waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.changeDiff).waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.changeDiffLine).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.changeCard).first().waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.changeDiff).first().waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.changeDiffLine).first().waitFor({ state: 'visible' });
     const summaryText = await page.locator(SELECTORS.changesSummary).textContent();
     const changesText = await page.locator(SELECTORS.changesPanel).textContent();
     if (
@@ -2969,6 +2970,7 @@ function summarizePng(buffer, pngModule = PNG) {
 async function capturePreviewEvidence(page, gate) {
   try {
     gate.assertAllowed();
+    await page.locator(SELECTORS.previewTab).click();
     const section = page.locator(SELECTORS.preview);
     await section.waitFor({ state: 'visible' });
     const frame = page.locator(SELECTORS.previewFrame);
