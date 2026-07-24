@@ -1273,7 +1273,7 @@ function sanitizeRunOptions(value) {
 }
 
 async function clickByRole(page, role, name) {
-  const locator = page.getByRole(role, { name });
+  const locator = page.getByRole(role, { exact: true, name });
   await locator.click();
 }
 
@@ -1538,7 +1538,7 @@ async function assertVisibleVersion(page, revisionNumber) {
 async function captureSavedActivityEvidence(page, revisionNumber) {
   try {
     const expectedBody = `This draft was saved as Version ${revisionNumber}.`;
-    const activity = page.locator(SELECTORS.versionSavedActivity);
+    const activity = page.locator(SELECTORS.versionSavedActivity).filter({ hasText: expectedBody });
     await activity.waitFor({ state: 'visible' });
     await activity.getByText(expectedBody, { exact: true }).waitFor({ state: 'visible' });
     const activityText = await activity.textContent();

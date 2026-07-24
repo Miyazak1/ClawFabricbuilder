@@ -649,7 +649,8 @@ describe('BuilderApp v2', () => {
       draft_id: expect.stringMatching(/^builder-generation-draft:/u),
     });
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
+      .toContain('Version 1');
     expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
   });
 

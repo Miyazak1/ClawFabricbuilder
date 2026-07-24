@@ -673,9 +673,16 @@ export function BuilderPage({
         </div>
         <div className="cf-builder-toolbar-actions">
           {hasUnsavedDraft ? (
-            <span className="cf-builder-status-pill" data-builder-unsaved-draft="true">
-              Unsaved draft
-            </span>
+            <>
+              <span className="cf-builder-status-pill" data-builder-unsaved-draft="true">
+                Unsaved draft
+              </span>
+              {version === null ? null : (
+                <span className="text-xs text-muted-foreground" data-builder-current-version="true">
+                  Version {version}
+                </span>
+              )}
+            </>
           ) : viewingHistory ? (
             <span className="cf-builder-status-pill" data-builder-history-preview="true">
               Viewing Version {inspected.target.revision_number}

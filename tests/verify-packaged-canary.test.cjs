@@ -78,9 +78,10 @@ function savedProfileInput(overrides = {}) {
 }
 
 class FakeLocator {
-  constructor(page, selector) {
+  constructor(page, selector, filterText = null) {
     this.page = page;
     this.selector = selector;
+    this.filterText = filterText;
   }
 
   async click() {
@@ -130,6 +131,12 @@ class FakeLocator {
     return new FakeText(this.page, text);
   }
 
+  filter(options) {
+    const hasText = options?.hasText ?? null;
+    this.page.events.push(['filter', this.selector, hasText]);
+    return new FakeLocator(this.page, this.selector, hasText);
+  }
+
   async inputValue() {
     if (this.page.keepPasswordValue && this.selector === SELECTORS.apiKey) return 'secret-marker';
     return this.page.values.get(this.selector) ?? '';
@@ -143,6 +150,10 @@ class FakeLocator {
     if (this.selector === SELECTORS.versionSavedActivity) {
       if (this.page.savedActivityTextOverride !== null) return this.page.savedActivityTextOverride;
       if (this.page.savedActivityRevision <= 0) return '';
+      if (
+        this.filterText !== null
+        && this.filterText !== `This draft was saved as Version ${this.page.savedActivityRevision}.`
+      ) return '';
       return `Version saved This draft was saved as Version ${this.page.savedActivityRevision}.`;
     }
     return null;
@@ -2937,6 +2948,8 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make draft['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Ask['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
+  assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
+  assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
   assert.match(source, /artifacts_after_password_clear/u);
   assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v3['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);

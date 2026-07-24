@@ -469,7 +469,8 @@ describe('BuilderPage v2', () => {
 
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')?.textContent)
       .toContain('Unsaved draft');
-    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
+      .toContain('Version 1');
     expect(container.textContent).toContain('Save this draft before asking for another change');
     expect(container.textContent).toContain('Review the draft files in Result before saving this version.');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-ask-question="true"]')?.disabled)
