@@ -413,6 +413,87 @@ function revisionEvidence(selectedProjectId, revisionNumber) {
   return { candidate, current, receipt, sourceTree, verification };
 }
 
+function taskStreamConversation(selectedProjectId, revisionNumber) {
+  const items = [];
+  const userMessageIds = [
+    'builder-message:10101010-1010-4010-8010-101010101010',
+    'builder-message:13131313-1313-4313-8313-131313131313',
+  ];
+  const assistantMessageIds = [
+    'builder-message:12121212-1212-4212-8212-121212121212',
+    'builder-message:14141414-1414-4414-8414-141414141414',
+  ];
+  for (let revision = 1; revision <= revisionNumber; revision += 1) {
+    const evidence = revisionEvidence(selectedProjectId, revision);
+    const itemBase = (revision - 1) * 4;
+    items.push(
+      {
+        item_kind: 'user_message',
+        sequence: itemBase + 1,
+        turn_id: evidence.receipt.turn_id,
+        message: {
+          message_id: userMessageIds[revision - 1],
+          text: revision === 1 ? 'Make a focus timer.' : 'Change the heading.',
+        },
+        message_kind: 'submitted',
+        mode: 'work',
+        task: {
+          task_id: evidence.receipt.task_id,
+          title: revision === 1 ? 'Make a focus timer' : 'Change the heading',
+        },
+      },
+      {
+        item_kind: 'run_started',
+        sequence: itemBase + 2,
+        turn_id: evidence.receipt.turn_id,
+        run_id: evidence.receipt.run_id,
+        task_id: evidence.receipt.task_id,
+        attempt_number: 1,
+        retry_of_run_id: null,
+        recorded_state: 'started',
+      },
+      {
+        item_kind: 'run_completed',
+        sequence: itemBase + 3,
+        turn_id: evidence.receipt.turn_id,
+        run_id: evidence.receipt.run_id,
+        terminal_status: 'succeeded',
+        result_kind: 'candidate',
+        assistant_message: {
+          message_id: assistantMessageIds[revision - 1],
+          text: 'I prepared a draft for review.',
+        },
+        candidate: {
+          draft_id: `builder-generation-draft:${String(revision).repeat(64)}`,
+          title: evidence.receipt.title,
+          summary: evidence.receipt.summary,
+          candidate_state: 'proposed',
+          source_availability: 'not_loaded',
+        },
+      },
+      {
+        item_kind: 'turn_completed',
+        sequence: itemBase + 4,
+        turn_id: evidence.receipt.turn_id,
+        run_id: evidence.receipt.run_id,
+        outcome: 'candidate_ready',
+      },
+    );
+  }
+  return {
+    conversation_id: revisionEvidence(selectedProjectId, 1).receipt.conversation_id,
+    created_at_ms: 1000,
+    head_sequence: items.length,
+    items,
+    recorded_active_turn_id: null,
+    window: {
+      first_sequence: 1,
+      has_earlier: false,
+      last_sequence: items.length,
+    },
+  };
+}
+
 function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
@@ -432,7 +513,7 @@ function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
     : {
       stream_version: 'builder-task-stream-read-result.v1',
       project_id: projectId,
-      conversation: null,
+      conversation: saved ? taskStreamConversation(selectedProjectId, revisionNumber) : null,
       authority: {
         conversation: 'sqlite_canonical_event_replay_or_absent',
         project_source: 'not_included',
@@ -1424,7 +1505,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v3');
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v4');
   assert.equal(result.safe_storage.credential_status, 'stored');
   assert.deepEqual(result.draft, {
     initial: {
@@ -1458,6 +1539,34 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(result.preview.initial.script_src, 'none');
   assert.equal(result.preview.updated.sandbox, 'empty');
   assert.equal(result.preview.updated.script_src, 'none');
+  assert.deepEqual(result.task_stream, {
+    initial: {
+      candidate_ready_count: 1,
+      candidate_result_count: 1,
+      head_sequence: 4,
+      item_count: 4,
+      latest_candidate_bound_to_revision: true,
+      source_availability: 'not_loaded',
+    },
+    updated: {
+      candidate_ready_count: 2,
+      candidate_result_count: 2,
+      head_sequence: 8,
+      item_count: 8,
+      latest_candidate_bound_to_revision: true,
+      source_availability: 'not_loaded',
+    },
+    restart: {
+      candidate_ready_count: 2,
+      candidate_result_count: 2,
+      head_sequence: 8,
+      item_count: 8,
+      latest_candidate_bound_to_revision: true,
+      source_availability: 'not_loaded',
+    },
+    restart_unchanged: true,
+    update_advanced_candidate_count: true,
+  });
   assert.equal(JSON.stringify(result).includes(parsed.provider.credential), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.model), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.base_url), false);
@@ -1550,7 +1659,7 @@ test('copies only saved provider profile files and runs without provider input o
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v3');
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v4');
   assert.deepEqual(result.input, {
     credential_source: 'saved_profile',
     idea_digest: result.input.idea_digest,
@@ -1568,6 +1677,8 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.project.restart_new_revision_observed, true);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
+  assert.equal(result.task_stream.updated.candidate_ready_count, 2);
+  assert.equal(result.task_stream.restart_unchanged, true);
   assert.deepEqual(copied.map(([source, target]) => [
     path.relative(parsed.source_user_data_path, source),
     path.relative(userDataPath, target),
