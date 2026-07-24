@@ -25,6 +25,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
 } from '../features/builder/application/builderPorts';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
@@ -32,6 +33,11 @@ import {
   BuilderDesktopProjectWorkspacePortError,
   createBuilderDesktopProjectWorkspacePort,
 } from '../features/builder/infrastructure/builderDesktopProjectWorkspacePort';
+import {
+  BuilderDesktopTaskStreamPortError,
+  createBuilderDesktopTaskStreamPort,
+} from '../features/builder/infrastructure/builderDesktopTaskStreamPort';
+import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
 import { BuilderPage, type BuilderFileName } from '../features/builder/presentation/BuilderPage';
@@ -176,6 +182,13 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
   },
 });
 
+const UNAVAILABLE_TASK_STREAM: BuilderTaskStreamPort = Object.freeze({
+  read(request: Parameters<BuilderTaskStreamPort['read']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopTaskStreamPortError());
+  },
+});
+
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
   try {
     return value === undefined
@@ -189,6 +202,7 @@ function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
 function safePorts(root: BuilderDesktopBridgeRoot) {
   let workspace = UNAVAILABLE_WORKSPACE;
   let generator = UNAVAILABLE_GENERATOR;
+  let taskStream = UNAVAILABLE_TASK_STREAM;
   try {
     workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
@@ -199,7 +213,12 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   } catch {
     generator = UNAVAILABLE_GENERATOR;
   }
-  return Object.freeze({ generator, workspace });
+  try {
+    taskStream = createBuilderDesktopTaskStreamPort(root.taskStream);
+  } catch {
+    taskStream = UNAVAILABLE_TASK_STREAM;
+  }
+  return Object.freeze({ generator, taskStream, workspace });
 }
 
 function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): string | null {
@@ -208,6 +227,14 @@ function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectControlle
     && (snapshot.status === 'ready' || snapshot.status === 'preview_unavailable')
   ) return snapshot.savedProject.target.project_id;
   return null;
+}
+
+function visibleConversationProjectId(
+  snapshot: ReturnType<typeof useBuilderProjectController>['snapshot'],
+): string | null {
+  return snapshot.draft?.project_id
+    ?? snapshot.savedProject?.target.project_id
+    ?? null;
 }
 
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
@@ -249,6 +276,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     workspace: workspacePorts.workspace,
     projectId,
   });
+  const conversation = useBuilderConversationController(
+    ports.taskStream,
+    visibleConversationProjectId(project.snapshot),
+  );
 
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
@@ -468,6 +499,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onOpenSettings={() => setView('settings')}
               onSave={save}
               onSelectFile={setActiveFile}
+              onRefreshConversation={conversation.refresh}
+              conversationSnapshot={conversation.snapshot}
               snapshot={project.snapshot}
             />
           )}

@@ -12,6 +12,7 @@ import {
   type BuilderGenerationDraft,
   type BuilderGenerationRequest,
 } from '../features/builder/application/builderGeneration';
+import { BUILDER_TASK_STREAM_READ_RESULT_VERSION } from '../features/builder/domain/builderConversationSnapshot';
 
 export const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
 export const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000';
@@ -24,6 +25,7 @@ export const CANDIDATE_ID = `builder-code-change-candidate:${'1'.repeat(64)}`;
 export const DRAFT_ID = `builder-generation-draft:${'2'.repeat(64)}`;
 export const COMMIT_OID = 'a'.repeat(40);
 export const TREE_OID = 'b'.repeat(40);
+const ASSISTANT_MESSAGE_ID = 'builder-message:223e4567-e89b-42d3-a456-426614174000';
 
 const ENCODER = new TextEncoder();
 
@@ -299,6 +301,83 @@ export async function createCatalogWire() {
       code_authority: 'not_read_for_catalog',
       source_read_admission: 'not_requested',
       current_selection: 'sqlite_current_project_revision',
+    },
+  };
+}
+
+export function createTaskStreamWire() {
+  return {
+    stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1234,
+      head_sequence: 4,
+      recorded_active_turn_id: null,
+      window: {
+        first_sequence: 1,
+        last_sequence: 4,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
+            text: 'Make a timer.',
+          },
+          message_kind: 'submitted',
+          mode: 'work',
+          task: {
+            task_id: TASK_ID,
+            title: 'Make a timer',
+          },
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'candidate',
+          assistant_message: {
+            message_id: ASSISTANT_MESSAGE_ID,
+            text: 'I prepared a draft for review.',
+          },
+          candidate: {
+            draft_id: DRAFT_ID,
+            title: 'Hello project',
+            summary: 'A small project.',
+            candidate_state: 'proposed',
+            source_availability: 'not_loaded',
+          },
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'candidate_ready',
+        },
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
     },
   };
 }

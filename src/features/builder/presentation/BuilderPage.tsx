@@ -1,12 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, FileCode2, Save, Sparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  Eye,
+  FileCode2,
+  Play,
+  RefreshCw,
+  Save,
+  Sparkles,
+  StopCircle,
+  UserRound,
+} from 'lucide-react';
 
+import {
+  isTrustedBuilderConversationControllerSnapshot,
+  type BuilderConversationControllerSnapshot,
+} from '../application/builderConversationController';
 import {
   isTrustedBuilderProjectControllerSnapshot,
   type BuilderProjectControllerSnapshot,
   type BuilderProjectControllerStatus,
 } from '../application/builderProjectController';
 import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
+import type { BuilderConversationItem } from '../domain/builderConversationSnapshot';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 
 export type BuilderFileName = string;
@@ -15,8 +32,10 @@ export type BuilderPageProps = {
   instruction: string;
   onInstructionChange?: (value: string) => void;
   onGenerate?: () => void;
+  onRefreshConversation?: () => Promise<unknown> | void;
   onSave?: () => void;
   onOpenSettings?: () => void;
+  conversationSnapshot?: BuilderConversationControllerSnapshot;
   snapshot: BuilderProjectControllerSnapshot;
   activeFile: BuilderFileName | null;
   onSelectFile?: (file: BuilderFileName) => void;
@@ -49,12 +68,182 @@ function selectedFiles(snapshot: BuilderProjectControllerSnapshot): readonly Bui
     ?? [];
 }
 
+function visibleActivitySnapshot(
+  value: BuilderConversationControllerSnapshot | undefined,
+): BuilderConversationControllerSnapshot | null {
+  if (value === undefined) return null;
+  return isTrustedBuilderConversationControllerSnapshot(value) ? value : null;
+}
+
+function activityItems(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): readonly BuilderConversationItem[] {
+  const conversation = snapshot?.conversation;
+  return conversation?.state === 'ready' ? conversation.conversation.items : [];
+}
+
+function activityMessage(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): string | null {
+  if (snapshot === null || snapshot.status === 'idle') return 'Select a project to see activity.';
+  if (snapshot.status === 'loading') return 'Loading activity...';
+  if (snapshot.status === 'unavailable') return 'Activity is unavailable.';
+  if (snapshot.status === 'stale') return 'Activity could not be refreshed.';
+  if (snapshot.conversation?.state === 'absent') return 'No activity yet.';
+  return null;
+}
+
+function outcomeLabel(
+  outcome: Extract<BuilderConversationItem, { item_kind: 'turn_completed' }>['outcome'],
+): string {
+  if (outcome === 'answered') return 'Answered';
+  if (outcome === 'candidate_ready') return 'Draft ready';
+  if (outcome === 'plan_proposed') return 'Plan ready';
+  if (outcome === 'failed') return 'Could not finish';
+  if (outcome === 'interrupted') return 'Interrupted';
+  if (outcome === 'cancelled') return 'Stopped';
+  return 'Responded';
+}
+
+function completionLabel(item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>): string {
+  if (item.terminal_status === 'failed') return 'Could not finish';
+  if (item.terminal_status === 'interrupted') return 'Interrupted';
+  if (item.terminal_status === 'cancelled') return 'Stopped';
+  if (item.result_kind === 'candidate') return 'Draft proposed';
+  if (item.result_kind === 'plan') return 'Plan proposed';
+  return 'Assistant';
+}
+
+function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
+  if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
+  if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
+  if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
+  if (item.item_kind === 'run_completed' && item.terminal_status !== 'succeeded') {
+    return <AlertCircle className="size-3.5" />;
+  }
+  if (item.item_kind === 'run_completed') return <Bot className="size-3.5" />;
+  return <CheckCircle2 className="size-3.5" />;
+}
+
+function activityTitle(item: BuilderConversationItem): string {
+  if (item.item_kind === 'user_message') {
+    return item.message_kind === 'steering' ? 'You added context' : 'You';
+  }
+  if (item.item_kind === 'run_started') return 'Started';
+  if (item.item_kind === 'run_control_requested') {
+    return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
+  }
+  if (item.item_kind === 'run_completed') return completionLabel(item);
+  return outcomeLabel(item.outcome);
+}
+
+function activityBody(item: BuilderConversationItem): string {
+  if (item.item_kind === 'user_message') return item.message.text;
+  if (item.item_kind === 'run_started') return 'The assistant began working on this request.';
+  if (item.item_kind === 'run_control_requested') {
+    return item.action === 'interrupt'
+      ? 'You asked to steer the current work.'
+      : 'You asked to stop the current work.';
+  }
+  if (item.item_kind === 'run_completed') {
+    return item.assistant_message?.text
+      ?? (item.terminal_status === 'succeeded'
+        ? 'The assistant finished this step.'
+        : 'The request did not finish.');
+  }
+  return `${outcomeLabel(item.outcome)}.`;
+}
+
+function ActivityItem({ item }: Readonly<{ item: BuilderConversationItem }>) {
+  return (
+    <li
+      className="cf-builder-activity-item"
+      data-builder-activity-card={activityTitle(item)}
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <ActivityGlyph item={item} />
+      </div>
+      <div className="min-w-0">
+        <div className="cf-builder-activity-title">{activityTitle(item)}</div>
+        <p className="cf-builder-activity-body">{activityBody(item)}</p>
+        {item.item_kind === 'run_completed' && item.candidate !== null ? (
+          <p className="cf-builder-activity-note">
+            {item.candidate.title}: {item.candidate.summary}
+          </p>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function ActivityPanel({
+  snapshot,
+  onRefresh,
+}: Readonly<{
+  snapshot: BuilderConversationControllerSnapshot | null;
+  onRefresh?: () => Promise<unknown> | void;
+}>) {
+  const items = activityItems(snapshot);
+  const message = activityMessage(snapshot);
+  const canRefresh = snapshot !== null
+    && snapshot.project_id !== null
+    && !snapshot.busy
+    && typeof onRefresh === 'function';
+  return (
+    <aside
+      aria-label="Project activity"
+      className="cf-builder-activity-panel"
+      data-builder-activity="true"
+      data-builder-activity-status={snapshot?.status ?? 'idle'}
+    >
+      <header className="cf-builder-activity-header">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">Activity</p>
+          <h3 className="truncate text-sm font-semibold">Project work</h3>
+        </div>
+        <button
+          aria-label="Refresh activity"
+          className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!canRefresh}
+          onClick={() => {
+            void onRefresh?.();
+          }}
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" className="size-3.5" />
+        </button>
+      </header>
+      <div className="cf-builder-activity-body-wrap">
+        {snapshot?.status === 'refreshing' ? (
+          <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
+        ) : null}
+        {items.length === 0 ? (
+          <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
+            {message ?? 'No activity yet.'}
+          </div>
+        ) : (
+          <ol className="cf-builder-activity-list">
+            {items.map((item) => <ActivityItem item={item} key={item.sequence} />)}
+          </ol>
+        )}
+        {items.length > 0 && message !== null ? (
+          <p className="cf-builder-activity-status" role={snapshot?.status === 'stale' ? 'alert' : 'status'}>
+            {message}
+          </p>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
 export function BuilderPage({
   instruction,
   onInstructionChange,
   onGenerate,
+  onRefreshConversation,
   onSave,
   onOpenSettings,
+  conversationSnapshot,
   snapshot,
   activeFile,
   onSelectFile,
@@ -81,6 +270,7 @@ export function BuilderPage({
   const canOpenSettings = status === 'generation_failed'
     && current?.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
+  const activity = visibleActivitySnapshot(conversationSnapshot);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [toolView, setToolView] = useState<(typeof TOOL_VIEWS)[number]['id']>('preview');
 
@@ -173,88 +363,91 @@ export function BuilderPage({
           </header>
 
           <div className="cf-builder-stage-grid">
-            <section
-              aria-labelledby="builder-tool-tab-preview"
-              className="cf-builder-preview-panel cf-builder-preview-primary"
-              hidden={toolView !== 'preview'}
-              id="builder-tool-preview"
-              role="tabpanel"
-            >
-              <div className="cf-builder-panel-toolbar">
-                <Eye aria-hidden="true" className="size-4" />
-                Preview
-              </div>
-              <p
-                className="mb-3 text-xs leading-5 text-muted-foreground"
-                data-builder-preview-safety-note="true"
+            <div className="cf-builder-result-stage">
+              <section
+                aria-labelledby="builder-tool-tab-preview"
+                className="cf-builder-preview-panel cf-builder-preview-primary"
+                hidden={toolView !== 'preview'}
+                id="builder-tool-preview"
+                role="tabpanel"
               >
-                Preview is isolated for safety.
-              </p>
-              {preview === null ? (
-                <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
-                  {hasContent
-                    ? 'This project can be viewed as code, but it does not have a static preview.'
-                    : 'Your preview will appear here.'}
+                <div className="cf-builder-panel-toolbar">
+                  <Eye aria-hidden="true" className="size-4" />
+                  Preview
                 </div>
-              ) : (
-                <BuilderStaticPreview projection={preview} />
-              )}
-            </section>
+                <p
+                  className="mb-3 text-xs leading-5 text-muted-foreground"
+                  data-builder-preview-safety-note="true"
+                >
+                  Preview is isolated for safety.
+                </p>
+                {preview === null ? (
+                  <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
+                    {hasContent
+                      ? 'This project can be viewed as code, but it does not have a static preview.'
+                      : 'Your preview will appear here.'}
+                  </div>
+                ) : (
+                  <BuilderStaticPreview projection={preview} />
+                )}
+              </section>
 
-            <section
-              aria-labelledby={selected === null ? undefined : tabId(selected.path)}
-              className="cf-builder-code-panel"
-              hidden={toolView !== 'code'}
-              id="builder-code-panel"
-              role="tabpanel"
-            >
-              <header className="cf-builder-code-header">
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-muted-foreground">Code</p>
-                  <h3 className="truncate text-sm font-semibold">{selected?.path ?? 'No files yet'}</h3>
-                </div>
-                <div className="cf-builder-tab-strip" role="tablist">
-                  {files.map((file) => (
-                    <button
-                      aria-controls="builder-code-panel"
-                      aria-selected={selected?.path === file.path}
-                      className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
-                      data-active={selected?.path === file.path}
-                      id={tabId(file.path)}
-                      key={file.path}
-                      onClick={() => selectFile(file.path)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'ArrowRight') {
-                          event.preventDefault();
-                          selectRelativeFile(1);
-                        } else if (event.key === 'ArrowLeft') {
-                          event.preventDefault();
-                          selectRelativeFile(-1);
-                        } else if (event.key === 'Home' && files[0]) {
-                          event.preventDefault();
-                          selectFile(files[0].path);
-                        } else if (event.key === 'End' && files.at(-1)) {
-                          event.preventDefault();
-                          selectFile(files.at(-1)!.path);
-                        }
-                      }}
-                      ref={(element) => {
-                        tabRefs.current[file.path] = element;
-                      }}
-                      role="tab"
-                      tabIndex={selected?.path === file.path ? 0 : -1}
-                      type="button"
-                    >
-                      <FileCode2 aria-hidden="true" className="size-3.5" />
-                      {file.path}
-                    </button>
-                  ))}
-                </div>
-              </header>
-              <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5">
-                <code>{selected?.content ?? ''}</code>
-              </pre>
-            </section>
+              <section
+                aria-labelledby={selected === null ? undefined : tabId(selected.path)}
+                className="cf-builder-code-panel"
+                hidden={toolView !== 'code'}
+                id="builder-code-panel"
+                role="tabpanel"
+              >
+                <header className="cf-builder-code-header">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground">Code</p>
+                    <h3 className="truncate text-sm font-semibold">{selected?.path ?? 'No files yet'}</h3>
+                  </div>
+                  <div className="cf-builder-tab-strip" role="tablist">
+                    {files.map((file) => (
+                      <button
+                        aria-controls="builder-code-panel"
+                        aria-selected={selected?.path === file.path}
+                        className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
+                        data-active={selected?.path === file.path}
+                        id={tabId(file.path)}
+                        key={file.path}
+                        onClick={() => selectFile(file.path)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'ArrowRight') {
+                            event.preventDefault();
+                            selectRelativeFile(1);
+                          } else if (event.key === 'ArrowLeft') {
+                            event.preventDefault();
+                            selectRelativeFile(-1);
+                          } else if (event.key === 'Home' && files[0]) {
+                            event.preventDefault();
+                            selectFile(files[0].path);
+                          } else if (event.key === 'End' && files.at(-1)) {
+                            event.preventDefault();
+                            selectFile(files.at(-1)!.path);
+                          }
+                        }}
+                        ref={(element) => {
+                          tabRefs.current[file.path] = element;
+                        }}
+                        role="tab"
+                        tabIndex={selected?.path === file.path ? 0 : -1}
+                        type="button"
+                      >
+                        <FileCode2 aria-hidden="true" className="size-3.5" />
+                        {file.path}
+                      </button>
+                    ))}
+                  </div>
+                </header>
+                <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5">
+                  <code>{selected?.content ?? ''}</code>
+                </pre>
+              </section>
+            </div>
+            <ActivityPanel onRefresh={onRefreshConversation} snapshot={activity} />
           </div>
         </section>
 

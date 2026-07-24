@@ -14,6 +14,7 @@ import {
   createGenerationDraft,
   createReadWire,
   createSaveResult,
+  createTaskStreamWire,
 } from '../test/builderV2Fixtures';
 import { createBuilderGenerationRequest } from '../features/builder/application/builderGeneration';
 
@@ -65,6 +66,7 @@ async function setup() {
     return createSaveResult(latestDraft, readWire);
   });
   const loadCurrent = vi.fn(async () => readWire);
+  const readTaskStream = vi.fn(async () => createTaskStreamWire());
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
     return request.project_id === null
@@ -92,7 +94,9 @@ async function setup() {
       listCurrent,
     },
     providerSettings: {},
-    taskStream: {},
+    taskStream: {
+      read: readTaskStream,
+    },
     windowControls: {
       close: async () => ({ result_version: 'builder-window-control-result.v1', ok: true }),
       minimize: async () => ({ result_version: 'builder-window-control-result.v1', ok: true }),
@@ -116,6 +120,7 @@ async function setup() {
     listCurrent,
     loadCurrent,
     open,
+    readTaskStream,
     saveDraft,
   };
 }
@@ -162,6 +167,25 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+  });
+
+  it('loads the visible project activity through the read-only task stream bridge', async () => {
+    const { container, readTaskStream } = await setup();
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, 'Make draft');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
+        .toContain('I prepared a draft for review.');
+    });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(container.textContent).not.toContain('builder-generation-draft:');
+    expect(container.textContent).not.toContain('sqlite');
   });
 
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {
