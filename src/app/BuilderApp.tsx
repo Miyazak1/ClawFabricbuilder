@@ -78,6 +78,7 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   codeGenerator: null,
   projectWorkspace: null,
   providerSettings: null,
+  taskStream: null,
   windowControls: null,
 });
 

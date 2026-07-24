@@ -69,9 +69,11 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /listCurrent/u);
   assert.doesNotMatch(preload, /projectRevisions|projectCatalog/u);
   assert.match(preload, /providerSettings/u);
+  assert.match(preload, /taskStream/u);
+  assert.match(preload, /clawfabric-builder:task-stream:read/u);
   assert.match(preload, /windowControls/u);
   assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 14);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 15);
 });
 
 test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {
@@ -106,6 +108,10 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
     path.join(root, 'electron', 'builder-task-stream-projection.cjs'),
     'utf8',
   );
+  const taskStreamAdapter = fs.readFileSync(
+    path.join(root, 'electron', 'builder-task-stream-ipc-adapter.cjs'),
+    'utf8',
+  );
   const generationRuntime = fs.readFileSync(
     path.join(root, 'electron', 'builder-generation-ipc-runtime.cjs'),
     'utf8',
@@ -121,6 +127,13 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(taskStream, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
   assert.match(taskStream, /replayBuilderConversation/u);
   assert.match(generationRuntime, /createBuilderConversationMainService/u);
+  assert.match(generationRuntime, /createBuilderTaskStreamIpcAdapter/u);
+  assert.match(generationRuntime, /READ_TASK_STREAM_CHANNEL/u);
+  assert.match(taskStreamAdapter, /renderer_authority:\s*'project_id_only'/u);
+  assert.match(taskStreamAdapter, /read_only:\s*true/u);
+  assert.match(taskStreamAdapter, /active_renderer_required:\s*true/u);
+  assert.match(taskStreamAdapter, /direct_electron_registration:\s*false/u);
+  assert.match(taskStreamAdapter, /direct_preload_exposure:\s*false/u);
   assert.doesNotMatch(
     lifecycle,
     /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
@@ -128,6 +141,10 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.doesNotMatch(
     taskStream,
     /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
+  );
+  assert.doesNotMatch(
+    taskStreamAdapter,
+    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-|node:sqlite|fetch\s*\(|https?:|saveDraft|generate|persist_candidate_commit|write_current|local-provider-executor/iu,
   );
 });
 

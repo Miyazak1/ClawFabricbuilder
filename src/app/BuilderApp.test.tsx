@@ -92,6 +92,7 @@ async function setup() {
       listCurrent,
     },
     providerSettings: {},
+    taskStream: {},
     windowControls: {
       close: async () => ({ result_version: 'builder-window-control-result.v1', ok: true }),
       minimize: async () => ({ result_version: 'builder-window-control-result.v1', ok: true }),

@@ -20,6 +20,9 @@ const {
   LIST_CURRENT_CHANNEL,
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
 const {
+  READ_TASK_STREAM_CHANNEL,
+} = require('../electron/builder-task-stream-ipc-adapter.cjs');
+const {
   BuilderGenerationIpcRuntimeError,
   createBuilderGenerationIpcRuntime,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
@@ -138,6 +141,21 @@ function runtimeWithService(service, probes = {}) {
               complete_candidate() {},
               complete_failure() {},
               request_cancel() {},
+              read_stream(body) {
+                probes.readStreamRequests ??= [];
+                probes.readStreamRequests.push({ project_id: body.project_id });
+                return {
+                  stream_version: 'builder-task-stream-read-result.v1',
+                  project_id: body.project_id,
+                  conversation: null,
+                  authority: {
+                    conversation: 'sqlite_canonical_event_replay_or_absent',
+                    project_source: 'not_included',
+                    candidate_source: 'not_loaded',
+                    project_revision: 'not_inferred',
+                  },
+                };
+              },
               verify_candidate() {},
             };
             return context.__conversationService;
@@ -169,6 +187,16 @@ function runtimeWithService(service, probes = {}) {
               saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
               listCurrent: { invoke: () => options.listCurrent() },
+            },
+          }),
+        };
+      }
+      if (specifier === './builder-task-stream-ipc-adapter.cjs') {
+        return {
+          READ_TASK_STREAM_CHANNEL,
+          createBuilderTaskStreamIpcAdapter: (options) => ({
+            channels: {
+              read: { invoke: (_event, body) => options.readStream(body) },
             },
           }),
         };
@@ -280,6 +308,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     SAVE_DRAFT_CHANNEL,
     LOAD_CURRENT_CHANNEL,
     LIST_CURRENT_CHANNEL,
+    READ_TASK_STREAM_CHANNEL,
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
@@ -332,6 +361,15 @@ test('keeps active-renderer and request validation inside the controlled adapter
   await assert.rejects(
     ipcMain.handlers.get(CANCEL_CHANNEL)({ sender: mainWindow.webContents }, { request_id: 'bad' }),
     (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(READ_TASK_STREAM_CHANNEL)({ sender: {} }, { project_id: PROJECT_ID }),
+    (error) => error.code === 'builder_task_stream_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(READ_TASK_STREAM_CHANNEL)({ sender: mainWindow.webContents }, { project_id: 'bad' }),
+    (error) => error.code === 'builder_task_stream_invalid',
   );
   runtime.dispose();
 });
@@ -458,8 +496,47 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(probes.saveOptions.conversationService,
     runtimeModule.context.__conversationService);
+  assert.equal(typeof runtimeModule.context.__conversationService.read_stream, 'function');
   assert.equal(runtime.dispose(), false);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
+});
+
+test('registers a read-only task stream channel backed by the conversation service', async (t) => {
+  const probes = {};
+  const runtimeModule = runtimeWithService({
+    generate() { return Promise.reject(new Error('not used')); },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const stream = await ipcMain.handlers.get(READ_TASK_STREAM_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, runtimeModule.context),
+  );
+  assert.deepEqual(stream, {
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: null,
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  });
+  assert.deepEqual(probes.readStreamRequests, [{ project_id: PROJECT_ID }]);
+  runtime.dispose();
 });
 
 test('keeps selected project identity in main and accepts only instruction over generation IPC', async (t) => {
@@ -710,6 +787,8 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.doesNotMatch(source, /createBuilderProductMetadataDatabase/u);
   assert.doesNotMatch(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
+  assert.match(source, /createBuilderTaskStreamIpcAdapter/u);
+  assert.match(source, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
   assert.match(source, /createBuilderOpenAICompatibleTransport\(\{ fetchImpl: options\.fetchImpl \}\)/u);
   assert.doesNotMatch(source, /globalThis\.fetch/u);
 });

@@ -427,9 +427,22 @@ function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
     title: revision.receipt.title,
     tree_oid: revision.receipt.tree_oid,
   };
+  const taskStream = projectId === null
+    ? null
+    : {
+      stream_version: 'builder-task-stream-read-result.v1',
+      project_id: projectId,
+      conversation: null,
+      authority: {
+        conversation: 'sqlite_canonical_event_replay_or_absent',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v2',
+      bridge_version: 'builder-preload.v3',
       legacy_namespaces_absent: true,
     },
     catalog: {
@@ -458,6 +471,7 @@ function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
       result_version: 'builder-project-read-result.v1',
       source_tree: revision.sourceTree,
     },
+    task_stream: taskStream,
     status: {
       status_version: 'builder-provider-settings-status.v1',
       configured: true,
@@ -469,7 +483,7 @@ function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v2',
+    bridgeVersion: 'builder-preload.v3',
     codeGenerator: {
       generate() { throw new Error('must not write through bridge'); },
     },
@@ -489,6 +503,12 @@ function installBridge(page) {
     providerSettings: {
       async replaceCurrent() { throw new Error('must not write through bridge'); },
       async status() { return bridgeEvidence().status; },
+    },
+    taskStream: {
+      async read(request) {
+        return bridgeEvidence(request.project_id, page.draftSaved, Math.max(1, page.savedRevision))
+          .task_stream;
+      },
     },
   };
 }
@@ -882,12 +902,13 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v2');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v3');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
   assert.match(source, /projectWorkspace\.listCurrent/u);
   assert.match(source, /projectWorkspace\.loadCurrent/u);
+  assert.match(source, /taskStream\.read/u);
   assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.generate|projectWorkspace\.saveDraft|cancel/u);
   const unsavedWait = page.events.findIndex(
     (event) => event[0] === 'scopedText' && event[2] === 'Unsaved draft',
@@ -1217,6 +1238,13 @@ test('sanitizes read evidence before dereferencing renderer-returned shapes', ()
       && !error.message.includes('secret-marker'),
   );
   assert.equal(trapCalls, 0);
+
+  const staleTaskStream = bridgeEvidence('builder-project:11111111-1111-4111-8111-111111111111');
+  staleTaskStream.task_stream.project_id = 'builder-project:22222222-2222-4222-8222-222222222222';
+  assert.throws(
+    () => assertReadEvidence(staleTaskStream),
+    (error) => error.code === 'canary_evidence_failed',
+  );
 });
 
 test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
@@ -2118,7 +2146,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make draft['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v2['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v3['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.doesNotMatch(preloadSource, /projectRevisions|projectCatalog/u);
 });

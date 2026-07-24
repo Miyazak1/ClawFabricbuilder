@@ -3,16 +3,18 @@ export type BuilderDesktopBridgeRoot = Readonly<{
   codeGenerator: unknown;
   projectWorkspace: unknown;
   providerSettings: unknown;
+  taskStream: unknown;
   windowControls: unknown;
 }>;
 
-export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v2';
+export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v3';
 
 const ROOT_KEYS = new Set([
   'bridgeVersion',
   'codeGenerator',
   'projectWorkspace',
   'providerSettings',
+  'taskStream',
   'windowControls',
 ]);
 
@@ -62,6 +64,7 @@ export function sanitizeBuilderDesktopBridgeRoot(value: unknown): BuilderDesktop
       codeGenerator: descriptors.codeGenerator.value,
       projectWorkspace: descriptors.projectWorkspace.value,
       providerSettings: descriptors.providerSettings.value,
+      taskStream: descriptors.taskStream.value,
       windowControls: descriptors.windowControls.value,
     });
   } catch {

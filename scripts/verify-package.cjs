@@ -63,6 +63,7 @@ for (const expected of [
   '/electron/builder-conversation-replay.cjs',
   '/electron/builder-conversation-main-service.cjs',
   '/electron/builder-task-stream-projection.cjs',
+  '/electron/builder-task-stream-ipc-adapter.cjs',
   '/electron/builder-product-metadata-schema.cjs',
   '/electron/builder-product-metadata-database.cjs',
   '/electron/builder-project-source-tree.cjs',
@@ -103,6 +104,7 @@ for (const forbiddenTest of [
   '/tests/builder-generation-main-service.test.cjs',
   '/tests/builder-conversation-main-service.test.cjs',
   '/tests/builder-project-workspace-ipc-adapter.test.cjs',
+  '/tests/builder-task-stream-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-runtime.test.cjs',
   '/tests/builder-window-controls-ipc-runtime.test.cjs',
@@ -216,6 +218,7 @@ const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
 const packagedTaskStreamProjection = packagedSource('electron/builder-task-stream-projection.cjs');
+const packagedTaskStreamIpcAdapter = packagedSource('electron/builder-task-stream-ipc-adapter.cjs');
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
   'clawfabric-builder:project-workspace:open',
@@ -233,13 +236,22 @@ const providerSettingsChannels = [
   'clawfabric-builder:provider-settings:replace-current',
   'clawfabric-builder:provider-settings:status',
 ];
+const taskStreamChannels = [
+  'clawfabric-builder:task-stream:read',
+];
 const windowControlsChannels = [
   'clawfabric-builder:window-controls:minimize',
   'clawfabric-builder:window-controls:toggle-maximize',
   'clawfabric-builder:window-controls:close',
   'clawfabric-builder:window-controls:read-state',
 ];
-const preloadChannels = [...channels, ...generationChannels, ...providerSettingsChannels, ...windowControlsChannels];
+const preloadChannels = [
+  ...channels,
+  ...generationChannels,
+  ...providerSettingsChannels,
+  ...taskStreamChannels,
+  ...windowControlsChannels,
+];
 
 function frozenObjectLiteral(node) {
   assert.equal(ts.isCallExpression(node), true);
@@ -310,25 +322,35 @@ exactObjectKeys(preloadRoot, [
   'projectWorkspace',
   'codeGenerator',
   'providerSettings',
+  'taskStream',
   'windowControls',
 ]);
+const bridgeVersionProperty = preloadRoot.properties.find((property) => property.name.text === 'bridgeVersion');
 const workspaceProperty = preloadRoot.properties.find((property) => property.name.text === 'projectWorkspace');
 const generationProperty = preloadRoot.properties.find((property) => property.name.text === 'codeGenerator');
 const providerSettingsProperty = preloadRoot.properties.find((property) => property.name.text === 'providerSettings');
+const taskStreamProperty = preloadRoot.properties.find((property) => property.name.text === 'taskStream');
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
+assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
 assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
 assert.equal(ts.isPropertyAssignment(generationProperty), true);
 assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
+assert.equal(ts.isPropertyAssignment(taskStreamProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
+assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v3');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
+const taskStreamBridge = frozenObjectLiteral(taskStreamProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'listCurrent']);
 exactObjectKeys(generationBridge, ['generate', 'cancel', 'availability']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
+exactObjectKeys(taskStreamBridge, ['read']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -378,6 +400,7 @@ assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[2]
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
+assert.equal(preloadConstants.get('READ_TASK_STREAM_CHANNEL'), taskStreamChannels[0]);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
@@ -392,6 +415,7 @@ exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
+exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['request']);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);
@@ -453,13 +477,15 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*SAVE_DRAFT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LOAD_CURRENT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_CURRENT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectWorkspace/u);
 assert.doesNotMatch(packagedPreload, /projectRevisions|projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
 assert.match(packagedPreload, /providerSettings/u);
+assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 14);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 15);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -488,6 +514,7 @@ assert.doesNotMatch(
 assert.match(packagedGenerationIpcRuntime, /createBuilderGenerationIpcAdapter/u);
 assert.match(packagedGenerationIpcRuntime, /createBuilderGenerationMainService/u);
 assert.match(packagedGenerationIpcRuntime, /createBuilderConversationMainService/u);
+assert.match(packagedGenerationIpcRuntime, /createBuilderTaskStreamIpcAdapter/u);
 assert.match(packagedGenerationIpcRuntime, /bind_current_authority/u);
 assert.doesNotMatch(
   packagedGenerationIpcRuntime,
@@ -537,6 +564,17 @@ assert.doesNotMatch(
   packagedTaskStreamProjection,
   /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
 );
+assert.match(packagedTaskStreamIpcAdapter, /builder_task_stream\.controlled_ipc_adapter\.v1/u);
+assert.match(packagedTaskStreamIpcAdapter, /READ_TASK_STREAM_CHANNEL/u);
+assert.match(packagedTaskStreamIpcAdapter, /renderer_authority:\s*'project_id_only'/u);
+assert.match(packagedTaskStreamIpcAdapter, /read_only:\s*true/u);
+assert.match(packagedTaskStreamIpcAdapter, /active_renderer_required:\s*true/u);
+assert.match(packagedTaskStreamIpcAdapter, /direct_electron_registration:\s*false/u);
+assert.match(packagedTaskStreamIpcAdapter, /direct_preload_exposure:\s*false/u);
+assert.doesNotMatch(
+  packagedTaskStreamIpcAdapter,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-|node:sqlite|fetch\s*\(|https?:|saveDraft|generate|persist_candidate_commit|write_current|local-provider-executor/iu,
+);
 assert.match(packagedWindowControlsIpcRuntime, /builder-window-controls-ipc-runtime\.v1/u);
 assert.match(packagedWindowControlsIpcRuntime, /activeWindow/u);
 assert.match(packagedWindowControlsIpcRuntime, /event\.sender !== webContents/u);
@@ -553,6 +591,13 @@ for (const channel of channels) {
 for (const channel of generationChannels) {
   assert.equal(
     packagedGenerationIpcAdapter.includes(channel) || packagedGenerationIpcRuntime.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of taskStreamChannels) {
+  assert.equal(
+    packagedTaskStreamIpcAdapter.includes(channel) || packagedGenerationIpcRuntime.includes(channel),
     true,
     channel,
   );

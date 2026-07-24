@@ -249,7 +249,29 @@ const STATUS_KEYS = Object.freeze([
   'credential_status',
   'status_version',
 ]);
-const READ_EVIDENCE_KEYS = Object.freeze(['bridge_contract', 'catalog', 'current', 'status']);
+const TASK_STREAM_KEYS = Object.freeze(['authority', 'conversation', 'project_id', 'stream_version']);
+const TASK_STREAM_AUTHORITY_KEYS = Object.freeze([
+  'candidate_source',
+  'conversation',
+  'project_revision',
+  'project_source',
+]);
+const TASK_STREAM_CONVERSATION_KEYS = Object.freeze([
+  'conversation_id',
+  'created_at_ms',
+  'head_sequence',
+  'items',
+  'recorded_active_turn_id',
+  'window',
+]);
+const TASK_STREAM_WINDOW_KEYS = Object.freeze(['first_sequence', 'has_earlier', 'last_sequence']);
+const READ_EVIDENCE_KEYS = Object.freeze([
+  'bridge_contract',
+  'catalog',
+  'current',
+  'status',
+  'task_stream',
+]);
 const RUN_OPTION_KEYS = Object.freeze(['argv', 'electron', 'env', 'fs', 'os', 'userDataPath']);
 const FIRST_CONFIG_INPUT_KEYS = Object.freeze(['executable_path', 'idea', 'provider', 'schema_version']);
 const SAVED_PROFILE_INPUT_KEYS = Object.freeze([
@@ -1343,7 +1365,10 @@ async function readOnlyBridgeEvidence(page, projectId = null) {
       const current = request.projectId === null
         ? null
         : await bridge.projectWorkspace.loadCurrent({ project_id: request.projectId });
-      return { bridge_contract, catalog, current, status };
+      const task_stream = request.projectId === null
+        ? null
+        : await bridge.taskStream.read({ project_id: request.projectId });
+      return { bridge_contract, catalog, current, status, task_stream };
     }, { projectId });
   } catch {
     fail('canary_read_evidence_failed');
@@ -1368,11 +1393,11 @@ function assertReadEvidence(value) {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v2'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v3'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v2',
+    bridge_version: 'builder-preload.v3',
     legacy_namespaces_absent: true,
   });
   const status = sanitizeStatus(evidenceDescriptors.status.value);
@@ -1380,7 +1405,19 @@ function assertReadEvidence(value) {
   const current = evidenceDescriptors.current.value === null
     ? null
     : sanitizeCurrent(evidenceDescriptors.current.value);
-  return Object.freeze({ bridge_contract: bridgeContract, catalog, current, status });
+  const taskStream = evidenceDescriptors.task_stream.value === null
+    ? null
+    : sanitizeTaskStream(
+      evidenceDescriptors.task_stream.value,
+      current === null ? null : current.product_revision_receipt.project_id,
+    );
+  return Object.freeze({
+    bridge_contract: bridgeContract,
+    catalog,
+    current,
+    status,
+    task_stream: taskStream,
+  });
 }
 
 function sanitizeStatus(value) {
@@ -1401,6 +1438,74 @@ function sanitizeStatus(value) {
     configured,
     credential_status: credentialStatus,
     status_version: statusVersion,
+  });
+}
+
+function sanitizeTaskStream(value, expectedProjectId) {
+  const descriptors = exactDataObject(value, TASK_STREAM_KEYS);
+  const streamVersion = descriptors.stream_version.value;
+  const projectId = safeProjectId(descriptors.project_id.value);
+  const authorityDescriptors = exactDataObject(
+    descriptors.authority.value,
+    TASK_STREAM_AUTHORITY_KEYS,
+  );
+  if (
+    streamVersion !== 'builder-task-stream-read-result.v1'
+    || (expectedProjectId !== null && projectId !== expectedProjectId)
+    || authorityDescriptors.conversation.value !== 'sqlite_canonical_event_replay_or_absent'
+    || authorityDescriptors.project_source.value !== 'not_included'
+    || authorityDescriptors.candidate_source.value !== 'not_loaded'
+    || authorityDescriptors.project_revision.value !== 'not_inferred'
+  ) fail('canary_evidence_failed');
+  const conversation = descriptors.conversation.value === null
+    ? null
+    : sanitizeTaskStreamConversation(descriptors.conversation.value, projectId);
+  return Object.freeze({
+    authority: Object.freeze({
+      candidate_source: 'not_loaded',
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_revision: 'not_inferred',
+      project_source: 'not_included',
+    }),
+    conversation,
+    project_id: projectId,
+    stream_version: streamVersion,
+  });
+}
+
+function sanitizeTaskStreamConversation(value, projectId) {
+  const descriptors = exactDataObject(value, TASK_STREAM_CONVERSATION_KEYS);
+  const conversationId = safeBuilderId(descriptors.conversation_id.value, 'conversation_id');
+  if (conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) {
+    fail('canary_evidence_failed');
+  }
+  const items = denseEvidenceArray(descriptors.items.value, 128);
+  const windowDescriptors = exactDataObject(descriptors.window.value, TASK_STREAM_WINDOW_KEYS);
+  const firstSequence = safePositiveInteger(windowDescriptors.first_sequence.value);
+  const lastSequence = safePositiveInteger(windowDescriptors.last_sequence.value);
+  const hasEarlier = windowDescriptors.has_earlier.value;
+  const headSequence = safePositiveInteger(descriptors.head_sequence.value);
+  const activeTurnId = descriptors.recorded_active_turn_id.value === null
+    ? null
+    : safeBuilderId(descriptors.recorded_active_turn_id.value, 'turn_id');
+  if (
+    typeof hasEarlier !== 'boolean'
+    || items.length === 0
+    || lastSequence < firstSequence
+    || lastSequence - firstSequence + 1 !== items.length
+    || headSequence < lastSequence
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    conversation_id: conversationId,
+    created_at_ms: safeNonNegativeInteger(descriptors.created_at_ms.value),
+    head_sequence: headSequence,
+    item_count: items.length,
+    recorded_active_turn_id: activeTurnId,
+    window: Object.freeze({
+      first_sequence: firstSequence,
+      has_earlier: hasEarlier,
+      last_sequence: lastSequence,
+    }),
   });
 }
 

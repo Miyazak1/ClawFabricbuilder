@@ -13,12 +13,13 @@ function bridge() {
     codeGenerator: Object.freeze({}),
     projectWorkspace: Object.freeze({}),
     providerSettings: Object.freeze({}),
+    taskStream: Object.freeze({}),
     windowControls: Object.freeze({}),
   };
 }
 
-describe('Builder desktop bridge root v2', () => {
-  it('accepts the exact v2 namespaces and returns a fresh frozen root', () => {
+describe('Builder desktop bridge root v3', () => {
+  it('accepts the exact v3 namespaces and returns a fresh frozen root', () => {
     const input = bridge();
     const result = sanitizeBuilderDesktopBridgeRoot(input);
     expect(result).toEqual(input);
@@ -30,7 +31,7 @@ describe('Builder desktop bridge root v2', () => {
 
   it.each([
     null,
-    { ...bridge(), bridgeVersion: 'builder-preload.v1' },
+    { ...bridge(), bridgeVersion: 'builder-preload.v2' },
     { ...bridge(), projectRevisions: {} },
     (() => {
       const value = bridge();
