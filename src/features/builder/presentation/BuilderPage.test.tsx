@@ -516,8 +516,20 @@ describe('BuilderPage v2', () => {
       .toContain('1 line added');
     expect(container.querySelector('[data-builder-change-card="Removed src/remove.ts"]')?.textContent)
       .toContain('1 line removed');
+    expect(container.querySelector('[data-builder-change-diff="index.html"]')?.textContent)
+      .toContain('<main>Old</main>');
+    expect(container.querySelector('[data-builder-change-diff="index.html"]')?.textContent)
+      .toContain('<main>New</main>');
+    expect(container.querySelector('[data-builder-change-diff="src/add.ts"]')?.textContent)
+      .toContain('const added = true;');
+    expect(container.querySelector('[data-builder-change-diff="src/remove.ts"]')?.textContent)
+      .toContain('const removed = true;');
+    expect(container.querySelector('[data-builder-change-diff="index.html"] [data-builder-change-diff-line-kind="removed"]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-builder-change-diff="index.html"] [data-builder-change-diff-line-kind="added"]'))
+      .not.toBeNull();
     expect(changesPanel?.textContent).not.toMatch(
-      /<main>Old|<main>New|const added|const removed|sha256:|commit_oid|tree_oid|receipt/iu,
+      /sha256:|commit_oid|tree_oid|receipt|review_id|provider|credential/iu,
     );
 
     onSelectFile.mockClear();

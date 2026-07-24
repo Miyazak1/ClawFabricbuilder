@@ -274,6 +274,16 @@ function lineSummary(change: BuilderSourceTreeChange): string {
   return `${change.before_line_count} ${change.before_line_count === 1 ? 'line' : 'lines'} to ${change.after_line_count} ${change.after_line_count === 1 ? 'line' : 'lines'}`;
 }
 
+function diffMarker(lineKind: BuilderSourceTreeChange['diff_lines'][number]['line_kind']): string {
+  if (lineKind === 'added') return '+';
+  if (lineKind === 'removed') return '-';
+  return ' ';
+}
+
+function lineNumberLabel(value: number | null): string {
+  return value === null ? '' : String(value);
+}
+
 function ChangesPanel({
   changes,
   onOpenFile,
@@ -326,6 +336,43 @@ function ChangesPanel({
                     </button>
                   )}
                   <p className="cf-builder-change-lines">{lineSummary(change)}</p>
+                  {change.diff_availability === 'too_large' ? (
+                    <p className="cf-builder-change-diff-note" data-builder-change-diff-note={change.path}>
+                      This change is too large for the inline comparison.
+                    </p>
+                  ) : (
+                    <div
+                      aria-label={`${change.path} comparison`}
+                      className="cf-builder-change-diff"
+                      data-builder-change-diff={change.path}
+                    >
+                      {change.diff_lines.map((line, index) => (
+                        <div
+                          className="cf-builder-change-diff-line"
+                          data-builder-change-diff-line-kind={line.line_kind}
+                          key={`${line.line_kind}:${line.before_line ?? ''}:${line.after_line ?? ''}:${index}`}
+                        >
+                          <span className="cf-builder-change-diff-number" aria-hidden="true">
+                            {lineNumberLabel(line.before_line)}
+                          </span>
+                          <span className="cf-builder-change-diff-number" aria-hidden="true">
+                            {lineNumberLabel(line.after_line)}
+                          </span>
+                          <span className="cf-builder-change-diff-marker" aria-hidden="true">
+                            {diffMarker(line.line_kind)}
+                          </span>
+                          <code className="cf-builder-change-diff-text">
+                            {line.text}{line.truncated ? ' ...' : ''}
+                          </code>
+                        </div>
+                      ))}
+                      {change.omitted_line_count > 0 ? (
+                        <p className="cf-builder-change-diff-note">
+                          {change.omitted_line_count} {change.omitted_line_count === 1 ? 'line' : 'lines'} not shown.
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </li>
             ))}
