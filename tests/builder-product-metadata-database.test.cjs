@@ -699,6 +699,62 @@ test('lists current Project Revisions as stable redacted catalog entries', (t) =
   metadata.close();
 });
 
+test('lists one project Revision history as a current-first receipt window', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  const first = metadata.record_project_revision_receipt(request({
+    title: 'First saved version',
+    summary: 'The first saved Builder version.',
+    selectedAt: 10,
+  }));
+  const second = metadata.record_project_revision_receipt(request({
+    idempotencyIndex: 2,
+    taskIndex: 11,
+    runIndex: 12,
+    reviewIndex: 13,
+    turnIndex: 14,
+    requestIndex: 15,
+    candidateIndex: 16,
+    commit: '2'.repeat(40),
+    tree: '3'.repeat(40),
+    parent: first.receipt.commit_oid,
+    candidateDigest: digest('2'),
+    resultingTreeDigest: digest('3'),
+    semanticIdentityDigest: digest('4'),
+    title: 'Second saved version',
+    summary: 'The second saved Builder version.',
+    expected: first.receipt.revision_receipt_digest,
+    selectedAt: 20,
+  }));
+
+  const listed = metadata.list_project_revisions({ project_id: PROJECT_ID, limit: 2 });
+  assert.equal(listed.result_version, BUILDER_PRODUCT_METADATA_RESULT_VERSION);
+  assert.equal(listed.operation, 'project_revisions_listed');
+  assert.equal(listed.metadata_evidence.transaction, 'project_revision_history_readback');
+  assert.equal(listed.metadata_evidence.git_object_verification, 'not_performed_by_metadata_database');
+  assert.equal(listed.metadata_evidence.source_bytes_stored, false);
+  assert.deepEqual(listed.current, {
+    project_id: PROJECT_ID,
+    title: 'Second saved version',
+    summary: 'The second saved Builder version.',
+    revision_receipt_digest: second.receipt.revision_receipt_digest,
+    revision_number: 2,
+    object_format: 'sha1',
+    commit_oid: second.receipt.commit_oid,
+    tree_oid: second.receipt.tree_oid,
+    parent_oid: second.receipt.parent_oid,
+  });
+  assert.deepEqual(
+    listed.receipts.map((receipt) => receipt.revision_receipt_digest),
+    [second.receipt.revision_receipt_digest, first.receipt.revision_receipt_digest],
+  );
+  assert.deepEqual(metadata.list_project_revisions({ project_id: PROJECT_ID, limit: 1 }).receipts, [
+    second.receipt,
+  ]);
+  assert.doesNotMatch(JSON.stringify(listed), /source_tree|credential_secret|provider_secret|ui_state_storage":"present/iu);
+  metadata.close();
+});
+
 test('replays the original action receipt while re-querying latest current', (t) => {
   const filePath = temporaryDatabase(t);
   const metadata = createBuilderProductMetadataDatabase(filePath);
@@ -1426,6 +1482,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
     'append_conversation_events',
     'close',
     'list_current_project_revisions',
+    'list_project_revisions',
     'load_conversation',
     'load_conversation_candidate_by_draft',
     'load_current_project_revision',

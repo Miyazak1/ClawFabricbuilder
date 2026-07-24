@@ -14,6 +14,7 @@ const {
   METADATA_TABLES,
   BuilderProductMetadataSchemaError,
   sanitizeListCurrentProjectRevisionsRequest,
+  sanitizeListProjectRevisionsRequest,
   sanitizeLoadCurrentRequest,
   sanitizeLoadProjectRevisionRequest,
   sanitizeRecordProjectRevisionRequest,
@@ -419,7 +420,7 @@ test('rejects nested proxy, accessor, symbol, resource drift, and forged verifie
   assertSchemaError(() => sanitizeRecordProjectRevisionRequest(forged));
 });
 
-test('sanitizes exact current, exact revision, and catalog list read requests', () => {
+test('sanitizes exact current, exact revision, catalog, and history read requests', () => {
   assert.deepEqual(
     sanitizeLoadCurrentRequest({ project_id: PROJECT_ID }),
     { project_id: PROJECT_ID },
@@ -435,10 +436,17 @@ test('sanitizes exact current, exact revision, and catalog list read requests', 
     sanitizeListCurrentProjectRevisionsRequest({ limit: 256 }),
     { limit: 256 },
   );
+  assert.deepEqual(
+    sanitizeListProjectRevisionsRequest({ project_id: PROJECT_ID, limit: 128 }),
+    { project_id: PROJECT_ID, limit: 128 },
+  );
   assertSchemaError(() => sanitizeLoadCurrentRequest({ project_id: PROJECT_ID, extra: true }));
   assertSchemaError(() => sanitizeLoadProjectRevisionRequest({ project_id: PROJECT_ID }));
   assertSchemaError(() => sanitizeListCurrentProjectRevisionsRequest({ limit: 0 }));
   assertSchemaError(() => sanitizeListCurrentProjectRevisionsRequest({ limit: 257 }));
+  assertSchemaError(() => sanitizeListProjectRevisionsRequest({ project_id: PROJECT_ID, limit: 0 }));
+  assertSchemaError(() => sanitizeListProjectRevisionsRequest({ project_id: PROJECT_ID, limit: 257 }));
+  assertSchemaError(() => sanitizeListProjectRevisionsRequest({ project_id: PROJECT_ID }));
 });
 
 test('returns fresh fixed schema errors without leaking hostile markers', () => {

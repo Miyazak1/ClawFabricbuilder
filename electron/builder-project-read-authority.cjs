@@ -20,6 +20,7 @@ const {
   BUILDER_PRODUCT_METADATA_USER_VERSION,
   BuilderProductMetadataSchemaError,
   sanitizeListCurrentProjectRevisionsRequest,
+  sanitizeListProjectRevisionsRequest,
   sanitizeLoadCurrentRequest,
   sanitizeLoadProjectRevisionRequest,
   sanitizeReceiptRow,
@@ -240,7 +241,9 @@ function sanitizeMetadataEvidence(value, operation) {
   assertExactObject(pragmas, ['foreign_keys', 'journal_mode', 'synchronous', 'trusted_schema']);
   const expectedTransaction = operation === 'current_listed'
     ? 'current_list_full_chain_readback'
-    : 'current_readback';
+    : operation === 'project_revisions_listed'
+      ? 'project_revision_history_readback'
+      : 'current_readback';
   if (
     valueAt(value, 'database_id') !== DATABASE_ID
     || valueAt(value, 'schema_version') !== BUILDER_PRODUCT_METADATA_SCHEMA_VERSION
@@ -316,6 +319,49 @@ function sanitizeMetadataListResult(value, limit) {
   }
   sanitizeMetadataEvidence(valueAt(value, 'metadata_evidence'), 'current_listed');
   return freezeDeep(projects);
+}
+
+function assertHistoryOrderAndBindings(receipts, current, request) {
+  if (receipts.length === 0) fail('builder_project_read_integrity_failed');
+  assertSummaryMatchesReceipt(current, receipts[0]);
+  if (current.project_id !== request.project_id) fail('builder_project_read_integrity_failed');
+  const seen = new Set();
+  for (let index = 0; index < receipts.length; index += 1) {
+    const receipt = receipts[index];
+    if (
+      receipt.project_id !== request.project_id
+      || seen.has(receipt.revision_receipt_digest)
+    ) fail('builder_project_read_integrity_failed');
+    seen.add(receipt.revision_receipt_digest);
+    if (index === 0) continue;
+    const newer = receipts[index - 1];
+    if (
+      receipt.revision_number !== newer.revision_number - 1
+      || newer.previous_revision_receipt_digest !== receipt.revision_receipt_digest
+      || newer.parent_oid !== receipt.commit_oid
+    ) fail('builder_project_read_integrity_failed');
+  }
+}
+
+function sanitizeMetadataHistoryResult(value, request) {
+  assertExactObject(value, ['result_version', 'operation', 'receipts', 'current', 'metadata_evidence']);
+  if (
+    valueAt(value, 'result_version') !== BUILDER_PRODUCT_METADATA_RESULT_VERSION
+    || valueAt(value, 'operation') !== 'project_revisions_listed'
+  ) fail('builder_project_read_integrity_failed');
+  const rawReceipts = valueAt(value, 'receipts');
+  assertDenseArray(rawReceipts, request.limit);
+  const receipts = rawReceipts.map((receipt) => {
+    try {
+      return sanitizeReceiptRow(receipt);
+    } catch {
+      fail('builder_project_read_integrity_failed');
+    }
+  });
+  const current = sanitizeCurrentSummary(valueAt(value, 'current'));
+  sanitizeMetadataEvidence(valueAt(value, 'metadata_evidence'), 'project_revisions_listed');
+  assertHistoryOrderAndBindings(receipts, current, request);
+  return freezeDeep({ receipts, current });
 }
 
 function candidateReceiptFromProductReceipt(receipt) {
@@ -408,6 +454,40 @@ function projectSnapshot(metadata, git) {
   });
 }
 
+function historySummary(receipt, currentDigest) {
+  return freezeDeep({
+    project_id: receipt.project_id,
+    title: receipt.title,
+    summary: receipt.summary,
+    revision_number: receipt.revision_number,
+    revision_receipt_digest: receipt.revision_receipt_digest,
+    previous_revision_receipt_digest: receipt.previous_revision_receipt_digest,
+    commit_oid: receipt.commit_oid,
+    tree_oid: receipt.tree_oid,
+    parent_oid: receipt.parent_oid,
+    selected_at_ms: receipt.selected_at_ms,
+    is_current: receipt.revision_receipt_digest === currentDigest,
+  });
+}
+
+async function verifyHistoryReceipts(receipts, readVerifiedCandidate) {
+  const summaries = [];
+  for (const receipt of receipts) {
+    const candidate = candidateReceiptFromProductReceipt(receipt);
+    const gitResult = sanitizeGitReadResult(
+      await readVerifiedCandidate(candidate),
+      candidate,
+    );
+    if (
+      receipt.commit_oid !== gitResult.candidate_receipt.commit_oid
+      || receipt.tree_oid !== gitResult.candidate_receipt.tree_oid
+      || receipt.resulting_tree_digest !== gitResult.source_tree.source_tree_digest
+    ) fail('builder_project_read_integrity_failed');
+    summaries.push(historySummary(receipt, receipts[0].revision_receipt_digest));
+  }
+  return freezeDeep(summaries);
+}
+
 function normalizeError(error) {
   if (error && typeof error === 'object' && utilTypes.isProxy(error)) {
     return new BuilderProjectReadAuthorityError('builder_project_read_unavailable');
@@ -455,6 +535,7 @@ function createBuilderProjectReadAuthority(rawOptions) {
   const loadCurrentMetadata = ownMethod(metadata, 'load_current_project_revision');
   const loadRevisionMetadata = ownMethod(metadata, 'load_project_revision');
   const listCurrentMetadata = ownMethod(metadata, 'list_current_project_revisions');
+  const listProjectRevisionsMetadata = ownMethod(metadata, 'list_project_revisions');
   const readVerifiedCandidate = ownMethod(git, 'read_verified_candidate');
 
   async function loadCurrent(rawRequest) {
@@ -529,11 +610,39 @@ function createBuilderProjectReadAuthority(rawOptions) {
     }
   }
 
+  async function listHistory(rawRequest) {
+    try {
+      const request = sanitizeListProjectRevisionsRequest(rawRequest);
+      const metadataResult = sanitizeMetadataHistoryResult(
+        await listProjectRevisionsMetadata(request),
+        request,
+      );
+      const revisions = await verifyHistoryReceipts(metadataResult.receipts, readVerifiedCandidate);
+      return freezeDeep({
+        result_version: BUILDER_PROJECT_READ_RESULT_VERSION,
+        operation: 'history_listed',
+        project_id: request.project_id,
+        current: metadataResult.current,
+        revisions,
+        authority_evidence: {
+          product_authority: 'sqlite_product_revision_receipt',
+          code_authority: 'git_commit_tree',
+          source_read_admission: 'verified',
+          current_selection: 'sqlite_current_project_revision',
+          history_selection: 'sqlite_project_revision_receipts',
+        },
+      });
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   return freezeDeep({
     authority_version: BUILDER_PROJECT_READ_AUTHORITY_VERSION,
     load_current: loadCurrent,
     load_revision: loadRevision,
     list_current: listCurrent,
+    list_history: listHistory,
   });
 }
 

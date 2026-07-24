@@ -125,6 +125,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
       'load_current',
       'load_revision',
       'list_current',
+      'list_history',
     ]);
     let closed = false;
     return Object.freeze({

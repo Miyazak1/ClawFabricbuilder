@@ -70,26 +70,27 @@ function sourceTree(content = '<main>Hello</main>\n') {
   });
 }
 
-function candidateReceipt(tree = sourceTree()) {
+function candidateReceipt(tree = sourceTree(), overrides = {}) {
+  const parentOid = overrides.parent_oid ?? null;
   const withoutVerification = {
     receipt_version: BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
     repository_version: BUILDER_GIT_PROJECT_REPOSITORY_VERSION,
-    project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
-    turn_id: TURN_ID,
-    task_id: TASK_ID,
-    run_id: RUN_ID,
-    request_id: REQUEST_ID,
-    candidate_id: CANDIDATE_ID,
-    candidate_digest: DIGEST,
+    project_id: overrides.project_id ?? PROJECT_ID,
+    conversation_id: overrides.conversation_id ?? CONVERSATION_ID,
+    turn_id: overrides.turn_id ?? TURN_ID,
+    task_id: overrides.task_id ?? TASK_ID,
+    run_id: overrides.run_id ?? RUN_ID,
+    request_id: overrides.request_id ?? REQUEST_ID,
+    candidate_id: overrides.candidate_id ?? CANDIDATE_ID,
+    candidate_digest: overrides.candidate_digest ?? DIGEST,
     resulting_tree_digest: tree.source_tree_digest,
-    semantic_identity_digest: SEMANTIC_DIGEST,
+    semantic_identity_digest: overrides.semantic_identity_digest ?? SEMANTIC_DIGEST,
     verification_receipt_digest: null,
     object_format: 'sha1',
-    commit_oid: COMMIT_OID,
-    tree_oid: TREE_OID,
-    parent_oid: null,
-    expected_base_oid: null,
+    commit_oid: overrides.commit_oid ?? COMMIT_OID,
+    tree_oid: overrides.tree_oid ?? TREE_OID,
+    parent_oid: parentOid,
+    expected_base_oid: overrides.expected_base_oid ?? parentOid,
     code_authority: 'git_commit_candidate',
     product_revision_admission: 'not_recorded',
     replay: false,
@@ -104,30 +105,30 @@ function candidateReceipt(tree = sourceTree()) {
   };
 }
 
-function productReceipt(tree = sourceTree()) {
-  const candidate = candidateReceipt(tree);
+function productReceipt(tree = sourceTree(), overrides = {}) {
+  const candidate = candidateReceipt(tree, overrides);
   return createRevisionReceipt({
-    project_id: PROJECT_ID,
-    revision_number: 1,
-    previous_revision_receipt_digest: null,
-    title: 'Hello tool',
-    summary: 'A verified saved Builder project.',
-    conversation_id: CONVERSATION_ID,
-    turn_id: TURN_ID,
-    request_id: REQUEST_ID,
+    project_id: candidate.project_id,
+    revision_number: overrides.revision_number ?? 1,
+    previous_revision_receipt_digest: overrides.previous_revision_receipt_digest ?? null,
+    title: overrides.title ?? 'Hello tool',
+    summary: overrides.summary ?? 'A verified saved Builder project.',
+    conversation_id: candidate.conversation_id,
+    turn_id: candidate.turn_id,
+    request_id: candidate.request_id,
     object_format: 'sha1',
-    commit_oid: COMMIT_OID,
-    tree_oid: TREE_OID,
-    parent_oid: null,
-    candidate_id: CANDIDATE_ID,
-    candidate_digest: DIGEST,
+    commit_oid: candidate.commit_oid,
+    tree_oid: candidate.tree_oid,
+    parent_oid: candidate.parent_oid,
+    candidate_id: candidate.candidate_id,
+    candidate_digest: candidate.candidate_digest,
     resulting_tree_digest: tree.source_tree_digest,
-    semantic_identity_digest: SEMANTIC_DIGEST,
+    semantic_identity_digest: candidate.semantic_identity_digest,
     verification_receipt_digest: candidate.verification_receipt_digest,
-    task_id: TASK_ID,
-    run_id: RUN_ID,
-    review_id: REVIEW_ID,
-    selected_at_ms: 10,
+    task_id: candidate.task_id,
+    run_id: candidate.run_id,
+    review_id: overrides.review_id ?? REVIEW_ID,
+    selected_at_ms: overrides.selected_at_ms ?? 10,
   });
 }
 
@@ -190,11 +191,11 @@ function gitResult(receipt, tree = sourceTree()) {
 function dependencies(overrides = {}) {
   const tree = sourceTree();
   const receipt = productReceipt(tree);
-  const candidate = candidateReceipt(tree);
   const calls = {
     current: [],
     revision: [],
     list: [],
+    history: [],
     git: [],
   };
   const metadata = {
@@ -224,12 +225,23 @@ function dependencies(overrides = {}) {
         metadata_evidence: metadataEvidence('current_list_full_chain_readback'),
       };
     },
+    list_project_revisions(request) {
+      calls.history.push(request);
+      const receipts = overrides.historyReceipts ?? [receipt];
+      return {
+        result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+        operation: 'project_revisions_listed',
+        receipts,
+        current: overrides.historyCurrent ?? currentSummary(receipts[0]),
+        metadata_evidence: metadataEvidence('project_revision_history_readback'),
+      };
+    },
     ...(overrides.metadata ?? {}),
   };
   const git = {
     read_verified_candidate(request) {
       calls.git.push(request);
-      return gitResult(candidate, tree);
+      return gitResult(request, tree);
     },
     ...(overrides.git ?? {}),
   };
@@ -492,6 +504,100 @@ test('lists only SQLite current summaries and never reads Git source objects', a
   assert.doesNotMatch(JSON.stringify(result), /files|content|conversation_id|candidate_digest/iu);
 });
 
+test('lists verified project history summaries without source or candidate internals', async () => {
+  const firstTree = sourceTree('<main>Version 1</main>\n');
+  const secondTree = sourceTree('<main>Version 2</main>\n');
+  const first = productReceipt(firstTree, {
+    title: 'Version one',
+    summary: 'The first saved Builder version.',
+    selected_at_ms: 10,
+  });
+  const second = productReceipt(secondTree, {
+    revision_number: 2,
+    previous_revision_receipt_digest: first.revision_receipt_digest,
+    title: 'Version two',
+    summary: 'The second saved Builder version.',
+    commit_oid: '2'.repeat(40),
+    tree_oid: '3'.repeat(40),
+    parent_oid: first.commit_oid,
+    candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+    candidate_digest: `sha256:${'2'.repeat(64)}`,
+    semantic_identity_digest: `sha256:${'3'.repeat(64)}`,
+    selected_at_ms: 20,
+  });
+  const calls = { history: [], git: [] };
+  const authority = createBuilderProjectReadAuthority({
+    metadata_database: {
+      load_current_project_revision() { throw new Error('history must not load current source'); },
+      load_project_revision() { throw new Error('history must not load single revision source'); },
+      list_current_project_revisions() { throw new Error('history must not list the project catalog'); },
+      list_project_revisions(request) {
+        calls.history.push(request);
+        return {
+          result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+          operation: 'project_revisions_listed',
+          receipts: [second, first],
+          current: currentSummary(second),
+          metadata_evidence: metadataEvidence('project_revision_history_readback'),
+        };
+      },
+    },
+    git_repository: {
+      read_verified_candidate(request) {
+        calls.git.push(request);
+        const tree = request.resulting_tree_digest === firstTree.source_tree_digest
+          ? firstTree
+          : secondTree;
+        return gitResult(request, tree);
+      },
+    },
+  });
+
+  const result = await authority.list_history({ project_id: PROJECT_ID, limit: 2 });
+
+  assert.equal(result.operation, 'history_listed');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.deepEqual(calls.history, [{ project_id: PROJECT_ID, limit: 2 }]);
+  assert.deepEqual(calls.git.map((request) => request.commit_oid), [
+    second.commit_oid,
+    first.commit_oid,
+  ]);
+  assert.deepEqual(result.revisions, [
+    {
+      project_id: PROJECT_ID,
+      title: 'Version two',
+      summary: 'The second saved Builder version.',
+      revision_number: 2,
+      revision_receipt_digest: second.revision_receipt_digest,
+      previous_revision_receipt_digest: first.revision_receipt_digest,
+      commit_oid: second.commit_oid,
+      tree_oid: second.tree_oid,
+      parent_oid: first.commit_oid,
+      selected_at_ms: 20,
+      is_current: true,
+    },
+    {
+      project_id: PROJECT_ID,
+      title: 'Version one',
+      summary: 'The first saved Builder version.',
+      revision_number: 1,
+      revision_receipt_digest: first.revision_receipt_digest,
+      previous_revision_receipt_digest: null,
+      commit_oid: first.commit_oid,
+      tree_oid: first.tree_oid,
+      parent_oid: null,
+      selected_at_ms: 10,
+      is_current: false,
+    },
+  ]);
+  assert.equal(result.authority_evidence.history_selection, 'sqlite_project_revision_receipts');
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /source_tree|files|content|candidate_digest|verification_receipt_digest|conversation_id|turn_id|request_id|task_id|run_id|review_id/iu,
+  );
+  assert.equal(Object.isFrozen(result.revisions), true);
+});
+
 test('fails closed on product and Git cross-evidence drift', async (t) => {
   await t.test('metadata current summary drift', async () => {
     const fixture = dependencies({
@@ -540,6 +646,45 @@ test('fails closed on product and Git cross-evidence drift', async (t) => {
       assertReadError('builder_project_read_integrity_failed'),
     );
   });
+
+  await t.test('history receipt chain drift', async () => {
+    const first = productReceipt();
+    const second = productReceipt(sourceTree('<main>Detached</main>\n'), {
+      revision_number: 2,
+      previous_revision_receipt_digest: `sha256:${'f'.repeat(64)}`,
+      commit_oid: '2'.repeat(40),
+      tree_oid: '3'.repeat(40),
+      parent_oid: first.commit_oid,
+      candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+      candidate_digest: `sha256:${'2'.repeat(64)}`,
+      semantic_identity_digest: `sha256:${'3'.repeat(64)}`,
+      selected_at_ms: 20,
+    });
+    const fixture = dependencies({
+      historyReceipts: [second, first],
+      historyCurrent: currentSummary(second),
+    });
+    await assert.rejects(
+      fixture.authority.list_history({ project_id: PROJECT_ID, limit: 2 }),
+      assertReadError('builder_project_read_integrity_failed'),
+    );
+    assert.equal(fixture.calls.git.length, 0);
+  });
+
+  await t.test('history Git source digest drift', async () => {
+    const fixture = dependencies({
+      git: {
+        read_verified_candidate(request) {
+          const changedTree = sourceTree('<main>Changed history</main>\n');
+          return gitResult(request, changedTree);
+        },
+      },
+    });
+    await assert.rejects(
+      fixture.authority.list_history({ project_id: PROJECT_ID, limit: 1 }),
+      assertReadError('builder_project_read_integrity_failed'),
+    );
+  });
 });
 
 test('rejects malformed dependency surfaces, responses, and requests without invoking source reads', async () => {
@@ -549,6 +694,7 @@ test('rejects malformed dependency surfaces, responses, and requests without inv
         load_current_project_revision() {},
         load_project_revision() {},
         list_current_project_revisions() {},
+        list_project_revisions() {},
       }),
       git_repository: { read_verified_candidate() {} },
     }),
@@ -583,6 +729,10 @@ test('binds dependency results back to the exact requested project and revision'
   const fixture = dependencies();
   await assert.rejects(
     fixture.authority.load_current({ project_id: OTHER_PROJECT_ID }),
+    assertReadError('builder_project_read_integrity_failed'),
+  );
+  await assert.rejects(
+    fixture.authority.list_history({ project_id: OTHER_PROJECT_ID, limit: 1 }),
     assertReadError('builder_project_read_integrity_failed'),
   );
   await assert.rejects(
@@ -656,5 +806,6 @@ test('source boundary stays main-only composition without storage, IPC, or netwo
   assert.match(source, /read_verified_candidate/u);
   assert.match(source, /load_current_project_revision/u);
   assert.match(source, /list_current_project_revisions/u);
+  assert.match(source, /list_project_revisions/u);
   assert.equal(BUILDER_GIT_CANDIDATE_VERIFICATION_VERSION.includes('verification'), true);
 });

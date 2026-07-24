@@ -36,6 +36,7 @@ const {
   sha256Canonical,
   sanitizeLoadCurrentRequest,
   sanitizeLoadProjectRevisionRequest,
+  sanitizeListProjectRevisionsRequest,
   sanitizeListCurrentProjectRevisionsRequest,
   sanitizeLoadConversationCandidateByDraftRequest,
   sanitizeReceiptRow,
@@ -970,6 +971,27 @@ function listResult(db, projects) {
   });
 }
 
+function historyResult(db, receipts, currentReceipt) {
+  return frozen({
+    result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+    operation: 'project_revisions_listed',
+    receipts,
+    current: currentSummary(currentReceipt),
+    metadata_evidence: {
+      database_id: DATABASE_ID,
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
+      runtime_pragmas: runtimePragmas(db),
+      transaction: 'project_revision_history_readback',
+      git_object_verification: 'not_performed_by_metadata_database',
+      source_bytes_stored: false,
+      credential_storage: 'not_present',
+      ui_state_storage: 'not_present',
+    },
+  });
+}
+
 function currentMatches(row, expected, expectedNumber) {
   return expected === null
     ? row.current_revision_receipt_digest === null && row.current_revision_number === expectedNumber
@@ -1190,6 +1212,30 @@ function listCurrentProjectRevisions(db, rawRequest) {
   return listResult(db, projects);
 }
 
+function listProjectRevisions(db, rawRequest) {
+  const request = sanitizeListProjectRevisionsRequest(rawRequest);
+  const current = loadCurrentReceipt(db, request.project_id, true);
+  const rows = all(
+    db,
+    `SELECT project_id, revision_receipt_digest, revision_number,
+      previous_revision_receipt_digest, title, summary, conversation_id, turn_id,
+      request_id, object_format, commit_oid, tree_oid, parent_oid, candidate_id,
+      candidate_digest, resulting_tree_digest, semantic_identity_digest,
+      verification_receipt_digest, task_id, run_id, review_id, selected_at_ms
+      FROM project_revisions
+      WHERE project_id = ?
+      ORDER BY revision_number DESC
+      LIMIT ?`,
+    [request.project_id, request.limit],
+  );
+  const receipts = rows.map((row) => {
+    const receipt = receiptFromRow(row);
+    verifyReceiptRelations(db, receipt);
+    return receipt;
+  });
+  return historyResult(db, receipts, current);
+}
+
 function ownErrorField(error, key) {
   if (!error || typeof error !== 'object') return null;
   const descriptor = Object.getOwnPropertyDescriptor(error, key);
@@ -1295,6 +1341,12 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     list_current_project_revisions(rawRequest) {
       try { return listCurrentProjectRevisions(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    list_project_revisions(rawRequest) {
+      try { return listProjectRevisions(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

@@ -743,6 +743,14 @@ function sanitizeLoadProjectRevisionRequest(value) {
   });
 }
 
+function sanitizeListProjectRevisionsRequest(value) {
+  exactObject(value, ['project_id', 'limit']);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    limit: safeLimit(valueAt(value, 'limit')),
+  });
+}
+
 function sanitizeListCurrentProjectRevisionsRequest(value) {
   exactObject(value, ['limit']);
   return freezeDeep({ limit: safeLimit(valueAt(value, 'limit')) });
@@ -832,6 +840,7 @@ module.exports = Object.freeze({
   sha256Canonical: safeBoundary(sha256Canonical),
   sanitizeLoadCurrentRequest: safeBoundary(sanitizeLoadCurrentRequest),
   sanitizeLoadProjectRevisionRequest: safeBoundary(sanitizeLoadProjectRevisionRequest),
+  sanitizeListProjectRevisionsRequest: safeBoundary(sanitizeListProjectRevisionsRequest),
   sanitizeListCurrentProjectRevisionsRequest: safeBoundary(sanitizeListCurrentProjectRevisionsRequest),
   sanitizeLoadConversationCandidateByDraftRequest:
     safeBoundary(sanitizeLoadConversationCandidateByDraftRequest),
