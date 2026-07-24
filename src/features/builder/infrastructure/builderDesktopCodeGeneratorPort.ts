@@ -215,5 +215,10 @@ export function createBuilderDesktopCodeGeneratorPort(
         instruction: request.instruction,
       }]).then(unwrapGenerationEnvelope);
     },
+    restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
+      return callBridge(bridge, bridge.restoreDraft, [{
+        draft_id: request.draft_id,
+      }]).then(unwrapGenerationEnvelope);
+    },
   });
 }

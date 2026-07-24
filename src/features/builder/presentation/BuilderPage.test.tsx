@@ -43,6 +43,9 @@ async function snapshots() {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
       },
+      async restoreDraft() {
+        return draft;
+      },
     },
     workspace: {
       async open(request) {
@@ -184,12 +187,15 @@ describe('BuilderPage v2', () => {
   it('keeps the provider-settings recovery action limited to configuration failures', async () => {
     const { fresh } = await snapshots();
     const controller = createBuilderProjectController({
-      generator: { generate: async () => {
-        const error = Object.assign(new Error(), {
-          code: 'builder_generation_provider_unavailable',
-        });
-        throw error;
-      } },
+      generator: {
+        generate: async () => {
+          const error = Object.assign(new Error(), {
+            code: 'builder_generation_provider_unavailable',
+          });
+          throw error;
+        },
+        restoreDraft: async () => null,
+      },
       workspace: {
         open: async () => null,
         saveDraft: async () => null,
@@ -213,7 +219,10 @@ describe('BuilderPage v2', () => {
 
   it('labels an unknown Save outcome without claiming the draft is lost', async () => {
     const controller = createBuilderProjectController({
-      generator: { generate: async (request) => createGenerationDraft(request) },
+      generator: {
+        generate: async (request) => createGenerationDraft(request),
+        restoreDraft: async () => null,
+      },
       workspace: {
         open: async () => null,
         saveDraft: async () => {

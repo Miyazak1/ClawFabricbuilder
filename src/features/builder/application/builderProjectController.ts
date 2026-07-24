@@ -1,5 +1,6 @@
 import {
   createBuilderGenerationRequest,
+  sanitizeRestoredBuilderGenerationDraft,
   sanitizeBuilderGenerationDraft,
   type BuilderGenerationDraft,
 } from './builderGeneration';
@@ -60,12 +61,14 @@ export type BuilderProjectController = Readonly<{
   subscribe(listener: () => void): () => void;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
+  restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
   save(): Promise<BuilderProjectControllerSnapshot>;
   dispose(): void;
 }>;
 
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const SAVE_RESULT_KEYS = Object.freeze([
@@ -366,6 +369,33 @@ export function createBuilderProjectController(
     });
   }
 
+  async function restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot> {
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || !DRAFT_ID_PATTERN.test(draftId)
+      || !['ready', 'generation_failed', 'preview_unavailable'].includes(current.status)
+    ) return current;
+    const retained = current.savedProject;
+    const beforeRestore = current;
+    return run(async (operationEpoch) => {
+      publish(snapshot('opening', retained, null, current.preview, null));
+      try {
+        const draft = await sanitizeRestoredBuilderGenerationDraft(
+          await dependencies.generator.restoreDraft({ draft_id: draftId }),
+          draftId,
+        );
+        if (!draftMatchesSavedBase(draft, retained)) throw new Error();
+        if (disposed || operationEpoch !== epoch) return current;
+        return withPreview('draft_ready', retained, draft, operationEpoch);
+      } catch {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(beforeRestore);
+      }
+    });
+  }
+
   async function save(): Promise<BuilderProjectControllerSnapshot> {
     if (disposed || current.busy || current.draft === null) return current;
     const retained = current.savedProject;
@@ -419,6 +449,7 @@ export function createBuilderProjectController(
     },
     open,
     generate,
+    restoreDraft,
     save,
     dispose() {
       if (disposed) return;

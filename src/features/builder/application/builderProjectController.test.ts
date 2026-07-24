@@ -13,16 +13,19 @@ import {
   PROJECT_ID,
   createGenerationDraft,
   createReadWire,
+  createRestoredGenerationDraft,
   createSaveResult,
 } from '../../../test/builderV2Fixtures';
 
 function setup(options: {
   generate?: BuilderCodeGeneratorPort['generate'];
+  restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
 } = {}) {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
+  const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
   }));
@@ -43,10 +46,10 @@ function setup(options: {
     listCurrent: async () => ({ projects: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { generate },
+    generator: { generate, restoreDraft },
     workspace,
   });
-  return { controller, generate, loadCurrent, open, saveDraft };
+  return { controller, generate, loadCurrent, open, restoreDraft, saveDraft };
 }
 
 describe('Builder project controller v2', () => {
@@ -208,6 +211,53 @@ describe('Builder project controller v2', () => {
       draft: null,
       savedProject: { target: { project_id: PROJECT_ID } },
     });
+  });
+
+  it('restores a Git/SQLite verified pending draft by draft id without saving it', async () => {
+    const readWire = await createReadWire();
+    const restored = await createRestoredGenerationDraft(readWire.source_tree);
+    const { controller, restoreDraft, saveDraft } = setup({
+      open: async () => readWire,
+      restoreDraft: async (request) => {
+        expect(request).toEqual({ draft_id: DRAFT_ID });
+        return restored;
+      },
+    });
+    await controller.open(PROJECT_ID);
+    const result = await controller.restoreDraft(DRAFT_ID);
+
+    expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft).toMatchObject({
+      draft_id: DRAFT_ID,
+      request_id: null,
+      restart_restore: 'git_sqlite_verified',
+      admissions: { save: 'not_performed' },
+    });
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+  });
+
+  it('keeps the saved project visible when restored draft base evidence is stale', async () => {
+    const readWire = await createReadWire();
+    const restored = await createRestoredGenerationDraft(readWire.source_tree);
+    const { controller, restoreDraft } = setup({
+      open: async () => readWire,
+      restoreDraft: async () => ({
+        ...restored,
+        base_revision_evidence: {
+          ...restored.base_revision_evidence!,
+          revision_receipt_digest: `sha256:${'f'.repeat(64)}`,
+        },
+      }),
+    });
+    await controller.open(PROJECT_ID);
+    const result = await controller.restoreDraft(DRAFT_ID);
+
+    expect(restoreDraft).toHaveBeenCalledOnce();
+    expect(result.status).toBe('ready');
+    expect(result.draft).toBeNull();
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
   });
 
   it('fails closed when Save receipt and reopened Git/SQLite facts disagree', async () => {

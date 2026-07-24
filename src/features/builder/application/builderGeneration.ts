@@ -15,7 +15,7 @@ export type BuilderGenerationRequest = Readonly<{
 
 export type BuilderGenerationDraft = Readonly<{
   version: typeof BUILDER_GENERATION_RESULT_PROTOCOL;
-  request_id: string;
+  request_id: string | null;
   draft_id: string;
   title: string;
   summary: string;
@@ -43,7 +43,7 @@ export type BuilderGenerationDraft = Readonly<{
     preview: 'not_evaluated';
     execution: 'not_evaluated';
   }>;
-  restart_restore: 'not_persisted';
+  restart_restore: 'not_persisted' | 'git_sqlite_verified';
 }>;
 
 export type BuilderGenerationErrorCode =
@@ -213,6 +213,13 @@ function safeProjectId(value: unknown, code: BuilderGenerationErrorCode): string
   return value;
 }
 
+function safeDraftId(value: unknown): string {
+  if (typeof value !== 'string' || !DRAFT_ID_PATTERN.test(value)) {
+    throw invalid('invalid_generated_draft');
+  }
+  return value;
+}
+
 function safeDigest(value: unknown): string {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) {
     throw invalid('invalid_generated_draft');
@@ -342,10 +349,9 @@ export async function sanitizeBuilderGenerationDraft(
     if (
       source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
       || source.request_id !== request.request_digest
-      || typeof source.draft_id !== 'string'
-      || !DRAFT_ID_PATTERN.test(source.draft_id)
       || source.restart_restore !== 'not_persisted'
     ) throw invalid('invalid_generated_draft');
+    const draftId = safeDraftId(source.draft_id);
     const projectId = safeProjectId(source.project_id, 'invalid_generated_draft');
     if (
       source.existing_project_id !== request.existing_project_id
@@ -374,7 +380,7 @@ export async function sanitizeBuilderGenerationDraft(
     return deepFreeze({
       version: BUILDER_GENERATION_RESULT_PROTOCOL,
       request_id: request.request_digest,
-      draft_id: source.draft_id,
+      draft_id: draftId,
       title: safeDisplayText(source.title, 80),
       summary: safeDisplayText(source.summary, 400),
       project_id: projectId,
@@ -399,6 +405,89 @@ export async function sanitizeBuilderGenerationDraft(
         execution: 'not_evaluated',
       },
       restart_restore: 'not_persisted',
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationError) throw error;
+    throw invalid('invalid_generated_draft');
+  }
+}
+
+export async function sanitizeRestoredBuilderGenerationDraft(
+  value: unknown,
+  expectedDraftId: string,
+): Promise<BuilderGenerationDraft> {
+  try {
+    const expected = safeDraftId(expectedDraftId);
+    const source = exactRecord(value, DRAFT_KEYS, 'invalid_generated_draft');
+    const restartRestore = source.restart_restore;
+    if (
+      source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
+      || (restartRestore !== 'not_persisted' && restartRestore !== 'git_sqlite_verified')
+    ) throw invalid('invalid_generated_draft');
+    const draftId = safeDraftId(source.draft_id);
+    if (draftId !== expected) throw invalid('invalid_generated_draft');
+    let requestId: string | null;
+    if (restartRestore === 'git_sqlite_verified') {
+      if (source.request_id !== null) throw invalid('invalid_generated_draft');
+      requestId = null;
+    } else {
+      requestId = safeDigest(source.request_id);
+    }
+    const projectId = safeProjectId(source.project_id, 'invalid_generated_draft');
+    const existingProjectId = source.existing_project_id === null
+      ? null
+      : safeProjectId(source.existing_project_id, 'invalid_generated_draft');
+    if (existingProjectId !== null && existingProjectId !== projectId) {
+      throw invalid('invalid_generated_draft');
+    }
+    const candidate = exactRecord(source.candidate, CANDIDATE_KEYS, 'invalid_generated_draft');
+    if (
+      candidate.candidate_version !== 'builder-code-change-candidate.v2'
+      || typeof candidate.candidate_id !== 'string'
+      || !CANDIDATE_ID_PATTERN.test(candidate.candidate_id)
+    ) throw invalid('invalid_generated_draft');
+    const candidateDigest = safeDigest(candidate.candidate_digest);
+    const resultingTreeDigest = safeDigest(candidate.resulting_tree_digest);
+    const sourceTree = await sanitizeBuilderProjectSourceTree(source.source_tree);
+    if (sourceTree.source_tree_digest !== resultingTreeDigest) {
+      throw invalid('invalid_generated_draft');
+    }
+    const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_draft');
+    if (
+      admissions.conversation !== 'sqlite_recorded'
+      || admissions.draft !== 'candidate_not_saved'
+      || admissions.save !== 'not_performed'
+      || admissions.preview !== 'not_evaluated'
+      || admissions.execution !== 'not_evaluated'
+    ) throw invalid('invalid_generated_draft');
+    return deepFreeze({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      request_id: requestId,
+      draft_id: draftId,
+      title: safeDisplayText(source.title, 80),
+      summary: safeDisplayText(source.summary, 400),
+      project_id: projectId,
+      existing_project_id: existingProjectId,
+      candidate: {
+        candidate_version: 'builder-code-change-candidate.v2',
+        candidate_id: candidate.candidate_id,
+        candidate_digest: candidateDigest,
+        resulting_tree_digest: resultingTreeDigest,
+      },
+      base_revision_evidence: sanitizeBaseEvidence(
+        source.base_revision_evidence,
+        projectId,
+        existingProjectId !== null,
+      ),
+      source_tree: sourceTree,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'candidate_not_saved',
+        save: 'not_performed',
+        preview: 'not_evaluated',
+        execution: 'not_evaluated',
+      },
+      restart_restore: restartRestore,
     });
   } catch (error) {
     if (error instanceof BuilderGenerationError) throw error;

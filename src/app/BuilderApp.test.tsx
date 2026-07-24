@@ -13,6 +13,7 @@ import {
   createCatalogWire,
   createGenerationDraft,
   createReadWire,
+  createRestoredGenerationDraft,
   createSaveResult,
   createTaskStreamWire,
 } from '../test/builderV2Fixtures';
@@ -20,6 +21,9 @@ import { createBuilderGenerationRequest } from '../features/builder/application/
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
+const PENDING_TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174001';
+const PENDING_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174001';
+const PENDING_RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174001';
 
 afterEach(() => {
   for (const entry of mounted.splice(0)) {
@@ -44,12 +48,17 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-async function setup() {
+async function setup(options: Readonly<{
+  initiallySaved?: boolean;
+  pendingActivity?: boolean;
+  restoreAvailable?: boolean;
+}> = {}) {
   const readWire = await createReadWire();
   const catalogWire = await createCatalogWire();
-  let saved = false;
+  let saved = options.initiallySaved === true;
   let selectedProjectId: string | null = null;
   let latestDraft = await createGenerationDraft();
+  let restoredDraft = await createRestoredGenerationDraft(readWire.source_tree);
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
@@ -65,8 +74,29 @@ async function setup() {
     saved = true;
     return createSaveResult(latestDraft, readWire);
   });
+  const restoreDraft = vi.fn(async (request: unknown) => {
+    if (options.restoreAvailable !== true) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_parent_unavailable',
+          retryable: true,
+        },
+      };
+    }
+    restoredDraft = await createRestoredGenerationDraft(readWire.source_tree);
+    expect(request).toEqual({ draft_id: restoredDraft.draft_id });
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: restoredDraft,
+    };
+  });
   const loadCurrent = vi.fn(async () => readWire);
-  const readTaskStream = vi.fn(async () => createTaskStreamWire());
+  const readTaskStream = vi.fn(async () => (
+    options.pendingActivity === true ? pendingCandidateTaskStreamWire() : createTaskStreamWire()
+  ));
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
     return request.project_id === null
@@ -84,7 +114,7 @@ async function setup() {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
       generate,
-      restoreDraft: async () => null,
+      restoreDraft,
       cancel: async () => null,
       availability: async () => null,
     },
@@ -122,6 +152,7 @@ async function setup() {
     loadCurrent,
     open,
     readTaskStream,
+    restoreDraft,
     saveDraft,
   };
 }
@@ -131,6 +162,45 @@ function click(container: HTMLElement, label: string): void {
     .find((candidate) => candidate.textContent?.includes(label));
   expect(button, label).not.toBeUndefined();
   act(() => button?.click());
+}
+
+function pendingCandidateTaskStreamWire() {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      items: wire.conversation.items.map((item) => {
+        if (item.item_kind === 'user_message') {
+          return {
+            ...item,
+            turn_id: PENDING_TURN_ID,
+            task: item.task === null ? null : { ...item.task, task_id: PENDING_TASK_ID },
+          };
+        }
+        if (item.item_kind === 'run_started') {
+          return {
+            ...item,
+            turn_id: PENDING_TURN_ID,
+            run_id: PENDING_RUN_ID,
+            task_id: PENDING_TASK_ID,
+          };
+        }
+        if (item.item_kind === 'run_completed') {
+          return {
+            ...item,
+            turn_id: PENDING_TURN_ID,
+            run_id: PENDING_RUN_ID,
+          };
+        }
+        return {
+          ...item,
+          turn_id: PENDING_TURN_ID,
+          run_id: PENDING_RUN_ID,
+        };
+      }),
+    },
+  };
 }
 
 describe('BuilderApp v2', () => {
@@ -189,8 +259,33 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('sqlite');
   });
 
+  it('restores a pending draft from project activity after opening a saved project', async () => {
+    const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
+      initiallySaved: true,
+      pendingActivity: true,
+      restoreAvailable: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+
+    expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+    });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+  });
+
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {
-    const { container, loadCurrent, readTaskStream, saveDraft } = await setup();
+    const { container, loadCurrent, readTaskStream, restoreDraft, saveDraft } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -214,6 +309,7 @@ describe('BuilderApp v2', () => {
     });
     expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(restoreDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
   });
 

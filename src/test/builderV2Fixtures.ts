@@ -259,6 +259,18 @@ export async function createGenerationDraft(
   };
 }
 
+export async function createRestoredGenerationDraft(
+  sourceTreeValue?: Awaited<ReturnType<typeof createSourceTree>>,
+): Promise<BuilderGenerationDraft> {
+  const request = await createBuilderGenerationRequest('Add a saved-project change.', PROJECT_ID);
+  const draft = await createGenerationDraft(request, sourceTreeValue);
+  return {
+    ...draft,
+    request_id: null,
+    restart_restore: 'git_sqlite_verified',
+  };
+}
+
 export function createSaveResult(
   draft: BuilderGenerationDraft,
   readWire: Awaited<ReturnType<typeof createReadWire>>,

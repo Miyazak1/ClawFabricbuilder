@@ -1,6 +1,7 @@
 import type { BuilderGenerationRequest } from './builderGeneration';
 
 export type BuilderGenerationDiagnosticCode =
+  | 'builder_generation_parent_unavailable'
   | 'builder_generation_provider_unavailable'
   | 'builder_generation_timeout'
   | 'builder_generation_provider_http_error'
@@ -10,6 +11,7 @@ export type BuilderGenerationDiagnosticCode =
 export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   Record<BuilderGenerationDiagnosticCode, boolean>
 > = Object.freeze({
+  builder_generation_parent_unavailable: true,
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
@@ -18,6 +20,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
 });
 
 const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, string>> = Object.freeze({
+  builder_generation_parent_unavailable: 'The current project version is unavailable.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
@@ -53,6 +56,7 @@ export function sanitizeTrustedBuilderGenerationDiagnostic(
 
 export interface BuilderCodeGeneratorPort {
   generate(request: BuilderGenerationRequest): Promise<unknown>;
+  restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
 }
 
 export interface BuilderProjectWorkspacePort {

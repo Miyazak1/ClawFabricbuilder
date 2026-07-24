@@ -180,6 +180,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
 });
 
 const UNAVAILABLE_TASK_STREAM: BuilderTaskStreamPort = Object.freeze({
@@ -238,6 +242,42 @@ function visibleConversationProjectId(
 }
 
 type BuilderVisibleProjectSnapshot = ReturnType<typeof useBuilderProjectController>['snapshot'];
+type BuilderVisibleConversationSnapshot = ReturnType<typeof useBuilderConversationController>['snapshot'];
+
+function latestRestorableDraft(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): Readonly<{ draftId: string; restoreKey: string }> | null {
+  if (
+    projectSnapshot.busy
+    || projectSnapshot.draft !== null
+    || projectSnapshot.savedProject === null
+    || !['ready', 'generation_failed', 'preview_unavailable'].includes(projectSnapshot.status)
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== projectSnapshot.savedProject.target.project_id
+  ) return null;
+  const items = conversationSnapshot.conversation.conversation.items;
+  const savedTarget = projectSnapshot.savedProject.target;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.item_kind === 'run_completed' && item.candidate !== null) {
+      if (item.turn_id === savedTarget.turn_id && item.run_id === savedTarget.run_id) {
+        return null;
+      }
+      return Object.freeze({
+        draftId: item.candidate.draft_id,
+        restoreKey: [
+          conversationSnapshot.project_id,
+          conversationSnapshot.conversation.conversation.head_sequence,
+          savedTarget.revision_receipt_digest,
+          item.candidate.draft_id,
+        ].join(':'),
+      });
+    }
+  }
+  return null;
+}
 
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
@@ -252,11 +292,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
+  const restoreAttemptKeysRef = useRef(new Set<string>());
   const workspacePorts = useMemo(() => {
     void workspaceEpoch;
     const generator: BuilderCodeGeneratorPort = Object.freeze({
       generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
         return ports.generator.generate(request);
+      },
+      restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
+        return ports.generator.restoreDraft(request);
       },
     });
     const workspace: BuilderProjectWorkspacePort = Object.freeze({
@@ -285,6 +329,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
+    restoreAttemptKeysRef.current.clear();
     setWorkspaceEpoch(workspaceEpochRef.current);
     setProjectId(nextProjectId);
     setIdea('');
@@ -313,6 +358,22 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (conversationProjectId === null) return;
     await conversation.load(conversationProjectId).catch(() => undefined);
   }, [conversation]);
+
+  useEffect(() => {
+    const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
+    if (target === null) return;
+    const commandEpoch = workspaceEpochRef.current;
+    const attemptKey = `${commandEpoch}:${target.restoreKey}`;
+    if (restoreAttemptKeysRef.current.has(attemptKey)) return;
+    restoreAttemptKeysRef.current.add(attemptKey);
+    void project.restoreDraft(target.draftId).then(async (result) => {
+      if (
+        workspaceEpochRef.current !== commandEpoch
+        || result.draft?.draft_id !== target.draftId
+      ) return;
+      await readActivityAfterTerminal(result, commandEpoch);
+    }).catch(() => undefined);
+  }, [conversation.snapshot, project, readActivityAfterTerminal]);
 
   const generate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;

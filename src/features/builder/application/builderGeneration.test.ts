@@ -6,10 +6,13 @@ import {
   createBuilderGenerationRequest,
   sanitizeBuilderGenerationDraft,
   sanitizeBuilderGenerationRequest,
+  sanitizeRestoredBuilderGenerationDraft,
 } from './builderGeneration';
 import {
+  DRAFT_ID,
   PROJECT_ID,
   createGenerationDraft,
+  createRestoredGenerationDraft,
   createSourceTree,
 } from '../../../test/builderV2Fixtures';
 
@@ -98,6 +101,30 @@ describe('Builder generation v2', () => {
       { ...draft, saved: true },
     ]) {
       await expect(sanitizeBuilderGenerationDraft(forged, request)).rejects.toMatchObject({
+        code: 'invalid_generated_draft',
+      });
+    }
+  });
+
+  it('accepts a Git/SQLite restored unsaved draft without request authority', async () => {
+    const restored = await createRestoredGenerationDraft();
+    const result = await sanitizeRestoredBuilderGenerationDraft(structuredClone(restored), DRAFT_ID);
+
+    expect(result.request_id).toBeNull();
+    expect(result.restart_restore).toBe('git_sqlite_verified');
+    expect(result.existing_project_id).toBe(PROJECT_ID);
+    expect(result.base_revision_evidence?.project_id).toBe(PROJECT_ID);
+    expect(result.admissions.save).toBe('not_performed');
+  });
+
+  it('rejects restored draft id drift and fabricated restored request authority', async () => {
+    const restored = await createRestoredGenerationDraft();
+    for (const forged of [
+      { ...restored, draft_id: `builder-generation-draft:${'9'.repeat(64)}` },
+      { ...restored, request_id: `sha256:${'9'.repeat(64)}` },
+      { ...restored, saved: true },
+    ]) {
+      await expect(sanitizeRestoredBuilderGenerationDraft(forged, DRAFT_ID)).rejects.toMatchObject({
         code: 'invalid_generated_draft',
       });
     }

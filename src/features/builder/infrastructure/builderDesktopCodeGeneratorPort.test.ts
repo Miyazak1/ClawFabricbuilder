@@ -5,7 +5,7 @@ import {
   BuilderDesktopCodeGeneratorPortError,
   createBuilderDesktopCodeGeneratorPort,
 } from './builderDesktopCodeGeneratorPort';
-import { createGenerationDraft } from '../../../test/builderV2Fixtures';
+import { createGenerationDraft, createRestoredGenerationDraft } from '../../../test/builderV2Fixtures';
 
 describe('createBuilderDesktopCodeGeneratorPort', () => {
   it('forwards one v2 request and unwraps a fresh success envelope', async () => {
@@ -56,6 +56,52 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       code: 'builder_generation_provider_http_error',
       retryable: true,
       message: 'The AI service could not make this project.',
+    });
+  });
+
+  it('forwards only draft id when restoring a pending draft', async () => {
+    const restoredDraft = await createRestoredGenerationDraft();
+    const restoreDraft = vi.fn(async () => ({
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: restoredDraft,
+    }));
+    const port = createBuilderDesktopCodeGeneratorPort({
+      generate: async () => null,
+      restoreDraft,
+      cancel: async () => null,
+      availability: async () => null,
+    });
+
+    const result = await port.restoreDraft({ draft_id: restoredDraft.draft_id });
+
+    expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: restoredDraft.draft_id });
+    expect(result).toEqual(restoredDraft);
+    expect(result).not.toBe(restoredDraft);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('maps restored draft parent drift to a fixed diagnostic', async () => {
+    const port = createBuilderDesktopCodeGeneratorPort({
+      generate: async () => null,
+      restoreDraft: async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_parent_unavailable',
+          retryable: true,
+        },
+      }),
+      cancel: async () => null,
+      availability: async () => null,
+    });
+
+    await expect(port.restoreDraft({
+      draft_id: `builder-generation-draft:${'1'.repeat(64)}`,
+    })).rejects.toMatchObject({
+      code: 'builder_generation_parent_unavailable',
+      retryable: true,
+      message: 'The current project version is unavailable.',
     });
   });
 

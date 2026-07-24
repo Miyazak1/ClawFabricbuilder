@@ -48,6 +48,7 @@ async function renderHook(projectId?: string, strict = false) {
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
+  const restoreDraft = vi.fn(async () => draft);
   const saveDraft = vi.fn(async () => createSaveResult(draft, readWire));
   const loadCurrent = vi.fn(async () => readWire);
   const open = vi.fn(async (request: { project_id: string | null }) => (
@@ -59,7 +60,7 @@ async function renderHook(projectId?: string, strict = false) {
       }
       : readWire
   ));
-  const generator = { generate };
+  const generator = { generate, restoreDraft };
   const workspace = {
     open,
     saveDraft,
@@ -93,6 +94,7 @@ async function renderHook(projectId?: string, strict = false) {
     generate,
     loadCurrent,
     open,
+    restoreDraft,
     async selectProject(selectedProjectId?: string) {
       await act(async () => {
         root.render(<Harness selectedProjectId={selectedProjectId} />);
