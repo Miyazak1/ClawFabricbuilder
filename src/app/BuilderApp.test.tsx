@@ -126,6 +126,7 @@ async function setup(options: Readonly<{
   const listCurrent = vi.fn(async () => (
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
+  const listHistory = vi.fn(async () => ({ revisions: [] }));
   const bridge: BuilderDesktopBridgeRoot = {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
@@ -140,6 +141,7 @@ async function setup(options: Readonly<{
       saveDraft,
       loadCurrent,
       listCurrent,
+      listHistory,
     },
     providerSettings: {},
     taskStream: {

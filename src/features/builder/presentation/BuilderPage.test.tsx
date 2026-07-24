@@ -70,6 +70,9 @@ async function snapshots() {
       async listCurrent() {
         return { projects: [] };
       },
+      async listHistory() {
+        return { revisions: [] };
+      },
     },
   });
   const fresh = controller.getSnapshot();
@@ -231,6 +234,7 @@ describe('BuilderPage v2', () => {
         saveDraft: async () => null,
         loadCurrent: async () => null,
         listCurrent: async () => null,
+        listHistory: async () => null,
       },
     });
     void fresh;
@@ -263,6 +267,7 @@ describe('BuilderPage v2', () => {
           throw new Error('unavailable');
         },
         listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
       },
     });
     await controller.generate('Make a timer.');

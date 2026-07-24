@@ -26,6 +26,7 @@ const {
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_HISTORY_CHANNEL,
   createBuilderProjectWorkspaceIpcAdapter,
 } = require('./builder-project-workspace-ipc-adapter.cjs');
 const {
@@ -336,6 +337,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       saveDraft,
       loadCurrent: projectMainAuthority.project_read_authority.load_current,
       listCurrent: () => projectMainAuthority.project_read_authority.list_current({ limit: 256 }),
+      listHistory: projectMainAuthority.project_read_authority.list_history,
       mainWindowRef: options.mainWindowRef,
     });
     taskStreamAdapter = createBuilderTaskStreamIpcAdapter({
@@ -358,6 +360,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: SAVE_DRAFT_CHANNEL, invoke: workspaceAdapter.channels.saveDraft.invoke }),
     Object.freeze({ channel: LOAD_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.loadCurrent.invoke }),
     Object.freeze({ channel: LIST_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.listCurrent.invoke }),
+    Object.freeze({ channel: LIST_HISTORY_CHANNEL, invoke: workspaceAdapter.channels.listHistory.invoke }),
     Object.freeze({ channel: READ_TASK_STREAM_CHANNEL, invoke: taskStreamAdapter.channels.read.invoke }),
   ]);
   const installed = [];

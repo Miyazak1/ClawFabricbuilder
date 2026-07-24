@@ -6,11 +6,13 @@ const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
 const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
+const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const OPTION_KEYS = Object.freeze([
   'openProject',
   'saveDraft',
   'loadCurrent',
   'listCurrent',
+  'listHistory',
   'mainWindowRef',
 ]);
 const MAX_PLAIN_DATA_NODES = 20_000;
@@ -122,6 +124,7 @@ function safeOptions(value) {
       saveDraft: stableMethod(value, 'saveDraft'),
       loadCurrent: stableMethod(value, 'loadCurrent'),
       listCurrent: stableMethod(value, 'listCurrent'),
+      listHistory: stableMethod(value, 'listHistory'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
     });
   } catch {
@@ -260,8 +263,15 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.listCurrent, 0);
         },
       }),
+      listHistory: Object.freeze({
+        channel: LIST_HISTORY_CHANNEL,
+        method: 'listHistory',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.listHistory, 1);
+        },
+      }),
     }),
-    exposed_methods: Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent']),
+    exposed_methods: Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']),
     authority: Object.freeze({
       renderer_authority: 'project_selection_or_draft_id_only',
       main_owned_git_authority: true,
@@ -278,6 +288,7 @@ module.exports = Object.freeze({
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_HISTORY_CHANNEL,
   BuilderProjectWorkspaceIpcError,
   createBuilderProjectWorkspaceIpcAdapter,
 });

@@ -5,9 +5,13 @@ type BuilderProjectWorkspaceBridge = Readonly<{
   saveDraft(request: unknown): Promise<unknown>;
   loadCurrent(request: unknown): Promise<unknown>;
   listCurrent(): Promise<unknown>;
+  listHistory(request: unknown): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent']);
+const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
+const OPEN_REQUEST_KEYS = Object.freeze(['project_id']);
+const SAVE_DRAFT_REQUEST_KEYS = Object.freeze(['draft_id']);
+const LIST_HISTORY_REQUEST_KEYS = Object.freeze(['project_id', 'limit']);
 const MAX_NODES = 20_000;
 const MAX_ENTRIES = 20_000;
 const MAX_UTF8_BYTES = 16 * 1024 * 1024;
@@ -59,6 +63,7 @@ function sanitizeBridge(value: unknown): BuilderProjectWorkspaceBridge {
       saveDraft: methods.saveDraft,
       loadCurrent: methods.loadCurrent,
       listCurrent: methods.listCurrent,
+      listHistory: methods.listHistory,
     });
   } catch {
     throw unavailable();
@@ -141,6 +146,25 @@ function clonePlainData(value: unknown): unknown {
   }
 }
 
+function requestFields(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  try {
+    if (!isPlainObject(value)) throw unavailable();
+    const output: Record<string, unknown> = {};
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (
+        !descriptor
+        || !descriptor.enumerable
+        || !Object.hasOwn(descriptor, 'value')
+      ) throw unavailable();
+      output[key] = descriptor.value;
+    }
+    return Object.freeze(output);
+  } catch {
+    throw unavailable();
+  }
+}
+
 async function call(
   bridge: BuilderProjectWorkspaceBridge,
   method: (...args: unknown[]) => Promise<unknown>,
@@ -160,16 +184,19 @@ export function createBuilderDesktopProjectWorkspacePort(
   const bridge = sanitizeBridge(value);
   return Object.freeze({
     open(request: Readonly<{ project_id: string | null }>) {
-      return call(bridge, bridge.open, [request]);
+      return call(bridge, bridge.open, [requestFields(request, OPEN_REQUEST_KEYS)]);
     },
     saveDraft(request: Readonly<{ draft_id: string }>) {
-      return call(bridge, bridge.saveDraft, [request]);
+      return call(bridge, bridge.saveDraft, [requestFields(request, SAVE_DRAFT_REQUEST_KEYS)]);
     },
     loadCurrent(request: Readonly<{ project_id: string }>) {
-      return call(bridge, bridge.loadCurrent, [request]);
+      return call(bridge, bridge.loadCurrent, [requestFields(request, OPEN_REQUEST_KEYS)]);
     },
     listCurrent() {
       return call(bridge, bridge.listCurrent, []);
+    },
+    listHistory(request: Readonly<{ project_id: string; limit: number }>) {
+      return call(bridge, bridge.listHistory, [requestFields(request, LIST_HISTORY_REQUEST_KEYS)]);
     },
   });
 }

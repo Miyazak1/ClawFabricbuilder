@@ -173,6 +173,10 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
   listCurrent() {
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
+  listHistory(request: Parameters<BuilderProjectWorkspacePort['listHistory']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
+  },
 });
 
 const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
@@ -322,6 +326,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return ports.workspace.loadCurrent(request);
       },
       listCurrent() { return ports.workspace.listCurrent(); },
+      listHistory(request: Parameters<BuilderProjectWorkspacePort['listHistory']>[0]) {
+        return ports.workspace.listHistory(request);
+      },
     });
     return Object.freeze({ generator, workspace });
   }, [ports, workspaceEpoch]);

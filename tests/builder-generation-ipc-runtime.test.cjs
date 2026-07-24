@@ -20,6 +20,7 @@ const {
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_HISTORY_CHANNEL,
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
 const {
   READ_TASK_STREAM_CHANNEL,
@@ -187,12 +188,14 @@ function runtimeWithService(service, probes = {}) {
           SAVE_DRAFT_CHANNEL,
           LOAD_CURRENT_CHANNEL,
           LIST_CURRENT_CHANNEL,
+          LIST_HISTORY_CHANNEL,
           createBuilderProjectWorkspaceIpcAdapter: (options) => ({
             channels: {
               open: { invoke: (_event, body) => options.openProject(body) },
               saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
               listCurrent: { invoke: () => options.listCurrent() },
+              listHistory: { invoke: (_event, body) => options.listHistory(body) },
             },
           }),
         };
@@ -265,6 +268,16 @@ function runtimeWithService(service, probes = {}) {
                 },
                 load_revision() {},
                 list_current() { return { projects: [] }; },
+                list_history(body) {
+                  probes.listHistoryRequests ??= [];
+                  probes.listHistoryRequests.push({ project_id: body.project_id, limit: body.limit });
+                  return {
+                    result_version: 'builder-project-read-result.v1',
+                    operation: 'history_listed',
+                    project_id: body.project_id,
+                    revisions: [],
+                  };
+                },
               },
               close() { this.closed = true; return true; },
             };
@@ -321,6 +334,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     SAVE_DRAFT_CHANNEL,
     LOAD_CURRENT_CHANNEL,
     LIST_CURRENT_CHANNEL,
+    LIST_HISTORY_CHANNEL,
     READ_TASK_STREAM_CHANNEL,
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
@@ -397,6 +411,15 @@ test('keeps active-renderer and request validation inside the controlled adapter
   await assert.rejects(
     ipcMain.handlers.get(READ_TASK_STREAM_CHANNEL)({ sender: mainWindow.webContents }, { project_id: 'bad' }),
     (error) => error.code === 'builder_task_stream_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(LIST_HISTORY_CHANNEL)({ sender: {} }, { project_id: PROJECT_ID, limit: 32 }),
+    (error) => error.code === 'builder_project_workspace_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(LIST_HISTORY_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_project_workspace_invalid',
   );
   runtime.dispose();
 });
@@ -565,6 +588,39 @@ test('registers a read-only task stream channel backed by the conversation servi
     },
   });
   assert.deepEqual(probes.readStreamRequests, [{ project_id: PROJECT_ID }]);
+  runtime.dispose();
+});
+
+test('registers a read-only project history channel backed by project read authority', async (t) => {
+  const probes = {};
+  const runtimeModule = runtimeWithService({
+    generate() { return Promise.reject(new Error('not used')); },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const history = await ipcMain.handlers.get(LIST_HISTORY_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)}, limit: 32 })`, runtimeModule.context),
+  );
+  assert.deepEqual(history, {
+    result_version: 'builder-project-read-result.v1',
+    operation: 'history_listed',
+    project_id: PROJECT_ID,
+    revisions: [],
+  });
+  assert.deepEqual(probes.listHistoryRequests, [{ project_id: PROJECT_ID, limit: 32 }]);
   runtime.dispose();
 });
 

@@ -47,6 +47,7 @@ function setup(options: {
     saveDraft,
     loadCurrent,
     listCurrent: async () => ({ projects: [] }),
+    listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
     generator: { generate, answer, restoreDraft },

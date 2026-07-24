@@ -68,6 +68,7 @@ async function renderHook(projectId?: string, strict = false) {
     saveDraft,
     loadCurrent,
     listCurrent: async () => ({ projects: [] }),
+    listHistory: async () => ({ revisions: [] }),
   };
 
   function Harness({ selectedProjectId }: { selectedProjectId?: string }) {

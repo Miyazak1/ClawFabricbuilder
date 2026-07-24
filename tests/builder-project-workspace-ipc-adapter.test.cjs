@@ -10,6 +10,7 @@ const {
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_HISTORY_CHANNEL,
   BuilderProjectWorkspaceIpcError,
   createBuilderProjectWorkspaceIpcAdapter,
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
@@ -51,6 +52,10 @@ function adapter(overrides = {}) {
       calls.push(['list']);
       return { result_version: 'builder-project-read-result.v1', projects: [] };
     }),
+    listHistory: overrides.listHistory ?? (async (request) => {
+      calls.push(['history', request]);
+      return { result_version: 'builder-project-read-result.v1', operation: 'history_listed', project_id: request.project_id };
+    }),
     mainWindowRef: authority.mainWindowRef,
   });
   return { authority, calls, value };
@@ -59,12 +64,13 @@ function adapter(overrides = {}) {
 test('workspace adapter exposes only open, save, verified read, and catalog commands', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.namespace, 'builderProjectWorkspace');
-  assert.deepEqual(value.exposed_methods, ['open', 'saveDraft', 'loadCurrent', 'listCurrent']);
-  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'loadCurrent', 'listCurrent']);
+  assert.deepEqual(value.exposed_methods, ['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
+  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
   assert.equal(value.channels.open.channel, OPEN_PROJECT_CHANNEL);
   assert.equal(value.channels.saveDraft.channel, SAVE_DRAFT_CHANNEL);
   assert.equal(value.channels.loadCurrent.channel, LOAD_CURRENT_CHANNEL);
   assert.equal(value.channels.listCurrent.channel, LIST_CURRENT_CHANNEL);
+  assert.equal(value.channels.listHistory.channel, LIST_HISTORY_CHANNEL);
 
   const selected = await value.channels.open.invoke(authority.event, {
     project_id: null,
@@ -76,13 +82,19 @@ test('workspace adapter exposes only open, save, verified read, and catalog comm
     project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
   });
   const listed = await value.channels.listCurrent.invoke(authority.event);
+  const history = await value.channels.listHistory.invoke(authority.event, {
+    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    limit: 32,
+  });
   assert.equal(selected.operation, 'new_selected');
   assert.equal(saved.result_version, 'builder-project-save-result.v1');
   assert.equal(loaded.result_version, 'builder-project-read-result.v1');
   assert.deepEqual(listed.projects, []);
-  assert.deepEqual(calls.map(([operation]) => operation), ['open', 'save', 'load', 'list']);
+  assert.equal(history.operation, 'history_listed');
+  assert.deepEqual(calls.map(([operation]) => operation), ['open', 'save', 'load', 'list', 'history']);
   assert.equal(Object.isFrozen(saved), true);
   assert.equal(Object.isFrozen(listed.projects), true);
+  assert.equal(Object.isFrozen(history), true);
 });
 
 test('workspace adapter rejects inactive senders and extra arguments before authority calls', async () => {
@@ -95,6 +107,11 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
   );
   await assert.rejects(
     value.channels.listCurrent.invoke(authority.event, {}),
+    (error) => error instanceof BuilderProjectWorkspaceIpcError
+      && error.code === 'builder_project_workspace_invalid',
+  );
+  await assert.rejects(
+    value.channels.listHistory.invoke(authority.event),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_invalid',
   );

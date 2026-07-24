@@ -65,6 +65,7 @@ export interface BuilderProjectWorkspacePort {
   saveDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   loadCurrent(request: Readonly<{ project_id: string }>): Promise<unknown>;
   listCurrent(): Promise<unknown>;
+  listHistory(request: Readonly<{ project_id: string; limit: number }>): Promise<unknown>;
 }
 
 export interface BuilderTaskStreamPort {
