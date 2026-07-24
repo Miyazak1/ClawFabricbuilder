@@ -609,6 +609,92 @@ test('records fixed failed, cancelled, and timeout-interrupted terminal outcomes
   }
 });
 
+test('records a deliberate retry as a second run on the same active turn', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const first = begin(item.service);
+    const retry = item.service.retry_after_failure({
+      context: first,
+      failure_code: 'builder_generation_failed',
+    });
+    assert.equal(retry.attempt_number, 2);
+    assert.equal(retry.ids.turn_id, first.ids.turn_id);
+    assert.equal(retry.ids.task_id, first.ids.task_id);
+    assert.notEqual(retry.ids.run_id, first.ids.run_id);
+    assert.equal(retry.start_head.sequence, 4);
+    assert.deepEqual(retry.events.map((event) => event.event_type), [
+      'turn_submitted',
+      'run_started',
+      'run_completed',
+      'run_started',
+    ]);
+
+    const pending = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(pending.conversation.head_sequence, 4);
+    assert.equal(pending.conversation.recorded_active_turn_id, first.ids.turn_id);
+    assert.deepEqual(pending.conversation.items[3], {
+      item_kind: 'run_started',
+      sequence: 4,
+      turn_id: first.ids.turn_id,
+      run_id: retry.ids.run_id,
+      task_id: first.ids.task_id,
+      attempt_number: 2,
+      retry_of_run_id: first.ids.run_id,
+      recorded_state: 'started',
+    });
+    assert.doesNotMatch(JSON.stringify(pending), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+
+    const terminal = item.service.complete_candidate({
+      context: retry,
+      candidate_result: candidateResult(retry),
+      assistant_text: 'The retry prepared a timer draft.',
+    });
+    assert.equal(terminal.head.sequence, 6);
+    assert.equal(terminal.snapshot.active_turn_id, null);
+    assert.equal(terminal.snapshot.turns.length, 1);
+    assert.deepEqual(terminal.snapshot.turns[0].runs.map((run) => ({
+      attempt_number: run.attempt_number,
+      retry_of_run_id: run.retry_of_run_id,
+      run_id: run.run_id,
+      terminal_status: run.terminal_status,
+    })), [
+      {
+        attempt_number: 1,
+        retry_of_run_id: null,
+        run_id: first.ids.run_id,
+        terminal_status: 'failed',
+      },
+      {
+        attempt_number: 2,
+        retry_of_run_id: first.ids.run_id,
+        run_id: retry.ids.run_id,
+        terminal_status: 'succeeded',
+      },
+    ]);
+    assert.equal(terminal.snapshot.turns[0].outcome, 'candidate_ready');
+    const completedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(completedStream.conversation.head_sequence, 6);
+    assert.equal(completedStream.conversation.recorded_active_turn_id, null);
+    assert.equal(completedStream.conversation.items[4].result_kind, 'candidate');
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(950),
+      nowMs: () => 9_500,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), completedStream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
 test('rejects forged contexts and stays isolated from provider, IPC, renderer, and Git authority', () => {
   const item = fixture();
   try {
@@ -627,6 +713,10 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
     assert.throws(() => item.service.complete_explanation({
       context: work,
       assistant_text: 'This is an answer.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.retry_after_failure({
+      context: Object.freeze({}),
+      failure_code: 'builder_generation_failed',
     }), { code: 'builder_conversation_main_service_unavailable' });
   } finally {
     item.close();

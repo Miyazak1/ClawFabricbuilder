@@ -621,6 +621,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       conversation,
       request_digest: request.request_digest,
       start_head: { ...appended.head },
+      attempt_number: 1,
       events: appended.events,
       ids,
       cancel_requested: false,
@@ -635,6 +636,132 @@ function recoverActive(state, project, conversation, recordedAtMs) {
 
   function beginQuestion(rawRequest) {
     return beginTurn(sanitizeQuestionRequest(rawRequest), 'question');
+  }
+
+  function failureEvents(context, failureCode, completeTurn) {
+    const cancelled = failureCode === 'builder_generation_cancelled';
+    const interrupted = failureCode === 'builder_generation_timeout';
+    const events = [];
+    let previous = context.start_head;
+    if ((cancelled && !context.cancel_requested) || interrupted) {
+      const requested = eventAt({
+        projectId: context.project.project_id,
+        conversationId: context.conversation.conversation_id,
+        sequence: previous.sequence + 1,
+        commandId: cancelled ? context.ids.cancel_command_id : context.ids.interrupt_command_id,
+        eventType: cancelled ? 'run_cancel_requested' : 'run_interrupt_requested',
+        previous,
+        payload: {
+          turn_id: context.ids.turn_id,
+          run_id: context.ids.run_id,
+          request_id: cancelled ? context.ids.cancel_request_id : context.ids.interrupt_request_id,
+        },
+      });
+      events.push(requested);
+      previous = eventHead(requested);
+    }
+    const terminalStatus = cancelled ? 'cancelled' : interrupted ? 'interrupted' : 'failed';
+    const completed = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: previous.sequence + 1,
+      commandId: context.ids.terminal_command_id,
+      eventType: 'run_completed',
+      previous,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        terminal_status: terminalStatus,
+        result_kind: 'failure',
+        result_digest: sha256Canonical({
+          failure_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
+          request_digest: context.request_digest,
+          run_id: context.ids.run_id,
+          failure_code: failureCode,
+        }),
+        assistant_message: cancelled || interrupted ? null : {
+          message_id: context.ids.assistant_message_id,
+          text: context.mode === 'question'
+            ? 'The answer could not be prepared.'
+            : 'The draft could not be made.',
+        },
+        candidate_result: null,
+      },
+    });
+    events.push(completed);
+    if (completeTurn) {
+      const turnCompleted = eventAt({
+        projectId: context.project.project_id,
+        conversationId: context.conversation.conversation_id,
+        sequence: completed.sequence + 1,
+        commandId: context.ids.turn_terminal_command_id,
+        eventType: 'turn_completed',
+        previous: eventHead(completed),
+        payload: {
+          turn_id: context.ids.turn_id,
+          run_id: context.ids.run_id,
+          outcome: terminalStatus,
+        },
+      });
+      events.push(turnCompleted);
+    }
+    return freezeDeep({
+      completed_head: eventHead(completed),
+      events,
+    });
+  }
+
+  function retryAfterFailure(rawRequest) {
+    exactObject(rawRequest, ['context', 'failure_code']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    const failureCode = safeText(valueAt(rawRequest, 'failure_code'), 80, 160);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const failed = failureEvents(context, failureCode, false);
+    const retryIds = freezeDeep({
+      ...context.ids,
+      run_command_id: newId(options.createUuid, 'builder-command'),
+      terminal_command_id: newId(options.createUuid, 'builder-command'),
+      turn_terminal_command_id: newId(options.createUuid, 'builder-command'),
+      cancel_command_id: newId(options.createUuid, 'builder-command'),
+      cancel_request_id: newId(options.createUuid, 'builder-cancel-request'),
+      interrupt_command_id: newId(options.createUuid, 'builder-command'),
+      interrupt_request_id: newId(options.createUuid, 'builder-interrupt-request'),
+      assistant_message_id: newId(options.createUuid, 'builder-message'),
+      run_id: newId(options.createUuid, 'builder-run'),
+    });
+    const retryStarted = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: failed.completed_head.sequence + 1,
+      commandId: retryIds.run_command_id,
+      eventType: 'run_started',
+      previous: failed.completed_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: retryIds.run_id,
+        task_id: context.mode === 'work' ? context.ids.task_id : null,
+        attempt_number: context.attempt_number + 1,
+        retry_of_run_id: context.ids.run_id,
+        input_digest: context.request_digest,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [...failed.events, retryStarted],
+      recordedAtMs,
+    });
+    const retryContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      attempt_number: context.attempt_number + 1,
+      events: appended.events,
+      ids: retryIds,
+      cancel_requested: false,
+    });
+    TRUSTED_CONTEXTS.add(retryContext);
+    return retryContext;
   }
 
   function completeCandidate(rawRequest) {
@@ -800,75 +927,12 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     const context = trustedContext(valueAt(rawRequest, 'context'));
     const failureCode = safeText(valueAt(rawRequest, 'failure_code'), 80, 160);
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
-    const cancelled = failureCode === 'builder_generation_cancelled';
-    const interrupted = failureCode === 'builder_generation_timeout';
-    const events = [];
-    let previous = context.start_head;
-    if ((cancelled && !context.cancel_requested) || interrupted) {
-      const requested = eventAt({
-        projectId: context.project.project_id,
-        conversationId: context.conversation.conversation_id,
-        sequence: previous.sequence + 1,
-        commandId: cancelled ? context.ids.cancel_command_id : context.ids.interrupt_command_id,
-        eventType: cancelled ? 'run_cancel_requested' : 'run_interrupt_requested',
-        previous,
-        payload: {
-          turn_id: context.ids.turn_id,
-          run_id: context.ids.run_id,
-          request_id: cancelled ? context.ids.cancel_request_id : context.ids.interrupt_request_id,
-        },
-      });
-      events.push(requested);
-      previous = eventHead(requested);
-    }
-    const terminalStatus = cancelled ? 'cancelled' : interrupted ? 'interrupted' : 'failed';
-    const completed = eventAt({
-      projectId: context.project.project_id,
-      conversationId: context.conversation.conversation_id,
-      sequence: previous.sequence + 1,
-      commandId: context.ids.terminal_command_id,
-      eventType: 'run_completed',
-      previous,
-      payload: {
-        turn_id: context.ids.turn_id,
-        run_id: context.ids.run_id,
-        terminal_status: terminalStatus,
-        result_kind: 'failure',
-        result_digest: sha256Canonical({
-          failure_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
-          request_digest: context.request_digest,
-          run_id: context.ids.run_id,
-          failure_code: failureCode,
-        }),
-        assistant_message: cancelled || interrupted ? null : {
-          message_id: context.ids.assistant_message_id,
-          text: context.mode === 'question'
-            ? 'The answer could not be prepared.'
-            : 'The draft could not be made.',
-        },
-        candidate_result: null,
-      },
-    });
-    events.push(completed);
-    const turnCompleted = eventAt({
-      projectId: context.project.project_id,
-      conversationId: context.conversation.conversation_id,
-      sequence: completed.sequence + 1,
-      commandId: context.ids.turn_terminal_command_id,
-      eventType: 'turn_completed',
-      previous: eventHead(completed),
-      payload: {
-        turn_id: context.ids.turn_id,
-        run_id: context.ids.run_id,
-        outcome: terminalStatus,
-      },
-    });
-    events.push(turnCompleted);
+    const failed = failureEvents(context, failureCode, true);
     return append({
       project: context.project,
       conversation: context.conversation,
       expectedHead: context.start_head,
-      events,
+      events: failed.events,
       recordedAtMs,
     });
   }
@@ -1139,6 +1203,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     service_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
     begin_question: beginQuestion,
     begin_work: beginWork,
+    retry_after_failure: retryAfterFailure,
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,
     complete_failure: completeFailure,
