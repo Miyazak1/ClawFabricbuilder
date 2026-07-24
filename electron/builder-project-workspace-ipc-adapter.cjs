@@ -8,6 +8,10 @@ const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current'
 const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revision';
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
+const PROJECT_ID_PATTERN =
+  /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OPTION_KEYS = Object.freeze([
   'openProject',
   'saveDraft',
@@ -21,6 +25,7 @@ const MAX_PLAIN_DATA_NODES = 20_000;
 const MAX_PLAIN_DATA_ENTRIES = 20_000;
 const MAX_PLAIN_DATA_UTF8_BYTES = 16 * 1024 * 1024;
 const MAX_PLAIN_DATA_DEPTH = 64;
+const MAX_LIST_HISTORY_LIMIT = 256;
 const ERROR_MESSAGES = Object.freeze({
   builder_project_workspace_forbidden: 'Builder projects are unavailable.',
   builder_project_workspace_invalid: 'The Builder project request could not be verified.',
@@ -111,6 +116,87 @@ function stableMethod(value, key) {
     || utilTypes.isProxy(descriptor.value)
   ) throw ipcError();
   return descriptor.value;
+}
+
+function exactPayload(value, expectedKeys) {
+  if (!isPlainObject(value)) throw ipcError('builder_project_workspace_invalid');
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== expectedKeys.length
+    || keys.some((key) => typeof key !== 'string' || !expectedKeys.includes(key))
+  ) throw ipcError('builder_project_workspace_invalid');
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const output = {};
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (
+      !descriptor
+      || descriptor.enumerable !== true
+      || !Object.hasOwn(descriptor, 'value')
+    ) throw ipcError('builder_project_workspace_invalid');
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
+function safeProjectId(value, nullable = false) {
+  if (nullable && value === null) return null;
+  if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) {
+    throw ipcError('builder_project_workspace_invalid');
+  }
+  return value;
+}
+
+function safeDraftId(value) {
+  if (typeof value !== 'string' || !DRAFT_ID_PATTERN.test(value)) {
+    throw ipcError('builder_project_workspace_invalid');
+  }
+  return value;
+}
+
+function safeDigest(value) {
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) {
+    throw ipcError('builder_project_workspace_invalid');
+  }
+  return value;
+}
+
+function safeLimit(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_LIST_HISTORY_LIMIT) {
+    throw ipcError('builder_project_workspace_invalid');
+  }
+  return value;
+}
+
+function openProjectRequest(value) {
+  const source = exactPayload(value, ['project_id']);
+  return Object.freeze({ project_id: safeProjectId(source.project_id, true) });
+}
+
+function saveDraftRequest(value) {
+  const source = exactPayload(value, ['draft_id']);
+  return Object.freeze({ draft_id: safeDraftId(source.draft_id) });
+}
+
+function loadCurrentRequest(value) {
+  const source = exactPayload(value, ['project_id']);
+  return Object.freeze({ project_id: safeProjectId(source.project_id) });
+}
+
+function loadRevisionRequest(value) {
+  const source = exactPayload(value, ['project_id', 'revision_receipt_digest']);
+  return Object.freeze({
+    project_id: safeProjectId(source.project_id),
+    revision_receipt_digest: safeDigest(source.revision_receipt_digest),
+  });
+}
+
+function listHistoryRequest(value) {
+  const source = exactPayload(value, ['project_id', 'limit']);
+  return Object.freeze({
+    project_id: safeProjectId(source.project_id),
+    limit: safeLimit(source.limit),
+  });
 }
 
 function safeOptions(value) {
@@ -221,13 +307,16 @@ function assertActiveSender(event, mainWindowRef) {
 function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
   const options = safeOptions(rawOptions);
 
-  async function invoke(event, rawArguments, method, expectedArguments) {
+  async function invoke(event, rawArguments, method, expectedArguments, requestSanitizer = null) {
     try {
       assertActiveSender(event, options.mainWindowRef);
       if (rawArguments.length !== expectedArguments) {
         throw ipcError('builder_project_workspace_invalid');
       }
-      return clonePlainData(await Reflect.apply(method, undefined, rawArguments));
+      const safeArguments = requestSanitizer === null
+        ? rawArguments
+        : [requestSanitizer(rawArguments[0])];
+      return clonePlainData(await Reflect.apply(method, undefined, safeArguments));
     } catch (error) {
       throw normalizeError(error);
     }
@@ -242,28 +331,28 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
         channel: OPEN_PROJECT_CHANNEL,
         method: 'open',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.openProject, 1);
+          return invoke(event, rawArguments, options.openProject, 1, openProjectRequest);
         },
       }),
       saveDraft: Object.freeze({
         channel: SAVE_DRAFT_CHANNEL,
         method: 'saveDraft',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.saveDraft, 1);
+          return invoke(event, rawArguments, options.saveDraft, 1, saveDraftRequest);
         },
       }),
       loadCurrent: Object.freeze({
         channel: LOAD_CURRENT_CHANNEL,
         method: 'loadCurrent',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.loadCurrent, 1);
+          return invoke(event, rawArguments, options.loadCurrent, 1, loadCurrentRequest);
         },
       }),
       loadRevision: Object.freeze({
         channel: LOAD_REVISION_CHANNEL,
         method: 'loadRevision',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.loadRevision, 1);
+          return invoke(event, rawArguments, options.loadRevision, 1, loadRevisionRequest);
         },
       }),
       listCurrent: Object.freeze({
@@ -277,7 +366,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
         channel: LIST_HISTORY_CHANNEL,
         method: 'listHistory',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.listHistory, 1);
+          return invoke(event, rawArguments, options.listHistory, 1, listHistoryRequest);
         },
       }),
     }),

@@ -16,6 +16,10 @@ const {
   createBuilderProjectWorkspaceIpcAdapter,
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
 
+const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const DRAFT_ID = `builder-generation-draft:${'a'.repeat(64)}`;
+const REVISION_DIGEST = `sha256:${'b'.repeat(64)}`;
+
 function windowAuthority() {
   const webContents = Object.freeze({
     isDestroyed: () => false,
@@ -87,18 +91,18 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
     project_id: null,
   });
   const saved = await value.channels.saveDraft.invoke(authority.event, {
-    draft_id: `builder-generation-draft:${'a'.repeat(64)}`,
+    draft_id: DRAFT_ID,
   });
   const loaded = await value.channels.loadCurrent.invoke(authority.event, {
-    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    project_id: PROJECT_ID,
   });
   const revision = await value.channels.loadRevision.invoke(authority.event, {
-    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
-    revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+    project_id: PROJECT_ID,
+    revision_receipt_digest: REVISION_DIGEST,
   });
   const listed = await value.channels.listCurrent.invoke(authority.event);
   const history = await value.channels.listHistory.invoke(authority.event, {
-    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    project_id: PROJECT_ID,
     limit: 32,
   });
   assert.equal(selected.operation, 'new_selected');
@@ -107,7 +111,14 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   assert.equal(revision.operation, 'revision_loaded');
   assert.deepEqual(listed.projects, []);
   assert.equal(history.operation, 'history_listed');
-  assert.deepEqual(calls.map(([operation]) => operation), ['open', 'save', 'load', 'revision', 'list', 'history']);
+  assert.deepEqual(calls, [
+    ['open', { project_id: null }],
+    ['save', { draft_id: DRAFT_ID }],
+    ['load', { project_id: PROJECT_ID }],
+    ['revision', { project_id: PROJECT_ID, revision_receipt_digest: REVISION_DIGEST }],
+    ['list'],
+    ['history', { project_id: PROJECT_ID, limit: 32 }],
+  ]);
   assert.equal(Object.isFrozen(saved), true);
   assert.equal(Object.isFrozen(revision), true);
   assert.equal(Object.isFrozen(listed.projects), true);
@@ -118,7 +129,7 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
   const { authority, calls, value } = adapter();
   const inactive = Object.freeze({ sender: Object.freeze({}) });
   await assert.rejects(
-    value.channels.saveDraft.invoke(inactive, { draft_id: `builder-generation-draft:${'a'.repeat(64)}` }),
+    value.channels.saveDraft.invoke(inactive, { draft_id: DRAFT_ID }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_forbidden',
   );
@@ -134,13 +145,72 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
   );
   await assert.rejects(
     value.channels.loadRevision.invoke(authority.event, {
-      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      project_id: PROJECT_ID,
     }, {
-      revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+      revision_receipt_digest: REVISION_DIGEST,
     }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_invalid',
   );
+  assert.deepEqual(calls, []);
+});
+
+test('workspace adapter rejects forged request fields before authority calls', async () => {
+  const { authority, calls, value } = adapter();
+  const accessorRequest = {};
+  Object.defineProperty(accessorRequest, 'project_id', {
+    enumerable: true,
+    get() {
+      throw new Error('private request accessor marker');
+    },
+  });
+  const cases = [
+    () => value.channels.open.invoke(authority.event, {
+      project_id: null,
+      source_tree: { files: [] },
+    }),
+    () => value.channels.open.invoke(authority.event, {
+      project_id: 'not-a-builder-project',
+    }),
+    () => value.channels.saveDraft.invoke(authority.event, {
+      draft_id: DRAFT_ID,
+      source_tree: { files: [] },
+    }),
+    () => value.channels.saveDraft.invoke(authority.event, {
+      draft_id: `builder-generation-draft:${'g'.repeat(64)}`,
+    }),
+    () => value.channels.loadCurrent.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      authority: 'renderer-forged',
+    }),
+    () => value.channels.loadCurrent.invoke(authority.event, accessorRequest),
+    () => value.channels.loadRevision.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      revision_receipt_digest: REVISION_DIGEST,
+      commit_oid: '1'.repeat(40),
+    }),
+    () => value.channels.loadRevision.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      revision_receipt_digest: 'bad',
+    }),
+    () => value.channels.listHistory.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      limit: 32,
+      receipt: `sha256:${'e'.repeat(64)}`,
+    }),
+    () => value.channels.listHistory.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      limit: 257,
+    }),
+  ];
+  for (const run of cases) {
+    await assert.rejects(
+      run(),
+      (error) => error instanceof BuilderProjectWorkspaceIpcError
+        && error.code === 'builder_project_workspace_invalid'
+        && !`${error.message}:${error.stack}`.includes('private request accessor marker'),
+    );
+  }
   assert.deepEqual(calls, []);
 });
 
@@ -152,7 +222,7 @@ test('workspace adapter maps trusted authority failures to fixed public errors',
   });
   await assert.rejects(
     value.channels.saveDraft.invoke(authority.event, {
-      draft_id: `builder-generation-draft:${'a'.repeat(64)}`,
+      draft_id: DRAFT_ID,
     }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_conflict'
@@ -173,7 +243,7 @@ test('workspace adapter fails closed on proxy outputs without invoking traps', a
   });
   await assert.rejects(
     value.channels.loadCurrent.invoke(authority.event, {
-      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      project_id: PROJECT_ID,
     }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_unavailable',
@@ -198,7 +268,7 @@ test('workspace adapter normalizes hostile proxy errors without invoking traps',
   });
   await assert.rejects(
     value.channels.saveDraft.invoke(authority.event, {
-      draft_id: `builder-generation-draft:${'a'.repeat(64)}`,
+      draft_id: DRAFT_ID,
     }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_unavailable',
