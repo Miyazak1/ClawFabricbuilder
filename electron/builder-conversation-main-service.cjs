@@ -623,6 +623,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       start_head: { ...appended.head },
       attempt_number: 1,
       events: appended.events,
+      run_terminal_failure_code: null,
       ids,
       cancel_requested: false,
     });
@@ -716,7 +717,9 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     const context = trustedContext(valueAt(rawRequest, 'context'));
     const failureCode = safeText(valueAt(rawRequest, 'failure_code'), 80, 160);
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
-    const failed = failureEvents(context, failureCode, false);
+    const failed = context.run_terminal_failure_code === failureCode
+      ? freezeDeep({ completed_head: context.start_head, events: [] })
+      : failureEvents(context, failureCode, false);
     const retryIds = freezeDeep({
       ...context.ids,
       run_command_id: newId(options.createUuid, 'builder-command'),
@@ -757,11 +760,36 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       start_head: { ...appended.head },
       attempt_number: context.attempt_number + 1,
       events: appended.events,
+      run_terminal_failure_code: null,
       ids: retryIds,
       cancel_requested: false,
     });
     TRUSTED_CONTEXTS.add(retryContext);
     return retryContext;
+  }
+
+  function recordRetryableFailure(rawRequest) {
+    exactObject(rawRequest, ['context', 'failure_code']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (context.run_terminal_failure_code !== null) fail();
+    const failureCode = safeText(valueAt(rawRequest, 'failure_code'), 80, 160);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const failed = failureEvents(context, failureCode, false);
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: failed.events,
+      recordedAtMs,
+    });
+    const failedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+      run_terminal_failure_code: failureCode,
+    });
+    TRUSTED_CONTEXTS.add(failedContext);
+    return failedContext;
   }
 
   function completeCandidate(rawRequest) {
@@ -1203,6 +1231,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     service_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
     begin_question: beginQuestion,
     begin_work: beginWork,
+    record_retryable_failure: recordRetryableFailure,
     retry_after_failure: retryAfterFailure,
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,

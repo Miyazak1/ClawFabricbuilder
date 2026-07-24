@@ -695,6 +695,105 @@ test('records a deliberate retry as a second run on the same active turn', () =>
   }
 });
 
+test('records a retryable failed run without completing the turn before deliberate retry', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const first = begin(item.service);
+    const failed = item.service.record_retryable_failure({
+      context: first,
+      failure_code: 'builder_generation_failed',
+    });
+    assert.equal(failed.attempt_number, 1);
+    assert.equal(failed.run_terminal_failure_code, 'builder_generation_failed');
+    assert.equal(failed.ids.run_id, first.ids.run_id);
+    assert.equal(failed.start_head.sequence, 3);
+    assert.deepEqual(failed.events.map((event) => event.event_type), [
+      'turn_submitted',
+      'run_started',
+      'run_completed',
+    ]);
+
+    const failedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(failedStream.conversation.head_sequence, 3);
+    assert.equal(failedStream.conversation.recorded_active_turn_id, first.ids.turn_id);
+    assert.deepEqual(failedStream.conversation.items[2], {
+      item_kind: 'run_completed',
+      sequence: 3,
+      turn_id: first.ids.turn_id,
+      run_id: first.ids.run_id,
+      terminal_status: 'failed',
+      result_kind: 'failure',
+      assistant_message: {
+        message_id: first.ids.assistant_message_id,
+        text: 'The draft could not be made.',
+      },
+      candidate: null,
+    });
+    assert.throws(() => item.service.record_retryable_failure({
+      context: failed,
+      failure_code: 'builder_generation_failed',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+
+    const retry = item.service.retry_after_failure({
+      context: failed,
+      failure_code: 'builder_generation_failed',
+    });
+    assert.equal(retry.attempt_number, 2);
+    assert.equal(retry.run_terminal_failure_code, null);
+    assert.equal(retry.ids.turn_id, first.ids.turn_id);
+    assert.equal(retry.ids.task_id, first.ids.task_id);
+    assert.equal(retry.start_head.sequence, 4);
+    assert.deepEqual(retry.events.map((event) => event.event_type), [
+      'turn_submitted',
+      'run_started',
+      'run_completed',
+      'run_started',
+    ]);
+
+    const pendingRetry = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(pendingRetry.conversation.head_sequence, 4);
+    assert.equal(pendingRetry.conversation.recorded_active_turn_id, first.ids.turn_id);
+    assert.deepEqual(pendingRetry.conversation.items[3], {
+      item_kind: 'run_started',
+      sequence: 4,
+      turn_id: first.ids.turn_id,
+      run_id: retry.ids.run_id,
+      task_id: first.ids.task_id,
+      attempt_number: 2,
+      retry_of_run_id: first.ids.run_id,
+      recorded_state: 'started',
+    });
+
+    const terminal = item.service.complete_candidate({
+      context: retry,
+      candidate_result: candidateResult(retry),
+      assistant_text: 'The retry prepared a timer draft.',
+    });
+    assert.equal(terminal.head.sequence, 6);
+    const completedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(completedStream.conversation.head_sequence, 6);
+    assert.equal(completedStream.conversation.recorded_active_turn_id, null);
+    assert.equal(completedStream.conversation.items[4].result_kind, 'candidate');
+    assert.doesNotMatch(JSON.stringify(completedStream), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(975),
+      nowMs: () => 9_750,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), completedStream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
 test('rejects forged contexts and stays isolated from provider, IPC, renderer, and Git authority', () => {
   const item = fixture();
   try {
@@ -715,6 +814,10 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
       assistant_text: 'This is an answer.',
     }), { code: 'builder_conversation_main_service_unavailable' });
     assert.throws(() => item.service.retry_after_failure({
+      context: Object.freeze({}),
+      failure_code: 'builder_generation_failed',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.record_retryable_failure({
       context: Object.freeze({}),
       failure_code: 'builder_generation_failed',
     }), { code: 'builder_conversation_main_service_unavailable' });
