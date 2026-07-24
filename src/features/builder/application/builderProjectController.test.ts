@@ -16,6 +16,8 @@ import {
   createReadWire,
   createRestoredGenerationDraft,
   createSaveResult,
+  createSourceTree,
+  digest,
 } from '../../../test/builderV2Fixtures';
 
 function setup(options: {
@@ -27,6 +29,7 @@ function setup(options: {
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
+  loadRevision?: BuilderProjectWorkspacePort['loadRevision'];
 } = {}) {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
@@ -47,6 +50,10 @@ function setup(options: {
     throw new Error('save not configured');
   }));
   const loadCurrent = vi.fn(options.loadCurrent ?? (async () => createReadWire()));
+  const loadRevision = vi.fn(options.loadRevision ?? (async () => ({
+    ...await createReadWire(),
+    operation: 'revision_loaded',
+  })));
   const open = vi.fn(options.open ?? (async (request) => (
     request.project_id === null
       ? {
@@ -60,6 +67,7 @@ function setup(options: {
     open,
     saveDraft,
     loadCurrent,
+    loadRevision,
     listCurrent: async () => ({ projects: [] }),
     listHistory: async () => ({ revisions: [] }),
   };
@@ -67,7 +75,47 @@ function setup(options: {
     generator: { generate, answer, restoreDraft, rejectDraft, cancel },
     workspace,
   });
-  return { answer, cancel, controller, generate, loadCurrent, open, rejectDraft, restoreDraft, saveDraft };
+  return {
+    answer,
+    cancel,
+    controller,
+    generate,
+    loadCurrent,
+    loadRevision,
+    open,
+    rejectDraft,
+    restoreDraft,
+    saveDraft,
+  };
+}
+
+type ReadWire = Awaited<ReturnType<typeof createReadWire>>;
+
+async function readWireAsRevision(
+  wire: ReadWire,
+  revisionNumber: number,
+  previousRevisionReceiptDigest: string | null,
+): Promise<ReadWire> {
+  const unsignedReceipt = {
+    ...wire.product_revision_receipt,
+    revision_number: revisionNumber,
+    previous_revision_receipt_digest: previousRevisionReceiptDigest,
+  };
+  const receiptBody = { ...unsignedReceipt };
+  delete (receiptBody as { revision_receipt_digest?: string }).revision_receipt_digest;
+  const revisionReceiptDigest = await digest(receiptBody);
+  return {
+    ...wire,
+    product_revision_receipt: {
+      ...unsignedReceipt,
+      revision_receipt_digest: revisionReceiptDigest,
+    },
+    current: {
+      ...wire.current,
+      revision_number: revisionNumber,
+      revision_receipt_digest: revisionReceiptDigest,
+    },
+  } as unknown as ReadWire;
 }
 
 describe('Builder project controller v2', () => {
@@ -382,6 +430,88 @@ describe('Builder project controller v2', () => {
       admissions: { save: 'not_performed' },
     });
     expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+  });
+
+  it('inspects a historical revision without changing the current generation base', async () => {
+    const currentTree = await createSourceTree([
+      { path: 'index.html', content: '<main>Current</main>\n' },
+    ]);
+    const historicalTree = await createSourceTree([
+      { path: 'index.html', content: '<main>Earlier</main>\n' },
+    ]);
+    const historicalWire = await createReadWire(historicalTree, 1);
+    const currentWire = await readWireAsRevision(
+      await createReadWire(currentTree, 1),
+      2,
+      historicalWire.product_revision_receipt.revision_receipt_digest,
+    );
+    const inspectedWire = {
+      ...historicalWire,
+      current: currentWire.current,
+      operation: 'revision_loaded',
+    };
+    const { controller, generate, loadRevision } = setup({
+      open: async () => currentWire,
+      loadRevision: async () => inspectedWire,
+    });
+    await controller.open(PROJECT_ID);
+    const currentDigest = currentWire.product_revision_receipt.revision_receipt_digest;
+    const historicalDigest = historicalWire.product_revision_receipt.revision_receipt_digest;
+
+    const inspected = await controller.inspectRevision(PROJECT_ID, historicalDigest);
+
+    expect(loadRevision).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      revision_receipt_digest: historicalDigest,
+    });
+    expect(inspected.status).toBe('ready');
+    expect(inspected.savedProject?.target.revision_receipt_digest).toBe(currentDigest);
+    expect(inspected.inspectedRevision?.target.revision_receipt_digest).toBe(historicalDigest);
+    expect(inspected.inspectedRevision?.source_tree.source_tree_digest).toBe(historicalTree.source_tree_digest);
+
+    const blocked = await controller.generate('Should stay read-only.');
+    expect(blocked).toBe(inspected);
+    expect(generate).not.toHaveBeenCalled();
+
+    const restoredCurrent = await controller.showCurrentRevision();
+    expect(restoredCurrent.savedProject?.target.revision_receipt_digest).toBe(currentDigest);
+    expect(restoredCurrent.inspectedRevision).toBeNull();
+    await controller.generate('Change the current version.');
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate.mock.calls[0][0]).toMatchObject({ existing_project_id: PROJECT_ID });
+  });
+
+  it('ignores a historical revision whose latest current no longer matches the selected version', async () => {
+    const historicalWire = await createReadWire(await createSourceTree([
+      { path: 'index.html', content: '<main>Earlier</main>\n' },
+    ]), 1);
+    const currentWire = await readWireAsRevision(await createReadWire(await createSourceTree([
+      { path: 'index.html', content: '<main>Current</main>\n' },
+    ]), 1), 2, historicalWire.product_revision_receipt.revision_receipt_digest);
+    const staleWire = {
+      ...historicalWire,
+      current: {
+        ...currentWire.current,
+        revision_receipt_digest: `sha256:${'f'.repeat(64)}`,
+      },
+      operation: 'revision_loaded',
+    };
+    const { controller, loadRevision } = setup({
+      open: async () => currentWire,
+      loadRevision: async () => staleWire,
+    });
+    const before = await controller.open(PROJECT_ID);
+
+    const result = await controller.inspectRevision(
+      PROJECT_ID,
+      historicalWire.product_revision_receipt.revision_receipt_digest,
+    );
+
+    expect(loadRevision).toHaveBeenCalledOnce();
+    expect(result).toBe(before);
+    expect(result.inspectedRevision).toBeNull();
+    expect(result.savedProject?.target.revision_receipt_digest)
+      .toBe(currentWire.product_revision_receipt.revision_receipt_digest);
   });
 
   it('keeps the saved project visible when restored draft base evidence is stale', async () => {

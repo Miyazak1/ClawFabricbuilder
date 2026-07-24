@@ -171,6 +171,10 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
+  loadRevision(request: Parameters<BuilderProjectWorkspacePort['loadRevision']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
+  },
   listCurrent() {
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
@@ -275,6 +279,7 @@ function latestRestorableDraft(
   if (
     projectSnapshot.busy
     || projectSnapshot.draft !== null
+    || projectSnapshot.inspectedRevision !== null
     || projectSnapshot.savedProject === null
     || !['ready', 'generation_failed', 'preview_unavailable'].includes(projectSnapshot.status)
     || conversationSnapshot.status !== 'ready'
@@ -352,6 +357,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       loadCurrent(request: Parameters<BuilderProjectWorkspacePort['loadCurrent']>[0]) {
         return ports.workspace.loadCurrent(request);
       },
+      loadRevision(request: Parameters<BuilderProjectWorkspacePort['loadRevision']>[0]) {
+        return ports.workspace.loadRevision(request);
+      },
       listCurrent() { return ports.workspace.listCurrent(); },
       listHistory(request: Parameters<BuilderProjectWorkspacePort['listHistory']>[0]) {
         return ports.workspace.listHistory(request);
@@ -413,14 +421,21 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const attemptKey = `${commandEpoch}:${target.restoreKey}`;
     if (restoreAttemptKeysRef.current.has(attemptKey)) return;
     restoreAttemptKeysRef.current.add(attemptKey);
-    void project.restoreDraft(target.draftId).then(async (result) => {
-      if (
-        workspaceEpochRef.current !== commandEpoch
-        || result.draft?.draft_id !== target.draftId
-      ) return;
-      await readActivityAfterTerminal(result, commandEpoch);
-    }).catch(() => undefined);
-  }, [conversation.snapshot, project, readActivityAfterTerminal]);
+    window.setTimeout(() => {
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      void project.restoreDraft(target.draftId).then(async (result) => {
+        if (result.inspectedRevision !== null) {
+          restoreAttemptKeysRef.current.delete(attemptKey);
+          return;
+        }
+        if (
+          workspaceEpochRef.current !== commandEpoch
+          || result.draft?.draft_id !== target.draftId
+        ) return;
+        await readActivityAfterTerminal(result, commandEpoch);
+      }).catch(() => undefined);
+    });
+  }, [conversation.snapshot, project, project.snapshot, readActivityAfterTerminal]);
 
   const generate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -467,6 +482,17 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [catalog, history, project, readActivityAfterTerminal]);
+  const inspectRevision = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
+    setActiveFile(null);
+    await project.inspectRevision(targetProjectId, revisionReceiptDigest);
+  }, [project]);
+  const showCurrentRevision = useCallback(async () => {
+    const commandEpoch = workspaceEpochRef.current;
+    setActiveFile(null);
+    const result = await project.showCurrentRevision();
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch);
+  }, [project, readActivityAfterTerminal]);
   const windowControlsAvailable = windowControls !== null;
 
   const publishWindowMaximized = useCallback((maximized: boolean) => {
@@ -646,6 +672,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onAnswer={answer}
               onGenerate={generate}
               onInstructionChange={setIdea}
+              onInspectRevision={inspectRevision}
               onOpenSettings={() => setView('settings')}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
@@ -653,6 +680,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onSelectFile={setActiveFile}
               onRefreshConversation={conversation.refresh}
               onRefreshHistory={history.refresh}
+              onShowCurrentRevision={showCurrentRevision}
               conversationSnapshot={conversation.snapshot}
               historySnapshot={history.snapshot}
               snapshot={project.snapshot}

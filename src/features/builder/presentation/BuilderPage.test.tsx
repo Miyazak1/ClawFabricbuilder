@@ -18,6 +18,7 @@ import {
   createSaveResult,
   createSourceTree,
   createTaskStreamWire,
+  digest,
 } from '../../../test/builderV2Fixtures';
 import { createBuilderGenerationRequest } from '../application/builderGeneration';
 
@@ -85,6 +86,9 @@ async function snapshots() {
       async loadCurrent() {
         return readWire;
       },
+      async loadRevision() {
+        return { ...readWire, operation: 'revision_loaded' };
+      },
       async listCurrent() {
         return { projects: [] };
       },
@@ -111,6 +115,35 @@ async function savedHistory() {
     listHistory: async () => createHistoryWire(PROJECT_ID, 1),
   });
   return controller.load(PROJECT_ID);
+}
+
+type ReadWire = Awaited<ReturnType<typeof createReadWire>>;
+
+async function readWireAsRevision(
+  wire: ReadWire,
+  revisionNumber: number,
+  previousRevisionReceiptDigest: string | null,
+): Promise<ReadWire> {
+  const unsignedReceipt = {
+    ...wire.product_revision_receipt,
+    revision_number: revisionNumber,
+    previous_revision_receipt_digest: previousRevisionReceiptDigest,
+  };
+  const receiptBody = { ...unsignedReceipt };
+  delete (receiptBody as { revision_receipt_digest?: string }).revision_receipt_digest;
+  const revisionReceiptDigest = await digest(receiptBody);
+  return {
+    ...wire,
+    product_revision_receipt: {
+      ...unsignedReceipt,
+      revision_receipt_digest: revisionReceiptDigest,
+    },
+    current: {
+      ...wire.current,
+      revision_number: revisionNumber,
+      revision_receipt_digest: revisionReceiptDigest,
+    },
+  } as unknown as ReadWire;
 }
 
 async function changedDraftSnapshot() {
@@ -171,6 +204,9 @@ async function changedDraftSnapshot() {
       async loadCurrent() {
         return readWire;
       },
+      async loadRevision() {
+        return { ...readWire, operation: 'revision_loaded' };
+      },
       async listCurrent() {
         return { projects: [] };
       },
@@ -181,6 +217,79 @@ async function changedDraftSnapshot() {
   });
   await controller.open(PROJECT_ID);
   return controller.generate('Update the saved project.');
+}
+
+async function inspectedHistorySnapshot() {
+  const currentTree = await createSourceTree([
+    { path: 'index.html', content: '<main>Current</main>\n' },
+  ]);
+  const historicalTree = await createSourceTree([
+    { path: 'index.html', content: '<main>Earlier</main>\n' },
+  ]);
+  const historicalWire = await createReadWire(historicalTree, 1);
+  const currentWire = await readWireAsRevision(
+    await createReadWire(currentTree, 1),
+    2,
+    historicalWire.product_revision_receipt.revision_receipt_digest,
+  );
+  const controller = createBuilderProjectController({
+    generator: {
+      async generate(request) {
+        return createGenerationDraft(request, currentTree);
+      },
+      async answer(request) {
+        return createGenerationAnswer(request);
+      },
+      async restoreDraft() {
+        return createGenerationDraft(
+          await createBuilderGenerationRequest('Restore.', PROJECT_ID),
+          currentTree,
+        );
+      },
+      async rejectDraft(request) {
+        return {
+          result_version: 'builder-generation-draft-rejection-result.v1',
+          draft_id: request.draft_id,
+          project_id: PROJECT_ID,
+          rejected: true,
+          pending_draft_released: true,
+          conversation_event_admission: 'sqlite_recorded',
+        };
+      },
+      async cancel(request) {
+        return { request_id: request.request_id, cancelled: true };
+      },
+    },
+    workspace: {
+      async open() {
+        return currentWire;
+      },
+      async saveDraft() {
+        throw new Error('not used');
+      },
+      async loadCurrent() {
+        return currentWire;
+      },
+      async loadRevision() {
+        return {
+          ...historicalWire,
+          current: currentWire.current,
+          operation: 'revision_loaded',
+        };
+      },
+      async listCurrent() {
+        return { projects: [] };
+      },
+      async listHistory() {
+        return { revisions: [] };
+      },
+    },
+  });
+  await controller.open(PROJECT_ID);
+  return controller.inspectRevision(
+    PROJECT_ID,
+    historicalWire.product_revision_receipt.revision_receipt_digest,
+  );
 }
 
 function click(container: HTMLElement, selector: string): void {
@@ -251,6 +360,7 @@ describe('BuilderPage v2', () => {
         open: async () => null,
         saveDraft: async () => null,
         loadCurrent: async () => null,
+        loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
@@ -382,6 +492,60 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('opens a saved version as a read-only view and can return to current', async () => {
+    const { saved } = await snapshots();
+    const inspected = await inspectedHistorySnapshot();
+    const historyController = createBuilderProjectHistoryController({
+      listHistory: async () => createHistoryWire(PROJECT_ID, 2),
+    });
+    const history = await historyController.load(PROJECT_ID);
+    const onInspectRevision = vi.fn();
+    const onShowCurrentRevision = vi.fn();
+    const savedContainer = render(
+      <BuilderPage
+        activeFile={null}
+        historySnapshot={history}
+        instruction=""
+        onInspectRevision={onInspectRevision}
+        onShowCurrentRevision={onShowCurrentRevision}
+        snapshot={saved}
+      />,
+    );
+
+    click(savedContainer, '[data-builder-view-version="Version 1"]');
+    expect(onInspectRevision).toHaveBeenCalledExactlyOnceWith(
+      PROJECT_ID,
+      history.history?.revisions.find((revision) => revision.revision_number === 1)?.revision_receipt_digest,
+    );
+    expect(onShowCurrentRevision).not.toHaveBeenCalled();
+
+    const inspectedContainer = render(
+      <BuilderPage
+        activeFile={null}
+        historySnapshot={history}
+        instruction="Change it."
+        onGenerate={vi.fn()}
+        onInspectRevision={onInspectRevision}
+        onShowCurrentRevision={onShowCurrentRevision}
+        snapshot={inspected}
+      />,
+    );
+    expect(inspectedContainer.querySelector('[data-builder-history-preview="true"]')?.textContent)
+      .toContain('Viewing Version 1');
+    expect(inspectedContainer.textContent).toContain('Viewing a saved version');
+    expect(inspectedContainer.querySelector<HTMLButtonElement>('[data-builder-make-draft="true"]')?.disabled)
+      .toBe(true);
+    expect(inspected.preview?.src_doc).toContain('<main>Earlier</main>');
+    const previewFrame = inspectedContainer.querySelector('iframe');
+    expect(previewFrame).not.toBeNull();
+    expect(previewFrame?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
+    click(inspectedContainer, 'header [data-builder-show-current-version="true"]');
+    expect(onShowCurrentRevision).toHaveBeenCalledOnce();
+    expect(inspectedContainer.textContent).not.toMatch(
+      /sha256:|commit_oid|tree_oid|parent_oid|sqlite|credential|provider/iu,
+    );
+  });
+
   it('does not treat a restored activity candidate as an available unsaved draft', async () => {
     const { saved } = await snapshots();
     const activity = await candidateActivity();
@@ -461,6 +625,7 @@ describe('BuilderPage v2', () => {
         open: async () => null,
         saveDraft: async () => null,
         loadCurrent: async () => null,
+        loadRevision: async () => null,
         listCurrent: async () => null,
         listHistory: async () => null,
       },
@@ -496,6 +661,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => {
           throw new Error('unavailable');
         },
+        loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
         listHistory: async () => ({ revisions: [] }),
       },

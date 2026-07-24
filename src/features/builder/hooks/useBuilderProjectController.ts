@@ -22,6 +22,8 @@ export type UseBuilderProjectControllerResult = Readonly<{
   answer: BuilderProjectController['answer'];
   generate: BuilderProjectController['generate'];
   restoreDraft: BuilderProjectController['restoreDraft'];
+  inspectRevision: BuilderProjectController['inspectRevision'];
+  showCurrentRevision: BuilderProjectController['showCurrentRevision'];
   rejectDraft: BuilderProjectController['rejectDraft'];
   cancel: BuilderProjectController['cancel'];
   save: BuilderProjectController['save'];
@@ -32,6 +34,7 @@ const UNAVAILABLE_SNAPSHOT: BuilderProjectControllerSnapshot = Object.freeze({
   busy: false,
   savedProject: null,
   draft: null,
+  inspectedRevision: null,
   answer: null,
   preview: null,
   error: 'unavailable',
@@ -91,6 +94,16 @@ export function useBuilderProjectController(
     (draftId) => controller.restoreDraft(draftId).catch(() => controller.getSnapshot()),
     [controller],
   );
+  const inspectRevision = useCallback<BuilderProjectController['inspectRevision']>(
+    (projectId, revisionReceiptDigest) => (
+      controller.inspectRevision(projectId, revisionReceiptDigest).catch(() => controller.getSnapshot())
+    ),
+    [controller],
+  );
+  const showCurrentRevision = useCallback<BuilderProjectController['showCurrentRevision']>(
+    () => controller.showCurrentRevision().catch(() => controller.getSnapshot()),
+    [controller],
+  );
   const rejectDraft = useCallback<BuilderProjectController['rejectDraft']>(
     () => controller.rejectDraft().catch(() => controller.getSnapshot()),
     [controller],
@@ -100,7 +113,27 @@ export function useBuilderProjectController(
     [controller],
   );
   return useMemo(
-    () => Object.freeze({ snapshot, answer, generate, restoreDraft, rejectDraft, cancel, save }),
-    [snapshot, answer, generate, restoreDraft, rejectDraft, cancel, save],
+    () => Object.freeze({
+      snapshot,
+      answer,
+      generate,
+      restoreDraft,
+      inspectRevision,
+      showCurrentRevision,
+      rejectDraft,
+      cancel,
+      save,
+    }),
+    [
+      snapshot,
+      answer,
+      generate,
+      restoreDraft,
+      inspectRevision,
+      showCurrentRevision,
+      rejectDraft,
+      cancel,
+      save,
+    ],
   );
 }

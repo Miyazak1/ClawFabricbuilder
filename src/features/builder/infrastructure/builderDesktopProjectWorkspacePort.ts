@@ -4,13 +4,15 @@ type BuilderProjectWorkspaceBridge = Readonly<{
   open(request: unknown): Promise<unknown>;
   saveDraft(request: unknown): Promise<unknown>;
   loadCurrent(request: unknown): Promise<unknown>;
+  loadRevision(request: unknown): Promise<unknown>;
   listCurrent(): Promise<unknown>;
   listHistory(request: unknown): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
+const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
 const OPEN_REQUEST_KEYS = Object.freeze(['project_id']);
 const SAVE_DRAFT_REQUEST_KEYS = Object.freeze(['draft_id']);
+const LOAD_REVISION_REQUEST_KEYS = Object.freeze(['project_id', 'revision_receipt_digest']);
 const LIST_HISTORY_REQUEST_KEYS = Object.freeze(['project_id', 'limit']);
 const MAX_NODES = 20_000;
 const MAX_ENTRIES = 20_000;
@@ -62,6 +64,7 @@ function sanitizeBridge(value: unknown): BuilderProjectWorkspaceBridge {
       open: methods.open,
       saveDraft: methods.saveDraft,
       loadCurrent: methods.loadCurrent,
+      loadRevision: methods.loadRevision,
       listCurrent: methods.listCurrent,
       listHistory: methods.listHistory,
     });
@@ -191,6 +194,9 @@ export function createBuilderDesktopProjectWorkspacePort(
     },
     loadCurrent(request: Readonly<{ project_id: string }>) {
       return call(bridge, bridge.loadCurrent, [requestFields(request, OPEN_REQUEST_KEYS)]);
+    },
+    loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>) {
+      return call(bridge, bridge.loadRevision, [requestFields(request, LOAD_REVISION_REQUEST_KEYS)]);
     },
     listCurrent() {
       return call(bridge, bridge.listCurrent, []);

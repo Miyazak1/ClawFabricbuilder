@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
 const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
+const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revision';
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
@@ -33,6 +34,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     loadCurrent(request) {
       return ipcRenderer.invoke(LOAD_CURRENT_CHANNEL, request);
+    },
+    loadRevision(request) {
+      return ipcRenderer.invoke(LOAD_REVISION_CHANNEL, request);
     },
     listCurrent() {
       return ipcRenderer.invoke(LIST_CURRENT_CHANNEL);

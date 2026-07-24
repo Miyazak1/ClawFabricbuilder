@@ -224,6 +224,7 @@ const channels = [
   'clawfabric-builder:project-workspace:open',
   'clawfabric-builder:project-workspace:save-draft',
   'clawfabric-builder:project-workspace:load-current',
+  'clawfabric-builder:project-workspace:load-revision',
   'clawfabric-builder:project-workspace:list-current',
   'clawfabric-builder:project-workspace:list-history',
 ];
@@ -348,12 +349,13 @@ const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
 const taskStreamBridge = frozenObjectLiteral(taskStreamProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
-exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
+exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
 exactObjectKeys(generationBridge, ['generate', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
 exactObjectKeys(taskStreamBridge, ['read']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -401,8 +403,9 @@ function exactInvokeMethod(object, methodName, channelName, expectedParameters) 
 assert.equal(preloadConstants.get('OPEN_PROJECT_CHANNEL'), channels[0]);
 assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[1]);
 assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[2]);
-assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[3]);
-assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[4]);
+assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[3]);
+assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[4]);
+assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[5]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[1]);
 assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[2]);
@@ -420,6 +423,7 @@ assert.equal(preloadConstants.get('READ_WINDOW_STATE_CHANNEL'), windowControlsCh
 exactInvokeMethod(workspaceBridge, 'open', 'OPEN_PROJECT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'saveDraft', 'SAVE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
+exactInvokeMethod(workspaceBridge, 'loadRevision', 'LOAD_REVISION_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
 exactInvokeMethod(workspaceBridge, 'listHistory', 'LIST_HISTORY_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
@@ -493,11 +497,13 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RESTORE_DRAFT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*SAVE_DRAFT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LOAD_CURRENT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*LOAD_REVISION_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_CURRENT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_HISTORY_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectWorkspace/u);
+assert.match(packagedPreload, /loadRevision/u);
 assert.doesNotMatch(packagedPreload, /projectRevisions|projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
 assert.match(packagedPreload, /\banswer\b/u);
@@ -506,7 +512,7 @@ assert.match(packagedPreload, /rejectDraft/u);
 assert.match(packagedPreload, /providerSettings/u);
 assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 19);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 20);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

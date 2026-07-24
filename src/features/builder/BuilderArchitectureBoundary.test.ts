@@ -135,17 +135,24 @@ describe('Builder v2 architecture boundary', () => {
 
     expect(ports).toContain('open(request: Readonly<{ project_id: string | null }>)');
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
+    expect(ports).toContain('loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>)');
     expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
-    expect(ports).not.toMatch(/commit\(|source_tree.*Promise|revision.*Promise/u);
+    const portsWithoutLoadRevision = ports.replace(
+      / {2}loadRevision\(request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>\): Promise<unknown>;\r?\n/u,
+      '',
+    );
+    expect(portsWithoutLoadRevision).not.toMatch(
+      /commit\(|source_tree.*Promise|[Rr]evision.*Promise|(?:accept|delete|replace|restore|save|select|set).*Revision/u,
+    );
     expect(controller).toContain("saveDraft({ draft_id: draft.draft_id })");
     expect(controller).toContain("restoreDraft({ draft_id: draftId })");
     expect(controller).toContain("rejectDraft({ draft_id: draft.draft_id })");
     expect(controller).not.toContain('repository.commit');
-    expect(workspacePort).toContain("const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory'])");
+    expect(workspacePort).toContain("const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory'])");
     expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).toContain('answer: methods.answer');

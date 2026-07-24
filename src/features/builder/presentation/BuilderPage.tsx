@@ -51,6 +51,8 @@ export type BuilderPageProps = {
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
   onSave?: () => void;
+  onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onShowCurrentRevision?: () => Promise<unknown> | void;
   onOpenSettings?: () => void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
   historySnapshot?: BuilderProjectHistorySnapshot;
@@ -86,6 +88,7 @@ function tabId(file: string): string {
 
 function selectedFiles(snapshot: BuilderProjectControllerSnapshot): readonly BuilderProjectSourceFile[] {
   return snapshot.draft?.source_tree.files
+    ?? snapshot.inspectedRevision?.source_tree.files
     ?? snapshot.savedProject?.source_tree.files
     ?? [];
 }
@@ -299,11 +302,27 @@ function ChangesPanel({
   );
 }
 
-function VersionItem({ revision }: Readonly<{ revision: BuilderProjectHistoryRevision }>) {
+function VersionItem({
+  inspectedRevisionReceiptDigest,
+  onInspectRevision,
+  onShowCurrentRevision,
+  revision,
+}: Readonly<{
+  inspectedRevisionReceiptDigest: string | null;
+  onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onShowCurrentRevision?: () => Promise<unknown> | void;
+  revision: BuilderProjectHistoryRevision;
+}>) {
+  const isInspected = inspectedRevisionReceiptDigest === revision.revision_receipt_digest;
+  const canInspect = !isInspected
+    && (revision.is_current
+      ? typeof onShowCurrentRevision === 'function'
+      : typeof onInspectRevision === 'function');
   return (
     <li
       className="cf-builder-version-item"
       data-builder-version-card={`Version ${revision.revision_number}`}
+      data-builder-inspected-version={isInspected ? 'true' : undefined}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
         <History className="size-3.5" />
@@ -318,17 +337,39 @@ function VersionItem({ revision }: Readonly<{ revision: BuilderProjectHistoryRev
         <p className="cf-builder-version-name">{revision.title}</p>
         <p className="cf-builder-version-summary">{revision.summary}</p>
       </div>
+      <button
+        className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+        data-builder-show-current-version={revision.is_current ? 'true' : undefined}
+        data-builder-view-version={revision.is_current ? undefined : `Version ${revision.revision_number}`}
+        disabled={!canInspect}
+        onClick={() => {
+          if (revision.is_current) {
+            void onShowCurrentRevision?.();
+          } else {
+            void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
+          }
+        }}
+        type="button"
+      >
+        {isInspected ? 'Viewing' : revision.is_current ? 'Current' : 'View'}
+      </button>
     </li>
   );
 }
 
 function VersionHistoryPanel({
   hasSavedProject,
+  inspectedRevisionReceiptDigest,
+  onInspectRevision,
   onRefresh,
+  onShowCurrentRevision,
   snapshot,
 }: Readonly<{
   hasSavedProject: boolean;
+  inspectedRevisionReceiptDigest: string | null;
+  onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onRefresh?: () => Promise<unknown> | void;
+  onShowCurrentRevision?: () => Promise<unknown> | void;
   snapshot: BuilderProjectHistorySnapshot | null;
 }>) {
   const revisions = snapshot?.history?.revisions ?? [];
@@ -374,7 +415,10 @@ function VersionHistoryPanel({
           <ol className="cf-builder-version-list">
             {revisions.map((revision) => (
               <VersionItem
+                inspectedRevisionReceiptDigest={inspectedRevisionReceiptDigest}
                 key={revision.revision_receipt_digest}
+                onInspectRevision={onInspectRevision}
+                onShowCurrentRevision={onShowCurrentRevision}
                 revision={revision}
               />
             ))}
@@ -501,6 +545,8 @@ export function BuilderPage({
   onRefreshHistory,
   onRejectDraft,
   onSave,
+  onInspectRevision,
+  onShowCurrentRevision,
   onOpenSettings,
   conversationSnapshot,
   historySnapshot,
@@ -513,27 +559,31 @@ export function BuilderPage({
   const status = current?.status ?? 'unavailable';
   const saved = current?.savedProject ?? null;
   const draft = current?.draft ?? null;
+  const inspected = current?.inspectedRevision ?? null;
   const preview = current?.preview ?? null;
   const files = current === null ? [] : selectedFiles(current);
   const selected = files.find((file) => file.path === activeFile) ?? files[0] ?? null;
   const busy = current?.busy ?? false;
   const hasUnsavedDraft = draft !== null;
+  const viewingHistory = inspected !== null;
   const hasContent = files.length > 0;
-  const title = draft?.title ?? saved?.target.title ?? 'New project';
+  const title = draft?.title ?? inspected?.target.title ?? saved?.target.title ?? 'New project';
   const version = saved?.target.revision_number ?? null;
   const canGenerate = typeof onGenerate === 'function'
     && GENERATABLE_STATUSES.has(status)
     && !hasUnsavedDraft
+    && !viewingHistory
     && instruction.trim().length > 0;
   const canAnswer = typeof onAnswer === 'function'
     && GENERATABLE_STATUSES.has(status)
     && !hasUnsavedDraft
+    && !viewingHistory
     && instruction.trim().length > 0;
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
   const canReject = typeof onRejectDraft === 'function' && hasUnsavedDraft && !busy;
   const canCancel = typeof onCancel === 'function'
     && (status === 'answering' || status === 'generating');
-  const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft;
+  const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft && !viewingHistory;
   const failed = status === 'generation_failed' || status === 'answer_failed';
   const canOpenSettings = failed
     && current?.error === 'builder_generation_provider_unavailable'
@@ -587,11 +637,29 @@ export function BuilderPage({
             <span className="cf-builder-status-pill" data-builder-unsaved-draft="true">
               Unsaved draft
             </span>
+          ) : viewingHistory ? (
+            <span className="cf-builder-status-pill" data-builder-history-preview="true">
+              Viewing Version {inspected.target.revision_number}
+            </span>
           ) : version === null ? null : (
             <span className="text-xs text-muted-foreground" data-builder-current-version="true">
               Version {version}
             </span>
           )}
+          {viewingHistory ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-show-current-version="true"
+              disabled={busy || typeof onShowCurrentRevision !== 'function'}
+              onClick={() => {
+                void onShowCurrentRevision?.();
+              }}
+              type="button"
+            >
+              <History aria-hidden="true" className="size-4" />
+              Back to current
+            </button>
+          ) : null}
           {hasUnsavedDraft ? (
             <button
               className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
@@ -752,7 +820,10 @@ export function BuilderPage({
             <div className="cf-builder-side-stack">
               <VersionHistoryPanel
                 hasSavedProject={saved !== null}
+                inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
+                onInspectRevision={onInspectRevision}
                 onRefresh={onRefreshHistory}
+                onShowCurrentRevision={onShowCurrentRevision}
                 snapshot={history}
               />
               <ActivityPanel
@@ -780,7 +851,13 @@ export function BuilderPage({
             <footer className="cf-builder-composer-footer">
               <div className="cf-builder-composer-tools">
                 <span className="cf-builder-status-pill">
-                  {hasUnsavedDraft ? 'Save this draft before asking for another change' : saved ? 'Continue this project' : 'Start from an idea'}
+                  {viewingHistory
+                    ? 'Viewing a saved version'
+                    : hasUnsavedDraft
+                      ? 'Save this draft before asking for another change'
+                      : saved
+                        ? 'Continue this project'
+                        : 'Start from an idea'}
                 </span>
               </div>
               <div className="cf-builder-composer-actions">

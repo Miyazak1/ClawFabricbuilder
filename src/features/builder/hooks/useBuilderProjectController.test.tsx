@@ -78,6 +78,7 @@ async function renderHook(
   }));
   const saveDraft = vi.fn(async () => createSaveResult(draft, readWire));
   const loadCurrent = vi.fn(async () => readWire);
+  const loadRevision = vi.fn(async () => ({ ...readWire, operation: 'revision_loaded' }));
   const open = vi.fn(async (request: { project_id: string | null }) => (
     request.project_id === null
       ? {
@@ -92,6 +93,7 @@ async function renderHook(
     open,
     saveDraft,
     loadCurrent,
+    loadRevision,
     listCurrent: async () => ({ projects: [] }),
     listHistory: async () => ({ revisions: [] }),
   };

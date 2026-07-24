@@ -667,6 +667,22 @@ function installBridge(page) {
       rejectDraft() { throw new Error('must not write through bridge'); },
     },
     projectWorkspace: {
+      async open(request) {
+        if (request.project_id === null) {
+          return {
+            result_version: 'builder-project-selection-result.v1',
+            operation: 'new_selected',
+            project_id: null,
+          };
+        }
+        return bridgeEvidence(
+          request.project_id,
+          page.draftSaved,
+          Math.max(1, page.savedRevision),
+          Math.max(1, page.savedRevision, page.candidateTurns),
+          page.questionTurns,
+        ).current;
+      },
       async listCurrent() {
         return bridgeEvidence(
           null,
@@ -684,6 +700,55 @@ function installBridge(page) {
           Math.max(1, page.savedRevision, page.candidateTurns),
           page.questionTurns,
         ).current;
+      },
+      async loadRevision(request) {
+        return {
+          ...bridgeEvidence(
+            request.project_id,
+            page.draftSaved,
+            Math.max(1, page.savedRevision),
+            Math.max(1, page.savedRevision, page.candidateTurns),
+            page.questionTurns,
+          ).current,
+          operation: 'revision_loaded',
+        };
+      },
+      async listHistory(request) {
+        const evidence = bridgeEvidence(
+          request.project_id,
+          page.draftSaved,
+          Math.max(1, page.savedRevision),
+          Math.max(1, page.savedRevision, page.candidateTurns),
+          page.questionTurns,
+        );
+        const current = evidence.current?.current ?? null;
+        const receipt = evidence.current?.product_revision_receipt ?? null;
+        return {
+          result_version: 'builder-project-read-result.v1',
+          operation: 'history_listed',
+          project_id: request.project_id,
+          current,
+          revisions: receipt === null ? [] : [{
+            project_id: receipt.project_id,
+            title: receipt.title,
+            summary: receipt.summary,
+            revision_number: receipt.revision_number,
+            revision_receipt_digest: receipt.revision_receipt_digest,
+            previous_revision_receipt_digest: receipt.previous_revision_receipt_digest,
+            commit_oid: receipt.commit_oid,
+            tree_oid: receipt.tree_oid,
+            parent_oid: receipt.parent_oid,
+            selected_at_ms: receipt.selected_at_ms,
+            is_current: true,
+          }],
+          authority_evidence: {
+            product_authority: 'sqlite_product_revision_receipt',
+            code_authority: 'git_commit_tree',
+            source_read_admission: 'verified',
+            current_selection: 'sqlite_current_project_revision',
+            history_selection: 'sqlite_project_revision_receipts',
+          },
+        };
       },
       async saveDraft() { throw new Error('must not write through bridge'); },
     },

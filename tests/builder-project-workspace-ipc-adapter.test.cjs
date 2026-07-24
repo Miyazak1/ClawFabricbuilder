@@ -9,6 +9,7 @@ const {
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
+  LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
   LIST_HISTORY_CHANNEL,
   BuilderProjectWorkspaceIpcError,
@@ -48,6 +49,15 @@ function adapter(overrides = {}) {
       calls.push(['load', request]);
       return { result_version: 'builder-project-read-result.v1', project_id: request.project_id };
     }),
+    loadRevision: overrides.loadRevision ?? (async (request) => {
+      calls.push(['revision', request]);
+      return {
+        result_version: 'builder-project-read-result.v1',
+        operation: 'revision_loaded',
+        project_id: request.project_id,
+        revision_receipt_digest: request.revision_receipt_digest,
+      };
+    }),
     listCurrent: overrides.listCurrent ?? (async () => {
       calls.push(['list']);
       return { result_version: 'builder-project-read-result.v1', projects: [] };
@@ -61,14 +71,15 @@ function adapter(overrides = {}) {
   return { authority, calls, value };
 }
 
-test('workspace adapter exposes only open, save, verified read, and catalog commands', async () => {
+test('workspace adapter exposes only open, save, verified reads, and catalog commands', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.namespace, 'builderProjectWorkspace');
-  assert.deepEqual(value.exposed_methods, ['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
-  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']);
+  assert.deepEqual(value.exposed_methods, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
+  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
   assert.equal(value.channels.open.channel, OPEN_PROJECT_CHANNEL);
   assert.equal(value.channels.saveDraft.channel, SAVE_DRAFT_CHANNEL);
   assert.equal(value.channels.loadCurrent.channel, LOAD_CURRENT_CHANNEL);
+  assert.equal(value.channels.loadRevision.channel, LOAD_REVISION_CHANNEL);
   assert.equal(value.channels.listCurrent.channel, LIST_CURRENT_CHANNEL);
   assert.equal(value.channels.listHistory.channel, LIST_HISTORY_CHANNEL);
 
@@ -81,6 +92,10 @@ test('workspace adapter exposes only open, save, verified read, and catalog comm
   const loaded = await value.channels.loadCurrent.invoke(authority.event, {
     project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
   });
+  const revision = await value.channels.loadRevision.invoke(authority.event, {
+    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+  });
   const listed = await value.channels.listCurrent.invoke(authority.event);
   const history = await value.channels.listHistory.invoke(authority.event, {
     project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
@@ -89,10 +104,12 @@ test('workspace adapter exposes only open, save, verified read, and catalog comm
   assert.equal(selected.operation, 'new_selected');
   assert.equal(saved.result_version, 'builder-project-save-result.v1');
   assert.equal(loaded.result_version, 'builder-project-read-result.v1');
+  assert.equal(revision.operation, 'revision_loaded');
   assert.deepEqual(listed.projects, []);
   assert.equal(history.operation, 'history_listed');
-  assert.deepEqual(calls.map(([operation]) => operation), ['open', 'save', 'load', 'list', 'history']);
+  assert.deepEqual(calls.map(([operation]) => operation), ['open', 'save', 'load', 'revision', 'list', 'history']);
   assert.equal(Object.isFrozen(saved), true);
+  assert.equal(Object.isFrozen(revision), true);
   assert.equal(Object.isFrozen(listed.projects), true);
   assert.equal(Object.isFrozen(history), true);
 });
@@ -112,6 +129,15 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
   );
   await assert.rejects(
     value.channels.listHistory.invoke(authority.event),
+    (error) => error instanceof BuilderProjectWorkspaceIpcError
+      && error.code === 'builder_project_workspace_invalid',
+  );
+  await assert.rejects(
+    value.channels.loadRevision.invoke(authority.event, {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    }, {
+      revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+    }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_invalid',
   );

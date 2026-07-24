@@ -19,7 +19,9 @@ import {
   createRejectedTaskStreamWire,
   createRestoredGenerationDraft,
   createSaveResult,
+  createSourceTree,
   createTaskStreamWire,
+  digest,
 } from '../test/builderV2Fixtures';
 import { createBuilderGenerationRequest } from '../features/builder/application/builderGeneration';
 
@@ -57,16 +59,31 @@ async function setup(options: Readonly<{
   deferredGenerate?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
+  pendingAfterRevisionView?: boolean;
   rejectActivityAfterDiscard?: boolean;
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
+  validHistoryPreview?: boolean;
 }> = {}) {
-  const readWire = await createReadWire();
+  const historicalWire = options.validHistoryPreview === true
+    ? await createReadWire(await createSourceTree([
+      { path: 'index.html', content: '<main>Earlier</main>\n' },
+    ]))
+    : null;
+  const readWire = options.validHistoryPreview === true && historicalWire !== null
+    ? await readWireAsRevision(
+      await createReadWire(await createSourceTree([
+        { path: 'index.html', content: '<main>Current</main>\n' },
+      ])),
+      2,
+      historicalWire.product_revision_receipt.revision_receipt_digest,
+    )
+    : await createReadWire();
   const catalogWire = await createCatalogWire();
   let saved = options.initiallySaved === true;
   let selectedProjectId: string | null = null;
   let latestDraft = await createGenerationDraft();
-  let restoredDraft = await createRestoredGenerationDraft(readWire.source_tree);
+  let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveGenerate: (() => Promise<void>) | null = null;
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
@@ -115,7 +132,7 @@ async function setup(options: Readonly<{
         },
       };
     }
-    restoredDraft = await createRestoredGenerationDraft(readWire.source_tree);
+    restoredDraft = await createRestoredDraftForReadWire(readWire);
     expect(request).toEqual({ draft_id: restoredDraft.draft_id });
     return {
       version: 'builder-generation-ipc-result.v1',
@@ -143,13 +160,16 @@ async function setup(options: Readonly<{
     cancelled: true,
   }));
   const loadCurrent = vi.fn(async () => readWire);
+  let loadRevisionCalls = 0;
   const readTaskStream = vi.fn(async () => (
     options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
       ? createRejectedTaskStreamWire()
       : options.answerActivity === true
       ? createAnswerTaskStreamWire()
-      : options.rejectedPendingActivity === true
-        ? pendingCandidateTaskStreamWire(true)
+    : options.rejectedPendingActivity === true
+      ? pendingCandidateTaskStreamWire(true)
+      : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
+        ? pendingCandidateTaskStreamWire(false)
         : options.pendingActivity === true
           ? pendingCandidateTaskStreamWire(false)
         : createTaskStreamWire()
@@ -168,8 +188,28 @@ async function setup(options: Readonly<{
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
   const listHistory = vi.fn(async (request: unknown) => (
-    createHistoryWire((request as { project_id: string }).project_id, 1)
+    options.validHistoryPreview === true && historicalWire !== null
+      ? createValidHistoryWire((request as { project_id: string }).project_id, readWire, historicalWire)
+      : createHistoryWire((request as { project_id: string }).project_id, 1)
   ));
+  const loadRevision = vi.fn(async (request: unknown) => {
+    loadRevisionCalls += 1;
+    if (options.validHistoryPreview === true && historicalWire !== null) {
+      const revisionReceiptDigest = (request as { revision_receipt_digest: string }).revision_receipt_digest;
+      if (revisionReceiptDigest === historicalWire.product_revision_receipt.revision_receipt_digest) {
+        return {
+          ...historicalWire,
+          operation: 'revision_loaded',
+          current: readWire.current,
+        };
+      }
+    }
+    return {
+      ...readWire,
+      operation: 'revision_loaded',
+      current: readWire.current,
+    };
+  });
   const bridge: BuilderDesktopBridgeRoot = {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
@@ -184,6 +224,7 @@ async function setup(options: Readonly<{
       open,
       saveDraft,
       loadCurrent,
+      loadRevision,
       listCurrent,
       listHistory,
     },
@@ -214,6 +255,7 @@ async function setup(options: Readonly<{
     cancel,
     generate,
     listHistory,
+    loadRevision,
     listCurrent,
     loadCurrent,
     open,
@@ -227,11 +269,97 @@ async function setup(options: Readonly<{
   };
 }
 
+type ReadWire = Awaited<ReturnType<typeof createReadWire>>;
+
+async function readWireAsRevision(
+  wire: ReadWire,
+  revisionNumber: number,
+  previousRevisionReceiptDigest: string | null,
+): Promise<ReadWire> {
+  const unsignedReceipt = {
+    ...wire.product_revision_receipt,
+    revision_number: revisionNumber,
+    previous_revision_receipt_digest: previousRevisionReceiptDigest,
+  };
+  const receiptBody = { ...unsignedReceipt };
+  delete (receiptBody as { revision_receipt_digest?: string }).revision_receipt_digest;
+  const revisionReceiptDigest = await digest(receiptBody);
+  return {
+    ...wire,
+    product_revision_receipt: {
+      ...unsignedReceipt,
+      revision_receipt_digest: revisionReceiptDigest,
+    },
+    current: {
+      ...wire.current,
+      revision_number: revisionNumber,
+      revision_receipt_digest: revisionReceiptDigest,
+    },
+  } as unknown as ReadWire;
+}
+
+function historyRevision(wire: ReadWire, isCurrent: boolean, parentOid: string | null = wire.product_revision_receipt.parent_oid) {
+  return {
+    project_id: wire.product_revision_receipt.project_id,
+    title: wire.product_revision_receipt.title,
+    summary: wire.product_revision_receipt.summary,
+    revision_number: wire.product_revision_receipt.revision_number,
+    revision_receipt_digest: wire.product_revision_receipt.revision_receipt_digest,
+    previous_revision_receipt_digest: wire.product_revision_receipt.previous_revision_receipt_digest,
+    commit_oid: wire.product_revision_receipt.commit_oid,
+    tree_oid: wire.product_revision_receipt.tree_oid,
+    parent_oid: parentOid,
+    selected_at_ms: wire.product_revision_receipt.selected_at_ms,
+    is_current: isCurrent,
+  };
+}
+
+function createValidHistoryWire(projectId: string, currentWire: ReadWire, historicalWire: ReadWire) {
+  const currentParentOid = historicalWire.product_revision_receipt.commit_oid;
+  return {
+    result_version: 'builder-project-read-result.v1',
+    operation: 'history_listed',
+    project_id: projectId,
+    current: {
+      ...currentWire.current,
+      parent_oid: currentParentOid,
+    },
+    revisions: [
+      historyRevision(currentWire, true, currentParentOid),
+      historyRevision(historicalWire, false),
+    ],
+    authority_evidence: {
+      product_authority: 'sqlite_product_revision_receipt',
+      code_authority: 'git_commit_tree',
+      source_read_admission: 'verified',
+      current_selection: 'sqlite_current_project_revision',
+      history_selection: 'sqlite_project_revision_receipts',
+    },
+  };
+}
+
 function click(container: HTMLElement, label: string): void {
   const button = [...container.querySelectorAll<HTMLButtonElement>('button')]
     .find((candidate) => candidate.textContent?.includes(label));
   expect(button, label).not.toBeUndefined();
   act(() => button?.click());
+}
+
+async function createRestoredDraftForReadWire(
+  readWire: Awaited<ReturnType<typeof createReadWire>>,
+) {
+  const draft = await createRestoredGenerationDraft(readWire.source_tree);
+  if (draft.base_revision_evidence === null) return draft;
+  return {
+    ...draft,
+    base_revision_evidence: {
+      ...draft.base_revision_evidence,
+      project_id: readWire.product_revision_receipt.project_id,
+      revision_receipt_digest: readWire.product_revision_receipt.revision_receipt_digest,
+      commit_oid: readWire.product_revision_receipt.commit_oid,
+      source_tree_digest: readWire.source_tree.source_tree_digest,
+    },
+  };
 }
 
 function pendingCandidateTaskStreamWire(rejected: boolean) {
@@ -484,6 +612,56 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
+  });
+
+  it('does not consume pending draft restore while viewing saved history', async () => {
+    const { container, readTaskStream, restoreDraft } = await setup({
+      initiallySaved: true,
+      pendingAfterRevisionView: true,
+      restoreAvailable: true,
+      validHistoryPreview: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-view-version="Version 1"]')).not.toBeNull();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-builder-view-version="Version 1"]')?.click();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-history-preview="true"]')?.textContent)
+        .toContain('Viewing Version 1');
+    });
+    readTaskStream.mockClear();
+    const refreshActivity = container.querySelector<HTMLButtonElement>(
+      '[data-builder-activity="true"] button[aria-label="Refresh activity"]',
+    );
+    expect(refreshActivity).not.toBeNull();
+    expect(refreshActivity?.disabled).toBe(false);
+    act(() => {
+      refreshActivity?.click();
+    });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')).not.toBeNull();
+    });
+    expect(restoreDraft).not.toHaveBeenCalled();
+
+    click(container, 'Back to current');
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
   });
 
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {

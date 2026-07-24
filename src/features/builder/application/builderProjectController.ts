@@ -53,6 +53,7 @@ export type BuilderProjectControllerSnapshot = Readonly<{
   busy: boolean;
   savedProject: BuilderProjectReadSnapshot | null;
   draft: BuilderGenerationDraft | null;
+  inspectedRevision: BuilderProjectReadSnapshot | null;
   answer: BuilderGenerationAnswer | null;
   preview: BuilderSourceTreePreviewProjection | null;
   error: BuilderProjectControllerError;
@@ -71,6 +72,8 @@ export type BuilderProjectController = Readonly<{
   answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
+  inspectRevision(projectId: string, revisionReceiptDigest: string): Promise<BuilderProjectControllerSnapshot>;
+  showCurrentRevision(): Promise<BuilderProjectControllerSnapshot>;
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
   cancel(): Promise<BuilderProjectControllerSnapshot>;
   save(): Promise<BuilderProjectControllerSnapshot>;
@@ -118,6 +121,7 @@ function snapshot(
   preview: BuilderSourceTreePreviewProjection | null,
   error: BuilderProjectControllerError,
   answer: BuilderGenerationAnswer | null = null,
+  inspectedRevision: BuilderProjectReadSnapshot | null = null,
 ): BuilderProjectControllerSnapshot {
   const result = Object.freeze({
     status,
@@ -128,6 +132,7 @@ function snapshot(
       || status === 'rejecting',
     savedProject,
     draft,
+    inspectedRevision,
     answer,
     preview,
     error,
@@ -215,12 +220,20 @@ function sanitizeSaveResult(value: unknown, draft: BuilderGenerationDraft) {
 function selectedSourceTree(
   savedProject: BuilderProjectReadSnapshot | null,
   draft: BuilderGenerationDraft | null,
+  inspectedRevision: BuilderProjectReadSnapshot | null,
 ): Readonly<{ project_id: string; title: string; source_tree: BuilderProjectSourceTree }> | null {
   if (draft !== null) {
     return {
       project_id: draft.project_id,
       title: draft.title,
       source_tree: draft.source_tree,
+    };
+  }
+  if (inspectedRevision !== null) {
+    return {
+      project_id: inspectedRevision.target.project_id,
+      title: inspectedRevision.target.title,
+      source_tree: inspectedRevision.source_tree,
     };
   }
   if (savedProject !== null) {
@@ -282,6 +295,26 @@ function savedContainsDraft(
     && saved.source_tree.source_tree_digest === draft.source_tree.source_tree_digest;
 }
 
+function latestCurrentMatchesSaved(
+  saved: BuilderProjectReadSnapshot,
+  revision: BuilderProjectReadSnapshot,
+): boolean {
+  const currentSummary = revision.latestCurrent;
+  const savedTarget = saved.target;
+  return (
+    revision.operation === 'revision_loaded'
+    && currentSummary.project_id === savedTarget.project_id
+    && currentSummary.title === savedTarget.title
+    && currentSummary.summary === savedTarget.summary
+    && currentSummary.revision_receipt_digest === savedTarget.revision_receipt_digest
+    && currentSummary.revision_number === savedTarget.revision_number
+    && currentSummary.object_format === savedTarget.object_format
+    && currentSummary.commit_oid === savedTarget.commit_oid
+    && currentSummary.tree_oid === savedTarget.tree_oid
+    && currentSummary.parent_oid === savedTarget.parent_oid
+  );
+}
+
 function settledStatus(
   savedProject: BuilderProjectReadSnapshot | null,
   preview: BuilderSourceTreePreviewProjection | null,
@@ -318,13 +351,14 @@ export function createBuilderProjectController(
     savedProject: BuilderProjectReadSnapshot | null,
     draft: BuilderGenerationDraft | null,
     operationEpoch: number,
+    inspectedRevision: BuilderProjectReadSnapshot | null = null,
   ): Promise<BuilderProjectControllerSnapshot> {
-    const source = selectedSourceTree(savedProject, draft);
+    const source = selectedSourceTree(savedProject, draft, inspectedRevision);
     if (source === null || disposed || operationEpoch !== epoch) return current;
     try {
       const preview = await previewProject(source);
       if (disposed || operationEpoch !== epoch) return current;
-      return publish(snapshot(status, savedProject, draft, preview, null));
+      return publish(snapshot(status, savedProject, draft, preview, null, null, inspectedRevision));
     } catch {
       if (disposed || operationEpoch !== epoch) return current;
       return publish(snapshot(
@@ -333,6 +367,8 @@ export function createBuilderProjectController(
         draft,
         null,
         'preview_unavailable',
+        null,
+        inspectedRevision,
       ));
     }
   }
@@ -402,6 +438,7 @@ export function createBuilderProjectController(
       disposed
       || current.busy
       || current.draft !== null
+      || current.inspectedRevision !== null
       || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
@@ -450,6 +487,7 @@ export function createBuilderProjectController(
       disposed
       || current.busy
       || current.draft !== null
+      || current.inspectedRevision !== null
       || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
@@ -491,6 +529,7 @@ export function createBuilderProjectController(
       disposed
       || current.busy
       || current.draft !== null
+      || current.inspectedRevision !== null
       || !DRAFT_ID_PATTERN.test(draftId)
       || !['ready', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
@@ -511,6 +550,61 @@ export function createBuilderProjectController(
         return publish(beforeRestore);
       }
     });
+  }
+
+  async function inspectRevision(
+    projectId: string,
+    revisionReceiptDigest: string,
+  ): Promise<BuilderProjectControllerSnapshot> {
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || current.savedProject === null
+      || current.savedProject.target.project_id !== projectId
+      || !PROJECT_ID_PATTERN.test(projectId)
+      || !DIGEST_PATTERN.test(revisionReceiptDigest)
+    ) return current;
+    if (current.savedProject.target.revision_receipt_digest === revisionReceiptDigest) {
+      return showCurrentRevision();
+    }
+    const retained = current.savedProject;
+    const beforeInspect = current;
+    return run(async (operationEpoch) => {
+      publish(snapshot('opening', retained, null, current.preview, null, current.answer, current.inspectedRevision));
+      try {
+        const inspected = await sanitizeBuilderProjectReadSnapshot(
+          await dependencies.workspace.loadRevision({
+            project_id: projectId,
+            revision_receipt_digest: revisionReceiptDigest,
+          }),
+        );
+        if (
+          disposed
+          || operationEpoch !== epoch
+          || inspected.operation !== 'revision_loaded'
+          || inspected.target.project_id !== projectId
+          || inspected.target.revision_receipt_digest !== revisionReceiptDigest
+          || !latestCurrentMatchesSaved(retained, inspected)
+        ) throw new Error();
+        return withPreview('ready', retained, null, operationEpoch, inspected);
+      } catch {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(beforeInspect);
+      }
+    });
+  }
+
+  async function showCurrentRevision(): Promise<BuilderProjectControllerSnapshot> {
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || current.savedProject === null
+      || current.inspectedRevision === null
+    ) return current;
+    const retained = current.savedProject;
+    return run((operationEpoch) => withPreview('ready', retained, null, operationEpoch));
   }
 
   async function cancel(): Promise<BuilderProjectControllerSnapshot> {
@@ -611,6 +705,8 @@ export function createBuilderProjectController(
     answer,
     generate,
     restoreDraft,
+    inspectRevision,
+    showCurrentRevision,
     rejectDraft,
     cancel,
     save,

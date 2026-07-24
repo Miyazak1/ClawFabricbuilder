@@ -5,12 +5,14 @@ const { types: utilTypes } = require('node:util');
 const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
 const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
+const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revision';
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const OPTION_KEYS = Object.freeze([
   'openProject',
   'saveDraft',
   'loadCurrent',
+  'loadRevision',
   'listCurrent',
   'listHistory',
   'mainWindowRef',
@@ -123,6 +125,7 @@ function safeOptions(value) {
       openProject: stableMethod(value, 'openProject'),
       saveDraft: stableMethod(value, 'saveDraft'),
       loadCurrent: stableMethod(value, 'loadCurrent'),
+      loadRevision: stableMethod(value, 'loadRevision'),
       listCurrent: stableMethod(value, 'listCurrent'),
       listHistory: stableMethod(value, 'listHistory'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
@@ -256,6 +259,13 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.loadCurrent, 1);
         },
       }),
+      loadRevision: Object.freeze({
+        channel: LOAD_REVISION_CHANNEL,
+        method: 'loadRevision',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.loadRevision, 1);
+        },
+      }),
       listCurrent: Object.freeze({
         channel: LIST_CURRENT_CHANNEL,
         method: 'listCurrent',
@@ -271,7 +281,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['open', 'saveDraft', 'loadCurrent', 'listCurrent', 'listHistory']),
+    exposed_methods: Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']),
     authority: Object.freeze({
       renderer_authority: 'project_selection_or_draft_id_only',
       main_owned_git_authority: true,
@@ -287,6 +297,7 @@ module.exports = Object.freeze({
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
+  LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
   LIST_HISTORY_CHANNEL,
   BuilderProjectWorkspaceIpcError,

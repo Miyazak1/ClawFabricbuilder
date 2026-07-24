@@ -20,6 +20,7 @@ const {
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
+  LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
   LIST_HISTORY_CHANNEL,
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
@@ -192,6 +193,7 @@ function runtimeWithService(service, probes = {}) {
           OPEN_PROJECT_CHANNEL,
           SAVE_DRAFT_CHANNEL,
           LOAD_CURRENT_CHANNEL,
+          LOAD_REVISION_CHANNEL,
           LIST_CURRENT_CHANNEL,
           LIST_HISTORY_CHANNEL,
           createBuilderProjectWorkspaceIpcAdapter: (options) => ({
@@ -199,6 +201,7 @@ function runtimeWithService(service, probes = {}) {
               open: { invoke: (_event, body) => options.openProject(body) },
               saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
+              loadRevision: { invoke: (_event, body) => options.loadRevision(body) },
               listCurrent: { invoke: () => options.listCurrent() },
               listHistory: { invoke: (_event, body) => options.listHistory(body) },
             },
@@ -271,7 +274,27 @@ function runtimeWithService(service, probes = {}) {
                     context,
                   );
                 },
-                load_revision() {},
+                load_revision(body) {
+                  probes.loadRevisionRequests ??= [];
+                  probes.loadRevisionRequests.push({
+                    project_id: body.project_id,
+                    revision_receipt_digest: body.revision_receipt_digest,
+                  });
+                  if (typeof probes.loadRevision === 'function') return probes.loadRevision(body);
+                  context.__readProjectId = body.project_id;
+                  context.__readRevisionDigest = body.revision_receipt_digest;
+                  return vm.runInContext(
+                    `({
+                      operation: "revision_loaded",
+                      product_revision_receipt: {
+                        project_id: __readProjectId,
+                        revision_receipt_digest: __readRevisionDigest
+                      },
+                      current: { project_id: __readProjectId }
+                    })`,
+                    context,
+                  );
+                },
                 list_current() { return { projects: [] }; },
                 list_history(body) {
                   probes.listHistoryRequests ??= [];
@@ -339,6 +362,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     OPEN_PROJECT_CHANNEL,
     SAVE_DRAFT_CHANNEL,
     LOAD_CURRENT_CHANNEL,
+    LOAD_REVISION_CHANNEL,
     LIST_CURRENT_CHANNEL,
     LIST_HISTORY_CHANNEL,
     READ_TASK_STREAM_CHANNEL,
@@ -429,6 +453,22 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(LIST_HISTORY_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_project_workspace_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(LOAD_REVISION_CHANNEL)({ sender: {} }, {
+      project_id: PROJECT_ID,
+      revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+    }),
+    (error) => error.code === 'builder_project_workspace_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(LOAD_REVISION_CHANNEL)({ sender: mainWindow.webContents }, {
+      project_id: PROJECT_ID,
+    }, {
+      revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+    }),
     (error) => error.code === 'builder_project_workspace_invalid',
   );
   runtime.dispose();
@@ -632,6 +672,52 @@ test('registers a read-only project history channel backed by project read autho
     revisions: [],
   });
   assert.deepEqual(probes.listHistoryRequests, [{ project_id: PROJECT_ID, limit: 32 }]);
+  runtime.dispose();
+});
+
+test('registers a read-only historical revision channel without changing selection', async (t) => {
+  const projectB = 'builder-project:223e4567-e89b-42d3-a456-426614174000';
+  const generated = [];
+  const probes = {};
+  const runtimeModule = runtimeWithService({
+    generate(body) {
+      generated.push(body);
+      return Promise.resolve({ request_id: body.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  const invoke = (channel, body) => ipcMain.handlers.get(channel)({ sender: mainWindow.webContents }, body);
+  const body = (source) => vm.runInContext(source, runtimeModule.context);
+
+  await invoke(OPEN_PROJECT_CHANNEL, body(`({ project_id: ${JSON.stringify(projectB)} })`));
+  const revisionDigest = `sha256:${'c'.repeat(64)}`;
+  const revision = await invoke(
+    LOAD_REVISION_CHANNEL,
+    body(`({
+      project_id: ${JSON.stringify(PROJECT_ID)},
+      revision_receipt_digest: ${JSON.stringify(revisionDigest)}
+    })`),
+  );
+  assert.equal(revision.operation, 'revision_loaded');
+  assert.deepEqual(probes.loadRevisionRequests, [{
+    project_id: PROJECT_ID,
+    revision_receipt_digest: revisionDigest,
+  }]);
+
+  await invoke(GENERATE_CHANNEL, body('({ instruction: "Continue selected project." })'));
+  assert.equal(generated.at(-1).existing_project_id, projectB);
   runtime.dispose();
 });
 
@@ -1004,7 +1090,7 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   for (const forbidden of [
     /ipcRenderer|contextBridge|BrowserWindow|require\(['"]electron['"]\)|\bnet\b/u,
     /write_current|credential|safeStorage|providerSettings/u,
-    /builder-project-revision-repository|builder-project-revisions-v1|projectRevisionRepository|load_revision/u,
+    /builder-project-revision-repository|builder-project-revisions-v1|projectRevisionRepository/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
   ]) assert.doesNotMatch(source, forbidden);
   assert.match(source, /createBuilderProjectMainAuthority/u);
@@ -1014,6 +1100,7 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.match(source, /createBuilderGenerationMainService/u);
   assert.match(source, /createBuilderTaskStreamIpcAdapter/u);
   assert.match(source, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
+  assert.match(source, /channel:\s*LOAD_REVISION_CHANNEL/u);
   assert.match(source, /createBuilderOpenAICompatibleTransport\(\{ fetchImpl: options\.fetchImpl \}\)/u);
   assert.doesNotMatch(source, /globalThis\.fetch/u);
 });
