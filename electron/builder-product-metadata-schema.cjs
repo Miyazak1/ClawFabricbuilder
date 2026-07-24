@@ -12,9 +12,9 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 
-const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v2';
-const BUILDER_PRODUCT_METADATA_USER_VERSION = 2;
-const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v2';
+const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v3';
+const BUILDER_PRODUCT_METADATA_USER_VERSION = 3;
+const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v3';
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_PATTERN}$`, 'u');
@@ -48,7 +48,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     current_revision_receipt_digest TEXT,
     current_revision_number INTEGER NOT NULL DEFAULT 0,
     metadata_schema_version TEXT NOT NULL,
-    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v2'),
+    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v3'),
     CHECK (project_created_at_ms >= 0),
     CHECK (current_revision_number >= 0),
     CHECK (
@@ -64,26 +64,56 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     project_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
+    current_event_sequence INTEGER,
+    current_event_id TEXT,
+    current_event_digest TEXT,
     PRIMARY KEY (project_id, conversation_id),
     UNIQUE (conversation_id),
     CHECK (created_at_ms >= 0),
+    CHECK (current_event_sequence IS NULL OR current_event_sequence BETWEEN 1 AND 1024),
+    CHECK (
+      (current_event_sequence IS NULL AND current_event_id IS NULL AND current_event_digest IS NULL)
+      OR (current_event_sequence IS NOT NULL AND current_event_id IS NOT NULL
+        AND current_event_digest IS NOT NULL)
+    ),
+    UNIQUE (project_id, conversation_id, current_event_sequence),
+    FOREIGN KEY (project_id, conversation_id, current_event_sequence)
+      REFERENCES conversation_events(project_id, conversation_id, sequence)
+      ON DELETE RESTRICT ON UPDATE RESTRICT
+      DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
       ON DELETE RESTRICT ON UPDATE RESTRICT
   ) STRICT`,
   `CREATE TABLE conversation_events (
     project_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    event_id TEXT NOT NULL,
     sequence INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
     event_digest TEXT NOT NULL,
-    event_type TEXT NOT NULL,
     command_id TEXT NOT NULL,
+    command_digest TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    previous_event_sequence INTEGER,
+    previous_event_id TEXT,
+    previous_event_digest TEXT,
+    record_json TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
-    PRIMARY KEY (project_id, conversation_id, event_id),
-    UNIQUE (project_id, conversation_id, sequence),
+    PRIMARY KEY (project_id, conversation_id, sequence),
+    UNIQUE (project_id, conversation_id, event_id),
     UNIQUE (project_id, conversation_id, event_digest),
-    CHECK (sequence >= 1),
+    UNIQUE (project_id, conversation_id, command_id),
+    CHECK (sequence BETWEEN 1 AND 1024),
     CHECK (created_at_ms >= 0),
+    CHECK (length(record_json) BETWEEN 2 AND 24576),
+    CHECK (
+      (sequence = 1 AND previous_event_sequence IS NULL
+        AND previous_event_id IS NULL AND previous_event_digest IS NULL)
+      OR (sequence > 1 AND previous_event_sequence = sequence - 1
+        AND previous_event_id IS NOT NULL AND previous_event_digest IS NOT NULL)
+    ),
+    FOREIGN KEY (project_id, conversation_id, previous_event_sequence)
+      REFERENCES conversation_events(project_id, conversation_id, sequence)
+      ON DELETE RESTRICT ON UPDATE RESTRICT,
     FOREIGN KEY (project_id, conversation_id) REFERENCES conversations(project_id, conversation_id)
       ON DELETE RESTRICT ON UPDATE RESTRICT
   ) STRICT`,
@@ -199,7 +229,6 @@ const CREATE_SCHEMA_SQL = Object.freeze([
       ON DELETE RESTRICT ON UPDATE RESTRICT
   ) STRICT`,
   'CREATE INDEX project_revisions_project_selected_idx ON project_revisions(project_id, selected_at_ms)',
-  'CREATE INDEX conversation_events_conversation_sequence_idx ON conversation_events(project_id, conversation_id, sequence)',
   'CREATE INDEX tasks_conversation_idx ON tasks(project_id, conversation_id)',
   'CREATE INDEX runs_task_idx ON runs(project_id, task_id)',
   'CREATE INDEX reviews_run_idx ON reviews(project_id, run_id)',

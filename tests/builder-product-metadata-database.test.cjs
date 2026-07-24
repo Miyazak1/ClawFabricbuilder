@@ -22,6 +22,9 @@ const {
   BuilderProductMetadataDatabaseError,
   createBuilderProductMetadataDatabase,
 } = require('../electron/builder-product-metadata-database.cjs');
+const {
+  createBuilderConversationEvent,
+} = require('../electron/builder-conversation-records.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
 const OTHER_PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174001';
@@ -40,6 +43,93 @@ function digest(char) {
 
 function uuid(index) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+}
+
+function prior(event) {
+  return event === null ? null : {
+    sequence: event.sequence,
+    event_id: event.event_id,
+    event_digest: event.event_digest,
+  };
+}
+
+function conversationEvent(sequence, type, payload, previousEvent = null) {
+  return createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    sequence,
+    command_id: `builder-command:${uuid(100 + sequence)}`,
+    event_type: type,
+    previous_event: prior(previousEvent),
+    payload,
+    authority: {
+      context_authority: 'project_local_conversation',
+      permission_admission: 'not_granted',
+      execution_admission: 'not_granted',
+      revision_admission: 'not_created',
+    },
+  });
+}
+
+function initialConversationEvents() {
+  const submitted = conversationEvent(1, 'turn_submitted', {
+    message: {
+      message_id: `builder-message:${uuid(201)}`,
+      text: 'Build a small timer.',
+    },
+    turn_id: `builder-turn:${uuid(202)}`,
+    mode: 'work',
+    task: {
+      task_id: `builder-task:${uuid(203)}`,
+      title: 'Create Builder project',
+    },
+    base_revision: null,
+  });
+  const started = conversationEvent(2, 'run_started', {
+    turn_id: submitted.payload.turn_id,
+    run_id: `builder-run:${uuid(204)}`,
+    task_id: submitted.payload.task.task_id,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: digest('a'),
+  }, submitted);
+  return [submitted, started];
+}
+
+function terminalConversationEvents(initial) {
+  const completed = conversationEvent(3, 'run_completed', {
+    turn_id: initial[0].payload.turn_id,
+    run_id: initial[1].payload.run_id,
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: digest('b'),
+    assistant_message: {
+      message_id: `builder-message:${uuid(205)}`,
+      text: 'The draft is ready to review.',
+    },
+  }, initial[1]);
+  const terminal = conversationEvent(4, 'turn_completed', {
+    turn_id: initial[0].payload.turn_id,
+    run_id: initial[1].payload.run_id,
+    outcome: 'candidate_ready',
+  }, completed);
+  return [completed, terminal];
+}
+
+function appendConversationRequest(events, expectedHead = null) {
+  return {
+    project: { project_id: PROJECT_ID, created_at_ms: 1 },
+    conversation: {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1,
+    },
+    expected_head: expectedHead,
+    events,
+    recorded_at_ms: 2,
+  };
 }
 
 function oid(index) {
@@ -248,7 +338,7 @@ function seedRevisionChainFixture(filePath, length) {
     const insertProject = raw.prepare(`INSERT OR IGNORE INTO projects (
       project_id, project_created_at_ms, current_revision_receipt_digest,
       current_revision_number, metadata_schema_version
-    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v2')`);
+    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v3')`);
     const insertConversation = raw.prepare(`INSERT OR IGNORE INTO conversations (
       project_id, conversation_id, created_at_ms
     ) VALUES (?, ?, ?)`);
@@ -1076,6 +1166,110 @@ test('rejects same-commit competing receipts and rolls back partial facts', (t) 
   }
 });
 
+test('appends, replays, and restores one canonical conversation chain from SQLite', (t) => {
+  const filePath = temporaryDatabase(t);
+  const initial = initialConversationEvents();
+  let metadata = createBuilderProductMetadataDatabase(filePath);
+  const appended = metadata.append_conversation_events(appendConversationRequest(initial));
+  assert.equal(appended.result_version, 'builder-conversation-authority-result.v1');
+  assert.equal(appended.operation, 'events_appended');
+  assert.deepEqual(appended.action_events, initial);
+  assert.deepEqual(appended.current_head, prior(initial[1]));
+  assert.equal(appended.snapshot.event_count, 2);
+  assert.equal(appended.snapshot.turns[0].runs[0].status, 'running');
+  assert.equal(appended.metadata_evidence.database_id, 'builder-product-metadata-database.v3');
+  assert.equal(appended.metadata_evidence.transaction,
+    'conversation_expected_head_append_readback');
+  assert.equal(Object.isFrozen(appended), true);
+
+  const replayed = metadata.append_conversation_events(appendConversationRequest(initial));
+  assert.equal(replayed.operation, 'events_replayed');
+  assert.deepEqual(replayed.action_events, initial);
+  assert.deepEqual(replayed.current_head, prior(initial[1]));
+  metadata.close();
+
+  metadata = createBuilderProductMetadataDatabase(filePath);
+  const restored = metadata.load_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  assert.equal(restored.operation, 'conversation_loaded');
+  assert.deepEqual(restored.events, initial);
+  assert.deepEqual(restored.current_head, prior(initial[1]));
+  assert.equal(restored.snapshot.turns[0].runs[0].status, 'running');
+  metadata.close();
+});
+
+test('appends a terminal batch with expected-head CAS and rejects stale or drifting commands', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  const initial = initialConversationEvents();
+  metadata.append_conversation_events(appendConversationRequest(initial));
+  const terminal = terminalConversationEvents(initial);
+  const completed = metadata.append_conversation_events(
+    appendConversationRequest(terminal, prior(initial[1])),
+  );
+  assert.equal(completed.operation, 'events_appended');
+  assert.deepEqual(completed.current_head, prior(terminal[1]));
+  assert.equal(completed.snapshot.turns[0].runs[0].status, 'completed');
+  assert.equal(completed.snapshot.turns[0].runs[0].terminal_status, 'succeeded');
+  assert.equal(completed.snapshot.turns[0].messages[1].text,
+    'The draft is ready to review.');
+
+  assert.throws(
+    () => metadata.append_conversation_events(appendConversationRequest(
+      terminalConversationEvents(initial),
+      prior(initial[0]),
+    )),
+    assertDatabaseError('builder_product_metadata_invalid'),
+  );
+
+  const driftSubmitted = conversationEvent(1, 'turn_submitted', {
+    ...initial[0].payload,
+    message: {
+      ...initial[0].payload.message,
+      text: 'Build a different project with the same command identity.',
+    },
+  });
+  const drift = [
+    driftSubmitted,
+    conversationEvent(2, 'run_started', initial[1].payload, driftSubmitted),
+  ];
+  assert.throws(
+    () => metadata.append_conversation_events(appendConversationRequest(drift)),
+    assertDatabaseError('builder_product_metadata_idempotency_conflict'),
+  );
+  metadata.close();
+});
+
+test('fails closed when canonical conversation event bytes are corrupted', (t) => {
+  const filePath = temporaryDatabase(t);
+  const initial = initialConversationEvents();
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  metadata.append_conversation_events(appendConversationRequest(initial));
+  metadata.close();
+
+  const raw = new DatabaseSync(filePath);
+  raw.exec('PRAGMA foreign_keys = OFF');
+  raw.prepare(`UPDATE conversation_events SET record_json = ?
+    WHERE project_id = ? AND conversation_id = ? AND sequence = 2`).run(
+    JSON.stringify({ secret: 'credential-marker' }),
+    PROJECT_ID,
+    CONVERSATION_ID,
+  );
+  raw.close();
+
+  const reopened = createBuilderProductMetadataDatabase(filePath);
+  assert.throws(
+    () => reopened.load_conversation({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }),
+    assertDatabaseError('builder_product_metadata_integrity_failed', ['credential-marker']),
+  );
+  reopened.close();
+});
+
 test('separates invalid input from missing current and cross-project drift', (t) => {
   const missingPath = temporaryDatabase(t);
   const missing = createBuilderProductMetadataDatabase(missingPath);
@@ -1100,11 +1294,11 @@ test('separates invalid input from missing current and cross-project drift', (t)
   metadata.close();
 });
 
-test('fails closed on unexpected user_version, constraints, proxy, accessor, and symbol input', (t) => {
+test('rejects retired v2 metadata and fails closed on proxy, accessor, and symbol input', (t) => {
   const versionPath = temporaryDatabase(t);
   {
     const raw = new DatabaseSync(versionPath);
-    raw.exec('PRAGMA user_version = 99');
+    raw.exec('PRAGMA user_version = 2');
     raw.close();
   }
   assert.throws(
@@ -1149,8 +1343,10 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
   const filePath = temporaryDatabase(t);
   const metadata = createBuilderProductMetadataDatabase(filePath);
   assert.deepEqual(Reflect.ownKeys(metadata).sort(), [
+    'append_conversation_events',
     'close',
     'list_current_project_revisions',
+    'load_conversation',
     'load_current_project_revision',
     'load_project_identity',
     'load_project_revision',

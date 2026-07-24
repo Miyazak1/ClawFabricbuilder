@@ -147,7 +147,7 @@ function currentSummary(receipt) {
 
 function metadataEvidence(transaction = 'current_readback') {
   return {
-    database_id: 'builder-product-metadata-database.v2',
+    database_id: 'builder-product-metadata-database.v3',
     schema_fingerprint_digest: `sha256:${'e'.repeat(64)}`,
     schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
     user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
@@ -315,7 +315,7 @@ function realCandidate() {
   });
 }
 
-test('restarts through a real Git replay, SQLite v2 selection, and verified source read', async (t) => {
+test('restarts through a real Git replay, SQLite v3 selection, and verified source read', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-project-read-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectsRoot = path.join(root, 'projects');

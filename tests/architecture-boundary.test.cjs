@@ -37,6 +37,7 @@ test('retired JSON revision storage and renderer write IPC are absent', () => {
     'builder-project-revision-ipc-adapter.cjs',
     'builder-project-catalog-ipc-adapter.cjs',
     'builder-project-ipc-runtime.cjs',
+    'builder-conversation-repository.cjs',
   ]) {
     assert.equal(fs.existsSync(path.join(root, 'electron', retired)), false, retired);
   }

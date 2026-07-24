@@ -56,6 +56,9 @@ for (const expected of [
   '/electron/builder-git-command-runner.cjs',
   '/electron/builder-git-receipt-contract.cjs',
   '/electron/builder-git-project-repository.cjs',
+  '/electron/builder-conversation-authority-contract.cjs',
+  '/electron/builder-conversation-records.cjs',
+  '/electron/builder-conversation-replay.cjs',
   '/electron/builder-product-metadata-schema.cjs',
   '/electron/builder-product-metadata-database.cjs',
   '/electron/builder-project-source-tree.cjs',
@@ -84,6 +87,7 @@ for (const retired of [
   '/electron/builder-project-revision-ipc-adapter.cjs',
   '/electron/builder-project-catalog-ipc-adapter.cjs',
   '/electron/builder-project-ipc-runtime.cjs',
+  '/electron/builder-conversation-repository.cjs',
 ]) {
   assert.equal(packagedFiles.includes(retired), false, retired);
 }

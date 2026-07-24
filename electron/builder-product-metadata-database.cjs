@@ -8,6 +8,24 @@ const {
   BuilderGitReceiptContractError,
 } = require('./builder-git-receipt-contract.cjs');
 const {
+  BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION,
+  MAX_CONVERSATION_BYTES,
+  MAX_CONVERSATION_EVENTS,
+  BuilderConversationAuthorityContractError,
+  eventHead,
+  sanitizeAppendConversationEventsRequest,
+  sanitizeLoadConversationRequest,
+} = require('./builder-conversation-authority-contract.cjs');
+const {
+  BuilderConversationRecordError,
+  sanitizeBuilderConversationEvent,
+  serializeBuilderConversationEvent,
+} = require('./builder-conversation-records.cjs');
+const {
+  BuilderConversationReplayError,
+  replayBuilderConversation,
+} = require('./builder-conversation-replay.cjs');
+const {
   BUILDER_PRODUCT_METADATA_RESULT_VERSION,
   BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
   BUILDER_PRODUCT_METADATA_USER_VERSION,
@@ -23,7 +41,7 @@ const {
   sanitizeRecordProjectRevisionRequest,
 } = require('./builder-product-metadata-schema.cjs');
 
-const DATABASE_ID = 'builder-product-metadata-database.v2';
+const DATABASE_ID = 'builder-product-metadata-database.v3';
 const MAX_REVISION_CHAIN_DEPTH = 1024;
 const ERROR_MESSAGES = Object.freeze({
   builder_product_metadata_invalid: 'Builder product metadata could not be verified.',
@@ -281,6 +299,312 @@ function ensureConversation(db, conversation) {
     [conversation.project_id, conversation.conversation_id],
   );
   if (!row || !sameRow(row, conversation)) fail('builder_product_metadata_integrity_failed');
+}
+
+function sameHead(left, right) {
+  if (left === null || right === null) return left === right;
+  return left.sequence === right.sequence
+    && left.event_id === right.event_id
+    && left.event_digest === right.event_digest;
+}
+
+function headFromConversationRow(row) {
+  const allNull = row.current_event_sequence === null
+    && row.current_event_id === null
+    && row.current_event_digest === null;
+  if (allNull) return null;
+  if (
+    !Number.isSafeInteger(row.current_event_sequence)
+    || row.current_event_sequence < 1
+    || row.current_event_sequence > MAX_CONVERSATION_EVENTS
+    || typeof row.current_event_id !== 'string'
+    || typeof row.current_event_digest !== 'string'
+  ) fail('builder_product_metadata_integrity_failed');
+  return frozen({
+    sequence: row.current_event_sequence,
+    event_id: row.current_event_id,
+    event_digest: row.current_event_digest,
+  });
+}
+
+function loadConversationRow(db, projectId, conversationId, missingCode) {
+  const row = one(
+    db,
+    `SELECT project_id, conversation_id, created_at_ms, current_event_sequence,
+      current_event_id, current_event_digest
+      FROM conversations WHERE project_id = ? AND conversation_id = ?`,
+    [projectId, conversationId],
+  );
+  if (!row) fail(missingCode);
+  if (
+    row.project_id !== projectId
+    || row.conversation_id !== conversationId
+    || !Number.isSafeInteger(row.created_at_ms)
+    || row.created_at_ms < 0
+  ) fail('builder_product_metadata_integrity_failed');
+  return { row, head: headFromConversationRow(row) };
+}
+
+function eventFromRow(row, projectId, conversationId) {
+  if (
+    row.project_id !== projectId
+    || row.conversation_id !== conversationId
+    || typeof row.record_json !== 'string'
+    || Buffer.byteLength(row.record_json, 'utf8') > 24 * 1_024
+    || !Number.isSafeInteger(row.created_at_ms)
+    || row.created_at_ms < 0
+  ) fail('builder_product_metadata_integrity_failed');
+  let parsed;
+  try {
+    parsed = JSON.parse(row.record_json);
+  } catch {
+    fail('builder_product_metadata_integrity_failed');
+  }
+  let event;
+  try {
+    event = sanitizeBuilderConversationEvent(parsed);
+  } catch {
+    fail('builder_product_metadata_integrity_failed');
+  }
+  const canonicalRecord = serializeBuilderConversationEvent(event).slice(0, -1);
+  const previous = event.previous_event;
+  if (
+    canonicalRecord !== row.record_json
+    || event.sequence !== row.sequence
+    || event.event_id !== row.event_id
+    || event.event_digest !== row.event_digest
+    || event.command_id !== row.command_id
+    || event.command_digest !== row.command_digest
+    || event.event_type !== row.event_type
+    || (previous?.sequence ?? null) !== row.previous_event_sequence
+    || (previous?.event_id ?? null) !== row.previous_event_id
+    || (previous?.event_digest ?? null) !== row.previous_event_digest
+  ) fail('builder_product_metadata_integrity_failed');
+  return event;
+}
+
+function loadConversationState(db, projectId, conversationId, missingCode) {
+  const conversation = loadConversationRow(db, projectId, conversationId, missingCode);
+  const rows = all(
+    db,
+    `SELECT project_id, conversation_id, sequence, event_id, event_digest, command_id,
+      command_digest, event_type, previous_event_sequence, previous_event_id,
+      previous_event_digest, record_json, created_at_ms
+      FROM conversation_events
+      WHERE project_id = ? AND conversation_id = ?
+      ORDER BY sequence ASC
+      LIMIT ?`,
+    [projectId, conversationId, MAX_CONVERSATION_EVENTS + 1],
+  );
+  if (rows.length > MAX_CONVERSATION_EVENTS) {
+    fail('builder_product_metadata_resource_exceeded');
+  }
+  let bytes = 0;
+  const events = rows.map((row) => {
+    bytes += Buffer.byteLength(row.record_json ?? '', 'utf8');
+    if (bytes > MAX_CONVERSATION_BYTES) {
+      fail('builder_product_metadata_resource_exceeded');
+    }
+    return eventFromRow(row, projectId, conversationId);
+  });
+  const actualHead = events.length === 0 ? null : eventHead(events.at(-1));
+  if (!sameHead(actualHead, conversation.head)) {
+    fail('builder_product_metadata_integrity_failed');
+  }
+  let snapshot = null;
+  if (events.length > 0) {
+    try {
+      snapshot = replayBuilderConversation(events);
+    } catch {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    if (!sameHead(snapshot.head, conversation.head)) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+  }
+  return frozen({
+    conversation: {
+      project_id: projectId,
+      conversation_id: conversationId,
+      created_at_ms: conversation.row.created_at_ms,
+    },
+    head: conversation.head,
+    events,
+    snapshot,
+  });
+}
+
+function conversationResult(db, operation, state, actionEvents) {
+  return frozen({
+    result_version: BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION,
+    operation,
+    conversation: state.conversation,
+    action_events: actionEvents,
+    current_head: state.head,
+    events: state.events,
+    snapshot: state.snapshot,
+    metadata_evidence: {
+      database_id: DATABASE_ID,
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
+      runtime_pragmas: runtimePragmas(db),
+      transaction: operation === 'events_appended'
+        ? 'conversation_expected_head_append_readback'
+        : operation === 'events_replayed'
+          ? 'conversation_command_replay_latest_snapshot'
+          : 'conversation_snapshot_readback',
+      canonical_event_records: 'verified',
+      source_bytes_stored: false,
+      credential_storage: 'not_present',
+      provider_payload_storage: 'not_present',
+    },
+  });
+}
+
+function exactStoredBatch(state, request) {
+  const first = request.events[0];
+  const startIndex = state.events.findIndex((event) => event.command_id === first.command_id);
+  const anyCommandExists = request.events.some((candidate) => (
+    state.events.some((event) => event.command_id === candidate.command_id)
+  ));
+  if (startIndex < 0) {
+    if (anyCommandExists) fail('builder_product_metadata_idempotency_conflict');
+    return null;
+  }
+  const stored = state.events.slice(startIndex, startIndex + request.events.length);
+  if (
+    stored.length !== request.events.length
+    || startIndex !== (request.expected_head?.sequence ?? 0)
+  ) fail('builder_product_metadata_idempotency_conflict');
+  const previous = startIndex === 0 ? null : eventHead(state.events[startIndex - 1]);
+  if (!sameHead(previous, request.expected_head)) {
+    fail('builder_product_metadata_idempotency_conflict');
+  }
+  for (let index = 0; index < stored.length; index += 1) {
+    if (
+      stored[index].command_id !== request.events[index].command_id
+      || stored[index].command_digest !== request.events[index].command_digest
+      || stored[index].event_digest !== request.events[index].event_digest
+      || serializeBuilderConversationEvent(stored[index])
+        !== serializeBuilderConversationEvent(request.events[index])
+    ) fail('builder_product_metadata_idempotency_conflict');
+  }
+  return frozen(stored);
+}
+
+function appendConversationEvents(db, rawRequest) {
+  const request = sanitizeAppendConversationEventsRequest(rawRequest);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const existingProject = projectRow(db, request.project.project_id);
+    if (existingProject) verifyProjectRow(db, existingProject, request.project, true);
+    else ensureProject(db, request.project);
+    ensureConversation(db, request.conversation);
+    const before = loadConversationState(
+      db,
+      request.project.project_id,
+      request.conversation.conversation_id,
+      'builder_product_metadata_integrity_failed',
+    );
+    const replayed = exactStoredBatch(before, request);
+    if (replayed !== null) {
+      const replayResult = conversationResult(db, 'events_replayed', before, replayed);
+      db.exec('COMMIT');
+      return replayResult;
+    }
+    if (!sameHead(before.head, request.expected_head)) {
+      fail('builder_product_metadata_conflict');
+    }
+    const combined = [...before.events, ...request.events];
+    if (combined.length > MAX_CONVERSATION_EVENTS) {
+      fail('builder_product_metadata_resource_exceeded');
+    }
+    try {
+      replayBuilderConversation(combined);
+    } catch {
+      fail('builder_product_metadata_invalid');
+    }
+    for (const event of request.events) {
+      const previous = event.previous_event;
+      const recordJson = serializeBuilderConversationEvent(event).slice(0, -1);
+      run(db, `INSERT INTO conversation_events (
+        project_id, conversation_id, sequence, event_id, event_digest, command_id,
+        command_digest, event_type, previous_event_sequence, previous_event_id,
+        previous_event_digest, record_json, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        event.project_id,
+        event.conversation_id,
+        event.sequence,
+        event.event_id,
+        event.event_digest,
+        event.command_id,
+        event.command_digest,
+        event.event_type,
+        previous?.sequence ?? null,
+        previous?.event_id ?? null,
+        previous?.event_digest ?? null,
+        recordJson,
+        request.recorded_at_ms,
+      ]);
+    }
+    const nextHead = eventHead(request.events.at(-1));
+    const updated = run(
+      db,
+      `UPDATE conversations
+        SET current_event_sequence = ?, current_event_id = ?, current_event_digest = ?
+        WHERE project_id = ? AND conversation_id = ?
+          AND current_event_sequence IS ?
+          AND current_event_id IS ?
+          AND current_event_digest IS ?`,
+      [
+        nextHead.sequence,
+        nextHead.event_id,
+        nextHead.event_digest,
+        request.project.project_id,
+        request.conversation.conversation_id,
+        request.expected_head?.sequence ?? null,
+        request.expected_head?.event_id ?? null,
+        request.expected_head?.event_digest ?? null,
+      ],
+    );
+    if (updated.changes !== 1) fail('builder_product_metadata_conflict');
+    const after = loadConversationState(
+      db,
+      request.project.project_id,
+      request.conversation.conversation_id,
+      'builder_product_metadata_integrity_failed',
+    );
+    const actionEvents = exactStoredBatch(after, request);
+    if (actionEvents === null || !sameHead(after.head, nextHead)) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    const appendResult = conversationResult(db, 'events_appended', after, actionEvents);
+    db.exec('COMMIT');
+    return appendResult;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    throw error;
+  }
+}
+
+function loadConversation(db, rawRequest) {
+  const request = sanitizeLoadConversationRequest(rawRequest);
+  db.exec('BEGIN');
+  try {
+    const state = loadConversationState(
+      db,
+      request.project_id,
+      request.conversation_id,
+      'builder_product_metadata_not_found',
+    );
+    const loaded = conversationResult(db, 'conversation_loaded', state, []);
+    db.exec('COMMIT');
+    return loaded;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    throw error;
+  }
 }
 
 function ensureTask(db, task) {
@@ -819,6 +1143,13 @@ function normalizeOperationError(error) {
   if (error instanceof BuilderProductMetadataSchemaError) {
     return new BuilderProductMetadataDatabaseError('builder_product_metadata_invalid');
   }
+  if (
+    error instanceof BuilderConversationAuthorityContractError
+    || error instanceof BuilderConversationRecordError
+    || error instanceof BuilderConversationReplayError
+  ) {
+    return new BuilderProductMetadataDatabaseError('builder_product_metadata_invalid');
+  }
   if (error instanceof BuilderGitReceiptContractError) {
     return new BuilderProductMetadataDatabaseError('builder_product_metadata_invalid');
   }
@@ -866,6 +1197,18 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     load_current_project_revision(rawRequest) {
       try { return loadCurrent(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    append_conversation_events(rawRequest) {
+      try { return appendConversationEvents(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    load_conversation(rawRequest) {
+      try { return loadConversation(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

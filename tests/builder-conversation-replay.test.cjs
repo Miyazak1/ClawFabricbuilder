@@ -341,13 +341,13 @@ test('rejects duplicate command identity and forged array authority', () => {
   assert.throws(() => replayBuilderConversation(symbol), assertReplayError);
 });
 
-test('contains all transition rules in replay and none in repository', () => {
+test('contains all transition rules in replay and none in the SQLite persistence layer', () => {
   const fs = require('node:fs');
   const replaySource = fs.readFileSync(
     require.resolve('../electron/builder-conversation-replay.cjs'), 'utf8',
   );
-  const repositorySource = fs.readFileSync(
-    require.resolve('../electron/builder-conversation-repository.cjs'), 'utf8',
+  const databaseSource = fs.readFileSync(
+    require.resolve('../electron/builder-product-metadata-database.cjs'), 'utf8',
   );
   for (const eventType of [
     'turn_submitted', 'turn_steered', 'run_started', 'run_interrupt_requested',
@@ -355,7 +355,7 @@ test('contains all transition rules in replay and none in repository', () => {
     'run_completed', 'turn_completed',
   ]) {
     assert.match(replaySource, new RegExp(eventType, 'u'));
-    assert.doesNotMatch(repositorySource, new RegExp(eventType, 'u'));
+    assert.doesNotMatch(databaseSource, new RegExp(eventType, 'u'));
   }
-  assert.match(repositorySource, /replayBuilderConversation/u);
+  assert.match(databaseSource, /replayBuilderConversation/u);
 });

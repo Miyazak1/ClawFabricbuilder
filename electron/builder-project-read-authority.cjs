@@ -31,7 +31,7 @@ const {
 
 const BUILDER_PROJECT_READ_AUTHORITY_VERSION = 'builder-project-read-authority.v1';
 const BUILDER_PROJECT_READ_RESULT_VERSION = 'builder-project-read-result.v1';
-const DATABASE_ID = 'builder-product-metadata-database.v2';
+const DATABASE_ID = 'builder-product-metadata-database.v3';
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const PROJECT_ID_PATTERN =

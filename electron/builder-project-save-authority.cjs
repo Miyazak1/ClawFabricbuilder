@@ -237,7 +237,7 @@ function taskTitle(candidate) {
 function projectIdentityFromResult(value, expectedProjectId) {
   exactObject(value, ['result_version', 'operation', 'project', 'metadata_evidence']);
   if (
-    valueAt(value, 'result_version') !== 'builder-product-metadata-result.v2'
+    valueAt(value, 'result_version') !== 'builder-product-metadata-result.v3'
     || valueAt(value, 'operation') !== 'project_identity_loaded'
   ) fail('builder_project_save_invalid');
   const project = valueAt(value, 'project');
