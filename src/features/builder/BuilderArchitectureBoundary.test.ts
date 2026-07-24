@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const BUILDER_ROOT = join(process.cwd(), 'src', 'features', 'builder');
 const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'application/builderGeneration.ts',
+  'application/builderConversationController.ts',
   'application/builderPorts.ts',
   'application/builderProjectCatalogController.ts',
   'application/builderProjectController.ts',
@@ -15,12 +16,14 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'domain/builderProjectCatalog.ts',
   'domain/builderProjectSnapshot.ts',
   'domain/builderProviderSettings.ts',
+  'hooks/useBuilderConversationController.ts',
   'hooks/useBuilderProjectCatalogController.ts',
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
   'infrastructure/builderDesktopProjectWorkspacePort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
+  'infrastructure/builderDesktopTaskStreamPort.ts',
   'presentation/BuilderPage.tsx',
   'presentation/BuilderProjectCatalog.tsx',
   'presentation/BuilderProviderSettingsPanel.tsx',
@@ -105,6 +108,14 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'infrastructure', 'builderDesktopCodeGeneratorPort.ts'),
       'utf8',
     );
+    const taskStreamPort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopTaskStreamPort.ts'),
+      'utf8',
+    );
+    const conversationController = readFileSync(
+      join(BUILDER_ROOT, 'application', 'builderConversationController.ts'),
+      'utf8',
+    );
 
     expect(ports).toContain('open(request: Readonly<{ project_id: string | null }>)');
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
@@ -115,5 +126,9 @@ describe('Builder v2 architecture boundary', () => {
     expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request/u);
+    expect(taskStreamPort).toContain("const BRIDGE_KEYS = Object.freeze(['read'])");
+    expect(taskStreamPort).not.toMatch(/saveDraft|generate|projectWorkspace|providerSettings/u);
+    expect(conversationController).toContain("port.read({ project_id: projectId })");
+    expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);
   });
 });

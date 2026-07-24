@@ -61,3 +61,7 @@ export interface BuilderProjectWorkspacePort {
   loadCurrent(request: Readonly<{ project_id: string }>): Promise<unknown>;
   listCurrent(): Promise<unknown>;
 }
+
+export interface BuilderTaskStreamPort {
+  read(request: Readonly<{ project_id: string }>): Promise<unknown>;
+}
