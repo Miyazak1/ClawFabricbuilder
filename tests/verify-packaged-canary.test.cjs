@@ -22,6 +22,7 @@ const {
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
   askProjectQuestionViaUi,
+  captureSavedActivityEvidence,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
@@ -138,6 +139,11 @@ class FakeLocator {
     if (this.selector === SELECTORS.currentVersion) {
       return this.page.forcedVersionLabel ?? this.page.versionLabel;
     }
+    if (this.selector === SELECTORS.versionSavedActivity) {
+      if (this.page.savedActivityTextOverride !== null) return this.page.savedActivityTextOverride;
+      if (this.page.savedActivityRevision <= 0) return '';
+      return `Version saved This draft was saved as Version ${this.page.savedActivityRevision}.`;
+    }
     return null;
   }
 
@@ -178,6 +184,7 @@ class FakeRole {
       const revision = await this.page.commitSave();
       this.page.draftSaved = revision > 0;
       this.page.savedRevision = revision;
+      this.page.savedActivityRevision = revision;
       this.page.versionLabel = `Version ${revision}`;
     }
   }
@@ -238,6 +245,8 @@ class FakePage {
     this.previewVisible = true;
     this.projectStatus = 'ready';
     this.questionTurns = 0;
+    this.savedActivityRevision = 0;
+    this.savedActivityTextOverride = null;
     this.savedRevision = 0;
     this.versionLabel = 'Version 1';
     this.values = new Map();
@@ -432,7 +441,7 @@ function revisionEvidence(selectedProjectId, revisionNumber) {
   return { candidate, current, receipt, sourceTree, verification };
 }
 
-function taskStreamConversation(selectedProjectId, candidateTurns, questionTurns = 0) {
+function taskStreamConversation(selectedProjectId, savedRevision, candidateTurns, questionTurns = 0) {
   const items = [];
   const userMessageIds = [
     'builder-message:10101010-1010-4010-8010-101010101010',
@@ -461,6 +470,7 @@ function taskStreamConversation(selectedProjectId, candidateTurns, questionTurns
   }
   function pushCandidateTurn(revision) {
     const evidence = revisionEvidence(selectedProjectId, revision);
+    const draftId = `builder-generation-draft:${String(revision).repeat(64)}`;
     items.push(
       {
         item_kind: 'user_message',
@@ -499,7 +509,7 @@ function taskStreamConversation(selectedProjectId, candidateTurns, questionTurns
           text: 'I prepared a draft for review.',
         },
         candidate: {
-          draft_id: `builder-generation-draft:${String(revision).repeat(64)}`,
+          draft_id: draftId,
           title: evidence.receipt.title,
           summary: evidence.receipt.summary,
           candidate_state: 'proposed',
@@ -514,6 +524,18 @@ function taskStreamConversation(selectedProjectId, candidateTurns, questionTurns
         outcome: 'candidate_ready',
       },
     );
+    if (revision <= savedRevision) {
+      items.push({
+        item_kind: 'candidate_reviewed',
+        sequence: takeSequence(),
+        turn_id: evidence.receipt.turn_id,
+        run_id: evidence.receipt.run_id,
+        draft_id: draftId,
+        decision: 'accepted',
+        candidate_state: 'saved',
+        saved_revision: { revision_number: revision },
+      });
+    }
   }
   function pushQuestionTurn(index) {
     const turnId = questionTurnIds[index - 1];
@@ -609,7 +631,9 @@ function bridgeEvidence(
     : {
       stream_version: 'builder-task-stream-read-result.v1',
       project_id: projectId,
-      conversation: saved ? taskStreamConversation(selectedProjectId, candidateTurns, questionTurns) : null,
+      conversation: saved
+        ? taskStreamConversation(selectedProjectId, revisionNumber, candidateTurns, questionTurns)
+        : null,
       authority: {
         conversation: 'sqlite_canonical_event_replay_or_absent',
         project_source: 'not_included',
@@ -783,6 +807,7 @@ function fakeElectron(page) {
       activePage.candidateTurns = durableStore.candidateTurns;
       activePage.questionTurns = durableStore.questionTurns;
       activePage.savedRevision = durableStore.revision;
+      activePage.savedActivityRevision = durableStore.revision;
       activePage.draftSaved = durableStore.revision > 0;
       activePage.versionLabel = `Version ${Math.max(1, durableStore.revision)}`;
       activePage.commitSave = async () => {
@@ -1196,6 +1221,26 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('captures saved activity without exposing internal evidence', async () => {
+  const page = new FakePage();
+  page.savedActivityRevision = 1;
+
+  assert.deepEqual(await captureSavedActivityEvidence(page, 1), {
+    internal_evidence_hidden: true,
+    public_revision_number: 1,
+    version_saved_visible: true,
+  });
+
+  const leaked = new FakePage();
+  leaked.savedActivityRevision = 1;
+  leaked.savedActivityTextOverride = 'Version saved This draft was saved as Version 1. sha256:secret';
+  await assert.rejects(
+    captureSavedActivityEvidence(leaked, 1),
+    (error) => error.code === 'canary_save_activity_failed'
+      && error.stage === 'save_activity',
+  );
+});
+
 test('answers a saved-project question without creating a draft or revision', async (t) => {
   const page = new FakePage();
   installBridge(page);
@@ -1219,11 +1264,14 @@ test('answers a saved-project question without creating a draft or revision', as
     saved_revision_unchanged: true,
     task_stream: {
       answer_count: 1,
+      accepted_review_count: 1,
       candidate_ready_count: 1,
+      candidate_reviewed_count: 1,
       candidate_result_count: 1,
       explanation_result_count: 1,
-      head_sequence: 8,
-      item_count: 8,
+      head_sequence: 9,
+      item_count: 9,
+      latest_candidate_review: 'accepted',
       revision_unchanged: true,
       source_availability: 'not_loaded',
     },
@@ -1244,8 +1292,8 @@ test('rejects explanations that are not bound to a taskless question turn', () =
   const expectedRevision = bridgeEvidence(projectId, true, 1, 1, 1).current.product_revision_receipt;
 
   const workExplanation = bridgeEvidence(projectId, true, 1, 1, 1);
-  workExplanation.task_stream.conversation.items[4].mode = 'work';
-  workExplanation.task_stream.conversation.items[4].task = {
+  workExplanation.task_stream.conversation.items[5].mode = 'work';
+  workExplanation.task_stream.conversation.items[5].task = {
     task_id: expectedRevision.task_id,
     title: 'Not a question',
   };
@@ -1255,7 +1303,7 @@ test('rejects explanations that are not bound to a taskless question turn', () =
   );
 
   const taskedExplanation = bridgeEvidence(projectId, true, 1, 1, 1);
-  taskedExplanation.task_stream.conversation.items[5].task_id = expectedRevision.task_id;
+  taskedExplanation.task_stream.conversation.items[6].task_id = expectedRevision.task_id;
   assert.throws(
     () => assertTaskStreamExplanationFacts(taskedExplanation, expectedRevision, 1, 1),
     (error) => error.code === 'canary_question_evidence_failed',
@@ -1285,11 +1333,14 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 1');
   assert.deepEqual(pendingFacts, {
     answer_count: 0,
+    accepted_review_count: 1,
     candidate_ready_count: 2,
+    candidate_reviewed_count: 1,
     candidate_result_count: 2,
     explanation_result_count: 0,
-    head_sequence: 8,
-    item_count: 8,
+    head_sequence: 9,
+    item_count: 9,
+    latest_candidate_review: 'pending',
     latest_candidate_distinct_from_saved_revision: true,
     saved_revision_number: 1,
     source_availability: 'not_loaded',
@@ -1449,6 +1500,16 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'version',
+    },
+    {
+      code: 'canary_save_activity_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.savedActivityRevision = 1;
+        page.savedActivityTextOverride = 'Version saved This draft was saved as Version 1. review_id sha256:secret';
+        await captureSavedActivityEvidence(page, 1);
+      },
+      stage: 'save_activity',
     },
     {
       code: 'canary_question_failed',
@@ -1853,6 +1914,18 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
 
   assert.equal(result.result_version, CANARY_RESULT_VERSION);
   assert.equal(result.safe_storage.credential_status, 'stored');
+  assert.deepEqual(result.activity, {
+    initial_save: {
+      internal_evidence_hidden: true,
+      public_revision_number: 1,
+      version_saved_visible: true,
+    },
+    update_save: {
+      internal_evidence_hidden: true,
+      public_revision_number: 2,
+      version_saved_visible: true,
+    },
+  });
   assert.deepEqual(result.draft, {
     initial: {
       pre_save_catalog_empty: true,
@@ -1902,11 +1975,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       saved_revision_unchanged: true,
       task_stream: {
         answer_count: 1,
+        accepted_review_count: 1,
         candidate_ready_count: 1,
+        candidate_reviewed_count: 1,
         candidate_result_count: 1,
         explanation_result_count: 1,
-        head_sequence: 8,
-        item_count: 8,
+        head_sequence: 9,
+        item_count: 9,
+        latest_candidate_review: 'accepted',
         revision_unchanged: true,
         source_availability: 'not_loaded',
       },
@@ -1916,64 +1992,85 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.deepEqual(result.task_stream, {
     initial: {
       answer_count: 0,
+      accepted_review_count: 1,
       candidate_ready_count: 1,
+      candidate_reviewed_count: 1,
       candidate_result_count: 1,
       explanation_result_count: 0,
-      head_sequence: 4,
-      item_count: 4,
+      head_sequence: 5,
+      item_count: 5,
       latest_candidate_bound_to_revision: true,
+      latest_candidate_review: 'accepted',
+      latest_saved_revision_number: 1,
       source_availability: 'not_loaded',
     },
     question: {
       answer_count: 1,
+      accepted_review_count: 1,
       candidate_ready_count: 1,
+      candidate_reviewed_count: 1,
       candidate_result_count: 1,
       explanation_result_count: 1,
-      head_sequence: 8,
-      item_count: 8,
+      head_sequence: 9,
+      item_count: 9,
+      latest_candidate_review: 'accepted',
       revision_unchanged: true,
       source_availability: 'not_loaded',
     },
     pending_update: {
       answer_count: 1,
+      accepted_review_count: 1,
       candidate_ready_count: 2,
+      candidate_reviewed_count: 1,
       candidate_result_count: 2,
       explanation_result_count: 1,
-      head_sequence: 12,
-      item_count: 12,
+      head_sequence: 13,
+      item_count: 13,
+      latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       saved_revision_number: 1,
       source_availability: 'not_loaded',
     },
     pending_update_restart: {
       answer_count: 1,
+      accepted_review_count: 1,
       candidate_ready_count: 2,
+      candidate_reviewed_count: 1,
       candidate_result_count: 2,
       explanation_result_count: 1,
-      head_sequence: 12,
-      item_count: 12,
+      head_sequence: 13,
+      item_count: 13,
+      latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       saved_revision_number: 1,
       source_availability: 'not_loaded',
     },
     updated: {
       answer_count: 1,
+      accepted_review_count: 2,
       candidate_ready_count: 2,
+      candidate_reviewed_count: 2,
       candidate_result_count: 2,
       explanation_result_count: 1,
-      head_sequence: 12,
-      item_count: 12,
+      head_sequence: 14,
+      item_count: 14,
       latest_candidate_bound_to_revision: true,
+      latest_candidate_review: 'accepted',
+      latest_saved_revision_number: 2,
       source_availability: 'not_loaded',
     },
     restart: {
       answer_count: 1,
+      accepted_review_count: 2,
       candidate_ready_count: 2,
+      candidate_reviewed_count: 2,
       candidate_result_count: 2,
       explanation_result_count: 1,
-      head_sequence: 12,
-      item_count: 12,
+      head_sequence: 14,
+      item_count: 14,
       latest_candidate_bound_to_revision: true,
+      latest_candidate_review: 'accepted',
+      latest_saved_revision_number: 2,
       source_availability: 'not_loaded',
     },
     pending_update_advanced_candidate_count: true,
@@ -2040,11 +2137,13 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   const scopedTexts = allPageEvents.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
     ['Unsaved draft', { exact: true }],
+    ['This draft was saved as Version 1.', { exact: true }],
     ['Unsaved draft', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
     ['Version 1', { exact: true }],
     ['Unsaved draft', { exact: true }],
+    ['This draft was saved as Version 2.', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
     ['Version 2', { exact: true }],
@@ -2101,6 +2200,12 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.custom_chrome.window_controls_enabled, true);
   assert.equal(result.safe_storage.configured, true);
   assert.equal(result.safe_storage.credential_status, 'stored');
+  assert.equal(result.activity.initial_save.version_saved_visible, true);
+  assert.equal(result.activity.initial_save.public_revision_number, 1);
+  assert.equal(result.activity.initial_save.internal_evidence_hidden, true);
+  assert.equal(result.activity.update_save.version_saved_visible, true);
+  assert.equal(result.activity.update_save.public_revision_number, 2);
+  assert.equal(result.activity.update_save.internal_evidence_hidden, true);
   assert.equal(result.project.revision_number, 2);
   assert.equal(result.project.parent_oid, result.project.initial_commit_oid);
   assert.equal(result.project.restart_revision_unchanged, true);
