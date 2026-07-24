@@ -20,6 +20,12 @@ const {
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
+  createBuilderConversationMainService,
+} = require('../electron/builder-conversation-main-service.cjs');
+const {
+  createBuilderProductMetadataDatabase,
+} = require('../electron/builder-product-metadata-database.cjs');
+const {
   createBuilderProviderConfig,
 } = require('../electron/builder-provider-config.cjs');
 const {
@@ -73,6 +79,15 @@ function createUuidFactory(seed = 0) {
     const value = UUIDS[index % UUIDS.length];
     index += 1;
     return value;
+  };
+}
+
+function createUniqueUuidFactory(seed = 1) {
+  let value = seed;
+  return () => {
+    const suffix = value.toString(16).padStart(12, '0');
+    value += 1;
+    return `00000000-0000-4000-8000-${suffix}`;
   };
 }
 
@@ -132,6 +147,7 @@ function conversationService() {
     candidate: [],
     explanation: [],
     failure: [],
+    completeFailure: [],
     cancel: [],
     readCandidate: [],
     rejectCandidate: [],
@@ -321,13 +337,20 @@ function conversationService() {
       };
     },
     complete_failure(input) {
-      calls.failure.push(input);
+      calls.completeFailure.push(input);
       return {
         head: {
           sequence: input.context.start_head.sequence + 2,
           event_id: `builder-conversation-event:${'c'.repeat(64)}`,
           event_digest: `sha256:${'d'.repeat(64)}`,
         },
+      };
+    },
+    record_retryable_failure(input) {
+      calls.failure.push(input);
+      return {
+        ...input.context,
+        run_terminal_failure_code: input.failure_code,
       };
     },
     request_cancel(input) {
@@ -508,6 +531,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   assert.equal(lifecycle.calls.begin.length, 1);
   assert.equal(lifecycle.calls.candidate.length, 1);
   assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 0);
   assert.doesNotMatch(JSON.stringify(result), /credential|provider\.example|builder-model|operations|conversation_events|git_request_id/iu);
   assert.deepEqual(await service.restore_draft({ draft_id: result.draft_id }), result);
   assert.deepEqual(service.authority, {
@@ -643,7 +667,7 @@ test('records a provider explanation without creating Git candidate, draft, or s
   );
 });
 
-test('records a fixed terminal lifecycle outcome when provider generation fails', async () => {
+test('records a retryable terminal run outcome when provider generation fails', async () => {
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
     ...repositories({ conversationService: lifecycle }),
@@ -663,6 +687,76 @@ test('records a fixed terminal lifecycle outcome when provider generation fails'
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.failure.length, 1);
   assert.equal(lifecycle.calls.failure[0].failure_code, 'builder_generation_timeout');
+  assert.equal(lifecycle.calls.completeFailure.length, 0);
+});
+
+test('records real provider failures as retryable activity and closes them before distinct new work', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-retryable-generation-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  t.after(() => {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  let now = 7_000;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(1),
+    nowMs: () => now++,
+  });
+  const generationIds = [
+    UUIDS[0],
+    createUniqueUuidFactory(100)(),
+    UUIDS[0],
+    createUniqueUuidFactory(101)(),
+  ];
+  let transportAttempts = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      createUuid: () => generationIds.shift() ?? UUIDS[9],
+    }),
+    transport: async () => {
+      transportAttempts += 1;
+      if (transportAttempts === 1) {
+        const error = new Error(PRIVATE_MARKER);
+        error.code = 'builder_provider_failed';
+        throw error;
+      }
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  await assert.rejects(
+    service.generate(request()),
+    (error) => error.code === 'builder_generation_failed'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
+  assert.equal(failedStream.conversation.head_sequence, 3);
+  assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
+  assert.equal(failedStream.conversation.items[2].item_kind, 'run_completed');
+  assert.equal(failedStream.conversation.items[2].terminal_status, 'failed');
+  assert.equal(failedStream.conversation.items[2].result_kind, 'failure');
+  assert.equal(failedStream.conversation.items[2].candidate, null);
+
+  const result = await service.generate(request({ instruction: 'Try a different timer layout.' }));
+  assert.equal(result.project_id, PROJECT_ID);
+  const stream = conversation.read_stream({ project_id: PROJECT_ID });
+  assert.equal(stream.conversation.head_sequence, 8);
+  assert.equal(stream.conversation.recorded_active_turn_id, null);
+  assert.deepEqual(stream.conversation.items.slice(3, 6).map((item) => item.item_kind), [
+    'turn_completed',
+    'user_message',
+    'run_started',
+  ]);
+  assert.equal(stream.conversation.items[3].outcome, 'failed');
+  assert.equal(stream.conversation.items[4].message.text, 'Try a different timer layout.');
+  assert.equal(stream.conversation.items[6].result_kind, 'candidate');
+  assert.equal(stream.conversation.items[7].outcome, 'candidate_ready');
+  assert.doesNotMatch(JSON.stringify(stream), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
 });
 
 test('records cancellation intent before aborting provider work and fails closed if recording fails', async () => {
@@ -730,6 +824,7 @@ test('records cancellation intent before aborting provider work and fails closed
   assert.equal(lifecycle.calls.cancel.length, 1);
   assert.equal(lifecycle.calls.failure.length, 1);
   assert.equal(lifecycle.calls.failure[0].context.cancel_requested, true);
+  assert.equal(lifecycle.calls.completeFailure.length, 0);
 
   const answerLifecycle = conversationService();
   const answerGit = gitAuthority();
@@ -763,6 +858,7 @@ test('records cancellation intent before aborting provider work and fails closed
   assert.equal(answerLifecycle.calls.explanation.length, 0);
   assert.equal(answerLifecycle.calls.failure.length, 1);
   assert.equal(answerLifecycle.calls.failure[0].context.cancel_requested, true);
+  assert.equal(answerLifecycle.calls.completeFailure.length, 0);
   assert.equal(answerGit.receipts.length, 0);
 });
 
@@ -801,6 +897,7 @@ test('rejects same-digest cross-route concurrency before creating a second conve
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.cancel.length, 0);
   assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 0);
 
   assert.deepEqual(service.cancel({ request_id: shared.request_digest }), {
     request_id: shared.request_digest,
@@ -812,6 +909,7 @@ test('rejects same-digest cross-route concurrency before creating a second conve
   assert.equal(lifecycle.calls.cancel.length, 1);
   assert.equal(lifecycle.calls.failure.length, 1);
   assert.equal(lifecycle.calls.failure[0].context.ids.task_id === null, false);
+  assert.equal(lifecycle.calls.completeFailure.length, 0);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.explanation.length, 0);
   assert.equal(git.receipts.length, 0);
@@ -846,6 +944,7 @@ test('rejects same-digest cross-route concurrency before creating a second conve
   assert.equal(answerLifecycle.calls.question.length, 1);
   assert.equal(answerLifecycle.calls.cancel.length, 0);
   assert.equal(answerLifecycle.calls.failure.length, 0);
+  assert.equal(answerLifecycle.calls.completeFailure.length, 0);
 
   assert.deepEqual(answerService.cancel({ request_id: shared.request_digest }), {
     request_id: shared.request_digest,
@@ -857,6 +956,7 @@ test('rejects same-digest cross-route concurrency before creating a second conve
   assert.equal(answerLifecycle.calls.cancel.length, 1);
   assert.equal(answerLifecycle.calls.failure.length, 1);
   assert.equal(answerLifecycle.calls.failure[0].context.ids.task_id, null);
+  assert.equal(answerLifecycle.calls.completeFailure.length, 0);
   assert.equal(answerLifecycle.calls.candidate.length, 0);
   assert.equal(answerLifecycle.calls.explanation.length, 0);
   assert.equal(answerGit.receipts.length, 0);

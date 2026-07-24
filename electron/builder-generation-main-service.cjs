@@ -480,7 +480,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const beginConversationWork = ownMethod(options.conversationService, 'begin_work');
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
-  const completeConversationFailure = ownMethod(options.conversationService, 'complete_failure');
+  const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
@@ -679,7 +679,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (conversationContext === undefined) return;
     try {
       Reflect.apply(
-        completeConversationFailure,
+        recordConversationRetryableFailure,
         options.conversationService,
         [{ context: conversationContext, failure_code: failureCodeFrom(error) }],
       );
