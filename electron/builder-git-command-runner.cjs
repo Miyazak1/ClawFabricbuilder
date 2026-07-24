@@ -20,6 +20,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE_MS = 1_000;
 const BUILDER_GIT_OBJECT_FORMAT = 'sha1';
 const ZERO_OID = '0'.repeat(40);
+const MAIN_REF = 'refs/heads/main';
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const REQUEST_HASH_PATTERN = /^[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -357,6 +358,22 @@ function commandFor(operation, rawRequest) {
         writeOperation: false,
       };
     }
+    case 'read_main_ref': {
+      assertExactObject(rawRequest, ['object_format']);
+      safeObjectFormat(valueAt(rawRequest, 'object_format'));
+      return {
+        args: [
+          'rev-parse',
+          '--verify',
+          '--quiet',
+          '--end-of-options',
+          MAIN_REF,
+        ],
+        stdin: '',
+        writeOperation: false,
+        allowMissing: true,
+      };
+    }
     case 'hash_blob': {
       assertExactObject(rawRequest, ['object_format', 'content']);
       safeObjectFormat(valueAt(rawRequest, 'object_format'));
@@ -566,6 +583,24 @@ function commandFor(operation, rawRequest) {
           `create ${refs.request} ${commitOid}`,
           `delete ${refs.pendingCandidate} ${treeOid}`,
           `delete ${refs.pendingRequest} ${semanticBlobOid}`,
+          'prepare',
+          'commit',
+          '',
+        ].join('\n'),
+        writeOperation: true,
+      };
+    }
+    case 'update_main_ref': {
+      assertExactObject(rawRequest, ['object_format', 'commit_oid', 'expected_old_oid']);
+      const objectFormat = safeObjectFormat(valueAt(rawRequest, 'object_format'));
+      const commitOid = safeOid(valueAt(rawRequest, 'commit_oid'), objectFormat);
+      const expectedOldOid = safeOid(valueAt(rawRequest, 'expected_old_oid'), objectFormat, true);
+      if (commitOid === ZERO_OID) fail('builder_git_command_invalid');
+      return {
+        args: ['update-ref', '--stdin'],
+        stdin: [
+          'start',
+          `update ${MAIN_REF} ${commitOid} ${expectedOldOid ?? ZERO_OID}`,
           'prepare',
           'commit',
           '',

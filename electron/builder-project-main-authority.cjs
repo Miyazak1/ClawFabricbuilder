@@ -8,6 +8,9 @@ const {
   createDefaultBuilderGitProjectRepository,
 } = require('./builder-git-project-repository.cjs');
 const {
+  createDefaultBuilderGitCurrentProjection,
+} = require('./builder-git-current-projection.cjs');
+const {
   createBuilderProductMetadataDatabase,
 } = require('./builder-product-metadata-database.cjs');
 const {
@@ -109,10 +112,18 @@ function createBuilderProjectMainAuthority(rawOptions) {
       metadata_database: metadataDatabase,
       git_repository: gitRepository,
     });
+    const gitCurrentProjection = createDefaultBuilderGitCurrentProjection({
+      projects_root: projectsRoot,
+      runtime_root: runtimeRoot,
+      git_repository: gitRepository,
+    });
     const gitAuthority = methodFacade(gitRepository, [
       'persist_candidate_commit',
       'verify_candidate_receipt',
       'read_verified_candidate',
+    ]);
+    const gitCurrentProjectionAuthority = methodFacade(gitCurrentProjection, [
+      'project_current',
     ]);
     const metadataAuthority = methodFacade(metadataDatabase, [
       'append_conversation_events',
@@ -131,6 +142,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
     return Object.freeze({
       authority_version: BUILDER_PROJECT_MAIN_AUTHORITY_VERSION,
       git_authority: gitAuthority,
+      git_current_projection: gitCurrentProjectionAuthority,
       metadata_authority: metadataAuthority,
       project_read_authority: readAuthority,
       close() {

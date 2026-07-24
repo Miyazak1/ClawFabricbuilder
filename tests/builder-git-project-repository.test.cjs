@@ -859,7 +859,17 @@ test('verification rebuilds source tree bytes and rejects non-file Git tree entr
 test('rejects protected source paths before refs and ignores unrelated worktree files', async () => {
   const value = fixture();
   try {
-    for (const filePath of ['.git/config', '.clawfabric/project.json', '.gitmodules', '.gitattributes']) {
+    for (const filePath of [
+      '.git/config',
+      '.GIT/config',
+      'src/.Git/config',
+      '.clawfabric/project.json',
+      '.CLAWFABRIC/project.json',
+      '.gitmodules',
+      '.GitModules',
+      'src/.GITATTRIBUTES',
+      '.gitattributes',
+    ]) {
       const change = candidate({
         index: 1,
         operations: [{ operation: 'upsert', path: filePath, content: 'unsafe\n' }],

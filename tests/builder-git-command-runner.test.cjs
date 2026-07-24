@@ -11,6 +11,7 @@ const test = require('node:test');
 const {
   BUILDER_GIT_RUNNER_VERSION,
   BuilderGitCommandRunnerError,
+  ZERO_OID,
   createBuilderGitCommandRunner,
   createDefaultBuilderGitCommandRunner,
 } = require('../electron/builder-git-command-runner.cjs');
@@ -203,6 +204,27 @@ test('ignores hostile local config, replace refs, hooks, attributes, and filters
       author_time: 1_750_000_000,
     });
     assert.match(commit.stdout.trim(), /^[0-9a-f]{40}$/u);
+    const missingMain = await runner.run('read_main_ref', repository, {
+      object_format: 'sha1',
+    });
+    assert.equal(missingMain.found, false);
+    await runner.run('update_main_ref', repository, {
+      object_format: 'sha1',
+      commit_oid: commit.stdout.trim(),
+      expected_old_oid: null,
+    });
+    const main = await runner.run('read_main_ref', repository, {
+      object_format: 'sha1',
+    });
+    assert.equal(main.stdout.trim(), commit.stdout.trim());
+    await assert.rejects(
+      runner.run('update_main_ref', repository, {
+        object_format: 'sha1',
+        commit_oid: commit.stdout.trim(),
+        expected_old_oid: ZERO_OID,
+      }),
+      expectCode('builder_git_command_failed'),
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -220,6 +242,26 @@ test('rejects raw commands, malformed refs, and index files outside Git control 
     );
     await assert.rejects(
       runner.run('read_request', repository, { request_hash: '../main' }),
+      expectCode('builder_git_command_invalid'),
+    );
+    await assert.rejects(
+      runner.run('read_main_ref', repository, { object_format: 'sha1', ref: 'refs/heads/dev' }),
+      expectCode('builder_git_command_invalid'),
+    );
+    await assert.rejects(
+      runner.run('update_main_ref', repository, {
+        object_format: 'sha1',
+        commit_oid: 'not-an-oid',
+        expected_old_oid: null,
+      }),
+      expectCode('builder_git_command_invalid'),
+    );
+    await assert.rejects(
+      runner.run('update_main_ref', repository, {
+        object_format: 'sha1',
+        commit_oid: ZERO_OID,
+        expected_old_oid: null,
+      }),
       expectCode('builder_git_command_invalid'),
     );
     await assert.rejects(

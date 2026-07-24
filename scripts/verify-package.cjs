@@ -58,6 +58,7 @@ for (const expected of [
   '/electron/builder-git-command-runner.cjs',
   '/electron/builder-git-receipt-contract.cjs',
   '/electron/builder-git-project-repository.cjs',
+  '/electron/builder-git-current-projection.cjs',
   '/electron/builder-conversation-authority-contract.cjs',
   '/electron/builder-conversation-records.cjs',
   '/electron/builder-conversation-replay.cjs',
@@ -207,6 +208,7 @@ const packagedPreload = packagedSource('electron/preload.cjs');
 const packagedGitRunner = packagedSource('electron/builder-git-command-runner.cjs');
 const packagedGitReceiptContract = packagedSource('electron/builder-git-receipt-contract.cjs');
 const packagedGitRepository = packagedSource('electron/builder-git-project-repository.cjs');
+const packagedGitCurrentProjection = packagedSource('electron/builder-git-current-projection.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
@@ -496,6 +498,14 @@ assert.match(packagedGitRepository, /product_revision_admission:\s*PRODUCT_REVIS
 assert.doesNotMatch(
   packagedGitRepository,
   /builder-project-revision-repository|head\.json|read_current|load_current|refs\/heads\/main|ipcMain|ipcRenderer|preload|BrowserWindow|sqlite|better-sqlite|fetch\s*\(|https?:|child_process|execFile|shell/iu,
+);
+assert.match(packagedGitCurrentProjection, /project_current/u);
+assert.match(packagedGitCurrentProjection, /git_main_ref_and_materialized_worktree/u);
+assert.match(packagedGitCurrentProjection, /sqlite_current_repair/u);
+assert.match(packagedGitCurrentProjection, /foldedName/u);
+assert.doesNotMatch(
+  packagedGitCurrentProjection,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|https?:|Authorization|Bearer|provider|credential|node:sqlite|better-sqlite|shell:\s*true/iu,
 );
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);

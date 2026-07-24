@@ -247,6 +247,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const saveAuthority = createBuilderProjectSaveAuthority({
       generationDrafts: service,
       gitAuthority: projectMainAuthority.git_authority,
+      currentProjection: projectMainAuthority.git_current_projection,
       metadataAuthority: projectMainAuthority.metadata_authority,
       projectReadAuthority: projectMainAuthority.project_read_authority,
       conversationService,

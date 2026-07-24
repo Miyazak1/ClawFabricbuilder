@@ -53,7 +53,7 @@ const BUILDER_ID_PATTERNS = Object.freeze({
   candidate_id: /^builder-code-change-candidate:[0-9a-f]{64}$/u,
 });
 const PREPARE_REQUEST_KEYS = Object.freeze(['request_id', 'expected_base_oid', 'candidate']);
-const PROTECTED_PATHS = new Set(['.gitmodules', '.gitattributes']);
+const PROTECTED_SOURCE_NAMES = new Set(['.git', '.gitmodules', '.gitattributes', '.clawfabric']);
 const COMMIT_TRAILER_ORDER = Object.freeze([
   'Object-Format',
   'Project-Id',
@@ -271,9 +271,9 @@ function safeRelativeProjectPath(value) {
     || value.startsWith('/')
     || value.includes('\\')
     || value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
-    || PROTECTED_PATHS.has(value)
-    || value.startsWith('.git/')
-    || value.startsWith('.clawfabric/')
+    || value.split('/').some((segment) => PROTECTED_SOURCE_NAMES.has(
+      segment.normalize('NFKC').toLowerCase(),
+    ))
   ) fail('builder_git_project_invalid');
   return value;
 }

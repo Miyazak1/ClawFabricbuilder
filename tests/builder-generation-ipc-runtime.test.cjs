@@ -185,6 +185,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           createBuilderProjectSaveAuthority: (options) => {
             probes.saveOptions = options;
+            assert.equal(options.currentProjection, context.__projectMainAuthority.git_current_projection);
             return {
               save: async (body) => {
                 if (typeof probes.saveDraft === 'function') return probes.saveDraft(body);
@@ -261,6 +262,9 @@ function runtimeWithService(service, probes = {}) {
                 persist_candidate_commit() {},
                 verify_candidate_receipt() {},
                 read_verified_candidate() {},
+              },
+              git_current_projection: {
+                project_current() {},
               },
               metadata_authority: {
                 append_conversation_events() {},
@@ -617,6 +621,8 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.equal(probes.saveOptions.generationDrafts, service);
   assert.equal(probes.saveOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
+  assert.equal(probes.saveOptions.currentProjection,
+    runtimeModule.context.__projectMainAuthority.git_current_projection);
   assert.equal(probes.saveOptions.metadataAuthority,
     runtimeModule.context.__projectMainAuthority.metadata_authority);
   assert.equal(probes.saveOptions.projectReadAuthority,

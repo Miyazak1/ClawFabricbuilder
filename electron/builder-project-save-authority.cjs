@@ -12,6 +12,7 @@ const BUILDER_PROJECT_SAVE_RESULT_VERSION = 'builder-project-save-result.v1';
 const OPTION_KEYS = Object.freeze([
   'generationDrafts',
   'gitAuthority',
+  'currentProjection',
   'metadataAuthority',
   'projectReadAuthority',
   'conversationService',
@@ -123,6 +124,10 @@ function sha256Canonical(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
+function sha256CanonicalHex(value) {
+  return sha256Canonical(value).slice('sha256:'.length);
+}
+
 function safeUuid(value) {
   if (typeof value !== 'string' || !UUID_PATTERN.test(value)) fail('builder_project_save_invalid');
   return value;
@@ -166,10 +171,46 @@ function safeRevisionNumber(value) {
   return value;
 }
 
+function durableAttemptSeed(draft) {
+  const candidate = draft.candidate_proof;
+  return freezeDeep({
+    authority: BUILDER_PROJECT_SAVE_AUTHORITY_VERSION,
+    draft_id: draft.draft_id,
+    git_request_id: draft.git_request_id,
+    project_id: candidate.project_id,
+    conversation_id: candidate.conversation_id,
+    turn_id: candidate.turn_id,
+    task_id: candidate.task_id,
+    run_id: candidate.run_id,
+    candidate_id: candidate.candidate_id,
+    candidate_digest: candidate.candidate_digest,
+    resulting_tree_digest: candidate.resulting_tree_digest,
+    expected_base_oid: candidate.expected_base_oid,
+  });
+}
+
+function uuidFromAttemptSeed(seed, purpose) {
+  const chars = [...sha256CanonicalHex({
+    authority: BUILDER_PROJECT_SAVE_AUTHORITY_VERSION,
+    purpose,
+    seed,
+  }).slice(0, 32)];
+  chars[12] = '4';
+  chars[16] = (8 + (Number.parseInt(chars[16], 16) % 4)).toString(16);
+  return safeUuid([
+    chars.slice(0, 8).join(''),
+    chars.slice(8, 12).join(''),
+    chars.slice(12, 16).join(''),
+    chars.slice(16, 20).join(''),
+    chars.slice(20, 32).join(''),
+  ].join('-'));
+}
+
 function sanitizeOptions(value) {
   exactObject(value, OPTION_KEYS);
   const generationDrafts = valueAt(value, 'generationDrafts');
   const gitAuthority = valueAt(value, 'gitAuthority');
+  const currentProjection = valueAt(value, 'currentProjection');
   const metadataAuthority = valueAt(value, 'metadataAuthority');
   const projectReadAuthority = valueAt(value, 'projectReadAuthority');
   const conversationService = valueAt(value, 'conversationService');
@@ -187,6 +228,8 @@ function sanitizeOptions(value) {
     releasePendingDraft: ownMethod(generationDrafts, 'release_pending_draft'),
     gitAuthority,
     verifyCandidateReceipt: ownMethod(gitAuthority, 'verify_candidate_receipt'),
+    currentProjection,
+    projectCurrent: ownMethod(currentProjection, 'project_current'),
     metadataAuthority,
     loadProjectIdentity: ownMethod(metadataAuthority, 'load_project_identity'),
     recordProjectRevisionReceipt: ownMethod(metadataAuthority, 'record_project_revision_receipt'),
@@ -407,6 +450,49 @@ function currentReceiptFromReadResult(value, expectedProjectId, expectedReceipt,
   return receipt;
 }
 
+function sanitizeCurrentProjection(value, gitReceipt) {
+  exactObject(value, [
+    'result_version',
+    'project_id',
+    'commit_oid',
+    'tree_oid',
+    'expected_base_oid',
+    'previous_main_oid',
+    'main_ref',
+    'worktree',
+    'worktree_file_count',
+    'projection_authority',
+    'source_admission',
+  ]);
+  const previousMainOid = safeOid(valueAt(value, 'previous_main_oid'), true);
+  const mainRef = valueAt(value, 'main_ref');
+  if (
+    valueAt(value, 'result_version') !== 'builder-git-current-projection-result.v1'
+    || safeProjectId(valueAt(value, 'project_id')) !== gitReceipt.project_id
+    || safeOid(valueAt(value, 'commit_oid')) !== gitReceipt.commit_oid
+    || safeOid(valueAt(value, 'tree_oid')) !== gitReceipt.tree_oid
+    || safeOid(valueAt(value, 'expected_base_oid'), true) !== gitReceipt.expected_base_oid
+    || !['updated', 'already_current', 'repaired'].includes(mainRef)
+    || valueAt(value, 'worktree') !== 'materialized'
+    || !Number.isSafeInteger(valueAt(value, 'worktree_file_count'))
+    || valueAt(value, 'worktree_file_count') < 0
+    || valueAt(value, 'worktree_file_count') > 512
+    || valueAt(value, 'projection_authority') !== 'git_main_ref_and_materialized_worktree'
+    || valueAt(value, 'source_admission') !== 'git_verified_candidate'
+    || (mainRef === 'updated' && previousMainOid !== gitReceipt.expected_base_oid)
+    || (mainRef === 'already_current' && previousMainOid !== gitReceipt.commit_oid)
+    || (mainRef === 'repaired'
+      && (previousMainOid === gitReceipt.expected_base_oid || previousMainOid === gitReceipt.commit_oid))
+  ) fail('builder_project_save_invalid');
+  return freezeDeep({
+    project_id: gitReceipt.project_id,
+    commit_oid: gitReceipt.commit_oid,
+    tree_oid: gitReceipt.tree_oid,
+    main_ref: mainRef,
+    worktree: 'materialized',
+  });
+}
+
 function savedRevisionFromReceipt(value, expectedReceipt) {
   const revisionReceiptDigest = safeDigest(valueAt(value, 'revision_receipt_digest'));
   if (revisionReceiptDigest !== expectedReceipt) fail('builder_project_save_invalid');
@@ -449,6 +535,7 @@ function normalizeError(error) {
     code === 'builder_product_metadata_conflict'
     || code === 'builder_git_project_conflict'
     || code === 'builder_git_project_dirty'
+    || code === 'builder_git_current_projection_conflict'
   ) return new BuilderProjectSaveAuthorityError('builder_project_save_conflict');
   if (
     code === 'builder_product_metadata_not_found'
@@ -459,6 +546,7 @@ function normalizeError(error) {
     || code === 'builder_product_metadata_integrity_failed'
     || code === 'builder_git_project_invalid'
     || code === 'builder_git_project_integrity_failed'
+    || code === 'builder_git_current_projection_invalid'
     || code === 'builder_project_read_integrity_failed'
     || code === 'builder_generation_draft_conflict'
   ) return new BuilderProjectSaveAuthorityError('builder_project_save_invalid');
@@ -470,26 +558,22 @@ function createBuilderProjectSaveAuthority(rawOptions) {
   const attempts = new Map();
   const inFlight = new Map();
 
-  function createAttempt(draft) {
-    const acceptedAtMs = safeMs(Reflect.apply(options.nowMs, undefined, []));
-    const reviewUuid = safeUuid(Reflect.apply(options.createUuid, undefined, []));
-    const reviewerUuid = safeUuid(Reflect.apply(options.createUuid, undefined, []));
+  function createAttempt(draft, project) {
+    const seed = durableAttemptSeed(draft);
+    const acceptedAtMs = safeMs(project.created_at_ms + draft.conversation_head.sequence);
+    const reviewUuid = uuidFromAttemptSeed(seed, 'review');
+    const reviewerUuid = uuidFromAttemptSeed(seed, 'reviewer');
     return freezeDeep({
       accepted_at_ms: acceptedAtMs,
       review_id: `builder-review:${reviewUuid}`,
       reviewer_id: `builder-user:${reviewerUuid}`,
       git_request_id: draft.git_request_id,
       candidate_digest: draft.candidate_proof.candidate_digest,
-      idempotency_key: `builder-idempotency:${sha256Canonical({
-        authority: BUILDER_PROJECT_SAVE_AUTHORITY_VERSION,
-        draft_id: draft.draft_id,
-        git_request_id: draft.git_request_id,
-        candidate_digest: draft.candidate_proof.candidate_digest,
-      }).slice('sha256:'.length)}`,
+      idempotency_key: `builder-idempotency:${sha256CanonicalHex(seed)}`,
     });
   }
 
-  function attemptFor(draft) {
+  function attemptFor(draft, project) {
     const existing = attempts.get(draft.draft_id);
     if (existing) {
       if (
@@ -498,7 +582,7 @@ function createBuilderProjectSaveAuthority(rawOptions) {
       ) fail('builder_project_save_invalid');
       return existing;
     }
-    const attempt = createAttempt(draft);
+    const attempt = createAttempt(draft, project);
     attempts.set(draft.draft_id, attempt);
     return attempt;
   }
@@ -518,7 +602,6 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         await Reflect.apply(options.readPendingDraft, options.generationDrafts, [{ draft_id: request.draft_id }]),
         request.draft_id,
       );
-      const attempt = attemptFor(draft);
       const candidate = draft.candidate_proof;
       const recordedGitReceipt = sanitizeConversationVerification(
         Reflect.apply(
@@ -564,6 +647,7 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         || gitReceipt.expected_base_oid !== expectedBaseOid
       ) fail('builder_project_save_invalid');
       const project = await projectIdentity(candidate);
+      const attempt = attemptFor(draft, project);
       const record = await Reflect.apply(options.recordProjectRevisionReceipt, options.metadataAuthority, [{
         idempotency: { idempotency_key: attempt.idempotency_key },
         project,
@@ -627,6 +711,13 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         },
         expected_current_revision_receipt_digest: expectedCurrent,
       }]);
+      const projection = sanitizeCurrentProjection(
+        await Reflect.apply(options.projectCurrent, options.currentProjection, [{
+          candidate_receipt: gitReceipt,
+          projection_mode: 'sqlite_current_repair',
+        }]),
+        gitReceipt,
+      );
       const current = await Reflect.apply(options.loadCurrent, options.projectReadAuthority, [{
         project_id: candidate.project_id,
       }]);
@@ -668,6 +759,9 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         save_evidence: {
           code_authority: 'git_commit_candidate',
           product_authority: 'sqlite_accepted_project_revision_receipt',
+          projection_authority: 'git_main_ref_and_materialized_worktree',
+          projection_main_ref: projection.main_ref,
+          worktree_projection: projection.worktree,
           conversation_event_admission: 'sqlite_recorded',
           renderer_authority: 'draft_id_only',
         },

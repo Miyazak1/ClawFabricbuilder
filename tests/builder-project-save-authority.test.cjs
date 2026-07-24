@@ -24,6 +24,9 @@ const {
   createDefaultBuilderGitProjectRepository,
 } = require('../electron/builder-git-project-repository.cjs');
 const {
+  createDefaultBuilderGitCurrentProjection,
+} = require('../electron/builder-git-current-projection.cjs');
+const {
   createBuilderGitCandidateVerificationReceipt,
 } = require('../electron/builder-git-receipt-contract.cjs');
 const {
@@ -390,6 +393,39 @@ function expectSaveError(code, forbidden = []) {
   };
 }
 
+function projectionResult(gitReceipt, mainRef = 'updated') {
+  return {
+    result_version: 'builder-git-current-projection-result.v1',
+    project_id: gitReceipt.project_id,
+    commit_oid: gitReceipt.commit_oid,
+    tree_oid: gitReceipt.tree_oid,
+    expected_base_oid: gitReceipt.expected_base_oid,
+    previous_main_oid: (() => {
+      if (mainRef === 'already_current') return gitReceipt.commit_oid;
+      if (mainRef === 'repaired') return gitReceipt.parent_oid === null ? 'f'.repeat(40) : null;
+      return gitReceipt.expected_base_oid;
+    })(),
+    main_ref: mainRef,
+    worktree: 'materialized',
+    worktree_file_count: 1,
+    projection_authority: 'git_main_ref_and_materialized_worktree',
+    source_admission: 'git_verified_candidate',
+  };
+}
+
+function projectionAuthorityFor(gitReceipt, calls = null) {
+  return {
+    project_current(request) {
+      if (calls) calls.push(request);
+      assert.deepEqual(request, {
+        candidate_receipt: gitReceipt,
+        projection_mode: 'sqlite_current_repair',
+      });
+      return projectionResult(gitReceipt);
+    },
+  };
+}
+
 function realAuthorities(t) {
   const root = temporaryRoot(t);
   let now = 1_750_000_000;
@@ -402,6 +438,11 @@ function realAuthorities(t) {
   const metadataPath = path.join(root, 'metadata', 'builder.sqlite');
   const git = createDefaultBuilderGitProjectRepository(gitOptions);
   const metadata = createBuilderProductMetadataDatabase(metadataPath);
+  const projection = createDefaultBuilderGitCurrentProjection({
+    projects_root: gitOptions.projects_root,
+    runtime_root: gitOptions.runtime_root,
+    git_repository: git,
+  });
   const read = createBuilderProjectReadAuthority({
     metadata_database: metadata,
     git_repository: git,
@@ -411,6 +452,7 @@ function realAuthorities(t) {
     gitOptions,
     metadataPath,
     git,
+    projection,
     metadata,
     read,
   };
@@ -449,6 +491,12 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
       return value.git.read_verified_candidate(receipt);
     },
   };
+  const currentProjection = {
+    async project_current(request) {
+      stages.push('project_current');
+      return value.projection.project_current(request);
+    },
+  };
   const metadataAuthority = {
     load_project_identity(request) {
       stages.push('metadata_identity');
@@ -469,6 +517,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   const saveAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
     gitAuthority,
+    currentProjection,
     metadataAuthority,
     projectReadAuthority,
     conversationService,
@@ -485,6 +534,16 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   assert.equal(saved.project_id, PROJECT_ID);
   assert.equal(saved.pending_draft_released, true);
   assert.equal(saved.save_evidence.conversation_event_admission, 'sqlite_recorded');
+  assert.equal(saved.save_evidence.projection_authority, 'git_main_ref_and_materialized_worktree');
+  assert.equal(saved.save_evidence.projection_main_ref, 'updated');
+  assert.equal(saved.save_evidence.worktree_projection, 'materialized');
+  assert.deepEqual(stages.slice(0, 5), [
+    'git_verify',
+    'metadata_identity',
+    'metadata_record',
+    'project_current',
+    'read_current',
+  ]);
   assert.equal(generationDrafts.released.length, 1);
   assert.doesNotMatch(JSON.stringify(saved), /operations|credential|conversation_events|api\.deepseek/u);
   const savedStream = conversationService.read_stream({ project_id: PROJECT_ID });
@@ -536,6 +595,32 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
     expected_base_oid: current.product_revision_receipt.commit_oid,
     candidate: updateCandidate,
   });
+  const driftCandidate = candidate({
+    index: 3,
+    base: current.source_tree,
+    baseRevision: {
+      revision_receipt_digest: current.product_revision_receipt.revision_receipt_digest,
+      commit_oid: current.product_revision_receipt.commit_oid,
+    },
+    baseEvidence,
+    priorEvents: priorConversation.events,
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main>Projection drift</main>\n' },
+    ],
+  });
+  const driftGitReceipt = await value.git.persist_candidate_commit({
+    request_id: gitRequestId(3),
+    expected_base_oid: current.product_revision_receipt.commit_oid,
+    candidate: driftCandidate,
+  });
+  await value.projection.project_current({
+    candidate_receipt: driftGitReceipt,
+    projection_mode: 'sqlite_current_repair',
+  });
+  assert.equal(
+    fs.readFileSync(path.join(value.gitOptions.projects_root, UUID, 'index.html'), 'utf8'),
+    '<main>Projection drift</main>\n',
+  );
   const updatePending = pending(updateCandidate, {
     draft: '2',
     request: 2,
@@ -547,6 +632,15 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   const updated = await saveAuthority.save({ draft_id: updatePending.draft_id });
   assert.equal(updated.project_id, PROJECT_ID);
   assert.notEqual(updated.revision_receipt_digest, saved.revision_receipt_digest);
+  assert.equal(updated.save_evidence.projection_main_ref, 'repaired');
+  assert.equal(
+    fs.readFileSync(path.join(value.gitOptions.projects_root, UUID, 'README.md'), 'utf8'),
+    '# Updated\n',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(value.gitOptions.projects_root, UUID, 'src', 'app.js'), 'utf8'),
+    'document.title = "Updated";\n',
+  );
   assert.equal(
     value.metadata.load_project_identity({ project_id: PROJECT_ID }).project.created_at_ms,
     10_000,
@@ -590,6 +684,7 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
         return verification;
       },
     },
+    currentProjection: projectionAuthorityFor(gitReceipt),
     metadataAuthority: {
       load_project_identity() { return projectIdentityResult(25_000); },
       record_project_revision_receipt() {
@@ -645,7 +740,7 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
   });
   const draft = pending(value);
   const generationDrafts = draftsStore(draft);
-  const calls = { git: [], records: [] };
+  const calls = { git: [], records: [], projection: [] };
   let metadataFails = true;
   const gitReceipt = candidateGitReceipts.get(value);
   const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
@@ -658,6 +753,7 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
         return verification;
       },
     },
+    currentProjection: projectionAuthorityFor(gitReceipt, calls.projection),
     metadataAuthority: {
       load_project_identity() { return projectIdentityResult(50_000); },
       record_project_revision_receipt(request) {
@@ -705,6 +801,7 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
     expectSaveError('builder_project_save_unavailable'),
   );
   assert.equal(generationDrafts.released.length, 0);
+  assert.equal(calls.projection.length, 0);
   metadataFails = false;
   await saveAuthority.save({ draft_id: draft.draft_id });
   assert.equal(calls.git.length, 2);
@@ -712,7 +809,279 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
   assert.equal(calls.records[0].idempotency.idempotency_key, calls.records[1].idempotency.idempotency_key);
   assert.equal(calls.records[0].review.review_id, calls.records[1].review.review_id);
   assert.equal(calls.records[0].review.reviewed_at_ms, calls.records[1].review.reviewed_at_ms);
+  assert.equal(calls.projection.length, 1);
   assert.equal(generationDrafts.released.length, 1);
+});
+
+test('keeps pending draft and retries projection after SQLite receipt is recorded', async () => {
+  const value = candidate({
+    index: 1,
+    operations: [{ operation: 'upsert', path: 'index.html', content: '<main>Hello</main>\n' }],
+  });
+  const draft = pending(value);
+  const generationDrafts = draftsStore(draft);
+  const calls = { records: [], projection: [] };
+  const gitReceipt = candidateGitReceipts.get(value);
+  const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
+  const revisionDigest = `sha256:${'d'.repeat(64)}`;
+  const conversationService = conversationServiceFor(draft);
+  let projectionFails = true;
+  const saveAuthority = createBuilderProjectSaveAuthority({
+    generationDrafts,
+    conversationService,
+    gitAuthority: {
+      async verify_candidate_receipt() {
+        return verification;
+      },
+    },
+    currentProjection: {
+      project_current(request) {
+        calls.projection.push(request);
+        assert.deepEqual(request, {
+          candidate_receipt: gitReceipt,
+          projection_mode: 'sqlite_current_repair',
+        });
+        if (projectionFails) {
+          const error = new Error('private projection marker');
+          error.code = 'builder_git_current_projection_unavailable';
+          throw error;
+        }
+        return projectionResult(gitReceipt);
+      },
+    },
+    metadataAuthority: {
+      load_project_identity() { return projectIdentityResult(55_000); },
+      record_project_revision_receipt(request) {
+        calls.records.push(request);
+        return {
+          receipt: {
+            project_id: PROJECT_ID,
+            revision_receipt_digest: revisionDigest,
+            revision_number: 1,
+            commit_oid: gitReceipt.commit_oid,
+          },
+        };
+      },
+    },
+    projectReadAuthority: {
+      load_current() {
+        return {
+          result_version: 'builder-project-read-result.v1',
+          operation: 'current_loaded',
+          product_revision_receipt: {
+            project_id: PROJECT_ID,
+            revision_receipt_digest: revisionDigest,
+            revision_number: 1,
+            commit_oid: gitReceipt.commit_oid,
+          },
+          current: {},
+          source_tree: {},
+          git_candidate_receipt: {},
+          git_verification_receipt: {},
+          authority_evidence: {},
+        };
+      },
+    },
+    createUuid: uuidFactory(),
+    nowMs: () => 55_000,
+  });
+
+  await assert.rejects(
+    saveAuthority.save({ draft_id: draft.draft_id }),
+    expectSaveError('builder_project_save_unavailable', ['private projection marker']),
+  );
+  assert.equal(calls.records.length, 1);
+  assert.equal(calls.projection.length, 1);
+  assert.equal(conversationService.accepted.length, 0);
+  assert.equal(generationDrafts.released.length, 0);
+
+  projectionFails = false;
+  await saveAuthority.save({ draft_id: draft.draft_id });
+  assert.equal(calls.records.length, 2);
+  assert.equal(calls.projection.length, 2);
+  assert.equal(calls.records[0].idempotency.idempotency_key, calls.records[1].idempotency.idempotency_key);
+  assert.deepEqual(calls.records[0].review, calls.records[1].review);
+  assert.equal(calls.records[0].task.created_at_ms, calls.records[1].task.created_at_ms);
+  assert.equal(calls.records[0].run.completed_at_ms, calls.records[1].run.completed_at_ms);
+  assert.equal(calls.records[0].project_revision.selected_at_ms, calls.records[1].project_revision.selected_at_ms);
+  assert.equal(conversationService.accepted.length, 1);
+  assert.equal(generationDrafts.released.length, 1);
+});
+
+test('replays recorded SQLite receipt after projection failure and save authority restart', async (t) => {
+  const value = realAuthorities(t);
+  const candidateValue = candidate({
+    index: 1,
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main>Hello after restart</main>\n' },
+    ],
+  });
+  const gitReceipt = await value.git.persist_candidate_commit({
+    request_id: gitRequestId(1),
+    expected_base_oid: null,
+    candidate: candidateValue,
+  });
+  const draft = pending(candidateValue, { gitReceipt });
+  appendCandidateConversation(value.metadata, candidateValue, 12_000);
+  const firstDrafts = draftsStore(draft);
+  const firstRecords = [];
+  const firstConversation = createBuilderConversationMainService({
+    metadataAuthority: value.metadata,
+    createUuid: uuidFactory(1_200),
+    nowMs: () => 12_000,
+  });
+  const firstSaveAuthority = createBuilderProjectSaveAuthority({
+    generationDrafts: firstDrafts,
+    conversationService: firstConversation,
+    gitAuthority: {
+      verify_candidate_receipt(receipt) {
+        return value.git.verify_candidate_receipt(receipt);
+      },
+    },
+    currentProjection: {
+      project_current(request) {
+        assert.deepEqual(request, {
+          candidate_receipt: gitReceipt,
+          projection_mode: 'sqlite_current_repair',
+        });
+        const error = new Error('private first projection failure');
+        error.code = 'builder_git_current_projection_unavailable';
+        throw error;
+      },
+    },
+    metadataAuthority: {
+      load_project_identity(request) { return value.metadata.load_project_identity(request); },
+      record_project_revision_receipt(request) {
+        firstRecords.push(request);
+        return value.metadata.record_project_revision_receipt(request);
+      },
+    },
+    projectReadAuthority: {
+      load_current(request) { return value.read.load_current(request); },
+    },
+    createUuid: uuidFactory(1_300),
+    nowMs: () => 30_000,
+  });
+
+  await assert.rejects(
+    firstSaveAuthority.save({ draft_id: draft.draft_id }),
+    expectSaveError('builder_project_save_unavailable', ['private first projection failure']),
+  );
+  assert.equal(firstRecords.length, 1);
+  assert.equal(
+    firstConversation.read_stream({ project_id: PROJECT_ID }).conversation.items.some(
+      (item) => item.item_kind === 'candidate_reviewed',
+    ),
+    false,
+  );
+  assert.equal(firstDrafts.released.length, 0);
+  assert.equal(
+    value.metadata.load_current_project_revision({ project_id: PROJECT_ID }).current.commit_oid,
+    gitReceipt.commit_oid,
+  );
+
+  const restoredDraft = { ...draft, restart_restore: 'git_sqlite_verified' };
+  const restartedDrafts = draftsStore(restoredDraft);
+  const restartedRecords = [];
+  const restartedConversation = createBuilderConversationMainService({
+    metadataAuthority: value.metadata,
+    createUuid: uuidFactory(1_400),
+    nowMs: () => 90_000,
+  });
+  const restartedSaveAuthority = createBuilderProjectSaveAuthority({
+    generationDrafts: restartedDrafts,
+    conversationService: restartedConversation,
+    gitAuthority: {
+      verify_candidate_receipt(receipt) {
+        return value.git.verify_candidate_receipt(receipt);
+      },
+    },
+    currentProjection: value.projection,
+    metadataAuthority: {
+      load_project_identity(request) { return value.metadata.load_project_identity(request); },
+      record_project_revision_receipt(request) {
+        restartedRecords.push(request);
+        return value.metadata.record_project_revision_receipt(request);
+      },
+    },
+    projectReadAuthority: {
+      load_current(request) { return value.read.load_current(request); },
+    },
+    createUuid: uuidFactory(1_500),
+    nowMs: () => 95_000,
+  });
+
+  const saved = await restartedSaveAuthority.save({ draft_id: draft.draft_id });
+  assert.equal(saved.pending_draft_released, true);
+  assert.equal(saved.save_evidence.projection_main_ref, 'updated');
+  assert.equal(restartedRecords.length, 1);
+  assert.equal(restartedDrafts.released.length, 1);
+  assert.equal(restartedConversation.read_stream({ project_id: PROJECT_ID }).conversation.items.at(-1).item_kind, 'candidate_reviewed');
+  assert.deepEqual(restartedRecords[0].idempotency, firstRecords[0].idempotency);
+  assert.deepEqual(restartedRecords[0].review, firstRecords[0].review);
+  assert.equal(restartedRecords[0].task.created_at_ms, firstRecords[0].task.created_at_ms);
+  assert.equal(restartedRecords[0].run.completed_at_ms, firstRecords[0].run.completed_at_ms);
+  assert.equal(restartedRecords[0].project_revision.selected_at_ms, firstRecords[0].project_revision.selected_at_ms);
+  assert.equal(
+    fs.readFileSync(path.join(value.gitOptions.projects_root, UUID, 'index.html'), 'utf8'),
+    '<main>Hello after restart</main>\n',
+  );
+  value.metadata.close();
+});
+
+test('maps projection CAS conflict without accepting or releasing the pending draft', async () => {
+  const value = candidate({
+    index: 1,
+    operations: [{ operation: 'upsert', path: 'index.html', content: '<main>Hello</main>\n' }],
+  });
+  const draft = pending(value);
+  const generationDrafts = draftsStore(draft);
+  const gitReceipt = candidateGitReceipts.get(value);
+  const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
+  const conversationService = conversationServiceFor(draft);
+  const saveAuthority = createBuilderProjectSaveAuthority({
+    generationDrafts,
+    conversationService,
+    gitAuthority: {
+      verify_candidate_receipt() {
+        return verification;
+      },
+    },
+    currentProjection: {
+      project_current(request) {
+        assert.deepEqual(request, {
+          candidate_receipt: gitReceipt,
+          projection_mode: 'sqlite_current_repair',
+        });
+        const error = new Error('private main drift');
+        error.code = 'builder_git_current_projection_conflict';
+        throw error;
+      },
+    },
+    metadataAuthority: {
+      load_project_identity() { return projectIdentityResult(58_000); },
+      record_project_revision_receipt() {
+        return {
+          receipt: {
+            project_id: PROJECT_ID,
+            revision_receipt_digest: `sha256:${'e'.repeat(64)}`,
+            revision_number: 1,
+            commit_oid: gitReceipt.commit_oid,
+          },
+        };
+      },
+    },
+    projectReadAuthority: { load_current() { throw new Error('must not read after projection conflict'); } },
+    createUuid: uuidFactory(),
+    nowMs: () => 58_000,
+  });
+
+  await assert.rejects(
+    saveAuthority.save({ draft_id: draft.draft_id }),
+    expectSaveError('builder_project_save_conflict', ['private main drift']),
+  );
+  assert.equal(conversationService.accepted.length, 0);
+  assert.equal(generationDrafts.released.length, 0);
 });
 
 test('maps CAS conflict without releasing the pending draft', async () => {
@@ -730,6 +1099,7 @@ test('maps CAS conflict without releasing the pending draft', async () => {
         return createBuilderGitCandidateVerificationReceipt(receipt);
       },
     },
+    currentProjection: { project_current() { throw new Error('must not project after conflict'); } },
     metadataAuthority: {
       load_project_identity() { return projectIdentityResult(60_000); },
       record_project_revision_receipt() {
@@ -768,6 +1138,7 @@ test('rejects malformed save authority input with fixed redacted errors', async 
     generationDrafts,
     conversationService: conversationServiceFor(draft),
     gitAuthority: { verify_candidate_receipt() {} },
+    currentProjection: { project_current() {} },
     metadataAuthority: { load_project_identity() {}, record_project_revision_receipt() {} },
     projectReadAuthority: { load_current() {} },
     createUuid: uuidFactory(),
@@ -799,6 +1170,7 @@ test('rejects malformed save authority input with fixed redacted errors', async 
         driftVerifyCalls += 1;
       },
     },
+    currentProjection: { project_current() { throw new Error('must not project after invalid verification'); } },
     metadataAuthority: {
       load_project_identity() {},
       record_project_revision_receipt() {},
@@ -830,6 +1202,7 @@ test('rejects malformed save authority input with fixed redacted errors', async 
     gitAuthority: {
       verify_candidate_receipt() { throw hostile; },
     },
+    currentProjection: { project_current() { throw new Error('must not project after hostile Git verify'); } },
     metadataAuthority: { load_project_identity() {}, record_project_revision_receipt() {} },
     projectReadAuthority: { load_current() {} },
     createUuid: uuidFactory(),
