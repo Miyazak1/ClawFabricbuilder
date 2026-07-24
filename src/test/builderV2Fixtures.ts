@@ -218,6 +218,9 @@ export async function createGenerationDraft(
 ): Promise<BuilderGenerationDraft> {
   const request = requestValue ?? await createBuilderGenerationRequest('Make a small tool.');
   const sourceTree = sourceTreeValue ?? await createSourceTree();
+  const baseRead = request.existing_project_id === null
+    ? null
+    : await createReadWire(sourceTree);
   return {
     version: BUILDER_GENERATION_RESULT_PROTOCOL,
     request_id: request.request_digest,
@@ -237,8 +240,8 @@ export async function createGenerationDraft(
       : {
         evidence_version: 'builder-project-base-revision-evidence.v2',
         project_id: request.existing_project_id,
-        revision_receipt_digest: await digest({ revision: 'base' }),
-        commit_oid: COMMIT_OID,
+        revision_receipt_digest: baseRead!.product_revision_receipt.revision_receipt_digest,
+        commit_oid: baseRead!.product_revision_receipt.commit_oid,
         source_tree_digest: sourceTree.source_tree_digest,
         verification_admission: 'git_sqlite_read_authority_verified',
       },

@@ -15,6 +15,7 @@ const {
   SELECTORS,
   assertCustomChromeControls,
   assertExactRevision,
+  assertRevisionAdvance,
   assertReadEvidence,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
@@ -33,6 +34,7 @@ const {
   runPackagedCanary,
   sanitizeLaunchEnvironment,
   summarizePng,
+  updateProjectViaUi,
 } = require('../scripts/verify-packaged-canary.cjs');
 
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
@@ -103,7 +105,7 @@ class FakeLocator {
     if (this.selector === SELECTORS.previewFrame && name === 'sandbox') return '';
     if (this.page.failPreviewAttributes) return 'unsafe';
     if (this.selector === SELECTORS.previewFrame && name === 'srcdoc') {
-      return '<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src \'none\'"><body><main>Focus timer preview</main></body>';
+      return `<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><body><main>Focus timer preview ${this.page.savedRevision}</main></body>`;
     }
     return null;
   }
@@ -125,7 +127,9 @@ class FakeLocator {
 
   async textContent() {
     this.page.events.push(['textContent', this.selector]);
-    if (this.selector === SELECTORS.currentVersion) return this.page.versionLabel;
+    if (this.selector === SELECTORS.currentVersion) {
+      return this.page.forcedVersionLabel ?? this.page.versionLabel;
+    }
     return null;
   }
 
@@ -159,7 +163,12 @@ class FakeRole {
     this.page.events.push(['roleClick', this.role, this.name]);
     if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
-    if (this.name === 'Save version' && this.page.persistSave) this.page.draftSaved = true;
+    if (this.name === 'Save version' && this.page.persistSave) {
+      const revision = await this.page.commitSave();
+      this.page.draftSaved = revision > 0;
+      this.page.savedRevision = revision;
+      this.page.versionLabel = `Version ${revision}`;
+    }
   }
 
   async waitFor(options) {
@@ -211,13 +220,16 @@ class FakePage {
     this.failRoleWaits = new Set();
     this.failTextWaitFor = new Set();
     this.failWaitFor = new Set();
+    this.forcedVersionLabel = null;
     this.disabledRoles = new Set();
     this.keepPasswordValue = false;
     this.previewVisible = true;
     this.projectStatus = 'ready';
+    this.savedRevision = 0;
     this.versionLabel = 'Version 1';
     this.values = new Map();
     this.listeners = new Map();
+    this.commitSave = async () => this.savedRevision + 1;
   }
 
   emitRequest(url) {
@@ -274,23 +286,36 @@ function sourceEntry(pathValue, content) {
   return { ...body, content_digest: digestCanonical(body) };
 }
 
-function bridgeEvidence(projectId = null, saved = true) {
-  const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
-  const selectedProjectId = projectId ?? canonicalProjectId;
+function revisionEvidence(selectedProjectId, revisionNumber) {
+  const previous = revisionNumber === 2 ? revisionEvidence(selectedProjectId, 1) : null;
+  const second = revisionNumber === 2;
   const conversationId = 'builder-conversation:11111111-1111-4111-8111-111111111111';
-  const turnId = 'builder-turn:22222222-2222-4222-8222-222222222222';
-  const taskId = 'builder-task:33333333-3333-4333-8333-333333333333';
-  const runId = 'builder-run:44444444-4444-4444-8444-444444444444';
-  const requestId = 'builder-git-request:55555555-5555-4555-8555-555555555555';
-  const reviewId = 'builder-review:66666666-6666-4666-8666-666666666666';
-  const candidateId = `builder-code-change-candidate:${'7'.repeat(64)}`;
-  const candidateDigest = `sha256:${'8'.repeat(64)}`;
-  const semanticIdentityDigest = `sha256:${'9'.repeat(64)}`;
-  const commitOid = 'a'.repeat(40);
-  const treeOid = 'b'.repeat(40);
+  const turnId = second
+    ? 'builder-turn:77777777-7777-4777-8777-777777777777'
+    : 'builder-turn:22222222-2222-4222-8222-222222222222';
+  const taskId = second
+    ? 'builder-task:88888888-8888-4888-8888-888888888888'
+    : 'builder-task:33333333-3333-4333-8333-333333333333';
+  const runId = second
+    ? 'builder-run:99999999-9999-4999-8999-999999999999'
+    : 'builder-run:44444444-4444-4444-8444-444444444444';
+  const requestId = second
+    ? 'builder-git-request:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    : 'builder-git-request:55555555-5555-4555-8555-555555555555';
+  const reviewId = second
+    ? 'builder-review:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    : 'builder-review:66666666-6666-4666-8666-666666666666';
+  const candidateId = `builder-code-change-candidate:${(second ? 'e' : '7').repeat(64)}`;
+  const candidateDigest = `sha256:${(second ? 'f' : '8').repeat(64)}`;
+  const semanticIdentityDigest = `sha256:${(second ? '1' : '9').repeat(64)}`;
+  const commitOid = (second ? 'c' : 'a').repeat(40);
+  const treeOid = (second ? 'd' : 'b').repeat(40);
+  const parentOid = previous?.receipt.commit_oid ?? null;
   const files = [
     sourceEntry('app.js', ''),
-    sourceEntry('index.html', '<main>Focus timer</main>'),
+    sourceEntry('index.html', second
+      ? '<main><h1>Focus timer</h1><p>Stay on track.</p></main>'
+      : '<main>Focus timer</main>'),
     sourceEntry('styles.css', 'main { color: black; }'),
   ];
   const sourceTreeBody = {
@@ -309,7 +334,7 @@ function bridgeEvidence(projectId = null, saved = true) {
     commit_oid: commitOid,
     commit_ref_admission: 'verified',
     conversation_id: conversationId,
-    expected_base_oid: null,
+    expected_base_oid: parentOid,
     object_format: 'sha1',
     project_id: selectedProjectId,
     receipt_version: 'builder-git-candidate-verification-receipt.v1',
@@ -330,9 +355,9 @@ function bridgeEvidence(projectId = null, saved = true) {
     code_authority: 'git_commit_candidate',
     commit_oid: commitOid,
     conversation_id: conversationId,
-    expected_base_oid: null,
+    expected_base_oid: parentOid,
     object_format: 'sha1',
-    parent_oid: null,
+    parent_oid: parentOid,
     product_revision_admission: 'not_recorded',
     project_id: selectedProjectId,
     receipt_version: 'builder-git-candidate-receipt.v1',
@@ -353,15 +378,15 @@ function bridgeEvidence(projectId = null, saved = true) {
     commit_oid: commitOid,
     conversation_id: conversationId,
     object_format: 'sha1',
-    parent_oid: null,
-    previous_revision_receipt_digest: null,
+    parent_oid: parentOid,
+    previous_revision_receipt_digest: previous?.receipt.revision_receipt_digest ?? null,
     project_id: selectedProjectId,
     request_id: requestId,
     resulting_tree_digest: sourceTree.source_tree_digest,
     review_id: reviewId,
-    revision_number: 1,
+    revision_number: revisionNumber,
     run_id: runId,
-    selected_at_ms: 1000,
+    selected_at_ms: revisionNumber * 1000,
     semantic_identity_digest: semanticIdentityDigest,
     summary: 'A timer.',
     task_id: taskId,
@@ -377,23 +402,30 @@ function bridgeEvidence(projectId = null, saved = true) {
   const current = {
     commit_oid: commitOid,
     object_format: 'sha1',
-    parent_oid: null,
+    parent_oid: parentOid,
     project_id: selectedProjectId,
-    revision_number: 1,
+    revision_number: revisionNumber,
     revision_receipt_digest: receipt.revision_receipt_digest,
     summary: receipt.summary,
     title: receipt.title,
     tree_oid: treeOid,
   };
+  return { candidate, current, receipt, sourceTree, verification };
+}
+
+function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
+  const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const selectedProjectId = projectId ?? canonicalProjectId;
+  const revision = revisionEvidence(selectedProjectId, revisionNumber);
   const project = {
-    commit_oid: commitOid,
+    commit_oid: revision.receipt.commit_oid,
     project_id: canonicalProjectId,
-    revision_number: 1,
-    revision_receipt_digest: receipt.revision_receipt_digest,
-    selected_at_ms: 1000,
-    summary: receipt.summary,
-    title: receipt.title,
-    tree_oid: treeOid,
+    revision_number: revisionNumber,
+    revision_receipt_digest: revision.receipt.revision_receipt_digest,
+    selected_at_ms: revision.receipt.selected_at_ms,
+    summary: revision.receipt.summary,
+    title: revision.receipt.title,
+    tree_oid: revision.receipt.tree_oid,
   };
   return {
     bridge_contract: {
@@ -418,13 +450,13 @@ function bridgeEvidence(projectId = null, saved = true) {
         product_authority: 'sqlite_product_revision_receipt',
         source_read_admission: 'verified',
       },
-      current,
-      git_candidate_receipt: candidate,
-      git_verification_receipt: verification,
+      current: revision.current,
+      git_candidate_receipt: revision.candidate,
+      git_verification_receipt: revision.verification,
       operation: 'current_loaded',
-      product_revision_receipt: receipt,
+      product_revision_receipt: revision.receipt,
       result_version: 'builder-project-read-result.v1',
-      source_tree: sourceTree,
+      source_tree: revision.sourceTree,
     },
     status: {
       status_version: 'builder-provider-settings-status.v1',
@@ -442,8 +474,16 @@ function installBridge(page) {
       generate() { throw new Error('must not write through bridge'); },
     },
     projectWorkspace: {
-      async listCurrent() { return bridgeEvidence(null, page.draftSaved).catalog; },
-      async loadCurrent(request) { return bridgeEvidence(request.project_id, page.draftSaved).current; },
+      async listCurrent() {
+        return bridgeEvidence(null, page.draftSaved, Math.max(1, page.savedRevision)).catalog;
+      },
+      async loadCurrent(request) {
+        return bridgeEvidence(
+          request.project_id,
+          page.draftSaved,
+          Math.max(1, page.savedRevision),
+        ).current;
+      },
       async saveDraft() { throw new Error('must not write through bridge'); },
     },
     providerSettings: {
@@ -454,11 +494,22 @@ function installBridge(page) {
 }
 
 function fakeElectron(page) {
+  const durableStore = { revision: 0 };
   const fake = {
     appEvents: [],
     launches: [],
+    pages: [],
     async launch(options) {
       fake.launches.push(options);
+      const activePage = fake.launches.length === 1 ? page : new FakePage();
+      activePage.savedRevision = durableStore.revision;
+      activePage.draftSaved = durableStore.revision > 0;
+      activePage.versionLabel = `Version ${Math.max(1, durableStore.revision)}`;
+      activePage.commitSave = async () => {
+        durableStore.revision += 1;
+        return durableStore.revision;
+      };
+      fake.pages.push(activePage);
       const requestListeners = [];
       return {
         context: () => {
@@ -476,12 +527,16 @@ function fakeElectron(page) {
         },
         async firstWindow() {
           fake.appEvents.push(['firstWindow']);
-          page.evaluate = async (callback, argument) => {
-            page.events.push(['evaluate', callback.toString(), argument]);
-            return bridgeEvidence(argument.projectId, page.draftSaved);
+          activePage.evaluate = async (callback, argument) => {
+            activePage.events.push(['evaluate', callback.toString(), argument]);
+            return bridgeEvidence(
+              argument.projectId,
+              durableStore.revision > 0,
+              Math.max(1, durableStore.revision),
+            );
           };
-          page.artifactsAllowed = true;
-          return page;
+          activePage.artifactsAllowed = true;
+          return activePage;
         },
       };
     },
@@ -849,6 +904,32 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('verifies Version 1 before saving a second unsaved draft as Version 2', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+  ).current.product_revision_receipt;
+  const update = await updateProjectViaUi(page, firstRevision);
+
+  assert.deepEqual(update, {
+    previous_revision_verified_before_save: true,
+    saved_via_ui: true,
+    unsaved_draft_observed: true,
+  });
+  assert.equal(page.savedRevision, 2);
+  assert.equal(page.versionLabel, 'Version 2');
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['New project', 'Make draft', 'Save version', 'Make change', 'Save version'],
+  );
+});
+
 test('reports fixed redacted UI stages without raw provider, prompt, or DOM details', async () => {
   const provider = parseCanaryInput(input()).provider;
   const stages = [
@@ -963,10 +1044,79 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       run: async () => {
         const page = new FakePage();
         installBridge(page);
-        page.versionLabel = 'Version 2';
+        page.forcedVersionLabel = 'Version 2';
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'version',
+    },
+    {
+      code: 'canary_update_generation_terminal_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.alertVisible = true;
+        page.previewVisible = false;
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await updateProjectViaUi(page, first);
+      },
+      stage: 'update_generation_terminal',
+    },
+    {
+      code: 'canary_update_draft_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.failTextWaitFor.add('Unsaved draft');
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await updateProjectViaUi(page, first);
+      },
+      stage: 'update_draft',
+    },
+    {
+      code: 'canary_update_save_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.failRoleClicks.add('button:Save version');
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await updateProjectViaUi(page, first);
+      },
+      stage: 'update_save',
+    },
+    {
+      code: 'canary_update_save_confirmation_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.failWaitFor.add(SELECTORS.unsavedDraft);
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await updateProjectViaUi(page, first);
+      },
+      stage: 'update_save_confirmation',
     },
     {
       code: 'canary_preview_failed',
@@ -1123,6 +1273,28 @@ test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
   );
 });
 
+test('rejects every forged Version 2 parent-chain facet', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const first = revisionEvidence(projectId, 1).receipt;
+  const second = revisionEvidence(projectId, 2).receipt;
+  const forgeries = [
+    { ...second, revision_number: 3 },
+    { ...second, project_id: 'builder-project:22222222-2222-4222-8222-222222222222' },
+    { ...second, parent_oid: 'f'.repeat(40) },
+    { ...second, previous_revision_receipt_digest: `sha256:${'f'.repeat(64)}` },
+    { ...second, commit_oid: first.commit_oid },
+    { ...second, tree_oid: first.tree_oid },
+    { ...second, revision_receipt_digest: first.revision_receipt_digest },
+  ];
+
+  for (const forged of forgeries) {
+    assert.throws(
+      () => assertRevisionAdvance(first, forged),
+      (error) => error.code === 'canary_evidence_failed',
+    );
+  }
+});
+
 test('summarizes nonblank preview pixels and tracks unexpected renderer network', () => {
   const summary = summarizePng(pngFixture());
   assert.equal(summary.width, 5);
@@ -1224,22 +1396,40 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v2');
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v3');
   assert.equal(result.safe_storage.credential_status, 'stored');
   assert.deepEqual(result.draft, {
-    pre_save_catalog_empty: true,
-    saved_via_ui: true,
-    unsaved_draft_observed: true,
+    initial: {
+      pre_save_catalog_empty: true,
+      saved_via_ui: true,
+      unsaved_draft_observed: true,
+    },
+    update: {
+      previous_revision_verified_before_save: true,
+      saved_via_ui: true,
+      unsaved_draft_observed: true,
+    },
   });
-  assert.equal(result.project.revision_number, 1);
+  assert.equal(result.project.initial_revision_number, 1);
+  assert.equal(result.project.revision_number, 2);
+  assert.equal(result.project.parent_oid, result.project.initial_commit_oid);
+  assert.equal(
+    result.project.previous_revision_receipt_digest,
+    result.project.initial_revision_receipt_digest,
+  );
+  assert.notEqual(result.project.commit_oid, result.project.initial_commit_oid);
+  assert.notEqual(result.project.tree_oid, result.project.initial_tree_oid);
   assert.match(result.project.revision_receipt_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.match(result.project.commit_oid, /^[0-9a-f]{40}$/u);
   assert.match(result.project.tree_oid, /^[0-9a-f]{40}$/u);
   assert.equal(result.project.restart_revision_unchanged, true);
-  assert.equal(result.project.restart_new_revision_observed, false);
+  assert.equal(result.project.restart_new_revision_observed, true);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
-  assert.equal(result.preview.first.sandbox, 'empty');
-  assert.equal(result.preview.first.script_src, 'none');
+  assert.equal(result.preview.update_changed_srcdoc, true);
+  assert.equal(result.preview.initial.sandbox, 'empty');
+  assert.equal(result.preview.initial.script_src, 'none');
+  assert.equal(result.preview.updated.sandbox, 'empty');
+  assert.equal(result.preview.updated.script_src, 'none');
   assert.equal(JSON.stringify(result).includes(parsed.provider.credential), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.model), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.base_url), false);
@@ -1255,7 +1445,12 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   ]) {
     assert.equal(resultPacket.includes(forbidden), false);
   }
-  assert.deepEqual(Object.keys(result.input).sort(), ['credential_source', 'idea_digest', 'schema_version']);
+  assert.deepEqual(Object.keys(result.input).sort(), [
+    'credential_source',
+    'idea_digest',
+    'schema_version',
+    'update_instruction_digest',
+  ]);
   assert.equal(electron.launches.length, 2);
   assert.deepEqual(electron.appEvents, [
     ['context'],
@@ -1272,19 +1467,21 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     assert.equal(Object.hasOwn(launch.env, 'PROVIDER_API_KEY'), false);
     assert.equal(Object.hasOwn(launch.env, 'PATH'), true);
   }
-  const scopedLocators = page.events.filter((event) => event[0] === 'scopedLocator');
+  const allPageEvents = electron.pages.flatMap((candidate) => candidate.events);
+  const scopedLocators = allPageEvents.filter((event) => event[0] === 'scopedLocator');
   assert.equal(scopedLocators.length, 1);
   assert.equal(scopedLocators[0][1], SELECTORS.projectCatalog);
   assert.equal(
     scopedLocators[0][2],
     'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
   );
-  const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
+  const scopedTexts = allPageEvents.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
+    ['Unsaved draft', { exact: true }],
     ['Unsaved draft', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
-    ['Version 1', { exact: true }],
+    ['Version 2', { exact: true }],
   ]);
   assert.deepEqual(removed, [userDataPath]);
 });
@@ -1325,20 +1522,24 @@ test('copies only saved provider profile files and runs without provider input o
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v2');
+  assert.equal(result.result_version, 'builder-packaged-canary-result.v3');
   assert.deepEqual(result.input, {
     credential_source: 'saved_profile',
     idea_digest: result.input.idea_digest,
     schema_version: CANARY_INPUT_VERSION,
+    update_instruction_digest: result.input.update_instruction_digest,
   });
   assert.equal(result.user_data.temporary, true);
   assert.equal(result.user_data.source_profile_unchanged, true);
   assert.equal(result.custom_chrome.window_controls_enabled, true);
   assert.equal(result.safe_storage.configured, true);
   assert.equal(result.safe_storage.credential_status, 'stored');
+  assert.equal(result.project.revision_number, 2);
+  assert.equal(result.project.parent_oid, result.project.initial_commit_oid);
   assert.equal(result.project.restart_revision_unchanged, true);
-  assert.equal(result.project.restart_new_revision_observed, false);
+  assert.equal(result.project.restart_new_revision_observed, true);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
+  assert.equal(result.preview.update_changed_srcdoc, true);
   assert.deepEqual(copied.map(([source, target]) => [
     path.relative(parsed.source_user_data_path, source),
     path.relative(userDataPath, target),
@@ -1350,7 +1551,13 @@ test('copies only saved provider profile files and runs without provider input o
   ]);
   assert.deepEqual(copied.map(([source]) => source), [localState, localState, current, secret]);
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Make draft', 'Save version']);
+  assert.deepEqual(roleClicks, [
+    'New project',
+    'Make draft',
+    'Save version',
+    'Make change',
+    'Save version',
+  ]);
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), false);
@@ -1846,7 +2053,11 @@ test('cleanup refuses user data replacement before recursive remove', async (t) 
           if (closeCount === 2) state.stats.set(userDataPath, fakeDirectoryStat(1n, 12n));
         },
         async firstWindow() {
-          page.evaluate = async (callback, argument) => bridgeEvidence(argument.projectId, page.draftSaved);
+          page.evaluate = async (callback, argument) => bridgeEvidence(
+            argument.projectId,
+            page.draftSaved,
+            Math.max(1, page.savedRevision),
+          );
           page.artifactsAllowed = true;
           return page;
         },

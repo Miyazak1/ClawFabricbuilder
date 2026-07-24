@@ -100,6 +100,37 @@ describe('Builder project controller v2', () => {
     expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
   });
 
+  it('rejects a generated draft that is based on stale project revision evidence', async () => {
+    const readWire = await createReadWire();
+    const { controller } = setup({
+      generate: async (request) => {
+        const draft = await createGenerationDraft(request, readWire.source_tree);
+        return {
+          ...draft,
+          base_revision_evidence: {
+            ...draft.base_revision_evidence!,
+            revision_receipt_digest: `sha256:${'f'.repeat(64)}`,
+          },
+        };
+      },
+      open: async () => readWire,
+    });
+    await controller.open(PROJECT_ID);
+    const result = await controller.generate('Add a pause button.');
+
+    expect(result).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_failed',
+      draft: null,
+      savedProject: {
+        target: {
+          project_id: PROJECT_ID,
+          revision_receipt_digest: readWire.product_revision_receipt.revision_receipt_digest,
+        },
+      },
+    });
+  });
+
   it('saves by draft_id only and accepts the verified reopen as current', async () => {
     const readWire = await createReadWire();
     let draft = await createGenerationDraft();

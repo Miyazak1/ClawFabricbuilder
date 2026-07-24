@@ -107,6 +107,21 @@ function snapshot(
   return result;
 }
 
+function draftMatchesSavedBase(
+  draft: BuilderGenerationDraft,
+  savedProject: BuilderProjectReadSnapshot | null,
+): boolean {
+  if (savedProject === null) return draft.base_revision_evidence === null;
+  const base = draft.base_revision_evidence;
+  return (
+    base !== null
+    && base.project_id === savedProject.target.project_id
+    && base.revision_receipt_digest === savedProject.target.revision_receipt_digest
+    && base.commit_oid === savedProject.target.commit_oid
+    && base.source_tree_digest === savedProject.source_tree.source_tree_digest
+  );
+}
+
 export function isTrustedBuilderProjectControllerSnapshot(
   value: unknown,
 ): value is BuilderProjectControllerSnapshot {
@@ -335,6 +350,7 @@ export function createBuilderProjectController(
           await dependencies.generator.generate(request),
           request,
         );
+        if (!draftMatchesSavedBase(draft, retained)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
         return withPreview('draft_ready', retained, draft, operationEpoch);
       } catch (error) {
