@@ -18,6 +18,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'domain/builderProjectHistory.ts',
   'domain/builderProjectSnapshot.ts',
   'domain/builderProviderSettings.ts',
+  'domain/builderSourceTreeChanges.ts',
   'hooks/useBuilderConversationController.ts',
   'hooks/useBuilderProjectCatalogController.ts',
   'hooks/useBuilderProjectHistoryController.ts',
@@ -127,6 +128,10 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'hooks', 'useBuilderProjectHistoryController.ts'),
       'utf8',
     );
+    const sourceTreeChanges = readFileSync(
+      join(BUILDER_ROOT, 'domain', 'builderSourceTreeChanges.ts'),
+      'utf8',
+    );
 
     expect(ports).toContain('open(request: Readonly<{ project_id: string | null }>)');
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
@@ -154,5 +159,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(historyController).not.toMatch(/saveDraft|generate|optimistic|source_tree|commit_oid|tree_oid/u);
     expect(historyHook).toContain('createBuilderProjectHistoryController({ listHistory })');
     expect(historyHook).not.toMatch(/saveDraft|generate|source_tree|ipcRenderer|localStorage/u);
+    expect(sourceTreeChanges).toContain('createBuilderSourceTreeChanges');
+    expect(sourceTreeChanges).not.toMatch(/ipcRenderer|saveDraft|generate|commit_oid|tree_oid|receipt|localStorage/u);
   });
 });

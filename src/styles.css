@@ -454,6 +454,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
 }
 
+.cf-builder-changes-panel,
 .cf-builder-code-panel,
 .cf-builder-preview-panel {
   min-height: 0;
@@ -470,6 +471,108 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-preview-panel {
   overflow: auto;
   padding: 14px;
+}
+
+.cf-builder-changes-panel {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--cf-surface);
+}
+
+.cf-builder-changes-body {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.cf-builder-changes-summary {
+  margin: 0;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cf-builder-changes-list {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.cf-builder-change-item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface-muted);
+  padding: 10px;
+}
+
+.cf-builder-change-kind {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: var(--cf-surface);
+  color: var(--cf-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cf-builder-change-item[data-builder-change-kind="added"] .cf-builder-change-kind {
+  border-color: color-mix(in srgb, #198754 36%, var(--cf-border));
+  color: #1f7a48;
+}
+
+.cf-builder-change-item[data-builder-change-kind="modified"] .cf-builder-change-kind {
+  border-color: color-mix(in srgb, #5f6fb8 36%, var(--cf-border));
+  color: #4f5f9f;
+}
+
+.cf-builder-change-item[data-builder-change-kind="deleted"] .cf-builder-change-kind {
+  border-color: color-mix(in srgb, #b84d4d 34%, var(--cf-border));
+  color: #a14242;
+}
+
+.cf-builder-change-path,
+.cf-builder-change-path-button {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--cf-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.cf-builder-change-path-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.cf-builder-change-path-button:hover {
+  color: var(--cf-primary-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.cf-builder-change-lines {
+  margin: 2px 0 0;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .cf-builder-preview-primary {

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Bot,
   CheckCircle2,
   Eye,
   FileCode2,
+  GitCompareArrows,
   History,
   Play,
   RefreshCw,
@@ -31,6 +32,11 @@ import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
 import type { BuilderConversationItem } from '../domain/builderConversationSnapshot';
 import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
+import {
+  createBuilderSourceTreeChanges,
+  type BuilderSourceTreeChange,
+  type BuilderSourceTreeChanges,
+} from '../domain/builderSourceTreeChanges';
 
 export type BuilderFileName = string;
 
@@ -53,6 +59,7 @@ export type BuilderPageProps = {
 
 const TOOL_VIEWS = Object.freeze([
   { id: 'preview', label: 'Preview', Icon: Eye },
+  { id: 'changes', label: 'Changes', Icon: GitCompareArrows },
   { id: 'code', label: 'Code', Icon: FileCode2 },
 ] as const);
 const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
@@ -189,6 +196,101 @@ function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
   return hasUnsavedDraft
     ? 'Review the draft files in Result before saving this version.'
     : 'Activity keeps this draft summary only and cannot reopen unsaved files.';
+}
+
+function toolPanelId(id: (typeof TOOL_VIEWS)[number]['id']): string {
+  if (id === 'preview') return 'builder-tool-preview';
+  if (id === 'changes') return 'builder-tool-changes';
+  return 'builder-code-panel';
+}
+
+function changesSummary(changes: BuilderSourceTreeChanges): string {
+  if (changes.comparison_kind === 'no_draft') return 'No unsaved changes to review.';
+  if (changes.total_count === 0) return 'This draft has no file changes.';
+  const parts = [
+    changes.added_count === 0 ? null : `${changes.added_count} added`,
+    changes.modified_count === 0 ? null : `${changes.modified_count} changed`,
+    changes.deleted_count === 0 ? null : `${changes.deleted_count} removed`,
+  ].filter((part): part is string => part !== null);
+  return `${changes.total_count} file ${changes.total_count === 1 ? 'change' : 'changes'}: ${parts.join(', ')}.`;
+}
+
+function changeLabel(change: BuilderSourceTreeChange): string {
+  if (change.change_kind === 'added') return 'Added';
+  if (change.change_kind === 'deleted') return 'Removed';
+  return 'Changed';
+}
+
+function lineSummary(change: BuilderSourceTreeChange): string {
+  if (change.change_kind === 'added') {
+    return `${change.after_line_count} ${change.after_line_count === 1 ? 'line' : 'lines'} added`;
+  }
+  if (change.change_kind === 'deleted') {
+    return `${change.before_line_count} ${change.before_line_count === 1 ? 'line' : 'lines'} removed`;
+  }
+  return `${change.before_line_count} ${change.before_line_count === 1 ? 'line' : 'lines'} to ${change.after_line_count} ${change.after_line_count === 1 ? 'line' : 'lines'}`;
+}
+
+function ChangesPanel({
+  changes,
+  onOpenFile,
+}: Readonly<{
+  changes: BuilderSourceTreeChanges;
+  onOpenFile: (change: BuilderSourceTreeChange) => void;
+}>) {
+  return (
+    <section
+      aria-labelledby="builder-tool-tab-changes"
+      className="cf-builder-changes-panel"
+      data-builder-changes-panel="true"
+      id="builder-tool-changes"
+      role="tabpanel"
+    >
+      <div className="cf-builder-panel-toolbar">
+        <GitCompareArrows aria-hidden="true" className="size-4" />
+        Changes
+      </div>
+      <div className="cf-builder-changes-body">
+        <p className="cf-builder-changes-summary" data-builder-changes-summary="true">
+          {changesSummary(changes)}
+        </p>
+        {changes.files.length === 0 ? (
+          <div className="cf-builder-empty flex min-h-56 items-center justify-center border border-dashed px-4 text-center text-sm">
+            {changes.comparison_kind === 'no_draft'
+              ? 'Make a draft to compare it with the current version.'
+              : 'No file changes were found in this draft.'}
+          </div>
+        ) : (
+          <ol className="cf-builder-changes-list">
+            {changes.files.map((change) => (
+              <li
+                className="cf-builder-change-item"
+                data-builder-change-card={`${changeLabel(change)} ${change.path}`}
+                data-builder-change-kind={change.change_kind}
+                key={`${change.change_kind}:${change.path}`}
+              >
+                <span className="cf-builder-change-kind">{changeLabel(change)}</span>
+                <div className="min-w-0">
+                  {change.change_kind === 'deleted' ? (
+                    <span className="cf-builder-change-path">{change.path}</span>
+                  ) : (
+                    <button
+                      className="cf-builder-change-path-button"
+                      onClick={() => onOpenFile(change)}
+                      type="button"
+                    >
+                      {change.path}
+                    </button>
+                  )}
+                  <p className="cf-builder-change-lines">{lineSummary(change)}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function VersionItem({ revision }: Readonly<{ revision: BuilderProjectHistoryRevision }>) {
@@ -430,6 +532,10 @@ export function BuilderPage({
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
   const history = visibleHistorySnapshot(historySnapshot);
+  const changes = useMemo(() => createBuilderSourceTreeChanges(
+    saved?.source_tree ?? null,
+    draft?.source_tree ?? null,
+  ), [draft, saved]);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [toolView, setToolView] = useState<(typeof TOOL_VIEWS)[number]['id']>('preview');
 
@@ -449,6 +555,12 @@ export function BuilderPage({
     const index = files.findIndex((file) => file.path === selected.path);
     const next = files[(index + offset + files.length) % files.length];
     selectFile(next.path);
+  }
+
+  function openChangedFile(change: BuilderSourceTreeChange): void {
+    if (change.change_kind === 'deleted') return;
+    setToolView('code');
+    onSelectFile?.(change.path);
   }
 
   return (
@@ -497,13 +609,17 @@ export function BuilderPage({
             <div className="min-w-0">
               <p className="text-xs font-medium text-muted-foreground">Result</p>
               <h2 className="text-sm font-semibold">
-                {toolView === 'preview' ? 'Project preview' : 'Project files'}
+                {toolView === 'preview'
+                  ? 'Project preview'
+                  : toolView === 'changes'
+                    ? 'Project changes'
+                    : 'Project files'}
               </h2>
             </div>
             <div className="cf-builder-tool-switch" role="tablist" aria-label="Project tools">
               {TOOL_VIEWS.map(({ Icon, id, label }) => (
                 <button
-                  aria-controls={id === 'preview' ? 'builder-tool-preview' : 'builder-code-panel'}
+                  aria-controls={toolPanelId(id)}
                   aria-selected={toolView === id}
                   className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
                   data-active={toolView === id}
@@ -605,6 +721,13 @@ export function BuilderPage({
                   <code>{selected?.content ?? ''}</code>
                 </pre>
               </section>
+
+              <div hidden={toolView !== 'changes'}>
+                <ChangesPanel
+                  changes={changes}
+                  onOpenFile={openChangedFile}
+                />
+              </div>
             </div>
             <div className="cf-builder-side-stack">
               <VersionHistoryPanel

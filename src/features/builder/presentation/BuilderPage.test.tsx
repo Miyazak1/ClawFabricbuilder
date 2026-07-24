@@ -15,8 +15,10 @@ import {
   createHistoryWire,
   createReadWire,
   createSaveResult,
+  createSourceTree,
   createTaskStreamWire,
 } from '../../../test/builderV2Fixtures';
+import { createBuilderGenerationRequest } from '../application/builderGeneration';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ container: HTMLDivElement; root: Root }> = [];
@@ -98,6 +100,66 @@ async function savedHistory() {
     listHistory: async () => createHistoryWire(PROJECT_ID, 1),
   });
   return controller.load(PROJECT_ID);
+}
+
+async function changedDraftSnapshot() {
+  const baseTree = await createSourceTree([
+    { path: 'index.html', content: '<main>Old</main>\n' },
+    { path: 'styles.css', content: 'main { color: black; }\n' },
+    { path: 'src/remove.ts', content: 'const removed = true;\n' },
+  ]);
+  const draftTree = await createSourceTree([
+    { path: 'index.html', content: '<main>New</main>\n<section>Detail</section>\n' },
+    { path: 'styles.css', content: 'main { color: black; }\n' },
+    { path: 'src/add.ts', content: 'const added = true;\n' },
+  ]);
+  const readWire = await createReadWire(baseTree);
+  const request = await createBuilderGenerationRequest('Update the saved project.', PROJECT_ID);
+  const rawDraft = await createGenerationDraft(request, draftTree);
+  const draft = {
+    ...rawDraft,
+    base_revision_evidence: {
+      ...rawDraft.base_revision_evidence!,
+      revision_receipt_digest: readWire.product_revision_receipt.revision_receipt_digest,
+      commit_oid: readWire.product_revision_receipt.commit_oid,
+      source_tree_digest: baseTree.source_tree_digest,
+    },
+  };
+  const controller = createBuilderProjectController({
+    generator: {
+      async generate() {
+        return draft;
+      },
+      async answer() {
+        return createGenerationAnswer(request);
+      },
+      async restoreDraft() {
+        return draft;
+      },
+      async cancel(cancelRequest) {
+        return { request_id: cancelRequest.request_id, cancelled: true };
+      },
+    },
+    workspace: {
+      async open() {
+        return readWire;
+      },
+      async saveDraft() {
+        return createSaveResult(draft, readWire);
+      },
+      async loadCurrent() {
+        return readWire;
+      },
+      async listCurrent() {
+        return { projects: [] };
+      },
+      async listHistory() {
+        return { revisions: [] };
+      },
+    },
+  });
+  await controller.open(PROJECT_ID);
+  return controller.generate('Update the saved project.');
 }
 
 function click(container: HTMLElement, selector: string): void {
@@ -220,6 +282,39 @@ describe('BuilderPage v2', () => {
       .toBe(true);
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('shows draft file changes before Save without exposing source or Git evidence', async () => {
+    const draftReady = await changedDraftSnapshot();
+    const onSelectFile = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Update the saved project."
+        onSelectFile={onSelectFile}
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '#builder-tool-tab-changes');
+
+    const changesPanel = container.querySelector('[data-builder-changes-panel="true"]');
+    expect(changesPanel).not.toBeNull();
+    expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)
+      .toContain('3 file changes: 1 added, 1 changed, 1 removed.');
+    expect(container.querySelector('[data-builder-change-card="Changed index.html"]')?.textContent)
+      .toContain('1 line to 2 lines');
+    expect(container.querySelector('[data-builder-change-card="Added src/add.ts"]')?.textContent)
+      .toContain('1 line added');
+    expect(container.querySelector('[data-builder-change-card="Removed src/remove.ts"]')?.textContent)
+      .toContain('1 line removed');
+    expect(changesPanel?.textContent).not.toMatch(
+      /<main>Old|<main>New|const added|const removed|sha256:|commit_oid|tree_oid|receipt/iu,
+    );
+
+    onSelectFile.mockClear();
+    click(container, '[data-builder-change-card="Added src/add.ts"] button');
+    expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
   });
 
   it('shows Git/SQLite revision number only for a verified saved snapshot', async () => {
