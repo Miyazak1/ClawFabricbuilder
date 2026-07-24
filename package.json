@@ -19,6 +19,7 @@
     "build": "npm run typecheck && vite build",
     "verify:package": "node scripts/verify-package.cjs",
     "verify:packaged-canary": "node scripts/verify-packaged-canary.cjs",
+    "verify:packaged-canary:deepseek": "node scripts/verify-deepseek-packaged-canary.cjs",
     "pack": "npm run build && electron-builder --dir && npm run verify:package",
     "dist": "npm run build && electron-builder --win nsis && npm run verify:package"
   },
