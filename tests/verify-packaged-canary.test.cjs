@@ -19,6 +19,7 @@ const {
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
+  assertTaskStreamCandidateFacts,
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
   askProjectQuestionViaUi,
@@ -31,6 +32,7 @@ const {
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
   generateProjectViaUi,
+  inspectHistoryVersionViaUi,
   networkRecorder,
   openProjectFromCatalogById,
   parseCanaryInput,
@@ -87,6 +89,11 @@ class FakeLocator {
   async click() {
     this.page.events.push(['click', this.selector]);
     if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
+    const historyMatch = /\[data-builder-view-version="Version ([1-9][0-9]*)"\]/u.exec(this.selector);
+    if (historyMatch !== null) {
+      this.page.historyViewingRevision = Number(historyMatch[1]);
+      this.page.versionLabel = `Version ${this.page.savedRevision}`;
+    }
   }
 
   async fill(value) {
@@ -115,7 +122,8 @@ class FakeLocator {
     if (this.selector === SELECTORS.previewFrame && name === 'sandbox') return '';
     if (this.page.failPreviewAttributes) return 'unsafe';
     if (this.selector === SELECTORS.previewFrame && name === 'srcdoc') {
-      const previewRevision = Math.max(this.page.savedRevision, this.page.candidateTurns);
+      const previewRevision = this.page.historyViewingRevision
+        ?? Math.max(this.page.savedRevision, this.page.candidateTurns);
       return `<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><body><main>Focus timer preview ${previewRevision}</main></body>`;
     }
     return null;
@@ -175,6 +183,10 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, options?.state ?? 'visible');
       return;
     }
+    if (this.selector === SELECTORS.historyPreview) {
+      this.page.assertSelectorVisibility(this.selector, this.page.historyViewingRevision !== null, options?.state ?? 'visible');
+      return;
+    }
     if (this.selector === SELECTORS.preview && this.page.previewVisible === false) {
       return new Promise(() => {});
     }
@@ -201,6 +213,10 @@ class FakeRole {
     if (this.name === 'Make change') this.page.recordCandidateAttempt(this.page.savedRevision + 1);
     if (this.name === 'Retry') this.page.retryCandidateAttempt();
     if (this.name === 'Ask') this.page.recordQuestion();
+    if (this.name === 'Back to current') {
+      this.page.historyViewingRevision = null;
+      this.page.versionLabel = `Version ${Math.max(1, this.page.savedRevision)}`;
+    }
     if (this.name === 'Save version' && this.page.persistSave) {
       const revision = await this.page.commitSave();
       this.page.draftSaved = revision > 0;
@@ -261,6 +277,7 @@ class FakePage {
     this.failTextWaitFor = new Set();
     this.failWaitFor = new Set();
     this.forcedVersionLabel = null;
+    this.historyViewingRevision = null;
     this.disabledRoles = new Set();
     this.draftFailuresRemaining = 0;
     this.keepPasswordValue = false;
@@ -374,35 +391,48 @@ function sourceEntry(pathValue, content) {
 }
 
 function revisionEvidence(selectedProjectId, revisionNumber) {
-  const previous = revisionNumber === 2 ? revisionEvidence(selectedProjectId, 1) : null;
+  const previous = revisionNumber > 1 ? revisionEvidence(selectedProjectId, revisionNumber - 1) : null;
   const second = revisionNumber === 2;
+  const third = revisionNumber === 3;
   const conversationId = 'builder-conversation:11111111-1111-4111-8111-111111111111';
-  const turnId = second
-    ? 'builder-turn:77777777-7777-4777-8777-777777777777'
-    : 'builder-turn:22222222-2222-4222-8222-222222222222';
-  const taskId = second
-    ? 'builder-task:88888888-8888-4888-8888-888888888888'
-    : 'builder-task:33333333-3333-4333-8333-333333333333';
-  const runId = second
-    ? 'builder-run:99999999-9999-4999-8999-999999999999'
-    : 'builder-run:44444444-4444-4444-8444-444444444444';
-  const requestId = second
-    ? 'builder-git-request:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-    : 'builder-git-request:55555555-5555-4555-8555-555555555555';
-  const reviewId = second
-    ? 'builder-review:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-    : 'builder-review:66666666-6666-4666-8666-666666666666';
-  const candidateId = `builder-code-change-candidate:${(second ? 'e' : '7').repeat(64)}`;
-  const candidateDigest = `sha256:${(second ? 'f' : '8').repeat(64)}`;
-  const semanticIdentityDigest = `sha256:${(second ? '1' : '9').repeat(64)}`;
-  const commitOid = (second ? 'c' : 'a').repeat(40);
-  const treeOid = (second ? 'd' : 'b').repeat(40);
+  const turnId = third
+    ? 'builder-turn:cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    : second
+      ? 'builder-turn:77777777-7777-4777-8777-777777777777'
+      : 'builder-turn:22222222-2222-4222-8222-222222222222';
+  const taskId = third
+    ? 'builder-task:dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    : second
+      ? 'builder-task:88888888-8888-4888-8888-888888888888'
+      : 'builder-task:33333333-3333-4333-8333-333333333333';
+  const runId = third
+    ? 'builder-run:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    : second
+      ? 'builder-run:99999999-9999-4999-8999-999999999999'
+      : 'builder-run:44444444-4444-4444-8444-444444444444';
+  const requestId = third
+    ? 'builder-git-request:ffffffff-ffff-4fff-8fff-ffffffffffff'
+    : second
+      ? 'builder-git-request:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      : 'builder-git-request:55555555-5555-4555-8555-555555555555';
+  const reviewId = third
+    ? 'builder-review:12121212-1212-4212-8212-121212121212'
+    : second
+      ? 'builder-review:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      : 'builder-review:66666666-6666-4666-8666-666666666666';
+  const candidateId = `builder-code-change-candidate:${(third ? '3' : second ? 'e' : '7').repeat(64)}`;
+  const candidateDigest = `sha256:${(third ? '4' : second ? 'f' : '8').repeat(64)}`;
+  const semanticIdentityDigest = `sha256:${(third ? '5' : second ? '1' : '9').repeat(64)}`;
+  const commitOid = (third ? '4' : second ? 'c' : 'a').repeat(40);
+  const treeOid = (third ? '5' : second ? 'd' : 'b').repeat(40);
   const parentOid = previous?.receipt.commit_oid ?? null;
   const files = [
     sourceEntry('app.js', ''),
-    sourceEntry('index.html', second
-      ? '<main><h1>Focus timer</h1><p>Stay on track.</p></main>'
-      : '<main>Focus timer</main>'),
+    sourceEntry('index.html', third
+      ? '<main><h1>Focus timer</h1><p>Stay on track.</p><small>Completed sessions appear here.</small></main>'
+      : second
+        ? '<main><h1>Focus timer</h1><p>Stay on track.</p></main>'
+        : '<main>Focus timer</main>'),
     sourceEntry('styles.css', 'main { color: black; }'),
   ];
   const sourceTreeBody = {
@@ -505,10 +535,12 @@ function taskStreamConversation(selectedProjectId, savedRevision, candidateTurns
   const userMessageIds = [
     'builder-message:10101010-1010-4010-8010-101010101010',
     'builder-message:13131313-1313-4313-8313-131313131313',
+    'builder-message:19191919-1919-4919-8919-191919191919',
   ];
   const assistantMessageIds = [
     'builder-message:12121212-1212-4212-8212-121212121212',
     'builder-message:14141414-1414-4414-8414-141414141414',
+    'builder-message:20202020-2020-4020-8020-202020202020',
   ];
   const questionUserMessageIds = [
     'builder-message:15151515-1515-4515-8515-151515151515',
@@ -537,13 +569,21 @@ function taskStreamConversation(selectedProjectId, savedRevision, candidateTurns
         turn_id: evidence.receipt.turn_id,
         message: {
           message_id: userMessageIds[revision - 1],
-          text: revision === 1 ? 'Make a focus timer.' : 'Change the heading.',
+          text: revision === 1
+            ? 'Make a focus timer.'
+            : revision === 2
+              ? 'Change the heading.'
+              : 'Add a completed-state summary.',
         },
         message_kind: 'submitted',
         mode: 'work',
         task: {
           task_id: evidence.receipt.task_id,
-          title: revision === 1 ? 'Make a focus timer' : 'Change the heading',
+          title: revision === 1
+            ? 'Make a focus timer'
+            : revision === 2
+              ? 'Change the heading'
+              : 'Add completed-state summary',
         },
       },
       {
@@ -875,6 +915,7 @@ function fakeElectron(page) {
       activePage.retryDraftVisible = false;
       activePage.unsavedDraftVisible = durableStore.candidateTurns > durableStore.revision;
       activePage.versionLabel = `Version ${Math.max(1, durableStore.revision)}`;
+      activePage.historyViewingRevision = null;
       activePage.commitSave = async () => {
         durableStore.revision = Math.max(durableStore.revision + 1, durableStore.candidateTurns);
         durableStore.candidateTurns = Math.max(durableStore.candidateTurns, durableStore.revision);
@@ -1492,6 +1533,56 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   );
 });
 
+test('inspects saved history without mutating the current revision or task stream', async (t) => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  installBridge(page);
+  gate.allow();
+  page.artifactsAllowed = true;
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const initialRevision = bridgeEvidence(projectId, true, 1, 1, 0).current.product_revision_receipt;
+  const initialPreview = await capturePreviewEvidence(page, gate);
+  await askProjectQuestionViaUi(page, initialRevision, CANARY_QUESTION, 1, 1);
+  await createUpdateDraftViaUi(page, initialRevision, undefined, 1);
+  await saveUpdateDraftViaUi(page, initialRevision);
+  const updatedEvidence = await readSanitizedBridgeEvidence(page, projectId);
+  const updatedRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+  const updatedTaskStream = assertTaskStreamCandidateFacts(updatedEvidence, updatedRevision, 2, 1);
+  const updatedPreview = await capturePreviewEvidence(page, gate);
+
+  const history = await inspectHistoryVersionViaUi(
+    page,
+    initialRevision,
+    updatedRevision,
+    initialPreview,
+    updatedPreview,
+    updatedTaskStream,
+    gate,
+  );
+
+  assert.deepEqual(history, {
+    current_preview_restored: true,
+    current_revision_unchanged: true,
+    historical_preview_matches_saved_version: true,
+    returned_to_current: true,
+    task_stream_unchanged: true,
+    viewed_revision_number: 1,
+  });
+  assert.equal(page.historyViewingRevision, null);
+  assert.equal(page.versionLabel, 'Version 2');
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === '[data-builder-view-version="Version 1"]'
+  )), true);
+  assert.equal(page.events.some((event) => (
+    event[0] === 'roleClick'
+    && event[2] === 'Back to current'
+  )), true);
+});
+
 test('reports fixed redacted UI stages without raw provider, prompt, or DOM details', async () => {
   const provider = parseCanaryInput(input()).provider;
   const stages = [
@@ -2065,6 +2156,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       saved_via_ui: true,
       unsaved_draft_observed: true,
     },
+    restart_continuation: {
+      previous_revision_verified_before_save: true,
+      unsaved_draft_observed: true,
+    },
     pending_update_restart: {
       save_remained_explicit: true,
       saved_revision_visible: true,
@@ -2092,8 +2187,18 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(result.project.restart_new_revision_observed, true);
   assert.equal(result.project.pending_update_revision_unchanged, true);
   assert.equal(result.project.pending_update_restart_revision_unchanged, true);
+  assert.equal(result.project.restart_continuation_revision_unchanged, true);
+  assert.deepEqual(result.history, {
+    current_preview_restored: true,
+    current_revision_unchanged: true,
+    historical_preview_matches_saved_version: true,
+    returned_to_current: true,
+    task_stream_unchanged: true,
+    viewed_revision_number: 1,
+  });
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
   assert.equal(result.preview.pending_update_restart_srcdoc_unchanged, true);
+  assert.equal(result.preview.restart_continuation_changed_srcdoc, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
   assert.equal(result.preview.initial.sandbox, 'empty');
   assert.equal(result.preview.initial.script_src, 'none');
@@ -2103,6 +2208,8 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(result.preview.pending_update_restart.script_src, 'none');
   assert.equal(result.preview.updated.sandbox, 'empty');
   assert.equal(result.preview.updated.script_src, 'none');
+  assert.equal(result.preview.restart_continuation.sandbox, 'empty');
+  assert.equal(result.preview.restart_continuation.script_src, 'none');
   assert.deepEqual(result.question, {
     after_initial_save: {
       saved_revision_unchanged: true,
@@ -2206,9 +2313,24 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       latest_saved_revision_number: 2,
       source_availability: 'not_loaded',
     },
+    restart_continuation: {
+      answer_count: 1,
+      accepted_review_count: 2,
+      candidate_ready_count: 3,
+      candidate_reviewed_count: 2,
+      candidate_result_count: 3,
+      explanation_result_count: 1,
+      head_sequence: 18,
+      item_count: 18,
+      latest_candidate_review: 'pending',
+      latest_candidate_distinct_from_saved_revision: true,
+      saved_revision_number: 2,
+      source_availability: 'not_loaded',
+    },
     pending_update_advanced_candidate_count: true,
     question_did_not_advance_candidate_count: true,
     pending_update_restart_unchanged: true,
+    restart_continuation_advanced_candidate_count: true,
     restart_unchanged: true,
     update_advanced_candidate_count: true,
   });
@@ -2232,6 +2354,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     'credential_source',
     'idea_digest',
     'question_digest',
+    'restart_continuation_instruction_digest',
     'schema_version',
     'update_instruction_digest',
   ]);
@@ -2280,6 +2403,9 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
     ['Version 2', { exact: true }],
+    ['Version 1', { exact: true }],
+    ['Viewing Version 1', { exact: true }],
+    ['Unsaved draft', { exact: true }],
   ]);
   assert.deepEqual(removed, [userDataPath]);
 });
@@ -2325,6 +2451,7 @@ test('copies only saved provider profile files and runs without provider input o
     credential_source: 'saved_profile',
     idea_digest: result.input.idea_digest,
     question_digest: result.input.question_digest,
+    restart_continuation_instruction_digest: result.input.restart_continuation_instruction_digest,
     schema_version: CANARY_INPUT_VERSION,
     update_instruction_digest: result.input.update_instruction_digest,
   });
@@ -2344,9 +2471,14 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.project.restart_revision_unchanged, true);
   assert.equal(result.project.restart_new_revision_observed, true);
   assert.equal(result.project.pending_update_restart_revision_unchanged, true);
+  assert.equal(result.project.restart_continuation_revision_unchanged, true);
   assert.equal(result.draft.pending_update_restart.unsaved_draft_restored, true);
+  assert.equal(result.draft.restart_continuation.unsaved_draft_observed, true);
+  assert.equal(result.history.current_revision_unchanged, true);
+  assert.equal(result.history.returned_to_current, true);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
   assert.equal(result.preview.pending_update_restart_srcdoc_unchanged, true);
+  assert.equal(result.preview.restart_continuation_changed_srcdoc, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
   assert.equal(result.question.after_initial_save.saved_revision_unchanged, true);
   assert.equal(result.question.after_initial_save.ui_answer_observed, true);
@@ -2354,6 +2486,9 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
   assert.equal(result.task_stream.updated.answer_count, 1);
+  assert.equal(result.task_stream.restart_continuation.candidate_ready_count, 3);
+  assert.equal(result.task_stream.restart_continuation.accepted_review_count, 2);
+  assert.equal(result.task_stream.restart_continuation_advanced_candidate_count, true);
   assert.equal(result.task_stream.restart_unchanged, true);
   assert.deepEqual(copied.map(([source, target]) => [
     path.relative(parsed.source_user_data_path, source),
@@ -2376,6 +2511,8 @@ test('copies only saved provider profile files and runs without provider input o
     'Ask',
     'Make change',
     'Save version',
+    'Back to current',
+    'Make change',
   ]);
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
@@ -2948,8 +3085,13 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make draft['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Ask['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
+  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
+  assert.match(source, /builder-packaged-canary-result\.v7/u);
+  assert.match(source, /restart_continuation_instruction_digest/u);
+  assert.match(source, /restart_continuation_advanced_candidate_count/u);
+  assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
   assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v3['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
