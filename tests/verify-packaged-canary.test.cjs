@@ -32,6 +32,7 @@ const {
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
   generateProjectViaUi,
+  inspectDraftReviewDiffViaUi,
   inspectHistoryVersionViaUi,
   networkRecorder,
   openProjectFromCatalogById,
@@ -50,6 +51,15 @@ const {
 
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
 const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs');
+
+function reviewDiffEvidence() {
+  return {
+    changes_panel_visible: true,
+    inline_diff_visible: true,
+    internal_evidence_hidden: true,
+    review_checkpoint_visible: true,
+  };
+}
 
 function input(overrides = {}) {
   return JSON.stringify({
@@ -89,6 +99,9 @@ class FakeLocator {
   async click() {
     this.page.events.push(['click', this.selector]);
     if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
+    if (this.selector === SELECTORS.reviewOpenChanges) {
+      this.page.changesPanelVisible = true;
+    }
     const historyMatch = /\[data-builder-view-version="Version ([1-9][0-9]*)"\]/u.exec(this.selector);
     if (historyMatch !== null) {
       this.page.historyViewingRevision = Number(historyMatch[1]);
@@ -164,6 +177,17 @@ class FakeLocator {
       ) return '';
       return `Version saved This draft was saved as Version ${this.page.savedActivityRevision}.`;
     }
+    if (this.selector === SELECTORS.reviewCheckpoint) {
+      if (this.page.reviewTextOverride !== null) return this.page.reviewTextOverride;
+      return 'Review before saving 1 file change: 1 added. Preview and changes are ready.';
+    }
+    if (this.selector === SELECTORS.changesSummary) {
+      return '1 file change: 1 added.';
+    }
+    if (this.selector === SELECTORS.changesPanel) {
+      if (this.page.changesTextOverride !== null) return this.page.changesTextOverride;
+      return 'Changes 1 file change: 1 added. 1 line added + Focus timer preview';
+    }
     return null;
   }
 
@@ -185,6 +209,24 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.historyPreview) {
       this.page.assertSelectorVisibility(this.selector, this.page.historyViewingRevision !== null, options?.state ?? 'visible');
+      return;
+    }
+    if (this.selector === SELECTORS.reviewCheckpoint || this.selector === SELECTORS.reviewOpenChanges) {
+      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, options?.state ?? 'visible');
+      return;
+    }
+    if (
+      this.selector === SELECTORS.changesPanel
+      || this.selector === SELECTORS.changesSummary
+      || this.selector === SELECTORS.changeCard
+      || this.selector === SELECTORS.changeDiff
+      || this.selector === SELECTORS.changeDiffLine
+    ) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.unsavedDraftVisible && this.page.changesPanelVisible,
+        options?.state ?? 'visible',
+      );
       return;
     }
     if (this.selector === SELECTORS.preview && this.page.previewVisible === false) {
@@ -265,6 +307,8 @@ class FakePage {
     this.artifactsAllowed = false;
     this.alertVisible = false;
     this.candidateTurns = 0;
+    this.changesPanelVisible = false;
+    this.changesTextOverride = null;
     this.draftSaved = false;
     this.persistSave = true;
     this.events = [];
@@ -286,6 +330,7 @@ class FakePage {
     this.projectStatus = 'ready';
     this.questionTurns = 0;
     this.retryDraftVisible = false;
+    this.reviewTextOverride = null;
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
     this.savedRevision = 0;
@@ -323,6 +368,7 @@ class FakePage {
     };
     this.recordCandidateDraft = (candidateTurns) => {
       this.candidateTurns = Math.max(this.candidateTurns, candidateTurns);
+      this.changesPanelVisible = false;
       this.retryDraftVisible = false;
       this.unsavedDraftVisible = true;
     };
@@ -908,6 +954,7 @@ function fakeElectron(page) {
       fake.launches.push(options);
       const activePage = fake.launches.length === 1 ? page : new FakePage();
       activePage.candidateTurns = durableStore.candidateTurns;
+      activePage.changesPanelVisible = false;
       activePage.questionTurns = durableStore.questionTurns;
       activePage.savedRevision = durableStore.revision;
       activePage.savedActivityRevision = durableStore.revision;
@@ -926,6 +973,7 @@ function fakeElectron(page) {
       activePage.recordCandidateDraft = (candidateTurns) => {
         durableStore.candidateTurns = Math.max(durableStore.candidateTurns, candidateTurns);
         activePage.candidateTurns = durableStore.candidateTurns;
+        activePage.changesPanelVisible = false;
         activePage.retryDraftVisible = false;
         activePage.unsavedDraftVisible = true;
       };
@@ -1299,6 +1347,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
   assert.deepEqual(draftEvidence, {
     pre_save_catalog_empty: true,
+    review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
     unsaved_draft_observed: true,
   });
@@ -1331,6 +1380,24 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('observes draft review diff before Save without leaking internal evidence', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+
+  const evidence = await inspectDraftReviewDiffViaUi(page);
+
+  assert.deepEqual(evidence, reviewDiffEvidence());
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), true);
+  page.reviewTextOverride = 'Review before saving sha256:secret';
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+});
+
 test('retries a failed draft through visible UI without saving or leaking write authority', async (t) => {
   const page = new FakePage();
   installBridge(page);
@@ -1344,6 +1411,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
       'Change this text after the first failure.',
     ),
     {
+      review_diff: reviewDiffEvidence(),
       retry_button_observed: true,
       retry_recovered_draft: true,
       save_remained_explicit: true,
@@ -1478,6 +1546,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
 
   assert.deepEqual(pending, {
     previous_revision_verified_before_save: true,
+    review_diff: reviewDiffEvidence(),
     unsaved_draft_observed: true,
   });
   assert.equal(page.savedRevision, 1);
@@ -1522,6 +1591,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
 
   assert.deepEqual(update, {
     previous_revision_verified_before_save: true,
+    review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
     unsaved_draft_observed: true,
   });
@@ -1734,6 +1804,16 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await captureSavedActivityEvidence(page, 1);
       },
       stage: 'save_activity',
+    },
+    {
+      code: 'canary_review_diff_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.unsavedDraftVisible = true;
+        page.failWaitFor.add(SELECTORS.changeDiffLine);
+        await inspectDraftReviewDiffViaUi(page);
+      },
+      stage: 'review_diff',
     },
     {
       code: 'canary_question_failed',
@@ -2153,20 +2233,24 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.deepEqual(result.draft, {
     initial: {
       pre_save_catalog_empty: true,
+      review_diff: reviewDiffEvidence(),
       saved_via_ui: true,
       unsaved_draft_observed: true,
     },
     restart_continuation: {
       previous_revision_verified_before_save: true,
+      review_diff: reviewDiffEvidence(),
       unsaved_draft_observed: true,
     },
     pending_update_restart: {
+      review_diff: reviewDiffEvidence(),
       save_remained_explicit: true,
       saved_revision_visible: true,
       unsaved_draft_restored: true,
     },
     update: {
       previous_revision_verified_before_save: true,
+      review_diff: reviewDiffEvidence(),
       saved_via_ui: true,
       unsaved_draft_observed: true,
     },
@@ -2393,12 +2477,15 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   const scopedTexts = allPageEvents.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
     ['Unsaved draft', { exact: true }],
+    ['Review before saving', { exact: true }],
     ['This draft was saved as Version 1.', { exact: true }],
     ['Unsaved draft', { exact: true }],
+    ['Review before saving', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
     ['Version 1', { exact: true }],
     ['Unsaved draft', { exact: true }],
+    ['Review before saving', { exact: true }],
     ['This draft was saved as Version 2.', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
@@ -2406,6 +2493,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     ['Version 1', { exact: true }],
     ['Viewing Version 1', { exact: true }],
     ['Unsaved draft', { exact: true }],
+    ['Review before saving', { exact: true }],
   ]);
   assert.deepEqual(removed, [userDataPath]);
 });
@@ -2466,6 +2554,10 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.activity.update_save.version_saved_visible, true);
   assert.equal(result.activity.update_save.public_revision_number, 2);
   assert.equal(result.activity.update_save.internal_evidence_hidden, true);
+  assert.deepEqual(result.draft.initial.review_diff, reviewDiffEvidence());
+  assert.deepEqual(result.draft.update.review_diff, reviewDiffEvidence());
+  assert.deepEqual(result.draft.pending_update_restart.review_diff, reviewDiffEvidence());
+  assert.deepEqual(result.draft.restart_continuation.review_diff, reviewDiffEvidence());
   assert.equal(result.project.revision_number, 2);
   assert.equal(result.project.parent_oid, result.project.initial_commit_oid);
   assert.equal(result.project.restart_revision_unchanged, true);
@@ -3088,7 +3180,10 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v7/u);
+  assert.match(source, /builder-packaged-canary-result\.v8/u);
+  assert.match(source, /inspectDraftReviewDiffViaUi/u);
+  assert.match(source, /data-builder-change-diff-line-kind/u);
+  assert.match(source, /canary_review_diff_failed/u);
   assert.match(source, /restart_continuation_instruction_digest/u);
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);

@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v7';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v8';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'After reopening, add a compact completed-state summary below the timer.';
@@ -40,6 +40,11 @@ const WINDOWS_ENV_ALLOWLIST = Object.freeze([
 const SELECTORS = Object.freeze({
   apiKey: '#builder-provider-api-key',
   baseUrl: '#builder-provider-base-url',
+  changeCard: '[data-builder-change-card]',
+  changeDiff: '[data-builder-change-diff]',
+  changeDiffLine: '[data-builder-change-diff-line-kind]',
+  changesPanel: '[data-builder-changes-panel="true"]',
+  changesSummary: '[data-builder-changes-summary="true"]',
   currentVersion: '[data-builder-current-version="true"]',
   historyPreview: '[data-builder-history-preview="true"]',
   idea: '#builder-idea',
@@ -54,6 +59,8 @@ const SELECTORS = Object.freeze({
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
   retryDraft: '[data-builder-retry-draft="true"]',
+  reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
+  reviewOpenChanges: '[data-builder-review-open-changes="true"]',
   saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
   timeout: '#builder-provider-timeout',
@@ -99,6 +106,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_save_confirmation_failed: 'Packaged canary could not confirm the persisted draft in the UI.',
   canary_update_save_confirmation_failed: 'Packaged canary could not confirm the persisted update in the UI.',
   canary_save_activity_failed: 'Packaged canary saved activity evidence failed.',
+  canary_review_diff_failed: 'Packaged canary review diff evidence failed.',
   canary_history_failed: 'Packaged canary history evidence failed.',
   canary_history_navigation_failed: 'Packaged canary history navigation failed.',
   canary_history_preview_failed: 'Packaged canary history preview evidence failed.',
@@ -142,6 +150,7 @@ const ERROR_STAGES = Object.freeze({
   canary_save_confirmation_failed: 'save_confirmation',
   canary_update_save_confirmation_failed: 'update_save_confirmation',
   canary_save_activity_failed: 'save_activity',
+  canary_review_diff_failed: 'review_diff',
   canary_history_failed: 'history',
   canary_history_navigation_failed: 'history_navigation',
   canary_history_preview_failed: 'history_preview',
@@ -378,6 +387,7 @@ const PROVIDER_SECRET_FILE_PATTERN = /^[0-9a-f]{64}\.json$/u;
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const PROJECT_ID_LENGTH = 'builder-project:00000000-0000-0000-0000-000000000000'.length;
 const SAVED_ACTIVITY_INTERNAL_EVIDENCE_PATTERN = /builder-(?:generation-draft|git-request|message|project|review|run|task|turn):|sha256:|commit_oid|tree_oid|receipt|provider|credential|source_tree|review_id|reviewer_id|reviewed_at_ms/iu;
+const REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN = /builder-(?:code-change-candidate|conversation|generation-draft|git-request|message|project|review|run|task|turn):|sha256:|commit_oid|tree_oid|receipt|provider|credential|source_tree|review_id|reviewer_id|reviewed_at_ms/iu;
 
 class BuilderPackagedCanaryError extends Error {
   constructor(code = 'canary_evidence_failed') {
@@ -1335,6 +1345,7 @@ async function fillProviderSettingsViaUi(page, provider, gate) {
 }
 
 async function generateProjectViaUi(page, idea) {
+  let draftReviewDiff = null;
   try {
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
@@ -1355,6 +1366,7 @@ async function generateProjectViaUi(page, idea) {
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
     const preSave = await readSanitizedBridgeEvidence(page);
     if (preSave.catalog.projects.length !== 0 || preSave.current !== null) {
       fail('canary_draft_failed');
@@ -1385,12 +1397,56 @@ async function generateProjectViaUi(page, idea) {
   await assertVisibleVersion(page, 1);
   return Object.freeze({
     pre_save_catalog_empty: true,
+    review_diff: draftReviewDiff,
     saved_via_ui: true,
     unsaved_draft_observed: true,
   });
 }
 
+async function inspectDraftReviewDiffViaUi(page) {
+  try {
+    const review = page.locator(SELECTORS.reviewCheckpoint);
+    await review.waitFor({ state: 'visible' });
+    await review.getByText('Review before saving', { exact: true }).waitFor({ state: 'visible' });
+    const reviewText = await review.textContent();
+    if (
+      typeof reviewText !== 'string'
+      || !reviewText.includes('Review before saving')
+      || !reviewText.includes('file')
+      || reviewText.includes('No unsaved changes')
+      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(reviewText)
+    ) fail('canary_review_diff_failed');
+
+    await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.reviewOpenChanges).click();
+    await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.changeCard).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.changeDiff).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.changeDiffLine).waitFor({ state: 'visible' });
+    const summaryText = await page.locator(SELECTORS.changesSummary).textContent();
+    const changesText = await page.locator(SELECTORS.changesPanel).textContent();
+    if (
+      typeof summaryText !== 'string'
+      || typeof changesText !== 'string'
+      || !summaryText.includes('file')
+      || !changesText.includes('line')
+      || changesText.includes('No unsaved changes')
+      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(changesText)
+    ) fail('canary_review_diff_failed');
+    return Object.freeze({
+      changes_panel_visible: true,
+      inline_diff_visible: true,
+      internal_evidence_hidden: true,
+      review_checkpoint_visible: true,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_review_diff_failed');
+  }
+}
+
 async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE_INSTRUCTION) {
+  let draftReviewDiff = null;
   try {
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
@@ -1416,6 +1472,7 @@ async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
     const preSave = await readSanitizedBridgeEvidence(page);
     if (preSave.catalog.projects.length !== 0 || preSave.current !== null) {
       fail('canary_retry_failed');
@@ -1425,6 +1482,7 @@ async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE
     fail('canary_retry_failed');
   }
   return Object.freeze({
+    review_diff: draftReviewDiff,
     retry_button_observed: true,
     retry_recovered_draft: true,
     save_remained_explicit: true,
@@ -1480,6 +1538,7 @@ async function createUpdateDraftViaUi(
   instruction = CANARY_UPDATE_INSTRUCTION,
   expectedQuestionTurns = 0,
 ) {
+  let draftReviewDiff = null;
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
     await clickByRole(page, 'button', 'Make change');
@@ -1492,6 +1551,7 @@ async function createUpdateDraftViaUi(
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
     const preSave = await readSanitizedBridgeEvidence(page, currentProject.project_id);
     assertExactRevision(preSave, currentProject);
     assertTaskStreamPendingCandidateFacts(
@@ -1500,11 +1560,13 @@ async function createUpdateDraftViaUi(
       currentProject.revision_number + 1,
       expectedQuestionTurns,
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_update_draft_failed');
   }
   return Object.freeze({
     previous_revision_verified_before_save: true,
+    review_diff: draftReviewDiff,
     unsaved_draft_observed: true,
   });
 }
@@ -1684,6 +1746,7 @@ async function readPendingUpdateDraftRestoreEvidence(
       .waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     await assertVisibleVersion(page, currentProject.revision_number);
+    const reviewDiff = await inspectDraftReviewDiffViaUi(page);
     const evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
     assertExactRevision(evidence, currentProject);
     return Object.freeze({
@@ -1695,12 +1758,14 @@ async function readPendingUpdateDraftRestoreEvidence(
         expectedQuestionTurns,
       ),
       ui: Object.freeze({
+        review_diff: reviewDiff,
         save_remained_explicit: true,
         saved_revision_visible: true,
         unsaved_draft_restored: true,
       }),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_pending_draft_restart_failed');
   }
 }
@@ -3420,6 +3485,7 @@ module.exports = {
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
   generateProjectViaUi,
+  inspectDraftReviewDiffViaUi,
   inspectHistoryVersionViaUi,
   networkRecorder,
   openProjectFromCatalogById,
