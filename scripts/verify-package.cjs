@@ -71,6 +71,7 @@ for (const expected of [
   '/electron/builder-project-read-authority.cjs',
   '/electron/builder-project-main-authority.cjs',
   '/electron/builder-project-save-authority.cjs',
+  '/electron/builder-permission-authority-contract.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
   '/electron/builder-provider-config.cjs',
   '/electron/builder-provider-config-repository.cjs',
@@ -209,6 +210,7 @@ const packagedGitRunner = packagedSource('electron/builder-git-command-runner.cj
 const packagedGitReceiptContract = packagedSource('electron/builder-git-receipt-contract.cjs');
 const packagedGitRepository = packagedSource('electron/builder-git-project-repository.cjs');
 const packagedGitCurrentProjection = packagedSource('electron/builder-git-current-projection.cjs');
+const packagedPermissionAuthorityContract = packagedSource('electron/builder-permission-authority-contract.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
@@ -506,6 +508,28 @@ assert.match(packagedGitCurrentProjection, /foldedName/u);
 assert.doesNotMatch(
   packagedGitCurrentProjection,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|https?:|Authorization|Bearer|provider|credential|node:sqlite|better-sqlite|shell:\s*true/iu,
+);
+assert.match(packagedPermissionAuthorityContract, /builder_permission_facts_deny_by_default_v1/u);
+assert.match(packagedPermissionAuthorityContract, /ui_selection_authority:\s*'not_permission'/u);
+assert.match(packagedPermissionAuthorityContract, /fact_authority:\s*'main_owned_permission_fact_store'/u);
+assert.match(packagedPermissionAuthorityContract, /const EVALUATE_REQUEST_KEYS = Object\.freeze\(\[/u);
+assert.match(packagedPermissionAuthorityContract, /const FACTS_READ_RESULT_KEYS = Object\.freeze\(\[/u);
+assert.doesNotMatch(
+  packagedPermissionAuthorityContract.slice(
+    packagedPermissionAuthorityContract.indexOf('const EVALUATE_REQUEST_KEYS'),
+    packagedPermissionAuthorityContract.indexOf('const FACTS_READ_RESULT_KEYS'),
+  ),
+  /grants/u,
+);
+assert.match(packagedPermissionAuthorityContract, /createBuilderPermissionGrantRecord/u);
+assert.match(packagedPermissionAuthorityContract, /createBuilderPermissionRevocationRecord/u);
+assert.match(packagedPermissionAuthorityContract, /createBuilderPermissionEvaluator/u);
+assert.match(packagedPermissionAuthorityContract, /read_permission_facts/u);
+assert.match(packagedPermissionAuthorityContract, /revokedPermissionIds/u);
+assert.match(packagedPermissionAuthorityContract, /credential_readback:\s*false/u);
+assert.doesNotMatch(
+  packagedPermissionAuthorityContract,
+  /require\(['"]electron['"]\)|require\(['"]fs['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|node:fs|node:sqlite|better-sqlite|builder-provider|builder-git|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|eval\s*\(|new Function|shell:\s*true|localStorage|sessionStorage|indexedDB/iu,
 );
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
