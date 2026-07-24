@@ -55,6 +55,16 @@ async function snapshots() {
       async restoreDraft() {
         return draft;
       },
+      async rejectDraft(request) {
+        return {
+          result_version: 'builder-generation-draft-rejection-result.v1',
+          draft_id: request.draft_id,
+          project_id: PROJECT_ID,
+          rejected: true,
+          pending_draft_released: true,
+          conversation_event_admission: 'sqlite_recorded',
+        };
+      },
       async cancel(request) {
         return { request_id: request.request_id, cancelled: true };
       },
@@ -136,6 +146,16 @@ async function changedDraftSnapshot() {
       },
       async restoreDraft() {
         return draft;
+      },
+      async rejectDraft(request) {
+        return {
+          result_version: 'builder-generation-draft-rejection-result.v1',
+          draft_id: request.draft_id,
+          project_id: PROJECT_ID,
+          rejected: true,
+          pending_draft_released: true,
+          conversation_event_admission: 'sqlite_recorded',
+        };
       },
       async cancel(cancelRequest) {
         return { request_id: cancelRequest.request_id, cancelled: true };
@@ -224,6 +244,7 @@ describe('BuilderPage v2', () => {
         generate: async () => new Promise(() => undefined),
         answer: async () => null,
         restoreDraft: async () => null,
+        rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
       },
       workspace: {
@@ -264,11 +285,13 @@ describe('BuilderPage v2', () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
     const onSave = vi.fn();
+    const onRejectDraft = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         conversationSnapshot={activity}
         instruction="Add a timer."
+        onRejectDraft={onRejectDraft}
         onSave={onSave}
         snapshot={draftReady}
       />,
@@ -281,6 +304,11 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).toContain('Review the draft files in Result before saving this version.');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-ask-question="true"]')?.disabled)
       .toBe(true);
+    expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
+      .toContain('Discard draft');
+    click(container, '[data-builder-discard-draft="true"]');
+    expect(onRejectDraft).toHaveBeenCalledOnce();
+    expect(onSave).not.toHaveBeenCalled();
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
   });
@@ -388,7 +416,7 @@ describe('BuilderPage v2', () => {
     );
 
     expect(container.querySelector('[data-builder-activity-card="Draft rejected"]')?.textContent)
-      .toContain('You returned to the saved version.');
+      .toContain('The draft was discarded and is no longer available for review.');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
@@ -426,6 +454,7 @@ describe('BuilderPage v2', () => {
         },
         answer: async () => null,
         restoreDraft: async () => null,
+        rejectDraft: async () => null,
         cancel: async () => null,
       },
       workspace: {
@@ -456,6 +485,7 @@ describe('BuilderPage v2', () => {
         generate: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
+        rejectDraft: async () => null,
         cancel: async () => null,
       },
       workspace: {

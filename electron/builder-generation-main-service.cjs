@@ -37,6 +37,7 @@ const OPTION_KEYS = Object.freeze([
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
@@ -450,6 +451,27 @@ function pendingDraftResult(draft) {
   });
 }
 
+function sanitizeConversationCandidateReject(value, expectedDraftId) {
+  exactObject(value, [
+    'result_version',
+    'draft_id',
+    'project_id',
+    'conversation_id',
+    'rejection_admission',
+  ]);
+  if (
+    valueAt(value, 'result_version') !== 'builder-conversation-candidate-reject-result.v1'
+    || valueAt(value, 'draft_id') !== expectedDraftId
+    || valueAt(value, 'rejection_admission') !== 'sqlite_recorded'
+  ) fail();
+  return freezeDeep({
+    draft_id: expectedDraftId,
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    conversation_id: safePattern(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN, 96),
+    rejection_admission: 'sqlite_recorded',
+  });
+}
+
 function createBuilderGenerationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
   const bindCurrentAuthority = ownMethod(options.providerConfigRepository, 'bind_current_authority');
@@ -461,6 +483,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const completeConversationFailure = ownMethod(options.conversationService, 'complete_failure');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
+  const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
   const persistCandidateCommit = ownMethod(options.gitAuthority, 'persist_candidate_commit');
   const verifyCandidateReceipt = ownMethod(options.gitAuthority, 'verify_candidate_receipt');
   const readVerifiedCandidate = ownMethod(options.gitAuthority, 'read_verified_candidate');
@@ -958,6 +981,33 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function rejectDraft(rawRequest) {
+    try {
+      exactObject(rawRequest, ['draft_id']);
+      const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
+      const rejected = sanitizeConversationCandidateReject(
+        Reflect.apply(
+          rejectConversationCandidate,
+          options.conversationService,
+          [{ draft_id: draftId }],
+        ),
+        draftId,
+      );
+      pendingDrafts.delete(draftId);
+      return freezeDeep({
+        result_version: 'builder-generation-draft-rejection-result.v1',
+        draft_id: draftId,
+        project_id: rejected.project_id,
+        rejected: true,
+        pending_draft_released: true,
+        conversation_event_admission: rejected.rejection_admission,
+      });
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
+  }
+
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     answer,
@@ -967,6 +1017,7 @@ function createBuilderGenerationMainService(rawOptions) {
     restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
     release_pending_draft: releasePendingDraft,
+    reject_draft: rejectDraft,
     authority: Object.freeze({
       provider_config_snapshot_bound: true,
       project_read_authority_verified_source: true,

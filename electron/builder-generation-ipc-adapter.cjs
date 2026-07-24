@@ -7,6 +7,7 @@ const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
 const RESTORE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:restore-draft';
+const REJECT_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:reject-draft';
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const MAX_PLAIN_DATA_NODES = 20_000;
 const MAX_PLAIN_DATA_ENTRIES = 20_000;
@@ -16,6 +17,7 @@ const OPTION_KEYS = Object.freeze([
   'generate',
   'answer',
   'restoreDraft',
+  'rejectDraft',
   'cancel',
   'availability',
   'mainWindowRef',
@@ -287,6 +289,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.restoreDraft);
         },
       }),
+      rejectDraft: Object.freeze({
+        channel: REJECT_DRAFT_CHANNEL,
+        method: 'rejectDraft',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.rejectDraft);
+        },
+      }),
       cancel: Object.freeze({
         channel: CANCEL_CHANNEL,
         method: 'cancel',
@@ -302,7 +311,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['generate', 'answer', 'restoreDraft', 'cancel', 'availability']),
+    exposed_methods: Object.freeze(['generate', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']),
     authority: Object.freeze({
       host_adapter_injected: true,
       active_renderer_required: true,
@@ -321,6 +330,7 @@ module.exports = Object.freeze({
   CANCEL_CHANNEL,
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  REJECT_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
   createBuilderGenerationIpcAdapter,

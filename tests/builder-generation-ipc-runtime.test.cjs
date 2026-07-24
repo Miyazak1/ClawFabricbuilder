@@ -13,6 +13,7 @@ const {
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_CHANNEL,
+  REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
 const {
@@ -112,11 +113,13 @@ function runtimeWithService(service, probes = {}) {
           CANCEL_CHANNEL,
           AVAILABILITY_CHANNEL,
           RESTORE_DRAFT_CHANNEL,
+          REJECT_DRAFT_CHANNEL,
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
+              rejectDraft: { invoke: (_event, body) => options.rejectDraft(body) },
               cancel: { invoke: (_event, body) => options.cancel(body) },
               availability: { invoke: () => options.availability() },
             },
@@ -148,6 +151,7 @@ function runtimeWithService(service, probes = {}) {
               complete_candidate() {},
               complete_failure() {},
               request_cancel() {},
+              reject_candidate() {},
               read_stream(body) {
                 probes.readStreamRequests ??= [];
                 probes.readStreamRequests.push({ project_id: body.project_id });
@@ -164,6 +168,7 @@ function runtimeWithService(service, probes = {}) {
                 };
               },
               verify_candidate() {},
+              read_candidate_draft() {},
             };
             return context.__conversationService;
           },
@@ -328,6 +333,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     GENERATE_CHANNEL,
     ANSWER_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
+    REJECT_DRAFT_CHANNEL,
     CANCEL_CHANNEL,
     AVAILABILITY_CHANNEL,
     OPEN_PROJECT_CHANNEL,
@@ -400,6 +406,10 @@ test('keeps active-renderer and request validation inside the controlled adapter
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
+    ipcMain.handlers.get(REJECT_DRAFT_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
     ipcMain.handlers.get(CANCEL_CHANNEL)({ sender: mainWindow.webContents }, { request_id: 'bad' }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
@@ -439,7 +449,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     && error.stack === `${error.name}: ${error.message}`
   ));
   assert.deepEqual([...ipcMain.handlers.keys()], []);
-  assert.deepEqual(ipcMain.removed, [RESTORE_DRAFT_CHANNEL, ANSWER_CHANNEL, GENERATE_CHANNEL]);
+  assert.deepEqual(ipcMain.removed, [REJECT_DRAFT_CHANNEL, RESTORE_DRAFT_CHANNEL, ANSWER_CHANNEL, GENERATE_CHANNEL]);
   assert.equal(runtime.dispose(), false);
 
   const removalFailure = fakeIpcMain(CANCEL_CHANNEL, GENERATE_CHANNEL);
@@ -455,6 +465,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.equal(removalFailure.handlers.has(GENERATE_CHANNEL), true);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_DRAFT_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(REJECT_DRAFT_CHANNEL), false);
   assert.throws(() => cleanupRuntime.dispose(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
@@ -662,6 +673,51 @@ test('registers a read-only draft restore channel backed by generation service',
     restart_restore: 'git_sqlite_verified',
   });
   assert.deepEqual(restoreRequests, [{ draft_id: draftId }]);
+  runtime.dispose();
+});
+
+test('registers a draft rejection channel backed by generation service', async (t) => {
+  const rejectRequests = [];
+  const runtimeModule = runtimeWithService({
+    generate() { return Promise.reject(new Error('not used')); },
+    reject_draft(body) {
+      rejectRequests.push({ ...body });
+      return {
+        result_version: 'builder-generation-draft-rejection-result.v1',
+        draft_id: body.draft_id,
+        project_id: PROJECT_ID,
+        rejected: true,
+      };
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  });
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const draftId = `builder-generation-draft:${'d'.repeat(64)}`;
+  const rejected = await ipcMain.handlers.get(REJECT_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ draft_id: ${JSON.stringify(draftId)} })`, runtimeModule.context),
+  );
+  assert.deepEqual(rejected, {
+    result_version: 'builder-generation-draft-rejection-result.v1',
+    draft_id: draftId,
+    project_id: PROJECT_ID,
+    rejected: true,
+  });
+  assert.deepEqual(rejectRequests, [{ draft_id: draftId }]);
+  assert.equal(Object.hasOwn(rejectRequests[0], 'instruction'), false);
+  assert.equal(Object.hasOwn(rejectRequests[0], 'source_tree'), false);
   runtime.dispose();
 });
 

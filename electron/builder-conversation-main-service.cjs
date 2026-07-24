@@ -984,6 +984,59 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     });
   }
 
+  function rejectCandidate(rawRequest) {
+    try {
+      exactObject(rawRequest, ['draft_id']);
+      const draftId = safePattern(valueAt(rawRequest, 'draft_id'), DRAFT_ID_PATTERN);
+      const draft = readCandidateDraft({ draft_id: draftId });
+      const state = load(draft.project_id, draft.conversation_id);
+      if (state === null || !sameHead(state.head, draft.conversation_head)) fail();
+      const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+      const project = freezeDeep({
+        project_id: draft.project_id,
+        created_at_ms: projectCreatedAt(
+          draft.project_id,
+          draft.base_revision,
+          recordedAtMs,
+          state,
+        ),
+      });
+      const rejected = eventAt({
+        projectId: draft.project_id,
+        conversationId: draft.conversation_id,
+        sequence: state.head.sequence + 1,
+        commandId: newId(options.createUuid, 'builder-command'),
+        eventType: 'candidate_rejected',
+        previous: state.head,
+        payload: {
+          turn_id: draft.turn_id,
+          run_id: draft.run_id,
+          draft_id: draftId,
+          review_id: newId(options.createUuid, 'builder-review'),
+          reviewer_id: newId(options.createUuid, 'builder-user'),
+          reviewed_at_ms: recordedAtMs,
+          decision: 'rejected',
+        },
+      });
+      append({
+        project,
+        conversation: state.conversation,
+        expectedHead: state.head,
+        events: [rejected],
+        recordedAtMs,
+      });
+      return freezeDeep({
+        result_version: 'builder-conversation-candidate-reject-result.v1',
+        draft_id: draftId,
+        project_id: draft.project_id,
+        conversation_id: draft.conversation_id,
+        rejection_admission: 'sqlite_recorded',
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function readStream(rawRequest) {
     try {
       exactObject(rawRequest, ['project_id']);
@@ -1013,6 +1066,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
+    reject_candidate: rejectCandidate,
     read_stream: readStream,
     authority: Object.freeze({
       storage: 'sqlite_conversation_event_chain',

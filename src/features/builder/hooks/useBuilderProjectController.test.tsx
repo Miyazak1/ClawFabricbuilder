@@ -64,6 +64,14 @@ async function renderHook(
   });
   const answer = vi.fn(async (request) => createGenerationAnswer(request));
   const restoreDraft = vi.fn(async () => draft);
+  const rejectDraft = vi.fn(async (request: Readonly<{ draft_id: string }>) => ({
+    result_version: 'builder-generation-draft-rejection-result.v1',
+    draft_id: request.draft_id,
+    project_id: PROJECT_ID,
+    rejected: true,
+    pending_draft_released: true,
+    conversation_event_admission: 'sqlite_recorded',
+  }));
   const cancel = vi.fn(async (request: Readonly<{ request_id: string }>) => ({
     request_id: request.request_id,
     cancelled: true,
@@ -79,7 +87,7 @@ async function renderHook(
       }
       : readWire
   ));
-  const generator = { generate, answer, restoreDraft, cancel };
+  const generator = { generate, answer, restoreDraft, rejectDraft, cancel };
   const workspace = {
     open,
     saveDraft,
@@ -116,6 +124,7 @@ async function renderHook(
     generate,
     loadCurrent,
     open,
+    rejectDraft,
     restoreDraft,
     async resolveGenerate() {
       await resolveGenerate?.();
@@ -172,6 +181,22 @@ describe('useBuilderProjectController', () => {
       savedProject: {
         target: { project_id: PROJECT_ID, revision_number: 1 },
       },
+    });
+  });
+
+  it('exposes draft discard without saving', async () => {
+    const hook = await renderHook();
+    await act(async () => {
+      await hook.current().generate('Make a timer.');
+      await hook.current().rejectDraft();
+    });
+
+    expect(hook.rejectDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'new',
+      draft: null,
+      savedProject: null,
     });
   });
 

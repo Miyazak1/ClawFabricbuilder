@@ -22,6 +22,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   answer: BuilderProjectController['answer'];
   generate: BuilderProjectController['generate'];
   restoreDraft: BuilderProjectController['restoreDraft'];
+  rejectDraft: BuilderProjectController['rejectDraft'];
   cancel: BuilderProjectController['cancel'];
   save: BuilderProjectController['save'];
 }>;
@@ -90,12 +91,16 @@ export function useBuilderProjectController(
     (draftId) => controller.restoreDraft(draftId).catch(() => controller.getSnapshot()),
     [controller],
   );
+  const rejectDraft = useCallback<BuilderProjectController['rejectDraft']>(
+    () => controller.rejectDraft().catch(() => controller.getSnapshot()),
+    [controller],
+  );
   const cancel = useCallback<BuilderProjectController['cancel']>(
     () => controller.cancel().catch(() => controller.getSnapshot()),
     [controller],
   );
   return useMemo(
-    () => Object.freeze({ snapshot, answer, generate, restoreDraft, cancel, save }),
-    [snapshot, answer, generate, restoreDraft, cancel, save],
+    () => Object.freeze({ snapshot, answer, generate, restoreDraft, rejectDraft, cancel, save }),
+    [snapshot, answer, generate, restoreDraft, rejectDraft, cancel, save],
   );
 }

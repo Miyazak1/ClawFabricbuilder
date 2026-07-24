@@ -23,6 +23,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate,
       answer: async () => null,
       restoreDraft: async () => null,
+      rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -50,6 +51,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       }),
       answer: async () => null,
       restoreDraft: async () => null,
+      rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -92,6 +94,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       answer,
       restoreDraft: async () => null,
+      rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -117,6 +120,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       answer: async () => null,
       restoreDraft,
+      rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -126,6 +130,36 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: restoredDraft.draft_id });
     expect(result).toEqual(restoredDraft);
     expect(result).not.toBe(restoredDraft);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('forwards only draft id when discarding a pending draft', async () => {
+    const draftId = `builder-generation-draft:${'1'.repeat(64)}`;
+    const rejectDraft = vi.fn(async () => ({
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: {
+        result_version: 'builder-generation-draft-rejection-result.v1',
+        draft_id: draftId,
+        project_id: `builder-project:123e4567-e89b-42d3-a456-426614174000`,
+        rejected: true,
+        pending_draft_released: true,
+        conversation_event_admission: 'sqlite_recorded',
+      },
+    }));
+    const port = createBuilderDesktopCodeGeneratorPort({
+      generate: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      rejectDraft,
+      cancel: async () => null,
+      availability: async () => null,
+    });
+
+    const result = await port.rejectDraft({ draft_id: draftId });
+
+    expect(rejectDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: draftId });
+    expect(JSON.stringify(result)).not.toMatch(/source_tree|candidate_digest|provider|credential/iu);
     expect(Object.isFrozen(result)).toBe(true);
   });
 
@@ -139,6 +173,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       answer: async () => null,
       restoreDraft: async () => null,
+      rejectDraft: async () => null,
       cancel,
       availability: async () => null,
     });
@@ -164,6 +199,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
           retryable: true,
         },
       }),
+      rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -184,12 +220,14 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async (): Promise<unknown> => null,
       answer: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
+      rejectDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
     },
     {
       generate: async (): Promise<unknown> => null,
       answer: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
+      rejectDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
       availability: async (): Promise<unknown> => null,
       provider: 'renderer-owned',
@@ -214,6 +252,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         generate: async (): Promise<unknown> => response,
         answer: async (): Promise<unknown> => response,
         restoreDraft: async (): Promise<unknown> => null,
+        rejectDraft: async (): Promise<unknown> => null,
         cancel: async (): Promise<unknown> => null,
         availability: async (): Promise<unknown> => null,
       });
@@ -229,6 +268,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       answer: async () => null,
       restoreDraft: async () => null,
+      rejectDraft: async () => null,
       cancel: async () => ({
         request_id: `sha256:${'9'.repeat(64)}`,
         cancelled: true,

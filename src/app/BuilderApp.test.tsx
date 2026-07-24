@@ -57,6 +57,7 @@ async function setup(options: Readonly<{
   deferredGenerate?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
+  rejectActivityAfterDiscard?: boolean;
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
 }> = {}) {
@@ -122,13 +123,30 @@ async function setup(options: Readonly<{
       result: restoredDraft,
     };
   });
+  const rejectDraft = vi.fn(async (request: unknown) => {
+    expect(request).toEqual({ draft_id: latestDraft.draft_id });
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: {
+        result_version: 'builder-generation-draft-rejection-result.v1',
+        draft_id: latestDraft.draft_id,
+        project_id: PROJECT_ID,
+        rejected: true,
+        pending_draft_released: true,
+        conversation_event_admission: 'sqlite_recorded',
+      },
+    };
+  });
   const cancel = vi.fn(async (request: unknown) => ({
     request_id: (request as { request_id: string }).request_id,
     cancelled: true,
   }));
   const loadCurrent = vi.fn(async () => readWire);
   const readTaskStream = vi.fn(async () => (
-    options.answerActivity === true
+    options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
+      ? createRejectedTaskStreamWire()
+      : options.answerActivity === true
       ? createAnswerTaskStreamWire()
       : options.rejectedPendingActivity === true
         ? pendingCandidateTaskStreamWire(true)
@@ -158,6 +176,7 @@ async function setup(options: Readonly<{
       generate,
       answer,
       restoreDraft,
+      rejectDraft,
       cancel,
       availability: async () => null,
     },
@@ -199,6 +218,7 @@ async function setup(options: Readonly<{
     loadCurrent,
     open,
     readTaskStream,
+    rejectDraft,
     restoreDraft,
     async resolveGenerate() {
       await resolveGenerate?.();
@@ -346,6 +366,47 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('sqlite');
   });
 
+  it('discards an unsaved draft through draft-id-only control and refreshes activity', async () => {
+    const {
+      cancel,
+      container,
+      loadCurrent,
+      readTaskStream,
+      rejectDraft,
+      restoreDraft,
+      saveDraft,
+    } = await setup({ rejectActivityAfterDiscard: true });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, 'Make draft');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+    click(container, 'Discard draft');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-activity-card="Draft rejected"]')?.textContent)
+        .toContain('The draft was discarded and is no longer available for review.');
+    });
+    expect(rejectDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+    });
+    expect(rejectDraft.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(rejectDraft.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(loadCurrent).not.toHaveBeenCalled();
+    expect(restoreDraft).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(container.textContent).not.toMatch(/builder-generation-draft:|sha256:|provider|credential/iu);
+  });
+
   it('asks a question through the answer bridge without draft, save, or revision UI', async () => {
     const { answer, container, generate, readTaskStream, saveDraft } = await setup({
       answerActivity: true,
@@ -412,7 +473,7 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-activity-card="Draft rejected"]')?.textContent)
-        .toContain('You returned to the saved version.');
+        .toContain('The draft was discarded and is no longer available for review.');
     });
 
     expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });

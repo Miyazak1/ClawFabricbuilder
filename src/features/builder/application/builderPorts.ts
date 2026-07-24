@@ -58,6 +58,7 @@ export interface BuilderCodeGeneratorPort {
   generate(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
+  rejectDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   cancel(request: Readonly<{ request_id: string }>): Promise<unknown>;
 }
 

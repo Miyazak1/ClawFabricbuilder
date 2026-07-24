@@ -15,12 +15,6 @@ const {
 const {
   replayBuilderConversation,
 } = require('../electron/builder-conversation-replay.cjs');
-const {
-  CONVERSATION_AUTHORITY,
-  CONVERSATION_EVENT_KIND,
-  CONVERSATION_EVENT_VERSION,
-  createBuilderConversationEvent,
-} = require('../electron/builder-conversation-records.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -125,36 +119,6 @@ function candidateResult(context) {
       replay: false,
     },
   };
-}
-
-function rejectCandidate(item, context, terminal, candidate) {
-  const rejected = createBuilderConversationEvent({
-    record_version: CONVERSATION_EVENT_VERSION,
-    record_kind: CONVERSATION_EVENT_KIND,
-    project_id: PROJECT_ID,
-    conversation_id: context.conversation.conversation_id,
-    sequence: terminal.head.sequence + 1,
-    command_id: `builder-command:${uuidFactory(700)()}`,
-    event_type: 'candidate_rejected',
-    previous_event: terminal.head,
-    payload: {
-      turn_id: context.ids.turn_id,
-      run_id: context.ids.run_id,
-      draft_id: candidate.draft_id,
-      review_id: `builder-review:${uuidFactory(701)()}`,
-      reviewer_id: `builder-user:${uuidFactory(702)()}`,
-      reviewed_at_ms: 7_000,
-      decision: 'rejected',
-    },
-    authority: { ...CONVERSATION_AUTHORITY },
-  });
-  return item.database.append_conversation_events({
-    project: context.project,
-    conversation: context.conversation,
-    expected_head: terminal.head,
-    events: [rejected],
-    recorded_at_ms: 7_000,
-  });
 }
 
 test('records start and terminal events before allowing a later turn to continue', () => {
@@ -340,7 +304,7 @@ test('restores a main-only candidate draft proof after a real database restart',
   }
 });
 
-test('does not restore or verify a candidate after durable rejection', () => {
+test('records durable candidate rejection and does not restore or verify it afterward', () => {
   const item = fixture();
   let restartedDatabase = null;
   try {
@@ -351,7 +315,14 @@ test('does not restore or verify a candidate after durable rejection', () => {
       candidate_result: candidate,
       assistant_text: 'A timer draft is ready to review.',
     });
-    rejectCandidate(item, context, terminal, candidate);
+    const rejected = item.service.reject_candidate({ draft_id: candidate.draft_id });
+    assert.deepEqual(rejected, {
+      result_version: 'builder-conversation-candidate-reject-result.v1',
+      draft_id: candidate.draft_id,
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      rejection_admission: 'sqlite_recorded',
+    });
 
     const stream = item.service.read_stream({ project_id: PROJECT_ID });
     assert.equal(stream.conversation.head_sequence, 5);
@@ -382,6 +353,10 @@ test('does not restore or verify a candidate after durable rejection', () => {
         candidate_digest: CANDIDATE_DIGEST,
         conversation_head: terminal.head,
       }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => item.service.reject_candidate({ draft_id: candidate.draft_id }),
       { code: 'builder_conversation_main_service_unavailable' },
     );
 

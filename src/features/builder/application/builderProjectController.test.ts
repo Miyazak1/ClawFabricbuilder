@@ -22,6 +22,7 @@ function setup(options: {
   generate?: BuilderCodeGeneratorPort['generate'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
+  rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
   cancel?: BuilderCodeGeneratorPort['cancel'];
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
@@ -30,6 +31,14 @@ function setup(options: {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
+  const rejectDraft = vi.fn(options.rejectDraft ?? (async (request) => ({
+    result_version: 'builder-generation-draft-rejection-result.v1',
+    draft_id: request.draft_id,
+    project_id: PROJECT_ID,
+    rejected: true,
+    pending_draft_released: true,
+    conversation_event_admission: 'sqlite_recorded',
+  })));
   const cancel = vi.fn(options.cancel ?? (async (request) => ({
     request_id: request.request_id,
     cancelled: true,
@@ -55,10 +64,10 @@ function setup(options: {
     listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { generate, answer, restoreDraft, cancel },
+    generator: { generate, answer, restoreDraft, rejectDraft, cancel },
     workspace,
   });
-  return { answer, cancel, controller, generate, loadCurrent, open, restoreDraft, saveDraft };
+  return { answer, cancel, controller, generate, loadCurrent, open, rejectDraft, restoreDraft, saveDraft };
 }
 
 describe('Builder project controller v2', () => {
@@ -96,6 +105,35 @@ describe('Builder project controller v2', () => {
     expect(result.draft?.draft_id).toBe(DRAFT_ID);
     expect(result.savedProject).toBeNull();
     expect(result.draft?.admissions.save).toBe('not_performed');
+  });
+
+  it('discards an unsaved draft by draft_id without saving it', async () => {
+    const { controller, rejectDraft, saveDraft } = setup();
+    await controller.generate('Make a timer.');
+    const result = await controller.rejectDraft();
+
+    expect(rejectDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'new',
+      draft: null,
+      savedProject: null,
+    });
+  });
+
+  it('keeps a draft visible when discard cannot be durably recorded', async () => {
+    const { controller, rejectDraft } = setup({
+      rejectDraft: async () => {
+        throw new Error('private reject failure');
+      },
+    });
+    await controller.generate('Make a timer.');
+    const result = await controller.rejectDraft();
+
+    expect(rejectDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(result.status).toBe('reject_failed');
+    expect(result.error).toBe('reject_failed');
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
   });
 
   it('answers a question without generating a draft or creating a version', async () => {

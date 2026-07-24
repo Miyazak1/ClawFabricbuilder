@@ -193,6 +193,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -331,6 +335,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
         return ports.generator.restoreDraft(request);
       },
+      rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
+        return ports.generator.rejectDraft(request);
+      },
       cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
         return ports.generator.cancel(request);
       },
@@ -391,9 +398,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const readActivityAfterTerminal = useCallback(async (
     result: BuilderVisibleProjectSnapshot,
     commandEpoch: number,
+    fallbackProjectId: string | null = null,
   ) => {
     if (workspaceEpochRef.current !== commandEpoch) return;
-    const conversationProjectId = visibleConversationProjectId(result);
+    const conversationProjectId = visibleConversationProjectId(result) ?? fallbackProjectId;
     if (conversationProjectId === null) return;
     await conversation.load(conversationProjectId).catch(() => undefined);
   }, [conversation]);
@@ -433,6 +441,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const result = await project.cancel();
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
+  }, [project, readActivityAfterTerminal]);
+
+  const rejectDraft = useCallback(async () => {
+    const commandEpoch = workspaceEpochRef.current;
+    const draftProjectId = project.snapshot.draft?.project_id ?? null;
+    const result = await project.rejectDraft();
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch, draftProjectId);
   }, [project, readActivityAfterTerminal]);
 
   const save = useCallback(async () => {
@@ -632,6 +648,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onInstructionChange={setIdea}
               onOpenSettings={() => setView('settings')}
               onCancel={cancel}
+              onRejectDraft={rejectDraft}
               onSave={save}
               onSelectFile={setActiveFile}
               onRefreshConversation={conversation.refresh}

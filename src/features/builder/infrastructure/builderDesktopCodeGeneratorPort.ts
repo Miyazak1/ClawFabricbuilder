@@ -12,11 +12,12 @@ type BuilderCodeGeneratorBridge = Readonly<{
   generate(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   restoreDraft(request: unknown): Promise<unknown>;
+  rejectDraft(request: unknown): Promise<unknown>;
   cancel(request: unknown): Promise<unknown>;
   availability(): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = new Set(['generate', 'answer', 'restoreDraft', 'cancel', 'availability']);
+const BRIDGE_KEYS = new Set(['generate', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
 const MAX_DATA_GRAPH_UTF8_BYTES = 1024 * 1024;
@@ -152,6 +153,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       generate: methods.generate,
       answer: methods.answer,
       restoreDraft: methods.restoreDraft,
+      rejectDraft: methods.rejectDraft,
       cancel: methods.cancel,
       availability: methods.availability,
     });
@@ -242,6 +244,11 @@ export function createBuilderDesktopCodeGeneratorPort(
     },
     restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
       return callBridge(bridge, bridge.restoreDraft, [{
+        draft_id: request.draft_id,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
+      return callBridge(bridge, bridge.rejectDraft, [{
         draft_id: request.draft_id,
       }]).then(unwrapGenerationEnvelope);
     },

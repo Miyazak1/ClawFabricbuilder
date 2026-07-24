@@ -12,6 +12,7 @@ import {
   Save,
   Sparkles,
   StopCircle,
+  Trash2,
   UserRound,
 } from 'lucide-react';
 
@@ -48,6 +49,7 @@ export type BuilderPageProps = {
   onGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
+  onRejectDraft?: () => void;
   onSave?: () => void;
   onOpenSettings?: () => void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
@@ -74,6 +76,7 @@ function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'opening') return 'Opening...';
   if (status === 'answering') return 'Answering...';
   if (status === 'generating') return 'Making...';
+  if (status === 'rejecting') return 'Discarding...';
   return 'Saving...';
 }
 
@@ -185,7 +188,7 @@ function activityBody(item: BuilderConversationItem): string {
       ? 'You asked to steer the current work.'
       : 'You asked to stop the current work.';
   }
-  if (item.item_kind === 'candidate_reviewed') return 'You returned to the saved version.';
+  if (item.item_kind === 'candidate_reviewed') return 'The draft was discarded and is no longer available for review.';
   if (item.item_kind === 'run_completed') {
     return item.assistant_message?.text
       ?? (item.terminal_status === 'succeeded'
@@ -496,6 +499,7 @@ export function BuilderPage({
   onGenerate,
   onRefreshConversation,
   onRefreshHistory,
+  onRejectDraft,
   onSave,
   onOpenSettings,
   conversationSnapshot,
@@ -526,6 +530,7 @@ export function BuilderPage({
     && !hasUnsavedDraft
     && instruction.trim().length > 0;
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
+  const canReject = typeof onRejectDraft === 'function' && hasUnsavedDraft && !busy;
   const canCancel = typeof onCancel === 'function'
     && (status === 'answering' || status === 'generating');
   const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft;
@@ -587,6 +592,18 @@ export function BuilderPage({
               Version {version}
             </span>
           )}
+          {hasUnsavedDraft ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-discard-draft="true"
+              disabled={!canReject}
+              onClick={onRejectDraft}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" className="size-4" />
+              {status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
+            </button>
+          ) : null}
           {hasUnsavedDraft ? (
             <button
               className="cf-builder-primary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
@@ -814,6 +831,9 @@ export function BuilderPage({
           {status === 'saving' ? (
             <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Saving this version...</p>
           ) : null}
+          {status === 'rejecting' ? (
+            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Discarding this draft...</p>
+          ) : null}
           {failed ? (
             <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
               <p>{status === 'answer_failed'
@@ -847,6 +867,11 @@ export function BuilderPage({
           {status === 'save_unknown' ? (
             <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
               The save result could not be confirmed. Your draft is still available; check the project and try again.
+            </p>
+          ) : null}
+          {status === 'reject_failed' ? (
+            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
+              The draft could not be discarded. Your draft is still available; try again.
             </p>
           ) : null}
           {status === 'preview_unavailable' && hasContent ? (

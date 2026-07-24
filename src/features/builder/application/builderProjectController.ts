@@ -30,8 +30,10 @@ export type BuilderProjectControllerStatus =
   | 'generating'
   | 'draft_ready'
   | 'saving'
+  | 'rejecting'
   | 'answer_failed'
   | 'generation_failed'
+  | 'reject_failed'
   | 'save_unknown'
   | 'preview_unavailable'
   | 'conflict'
@@ -39,6 +41,7 @@ export type BuilderProjectControllerStatus =
 
 export type BuilderProjectControllerError =
   | BuilderGenerationDiagnosticCode
+  | 'reject_failed'
   | 'save_unknown'
   | 'preview_unavailable'
   | 'conflict'
@@ -68,6 +71,7 @@ export type BuilderProjectController = Readonly<{
   answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
+  rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
   cancel(): Promise<BuilderProjectControllerSnapshot>;
   save(): Promise<BuilderProjectControllerSnapshot>;
   dispose(): void;
@@ -97,6 +101,14 @@ const SAVE_EVIDENCE_KEYS = Object.freeze([
 ]);
 const SELECTION_RESULT_KEYS = Object.freeze(['result_version', 'operation', 'project_id']);
 const CANCEL_RESULT_KEYS = Object.freeze(['request_id', 'cancelled']);
+const REJECT_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'draft_id',
+  'project_id',
+  'rejected',
+  'pending_draft_released',
+  'conversation_event_admission',
+]);
 const TRUSTED_SNAPSHOTS = new WeakSet<object>();
 
 function snapshot(
@@ -112,7 +124,8 @@ function snapshot(
     busy: status === 'opening'
       || status === 'answering'
       || status === 'generating'
-      || status === 'saving',
+      || status === 'saving'
+      || status === 'rejecting',
     savedProject,
     draft,
     answer,
@@ -242,6 +255,18 @@ function sanitizeNewSelection(value: unknown): void {
     source.result_version !== 'builder-project-selection-result.v1'
     || source.operation !== 'new_selected'
     || source.project_id !== null
+  ) throw new Error();
+}
+
+function sanitizeRejectResult(value: unknown, draft: BuilderGenerationDraft): void {
+  const source = exactRecord(value, REJECT_RESULT_KEYS);
+  if (
+    source.result_version !== 'builder-generation-draft-rejection-result.v1'
+    || source.draft_id !== draft.draft_id
+    || source.project_id !== draft.project_id
+    || source.rejected !== true
+    || source.pending_draft_released !== true
+    || source.conversation_event_admission !== 'sqlite_recorded'
   ) throw new Error();
 }
 
@@ -510,6 +535,27 @@ export function createBuilderProjectController(
     }
   }
 
+  async function rejectDraft(): Promise<BuilderProjectControllerSnapshot> {
+    if (disposed || current.busy || current.draft === null) return current;
+    const retained = current.savedProject;
+    const draft = current.draft;
+    return run(async (operationEpoch) => {
+      publish(snapshot('rejecting', retained, draft, current.preview, null));
+      try {
+        sanitizeRejectResult(
+          await dependencies.generator.rejectDraft({ draft_id: draft.draft_id }),
+          draft,
+        );
+        if (disposed || operationEpoch !== epoch) return current;
+        if (retained === null) return publish(snapshot('new', null, null, null, null));
+        return withPreview('ready', retained, null, operationEpoch);
+      } catch {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot('reject_failed', retained, draft, current.preview, 'reject_failed'));
+      }
+    });
+  }
+
   async function save(): Promise<BuilderProjectControllerSnapshot> {
     if (disposed || current.busy || current.draft === null) return current;
     const retained = current.savedProject;
@@ -565,6 +611,7 @@ export function createBuilderProjectController(
     answer,
     generate,
     restoreDraft,
+    rejectDraft,
     cancel,
     save,
     dispose() {

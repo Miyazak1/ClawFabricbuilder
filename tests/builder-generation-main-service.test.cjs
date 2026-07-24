@@ -134,6 +134,7 @@ function conversationService() {
     failure: [],
     cancel: [],
     readCandidate: [],
+    rejectCandidate: [],
   };
   const service = {
     calls,
@@ -349,6 +350,23 @@ function conversationService() {
       error.code = 'builder_product_metadata_not_found';
       throw error;
     },
+    reject_candidate(input) {
+      calls.rejectCandidate.push(input);
+      const candidate = candidateDrafts.get(input.draft_id);
+      if (candidate === undefined || rejectedDrafts.has(input.draft_id)) {
+        const error = new Error('missing private draft');
+        error.code = 'builder_conversation_main_service_unavailable';
+        throw error;
+      }
+      rejectedDrafts.add(input.draft_id);
+      return {
+        result_version: 'builder-conversation-candidate-reject-result.v1',
+        draft_id: input.draft_id,
+        project_id: candidate.project_id,
+        conversation_id: candidate.conversation_id,
+        rejection_admission: 'sqlite_recorded',
+      };
+    },
   };
   return service;
 }
@@ -529,6 +547,40 @@ test('revalidates cached pending drafts against durable conversation rejection',
     { draft_id: result.draft_id },
     { draft_id: result.draft_id },
   ]);
+});
+
+test('rejects a pending draft by draft id and releases main-only cache', async () => {
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle, gitAuthority: git }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+  const result = await service.generate(request());
+
+  assert.deepEqual(service.reject_draft({ draft_id: result.draft_id }), {
+    result_version: 'builder-generation-draft-rejection-result.v1',
+    draft_id: result.draft_id,
+    project_id: PROJECT_ID,
+    rejected: true,
+    pending_draft_released: true,
+    conversation_event_admission: 'sqlite_recorded',
+  });
+  assert.deepEqual(lifecycle.calls.rejectCandidate, [{ draft_id: result.draft_id }]);
+  await assert.rejects(
+    service.read_pending_draft({ draft_id: result.draft_id }),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(result.draft_id),
+  );
+  await assert.rejects(
+    service.restore_draft({ draft_id: result.draft_id }),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(result.draft_id),
+  );
+  assert.equal(git.receipts.length, 1);
 });
 
 test('records a provider explanation without creating Git candidate, draft, or save facts', async () => {
