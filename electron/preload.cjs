@@ -9,6 +9,7 @@ const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revisio
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
@@ -48,6 +49,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
   codeGenerator: Object.freeze({
     generate(request) {
       return ipcRenderer.invoke(GENERATE_CHANNEL, request);
+    },
+    retry(request) {
+      return ipcRenderer.invoke(RETRY_GENERATE_CHANNEL, request);
     },
     answer(request) {
       return ipcRenderer.invoke(ANSWER_CHANNEL, request);

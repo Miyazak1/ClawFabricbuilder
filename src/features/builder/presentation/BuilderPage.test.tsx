@@ -51,6 +51,10 @@ async function snapshots() {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
       },
+      async retry(request) {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
       async answer(request) {
         return createGenerationAnswer(request);
       },
@@ -182,6 +186,9 @@ async function changedDraftSnapshot() {
       async generate() {
         return draft;
       },
+      async retry() {
+        return draft;
+      },
       async answer() {
         return createGenerationAnswer(request);
       },
@@ -243,6 +250,9 @@ async function inspectedHistorySnapshot() {
   const controller = createBuilderProjectController({
     generator: {
       async generate(request) {
+        return createGenerationDraft(request, currentTree);
+      },
+      async retry(request) {
         return createGenerationDraft(request, currentTree);
       },
       async answer(request) {
@@ -359,6 +369,7 @@ describe('BuilderPage v2', () => {
     const controller = createBuilderProjectController({
       generator: {
         generate: async () => new Promise(() => undefined),
+        retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
         rejectDraft: async () => null,
@@ -653,6 +664,7 @@ describe('BuilderPage v2', () => {
           });
           throw error;
         },
+        retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
         rejectDraft: async () => null,
@@ -685,6 +697,7 @@ describe('BuilderPage v2', () => {
     const controller = createBuilderProjectController({
       generator: {
         generate: async (request) => createGenerationDraft(request),
+        retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
         rejectDraft: async () => null,

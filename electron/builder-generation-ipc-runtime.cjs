@@ -11,6 +11,7 @@ const {
   GENERATE_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  RETRY_GENERATE_CHANNEL,
   createBuilderGenerationIpcAdapter,
 } = require('./builder-generation-ipc-adapter.cjs');
 const {
@@ -282,12 +283,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.generate);
     }
 
+    function trackedRetryGenerate(rawRequest) {
+      return trackedGenerationOperation(rawRequest, service.retry_generate);
+    }
+
     function trackedAnswer(rawRequest) {
       return trackedGenerationOperation(rawRequest, service.answer);
     }
 
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
+      retry: trackedRetryGenerate,
       answer: trackedAnswer,
       restoreDraft: service.restore_draft,
       rejectDraft: service.reject_draft,
@@ -356,6 +362,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
   const handlers = Object.freeze([
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
+    Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
     Object.freeze({ channel: RESTORE_DRAFT_CHANNEL, invoke: adapter.channels.restoreDraft.invoke }),
     Object.freeze({ channel: REJECT_DRAFT_CHANNEL, invoke: adapter.channels.rejectDraft.invoke }),

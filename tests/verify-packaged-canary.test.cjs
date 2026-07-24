@@ -687,8 +687,12 @@ function installBridge(page) {
     bridgeVersion: 'builder-preload.v3',
     codeGenerator: {
       generate() { throw new Error('must not write through bridge'); },
+      retry() { throw new Error('must not write through bridge'); },
       answer() { throw new Error('must not write through bridge'); },
+      restoreDraft() { throw new Error('must not write through bridge'); },
       rejectDraft() { throw new Error('must not write through bridge'); },
+      cancel() { throw new Error('must not write through bridge'); },
+      availability() { throw new Error('must not write through bridge'); },
     },
     projectWorkspace: {
       async open(request) {
@@ -1205,7 +1209,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.match(source, /projectWorkspace\.listCurrent/u);
   assert.match(source, /projectWorkspace\.loadCurrent/u);
   assert.match(source, /taskStream\.read/u);
-  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:generate|answer|rejectDraft)|projectWorkspace\.saveDraft|cancel/u);
+  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|cancel/u);
   const unsavedWait = page.events.findIndex(
     (event) => event[0] === 'scopedText' && event[2] === 'Unsaved draft',
   );
@@ -2808,7 +2812,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
-  assert.doesNotMatch(source, /providerSettings\.replaceCurrent|codeGenerator\.(?:generate|answer|rejectDraft)|projectWorkspace\.saveDraft/u);
+  assert.doesNotMatch(source, /providerSettings\.replaceCurrent|codeGenerator\.(?:generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft/u);
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);

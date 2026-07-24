@@ -218,6 +218,7 @@ async function setup(options: Readonly<{
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
       generate,
+      retry: generate,
       answer,
       restoreDraft,
       rejectDraft,

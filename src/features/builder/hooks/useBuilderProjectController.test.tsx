@@ -62,6 +62,10 @@ async function renderHook(
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
+  const retry = vi.fn(async (request) => {
+    draft = await createGenerationDraft(request, readWire.source_tree);
+    return draft;
+  });
   const answer = vi.fn(async (request) => createGenerationAnswer(request));
   const restoreDraft = vi.fn(async () => draft);
   const rejectDraft = vi.fn(async (request: Readonly<{ draft_id: string }>) => ({
@@ -88,7 +92,7 @@ async function renderHook(
       }
       : readWire
   ));
-  const generator = { generate, answer, restoreDraft, rejectDraft, cancel };
+  const generator = { generate, retry, answer, restoreDraft, rejectDraft, cancel };
   const workspace = {
     open,
     saveDraft,

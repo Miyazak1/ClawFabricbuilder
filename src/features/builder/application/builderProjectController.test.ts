@@ -22,6 +22,7 @@ import {
 
 function setup(options: {
   generate?: BuilderCodeGeneratorPort['generate'];
+  retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
@@ -32,6 +33,7 @@ function setup(options: {
   loadRevision?: BuilderProjectWorkspacePort['loadRevision'];
 } = {}) {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
+  const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
   const rejectDraft = vi.fn(options.rejectDraft ?? (async (request) => ({
@@ -72,7 +74,7 @@ function setup(options: {
     listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { generate, answer, restoreDraft, rejectDraft, cancel },
+    generator: { generate, retry, answer, restoreDraft, rejectDraft, cancel },
     workspace,
   });
   return {
@@ -80,6 +82,7 @@ function setup(options: {
     cancel,
     controller,
     generate,
+    retry,
     loadCurrent,
     loadRevision,
     open,

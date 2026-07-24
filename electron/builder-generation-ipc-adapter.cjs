@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
@@ -15,6 +16,7 @@ const MAX_PLAIN_DATA_UTF8_BYTES = 1024 * 1024;
 const MAX_PLAIN_DATA_DEPTH = 64;
 const OPTION_KEYS = Object.freeze([
   'generate',
+  'retry',
   'answer',
   'restoreDraft',
   'rejectDraft',
@@ -275,6 +277,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.generate);
         },
       }),
+      retry: Object.freeze({
+        channel: RETRY_GENERATE_CHANNEL,
+        method: 'retry',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.retry);
+        },
+      }),
       answer: Object.freeze({
         channel: ANSWER_CHANNEL,
         method: 'answer',
@@ -311,7 +320,15 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['generate', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']),
+    exposed_methods: Object.freeze([
+      'generate',
+      'retry',
+      'answer',
+      'restoreDraft',
+      'rejectDraft',
+      'cancel',
+      'availability',
+    ]),
     authority: Object.freeze({
       host_adapter_injected: true,
       active_renderer_required: true,
@@ -326,6 +343,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   GENERATE_CHANNEL,
+  RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
   CANCEL_CHANNEL,
   AVAILABILITY_CHANNEL,
