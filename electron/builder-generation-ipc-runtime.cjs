@@ -5,6 +5,7 @@ const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
 const {
+  ANSWER_CHANNEL,
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_CHANNEL,
@@ -250,7 +251,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     const activeRequests = new Map();
 
-    function trackedGenerate(rawRequest) {
+    function trackedGenerationOperation(rawRequest, method) {
       if (selectionPending) fail();
       const request = createBuilderGenerationRequest({
         instruction: publicInstruction(rawRequest),
@@ -260,7 +261,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
       let operation;
       try {
-        operation = Promise.resolve(service.generate(request));
+        operation = Promise.resolve(Reflect.apply(method, service, [request]));
       } catch (error) {
         const remaining = (activeRequests.get(requestId) ?? 1) - 1;
         if (remaining === 0) activeRequests.delete(requestId);
@@ -274,8 +275,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       });
     }
 
+    function trackedGenerate(rawRequest) {
+      return trackedGenerationOperation(rawRequest, service.generate);
+    }
+
+    function trackedAnswer(rawRequest) {
+      return trackedGenerationOperation(rawRequest, service.answer);
+    }
+
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
+      answer: trackedAnswer,
       restoreDraft: service.restore_draft,
       cancel: service.cancel,
       availability: service.availability,
@@ -340,6 +350,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
   const handlers = Object.freeze([
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
+    Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
     Object.freeze({ channel: RESTORE_DRAFT_CHANNEL, invoke: adapter.channels.restoreDraft.invoke }),
     Object.freeze({ channel: CANCEL_CHANNEL, invoke: adapter.channels.cancel.invoke }),
     Object.freeze({ channel: AVAILABILITY_CHANNEL, invoke: adapter.channels.availability.invoke }),

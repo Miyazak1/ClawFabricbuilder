@@ -180,6 +180,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -298,6 +302,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const generator: BuilderCodeGeneratorPort = Object.freeze({
       generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
         return ports.generator.generate(request);
+      },
+      answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
+        return ports.generator.answer(request);
       },
       restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
         return ports.generator.restoreDraft(request);

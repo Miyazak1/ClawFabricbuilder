@@ -43,6 +43,9 @@ async function snapshots() {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
       },
+      async answer() {
+        return null;
+      },
       async restoreDraft() {
         return draft;
       },
@@ -194,6 +197,7 @@ describe('BuilderPage v2', () => {
           });
           throw error;
         },
+        answer: async () => null,
         restoreDraft: async () => null,
       },
       workspace: {
@@ -221,6 +225,7 @@ describe('BuilderPage v2', () => {
     const controller = createBuilderProjectController({
       generator: {
         generate: async (request) => createGenerationDraft(request),
+        answer: async () => null,
         restoreDraft: async () => null,
       },
       workspace: {

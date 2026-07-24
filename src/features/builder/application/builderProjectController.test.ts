@@ -19,12 +19,14 @@ import {
 
 function setup(options: {
   generate?: BuilderCodeGeneratorPort['generate'];
+  answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
 } = {}) {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
+  const answer = vi.fn(options.answer ?? (async () => null));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
@@ -46,10 +48,10 @@ function setup(options: {
     listCurrent: async () => ({ projects: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { generate, restoreDraft },
+    generator: { generate, answer, restoreDraft },
     workspace,
   });
-  return { controller, generate, loadCurrent, open, restoreDraft, saveDraft };
+  return { answer, controller, generate, loadCurrent, open, restoreDraft, saveDraft };
 }
 
 describe('Builder project controller v2', () => {

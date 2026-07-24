@@ -48,6 +48,7 @@ async function renderHook(projectId?: string, strict = false) {
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
+  const answer = vi.fn(async () => null);
   const restoreDraft = vi.fn(async () => draft);
   const saveDraft = vi.fn(async () => createSaveResult(draft, readWire));
   const loadCurrent = vi.fn(async () => readWire);
@@ -60,7 +61,7 @@ async function renderHook(projectId?: string, strict = false) {
       }
       : readWire
   ));
-  const generator = { generate, restoreDraft };
+  const generator = { generate, answer, restoreDraft };
   const workspace = {
     open,
     saveDraft,

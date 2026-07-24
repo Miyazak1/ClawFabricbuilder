@@ -56,6 +56,7 @@ export function sanitizeTrustedBuilderGenerationDiagnostic(
 
 export interface BuilderCodeGeneratorPort {
   generate(request: BuilderGenerationRequest): Promise<unknown>;
+  answer(request: BuilderGenerationRequest): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
 }
 

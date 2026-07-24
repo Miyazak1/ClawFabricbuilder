@@ -21,6 +21,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     });
     const port = createBuilderDesktopCodeGeneratorPort({
       generate,
+      answer: async () => null,
       restoreDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
@@ -47,6 +48,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
           retryable: true,
         },
       }),
+      answer: async () => null,
       restoreDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
@@ -59,6 +61,48 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     });
   });
 
+  it('forwards one bounded answer request without renderer-owned authority', async () => {
+    const request = await createBuilderGenerationRequest('What does this project do?');
+    const explanation = Object.freeze({
+      version: 'builder-generation-result.v2',
+      result_kind: 'explanation',
+      request_id: request.request_digest,
+      project_id: null,
+      existing_project_id: null,
+      title: 'Current project',
+      summary: 'Explains the current project.',
+      explanation: 'This answer does not change files.',
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+    const answer = vi.fn(async (_request: unknown) => ({
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: explanation,
+    }));
+    const port = createBuilderDesktopCodeGeneratorPort({
+      generate: async () => null,
+      answer,
+      restoreDraft: async () => null,
+      cancel: async () => null,
+      availability: async () => null,
+    });
+
+    const result = await port.answer(request);
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: request.instruction });
+    expect(answer.mock.calls[0][0]).not.toHaveProperty('existing_project_id');
+    expect(answer.mock.calls[0][0]).not.toHaveProperty('request_digest');
+    expect(result).toEqual(explanation);
+    expect(result).not.toBe(explanation);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('forwards only draft id when restoring a pending draft', async () => {
     const restoredDraft = await createRestoredGenerationDraft();
     const restoreDraft = vi.fn(async () => ({
@@ -68,6 +112,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     }));
     const port = createBuilderDesktopCodeGeneratorPort({
       generate: async () => null,
+      answer: async () => null,
       restoreDraft,
       cancel: async () => null,
       availability: async () => null,
@@ -84,6 +129,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
   it('maps restored draft parent drift to a fixed diagnostic', async () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       generate: async () => null,
+      answer: async () => null,
       restoreDraft: async () => ({
         version: 'builder-generation-ipc-result.v1',
         ok: false,
@@ -110,11 +156,13 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     {},
     {
       generate: async (): Promise<unknown> => null,
+      answer: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
     },
     {
       generate: async (): Promise<unknown> => null,
+      answer: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
       availability: async (): Promise<unknown> => null,
@@ -138,6 +186,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     ]) {
       const port = createBuilderDesktopCodeGeneratorPort({
         generate: async (): Promise<unknown> => response,
+        answer: async (): Promise<unknown> => response,
         restoreDraft: async (): Promise<unknown> => null,
         cancel: async (): Promise<unknown> => null,
         availability: async (): Promise<unknown> => null,

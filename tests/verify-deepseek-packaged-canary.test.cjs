@@ -217,6 +217,6 @@ test('source remains a thin wrapper over the packaged canary authority', () => {
   assert.match(source, /deepseek-v4-pro/u);
   assert.doesNotMatch(
     source,
-    /safeStorage|ipcMain|ipcRenderer|BrowserWindow|fetch\s*\(|Authorization|Bearer|providerSettings\.replaceCurrent|codeGenerator\.generate/iu,
+    /safeStorage|ipcMain|ipcRenderer|BrowserWindow|fetch\s*\(|Authorization|Bearer|providerSettings\.replaceCurrent|codeGenerator\.(?:generate|answer)/iu,
   );
 });
