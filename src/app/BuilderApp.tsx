@@ -288,15 +288,15 @@ function latestRestorableDraft(
   ) return null;
   const items = conversationSnapshot.conversation.conversation.items;
   const savedTarget = projectSnapshot.savedProject.target;
-  const rejectedDraftIds = new Set<string>();
+  const reviewedDraftIds = new Set<string>();
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
-    if (item.item_kind === 'candidate_reviewed' && item.decision === 'rejected') {
-      rejectedDraftIds.add(item.draft_id);
+    if (item.item_kind === 'candidate_reviewed') {
+      reviewedDraftIds.add(item.draft_id);
       continue;
     }
     if (item.item_kind === 'run_completed' && item.candidate !== null) {
-      if (rejectedDraftIds.has(item.candidate.draft_id)) continue;
+      if (reviewedDraftIds.has(item.candidate.draft_id)) continue;
       if (item.turn_id === savedTarget.turn_id && item.run_id === savedTarget.run_id) {
         return null;
       }

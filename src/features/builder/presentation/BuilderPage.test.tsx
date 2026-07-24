@@ -10,6 +10,7 @@ import { BuilderPage } from './BuilderPage';
 import {
   DRAFT_ID,
   PROJECT_ID,
+  createAcceptedTaskStreamWire,
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
@@ -106,6 +107,13 @@ async function snapshots() {
 async function candidateActivity(rejected = false) {
   const controller = createBuilderConversationController({
     read: async () => (rejected ? createRejectedTaskStreamWire() : createTaskStreamWire()),
+  });
+  return controller.load(PROJECT_ID);
+}
+
+async function acceptedCandidateActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => createAcceptedTaskStreamWire(1),
   });
   return controller.load(PROJECT_ID);
 }
@@ -593,6 +601,27 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('shows saved version activity without restoring or exposing internal review data', async () => {
+    const { saved } = await snapshots();
+    const activity = await acceptedCandidateActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-card="Version saved"]')?.textContent)
+      .toContain('This draft was saved as Version 1.');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|revision_receipt|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
   });
 

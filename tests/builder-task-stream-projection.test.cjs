@@ -138,6 +138,24 @@ function rejectedCandidateEvents() {
   return events;
 }
 
+function acceptedCandidateEvents() {
+  const events = candidateEvents();
+  append(events, 'candidate_accepted', {
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    review_id: id('review', 12),
+    reviewer_id: id('user', 13),
+    reviewed_at_ms: 3_000,
+    decision: 'accepted',
+    revision: {
+      revision_receipt_digest: `sha256:${'a'.repeat(64)}`,
+      revision_number: 3,
+    },
+  }, 11);
+  return events;
+}
+
 function explanationHistory(turnCount) {
   const events = [];
   for (let turn = 1; turn <= turnCount; turn += 1) {
@@ -267,10 +285,29 @@ test('projects rejected candidates without exposing review identity or Git evide
     draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
     decision: 'rejected',
     candidate_state: 'rejected',
+    saved_revision: null,
   });
   assert.doesNotMatch(
     JSON.stringify(stream),
     /review_id|reviewer_id|reviewed_at_ms|git_candidate_receipt|candidate_digest|commit_oid|tree_oid|credential|provider/iu,
+  );
+});
+
+test('projects accepted candidates as saved versions without exposing revision evidence', () => {
+  const stream = projectBuilderTaskStream(input(acceptedCandidateEvents()));
+  assert.deepEqual(stream.conversation.items.at(-1), {
+    item_kind: 'candidate_reviewed',
+    sequence: 5,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    decision: 'accepted',
+    candidate_state: 'saved',
+    saved_revision: { revision_number: 3 },
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /review_id|reviewer_id|reviewed_at_ms|revision_receipt|candidate_digest|commit_oid|tree_oid|credential|provider|source_tree/iu,
   );
 });
 

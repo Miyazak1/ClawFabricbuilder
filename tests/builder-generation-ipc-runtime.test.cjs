@@ -152,6 +152,7 @@ function runtimeWithService(service, probes = {}) {
               complete_candidate() {},
               complete_failure() {},
               request_cancel() {},
+              accept_candidate() {},
               reject_candidate() {},
               read_stream(body) {
                 probes.readStreamRequests ??= [];

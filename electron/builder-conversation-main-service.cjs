@@ -29,6 +29,8 @@ const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const REVIEW_ID_PATTERN = new RegExp(`^builder-review:${UUID_SOURCE}$`, 'u');
+const ACTOR_ID_PATTERN = new RegExp(`^(?:builder-user|builder-agent):${UUID_SOURCE}$`, 'u');
 const EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
@@ -148,6 +150,11 @@ function safeOid(value) {
 
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail();
+  return value;
+}
+
+function safeRevisionNumber(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_024) fail();
   return value;
 }
 
@@ -326,6 +333,14 @@ function sanitizeBaseRevision(value) {
   });
 }
 
+function sanitizeRevisionReference(value) {
+  exactObject(value, ['revision_receipt_digest', 'revision_number']);
+  return freezeDeep({
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+    revision_number: safeRevisionNumber(valueAt(value, 'revision_number')),
+  });
+}
+
 function sanitizeBeginRequest(value) {
   exactObject(value, ['project_id', 'instruction', 'request_digest', 'base_revision']);
   return freezeDeep({
@@ -343,6 +358,17 @@ function sanitizeQuestionRequest(value) {
     question: safeText(valueAt(value, 'question'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+  });
+}
+
+function sanitizeAcceptCandidateRequest(value) {
+  exactObject(value, ['draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'revision']);
+  return freezeDeep({
+    draft_id: safePattern(valueAt(value, 'draft_id'), DRAFT_ID_PATTERN),
+    review_id: safePattern(valueAt(value, 'review_id'), REVIEW_ID_PATTERN),
+    reviewer_id: safePattern(valueAt(value, 'reviewer_id'), ACTOR_ID_PATTERN),
+    reviewed_at_ms: safeTimestamp(valueAt(value, 'reviewed_at_ms')),
+    revision: sanitizeRevisionReference(valueAt(value, 'revision')),
   });
 }
 
@@ -1037,6 +1063,59 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     }
   }
 
+  function acceptCandidate(rawRequest) {
+    try {
+      const request = sanitizeAcceptCandidateRequest(rawRequest);
+      const draft = readCandidateDraft({ draft_id: request.draft_id });
+      const state = load(draft.project_id, draft.conversation_id);
+      if (state === null || !sameHead(state.head, draft.conversation_head)) fail();
+      const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+      const project = freezeDeep({
+        project_id: draft.project_id,
+        created_at_ms: projectCreatedAt(
+          draft.project_id,
+          draft.base_revision,
+          recordedAtMs,
+          state,
+        ),
+      });
+      const accepted = eventAt({
+        projectId: draft.project_id,
+        conversationId: draft.conversation_id,
+        sequence: state.head.sequence + 1,
+        commandId: newId(options.createUuid, 'builder-command'),
+        eventType: 'candidate_accepted',
+        previous: state.head,
+        payload: {
+          turn_id: draft.turn_id,
+          run_id: draft.run_id,
+          draft_id: request.draft_id,
+          review_id: request.review_id,
+          reviewer_id: request.reviewer_id,
+          reviewed_at_ms: request.reviewed_at_ms,
+          decision: 'accepted',
+          revision: { ...request.revision },
+        },
+      });
+      append({
+        project,
+        conversation: state.conversation,
+        expectedHead: state.head,
+        events: [accepted],
+        recordedAtMs,
+      });
+      return freezeDeep({
+        result_version: 'builder-conversation-candidate-accept-result.v1',
+        draft_id: request.draft_id,
+        project_id: draft.project_id,
+        conversation_id: draft.conversation_id,
+        acceptance_admission: 'sqlite_recorded',
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function readStream(rawRequest) {
     try {
       exactObject(rawRequest, ['project_id']);
@@ -1066,6 +1145,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
+    accept_candidate: acceptCandidate,
     reject_candidate: rejectCandidate,
     read_stream: readStream,
     authority: Object.freeze({

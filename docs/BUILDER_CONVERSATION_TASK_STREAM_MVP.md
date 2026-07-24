@@ -166,7 +166,7 @@ turn.submitted
 plan.proposed | plan.revised | plan.approved
 task.created | task.updated
 run.started | run.steered | run.interrupted | run.completed
-candidate.created | candidate.rejected
+candidate.created | candidate.accepted | candidate.rejected
 verification.started | verification.completed
 revision.saved | revision.conflicted
 ```
@@ -191,9 +191,11 @@ Revision.
 
 ### Review and Save
 
-Accept, reject, revise, and save are explicit user decisions. Saving binds the
-accepted candidate, Task, Run, base Revision, and new Revision. Rejecting a
-candidate preserves history but changes no Project source.
+Accept, reject, revise, and save are explicit user decisions. Saving first
+creates and verifies the Project Revision fact, then records the candidate as
+accepted in the Conversation projection. Conversation may show the saved Version
+number, but it is not Revision authority. Rejecting a candidate preserves
+history but changes no Project source.
 
 ## Minimal Interaction Flow
 

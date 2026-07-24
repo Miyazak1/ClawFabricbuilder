@@ -10,6 +10,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import {
   PROJECT_ID,
+  createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
   createCatalogWire,
   createGenerationAnswer,
@@ -60,6 +61,7 @@ async function setup(options: Readonly<{
   initiallySaved?: boolean;
   pendingActivity?: boolean;
   pendingAfterRevisionView?: boolean;
+  acceptedPendingActivity?: boolean;
   rejectActivityAfterDiscard?: boolean;
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
@@ -166,12 +168,14 @@ async function setup(options: Readonly<{
       ? createRejectedTaskStreamWire()
       : options.answerActivity === true
       ? createAnswerTaskStreamWire()
+    : options.acceptedPendingActivity === true
+      ? pendingCandidateTaskStreamWire('accepted')
     : options.rejectedPendingActivity === true
-      ? pendingCandidateTaskStreamWire(true)
-      : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
-        ? pendingCandidateTaskStreamWire(false)
+      ? pendingCandidateTaskStreamWire('rejected')
+    : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
+        ? pendingCandidateTaskStreamWire('proposed')
         : options.pendingActivity === true
-          ? pendingCandidateTaskStreamWire(false)
+          ? pendingCandidateTaskStreamWire('proposed')
         : createTaskStreamWire()
   ));
   const open = vi.fn(async (request: { project_id: string | null }) => {
@@ -362,8 +366,12 @@ async function createRestoredDraftForReadWire(
   };
 }
 
-function pendingCandidateTaskStreamWire(rejected: boolean) {
-  const wire = rejected ? createRejectedTaskStreamWire() : createTaskStreamWire();
+function pendingCandidateTaskStreamWire(state: 'accepted' | 'proposed' | 'rejected') {
+  const wire = state === 'accepted'
+    ? createAcceptedTaskStreamWire(1)
+    : state === 'rejected'
+      ? createRejectedTaskStreamWire()
+      : createTaskStreamWire();
   return {
     ...wire,
     conversation: {
@@ -602,6 +610,32 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-activity-card="Draft rejected"]')?.textContent)
         .toContain('The draft was discarded and is no longer available for review.');
+    });
+
+    expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(restoreDraft).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
+      .toContain('Version 1');
+  });
+
+  it('does not restore a pending draft after project activity records acceptance', async () => {
+    const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
+      initiallySaved: true,
+      acceptedPendingActivity: true,
+      restoreAvailable: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Version saved"]')?.textContent)
+        .toContain('This draft was saved as Version 1.');
     });
 
     expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });

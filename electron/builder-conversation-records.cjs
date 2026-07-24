@@ -59,6 +59,7 @@ const MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const TASK_KEYS = Object.freeze(['task_id', 'title']);
 const ASSISTANT_MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
+const REVISION_REFERENCE_KEYS = Object.freeze(['revision_receipt_digest', 'revision_number']);
 const CANDIDATE_RESULT_KEYS = Object.freeze([
   'draft_id', 'title', 'summary', 'git_candidate_receipt',
 ]);
@@ -67,6 +68,10 @@ const PAYLOAD_KEYS = Object.freeze({
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
   candidate_rejected: Object.freeze([
     'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'decision',
+  ]),
+  candidate_accepted: Object.freeze([
+    'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms',
+    'decision', 'revision',
   ]),
   run_started: Object.freeze([
     'turn_id', 'run_id', 'task_id', 'attempt_number', 'retry_of_run_id', 'input_digest',
@@ -200,6 +205,11 @@ function safeAttemptNumber(value) {
   return value;
 }
 
+function safeRevisionNumber(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_024) fail();
+  return value;
+}
+
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail();
   return value;
@@ -243,6 +253,14 @@ function sanitizeBaseRevision(value) {
   return {
     revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
     commit_oid: safeGitOid(valueAt(value, 'commit_oid')),
+  };
+}
+
+function sanitizeRevisionReference(value) {
+  assertExactObject(value, REVISION_REFERENCE_KEYS);
+  return {
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+    revision_number: safeRevisionNumber(valueAt(value, 'revision_number')),
   };
 }
 
@@ -298,6 +316,18 @@ function sanitizePayload(eventType, value) {
         reviewer_id: safeActorId(valueAt(value, 'reviewer_id')),
         reviewed_at_ms: safeTimestamp(valueAt(value, 'reviewed_at_ms')),
         decision: 'rejected',
+      };
+    case 'candidate_accepted':
+      if (valueAt(value, 'decision') !== 'accepted') fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        draft_id: safePattern(valueAt(value, 'draft_id'), DRAFT_ID_PATTERN, 96),
+        review_id: safeReviewId(valueAt(value, 'review_id')),
+        reviewer_id: safeActorId(valueAt(value, 'reviewer_id')),
+        reviewed_at_ms: safeTimestamp(valueAt(value, 'reviewed_at_ms')),
+        decision: 'accepted',
+        revision: sanitizeRevisionReference(valueAt(value, 'revision')),
       };
     case 'run_started':
       return {

@@ -129,6 +129,7 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(lifecycle, /append_conversation_events/u);
   assert.match(lifecycle, /load_conversation/u);
   assert.match(lifecycle, /verify_candidate:\s*verifyCandidate/u);
+  assert.match(lifecycle, /accept_candidate:\s*acceptCandidate/u);
   assert.match(lifecycle, /read_stream:\s*readStream/u);
   assert.match(lifecycle, /builder-git-receipt-contract\.cjs/u);
   assert.match(taskStream, /builder-task-stream-read-result\.v1/u);

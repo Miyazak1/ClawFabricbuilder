@@ -289,6 +289,7 @@ test('records candidate rejection only after a completed candidate run', () => {
     reviewer_id: id('user', 100),
     reviewed_at_ms: 1234,
     decision: 'rejected',
+    revision: null,
   });
   assert.equal(replay.authority.revision_admission, 'not_created');
 
@@ -311,6 +312,64 @@ test('records candidate rejection only after a completed candidate run', () => {
     reviewed_at_ms: 1235,
     decision: 'rejected',
   }, 105)), assertReplayError);
+});
+
+test('records candidate acceptance as a review fact without making conversation a revision authority', () => {
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 120), text: 'Build a tiny project.' },
+    turn_id: id('turn', 120), mode: 'work',
+    task: { task_id: id('task', 120), title: 'Build project' }, base_revision: null,
+  }, 120);
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 120), run_id: id('run', 120), task_id: id('task', 120),
+    attempt_number: 1, retry_of_run_id: null, input_digest: RESULT_A,
+  }, 121);
+  events = append(events, 'run_completed', {
+    turn_id: id('turn', 120), run_id: id('run', 120), terminal_status: 'succeeded',
+    result_kind: 'candidate', result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 121), text: 'A candidate is ready.' },
+  }, 122);
+  events = append(events, 'turn_completed', {
+    turn_id: id('turn', 120), run_id: id('run', 120), outcome: 'candidate_ready',
+  }, 123);
+  events = append(events, 'candidate_accepted', {
+    turn_id: id('turn', 120),
+    run_id: id('run', 120),
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}78`,
+    review_id: id('review', 120),
+    reviewer_id: id('user', 120),
+    reviewed_at_ms: 5678,
+    decision: 'accepted',
+    revision: {
+      revision_receipt_digest: `sha256:${'8'.repeat(64)}`,
+      revision_number: 2,
+    },
+  }, 124);
+
+  const replay = replayBuilderConversation(events);
+  assert.deepEqual(replay.turns[0].runs[0].candidate_review, {
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}78`,
+    review_id: id('review', 120),
+    reviewer_id: id('user', 120),
+    reviewed_at_ms: 5678,
+    decision: 'accepted',
+    revision: {
+      revision_receipt_digest: `sha256:${'8'.repeat(64)}`,
+      revision_number: 2,
+    },
+  });
+  assert.equal(replay.authority.revision_admission, 'not_created');
+
+  assert.throws(() => replayBuilderConversation(append([...events], 'candidate_rejected', {
+    turn_id: id('turn', 120),
+    run_id: id('run', 120),
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}78`,
+    review_id: id('review', 121),
+    reviewer_id: id('user', 120),
+    reviewed_at_ms: 5679,
+    decision: 'rejected',
+  }, 125)), assertReplayError);
 });
 
 test('requires terminal outcomes to honor durable interrupt and cancel requests', () => {

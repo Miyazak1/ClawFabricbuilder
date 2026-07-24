@@ -163,7 +163,11 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
-  if (item.item_kind === 'candidate_reviewed') return <AlertCircle className="size-3.5" />;
+  if (item.item_kind === 'candidate_reviewed') {
+    return item.decision === 'accepted'
+      ? <CheckCircle2 className="size-3.5" />
+      : <AlertCircle className="size-3.5" />;
+  }
   if (item.item_kind === 'run_completed' && item.terminal_status !== 'succeeded') {
     return <AlertCircle className="size-3.5" />;
   }
@@ -179,7 +183,9 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
-  if (item.item_kind === 'candidate_reviewed') return 'Draft rejected';
+  if (item.item_kind === 'candidate_reviewed') {
+    return item.decision === 'accepted' ? 'Version saved' : 'Draft rejected';
+  }
   if (item.item_kind === 'run_completed') return completionLabel(item);
   return outcomeLabel(item.outcome);
 }
@@ -192,7 +198,15 @@ function activityBody(item: BuilderConversationItem): string {
       ? 'You asked to steer the current work.'
       : 'You asked to stop the current work.';
   }
-  if (item.item_kind === 'candidate_reviewed') return 'The draft was discarded and is no longer available for review.';
+  if (item.item_kind === 'candidate_reviewed') {
+    if (item.decision === 'accepted') {
+      const revisionNumber = item.saved_revision?.revision_number;
+      return revisionNumber === undefined
+        ? 'This draft was saved as a version.'
+        : `This draft was saved as Version ${revisionNumber}.`;
+    }
+    return 'The draft was discarded and is no longer available for review.';
+  }
   if (item.item_kind === 'run_completed') {
     return item.assistant_message?.text
       ?? (item.terminal_status === 'succeeded'

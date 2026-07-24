@@ -247,7 +247,9 @@ function pending(candidateValue, {
 }
 
 function conversationServiceFor(draft) {
+  const accepted = [];
   return {
+    accepted,
     verify_candidate(input) {
       const candidateValue = draft.candidate_proof;
       assert.deepEqual(input, {
@@ -269,6 +271,27 @@ function conversationServiceFor(draft) {
           git_candidate_receipt: pendingProofGitReceipts.get(candidateValue),
         },
         verification_admission: 'sqlite_replay_verified',
+      };
+    },
+    accept_candidate(input) {
+      const candidateValue = draft.candidate_proof;
+      assert.equal(input.draft_id, draft.draft_id);
+      assert.match(input.review_id, /^builder-review:/u);
+      assert.match(input.reviewer_id, /^builder-user:/u);
+      assert.equal(Number.isSafeInteger(input.reviewed_at_ms), true);
+      assert.deepEqual(Object.keys(input.revision).sort(), [
+        'revision_number',
+        'revision_receipt_digest',
+      ]);
+      assert.match(input.revision.revision_receipt_digest, /^sha256:[0-9a-f]{64}$/u);
+      assert.equal(Number.isSafeInteger(input.revision.revision_number), true);
+      accepted.push(input);
+      return {
+        result_version: 'builder-conversation-candidate-accept-result.v1',
+        draft_id: draft.draft_id,
+        project_id: candidateValue.project_id,
+        conversation_id: candidateValue.conversation_id,
+        acceptance_admission: 'sqlite_recorded',
       };
     },
   };
@@ -343,8 +366,8 @@ function draftsStore(initialPending) {
   };
 }
 
-function uuidFactory() {
-  let index = 100;
+function uuidFactory(start = 100) {
+  let index = start;
   return () => {
     index += 1;
     return uuid(index);
@@ -414,7 +437,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   appendCandidateConversation(value.metadata, firstCandidate, 10_000);
   const conversationService = createBuilderConversationMainService({
     metadataAuthority: value.metadata,
-    createUuid: uuidFactory(),
+    createUuid: uuidFactory(900),
     nowMs: () => 10_000,
   });
   const gitAuthority = {
@@ -464,8 +487,27 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   assert.equal(saved.save_evidence.conversation_event_admission, 'sqlite_recorded');
   assert.equal(generationDrafts.released.length, 1);
   assert.doesNotMatch(JSON.stringify(saved), /operations|credential|conversation_events|api\.deepseek/u);
+  const savedStream = conversationService.read_stream({ project_id: PROJECT_ID });
+  assert.deepEqual(savedStream.conversation.items.at(-1), {
+    item_kind: 'candidate_reviewed',
+    sequence: 5,
+    turn_id: firstCandidate.turn_id,
+    run_id: firstCandidate.run_id,
+    draft_id: firstPending.draft_id,
+    decision: 'accepted',
+    candidate_state: 'saved',
+    saved_revision: { revision_number: 1 },
+  });
+  assert.doesNotMatch(
+    JSON.stringify(savedStream),
+    /revision_receipt|commit_oid|tree_oid|review_id|reviewer_id|reviewed_at_ms|provider|credential/iu,
+  );
 
   const current = await value.read.load_current({ project_id: PROJECT_ID });
+  const priorConversation = value.metadata.load_conversation({
+    project_id: firstCandidate.project_id,
+    conversation_id: firstCandidate.conversation_id,
+  });
   acceptanceTime = 20_000;
   const baseEvidence = {
     evidence_version: BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION,
@@ -483,7 +525,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
       commit_oid: current.product_revision_receipt.commit_oid,
     },
     baseEvidence,
-    priorEvents: candidateFullEvents.get(firstCandidate),
+    priorEvents: priorConversation.events,
     operations: [
       { operation: 'upsert', path: 'src/app.js', content: 'document.title = "Updated";\n' },
       { operation: 'upsert', path: 'README.md', content: '# Updated\n' },
@@ -536,9 +578,10 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
   const gitReceipt = candidateGitReceipts.get(value);
   const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
   const revisionDigest = `sha256:${'c'.repeat(64)}`;
+  const conversationService = conversationServiceFor(draft);
   const saveAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
-    conversationService: conversationServiceFor(draft),
+    conversationService,
     gitAuthority: {
       async verify_candidate_receipt(receipt) {
         verifyCalls += 1;
@@ -555,6 +598,7 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
           receipt: {
             project_id: PROJECT_ID,
             revision_receipt_digest: revisionDigest,
+            revision_number: 1,
             commit_oid: gitReceipt.commit_oid,
           },
         };
@@ -567,6 +611,7 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
           product_revision_receipt: {
             project_id: PROJECT_ID,
             revision_receipt_digest: revisionDigest,
+            revision_number: 1,
             commit_oid: gitReceipt.commit_oid,
           },
           current: {},
@@ -589,6 +634,7 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
   assert.deepEqual(await first, await second);
   assert.equal(verifyCalls, 1);
   assert.equal(recordCalls, 1);
+  assert.equal(conversationService.accepted.length, 1);
   assert.equal(generationDrafts.released.length, 1);
 });
 
@@ -625,6 +671,7 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
           receipt: {
             project_id: PROJECT_ID,
             revision_receipt_digest: `sha256:${'c'.repeat(64)}`,
+            revision_number: 1,
             commit_oid: gitReceipt.commit_oid,
           },
         };
@@ -638,6 +685,7 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
           product_revision_receipt: {
             project_id: PROJECT_ID,
             revision_receipt_digest: `sha256:${'c'.repeat(64)}`,
+            revision_number: 1,
             commit_oid: gitReceipt.commit_oid,
           },
           current: {},
@@ -741,6 +789,9 @@ test('rejects malformed save authority input with fixed redacted errors', async 
           project_id: 'builder-project:223e4567-e89b-42d3-a456-426614174000',
           verification_admission: 'sqlite_replay_verified',
         };
+      },
+      accept_candidate() {
+        throw new Error('must not accept after invalid verification');
       },
     },
     gitAuthority: {

@@ -199,6 +199,20 @@ function itemFromEvent(event) {
         draft_id: payload.draft_id,
         decision: 'rejected',
         candidate_state: 'rejected',
+        saved_revision: null,
+      };
+    case 'candidate_accepted':
+      return {
+        item_kind: 'candidate_reviewed',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        draft_id: payload.draft_id,
+        decision: 'accepted',
+        candidate_state: 'saved',
+        saved_revision: {
+          revision_number: payload.revision.revision_number,
+        },
       };
     case 'turn_completed':
       return {

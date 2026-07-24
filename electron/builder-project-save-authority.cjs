@@ -159,6 +159,13 @@ function safeMs(value) {
   return value;
 }
 
+function safeRevisionNumber(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_024) {
+    fail('builder_project_save_invalid');
+  }
+  return value;
+}
+
 function sanitizeOptions(value) {
   exactObject(value, OPTION_KEYS);
   const generationDrafts = valueAt(value, 'generationDrafts');
@@ -187,6 +194,7 @@ function sanitizeOptions(value) {
     loadCurrent: ownMethod(projectReadAuthority, 'load_current'),
     conversationService,
     verifyConversationCandidate: ownMethod(conversationService, 'verify_candidate'),
+    acceptConversationCandidate: ownMethod(conversationService, 'accept_candidate'),
     createUuid,
     nowMs,
   });
@@ -336,6 +344,23 @@ function sanitizeConversationVerification(value, draft) {
   return gitCandidateReceipt;
 }
 
+function sanitizeConversationAcceptance(value, draft, candidate) {
+  exactObject(value, [
+    'result_version',
+    'draft_id',
+    'project_id',
+    'conversation_id',
+    'acceptance_admission',
+  ]);
+  if (
+    valueAt(value, 'result_version') !== 'builder-conversation-candidate-accept-result.v1'
+    || valueAt(value, 'draft_id') !== draft.draft_id
+    || valueAt(value, 'project_id') !== candidate.project_id
+    || valueAt(value, 'conversation_id') !== candidate.conversation_id
+    || valueAt(value, 'acceptance_admission') !== 'sqlite_recorded'
+  ) fail('builder_project_save_invalid');
+}
+
 function taskTitle(candidate) {
   return candidate.base_revision === null
     ? 'Create Builder project'
@@ -380,6 +405,15 @@ function currentReceiptFromReadResult(value, expectedProjectId, expectedReceipt,
     || safeOid(valueAt(receipt, 'commit_oid')) !== expectedCommit
   ) fail('builder_project_save_invalid');
   return receipt;
+}
+
+function savedRevisionFromReceipt(value, expectedReceipt) {
+  const revisionReceiptDigest = safeDigest(valueAt(value, 'revision_receipt_digest'));
+  if (revisionReceiptDigest !== expectedReceipt) fail('builder_project_save_invalid');
+  return freezeDeep({
+    revision_receipt_digest: revisionReceiptDigest,
+    revision_number: safeRevisionNumber(valueAt(value, 'revision_number')),
+  });
 }
 
 function ownCode(error) {
@@ -601,6 +635,21 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         candidate.project_id,
         safeDigest(valueAt(record.receipt, 'revision_receipt_digest')),
         gitReceipt.commit_oid,
+      );
+      const savedRevision = savedRevisionFromReceipt(
+        currentReceipt,
+        safeDigest(valueAt(record.receipt, 'revision_receipt_digest')),
+      );
+      sanitizeConversationAcceptance(
+        Reflect.apply(options.acceptConversationCandidate, options.conversationService, [{
+          draft_id: draft.draft_id,
+          review_id: attempt.review_id,
+          reviewer_id: attempt.reviewer_id,
+          reviewed_at_ms: attempt.accepted_at_ms,
+          revision: savedRevision,
+        }]),
+        draft,
+        candidate,
       );
       Reflect.apply(options.releasePendingDraft, options.generationDrafts, [{
         draft_id: draft.draft_id,

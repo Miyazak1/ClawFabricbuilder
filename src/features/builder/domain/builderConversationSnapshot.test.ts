@@ -47,6 +47,7 @@ type MutableConversationItem = {
   draft_id?: string;
   decision?: string;
   candidate_state?: string;
+  saved_revision?: { revision_number: number } | null;
   outcome?: string;
 };
 
@@ -174,6 +175,24 @@ function rejectedCandidateWire(): MutableWire {
     draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
     decision: 'rejected',
     candidate_state: 'rejected',
+    saved_revision: null,
+  });
+  return wire;
+}
+
+function acceptedCandidateWire(): MutableWire {
+  const wire = candidateWire();
+  wire.conversation.head_sequence = 5;
+  wire.conversation.window.last_sequence = 5;
+  wire.conversation.items.push({
+    item_kind: 'candidate_reviewed',
+    sequence: 5,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    decision: 'accepted',
+    candidate_state: 'saved',
+    saved_revision: { revision_number: 1 },
   });
   return wire;
 }
@@ -343,10 +362,54 @@ describe('Builder conversation snapshot', () => {
       draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
       decision: 'rejected',
       candidate_state: 'rejected',
+      saved_revision: null,
     });
     expect(JSON.stringify(snapshot)).not.toMatch(
       /review_id|reviewer_id|reviewed_at_ms|git_|receipt|digest|provider|credential|source_tree/iu,
     );
+  });
+
+  it('accepts saved candidate review facts with only the public version number', () => {
+    const wire = acceptedCandidateWire();
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[4]).toEqual({
+      item_kind: 'candidate_reviewed',
+      sequence: 5,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+      decision: 'accepted',
+      candidate_state: 'saved',
+      saved_revision: { revision_number: 1 },
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /review_id|reviewer_id|reviewed_at_ms|revision_receipt|git_|receipt|digest|provider|credential|source_tree/iu,
+    );
+  });
+
+  it('requires accepted review facts to stay minimal and internally consistent', () => {
+    const missingRevision = acceptedCandidateWire();
+    delete missingRevision.conversation.items[4]!.saved_revision;
+
+    const leakedRevision = acceptedCandidateWire();
+    leakedRevision.conversation.items[4]!.saved_revision = {
+      revision_number: 1,
+      revision_receipt_digest: `sha256:${'f'.repeat(64)}`,
+    } as unknown as { revision_number: number };
+
+    const mismatchedState = acceptedCandidateWire();
+    mismatchedState.conversation.items[4]!.candidate_state = 'rejected';
+
+    const rejectedWithRevision = rejectedCandidateWire();
+    rejectedWithRevision.conversation.items[4]!.saved_revision = { revision_number: 1 };
+
+    expectUnavailable(missingRevision);
+    expectUnavailable(leakedRevision);
+    expectUnavailable(mismatchedState);
+    expectUnavailable(rejectedWithRevision);
   });
 
   it('accepts a bounded truncated window without inventing omitted history', () => {
@@ -452,6 +515,7 @@ describe('Builder conversation snapshot', () => {
         draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
         decision: 'rejected',
         candidate_state: 'rejected',
+        saved_revision: null,
       },
     ].slice(1);
     wire.conversation.head_sequence = 133;
@@ -472,6 +536,7 @@ describe('Builder conversation snapshot', () => {
       draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
       decision: 'rejected',
       candidate_state: 'rejected',
+      saved_revision: null,
     });
   });
 
@@ -574,6 +639,7 @@ describe('Builder conversation snapshot', () => {
         draft_id: visibleDraftId,
         decision: 'rejected',
         candidate_state: 'rejected',
+        saved_revision: null,
       },
     ].slice(1);
     visibleDraftPoison.conversation.head_sequence = 133;

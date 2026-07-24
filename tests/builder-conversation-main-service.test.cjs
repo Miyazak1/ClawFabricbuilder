@@ -334,6 +334,7 @@ test('records durable candidate rejection and does not restore or verify it afte
       draft_id: candidate.draft_id,
       decision: 'rejected',
       candidate_state: 'rejected',
+      saved_revision: null,
     });
     assert.doesNotMatch(
       JSON.stringify(stream),
@@ -368,6 +369,106 @@ test('records durable candidate rejection and does not restore or verify it afte
       metadataAuthority: restartedDatabase,
       createUuid: uuidFactory(750),
       nowMs: () => 7_500,
+    });
+    assert.throws(
+      () => restartedService.read_candidate_draft({ draft_id: candidate.draft_id }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), stream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
+test('records durable candidate acceptance and does not restore or review it afterward', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    const candidate = candidateResult(context);
+    const terminal = item.service.complete_candidate({
+      context,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const accepted = item.service.accept_candidate({
+      draft_id: candidate.draft_id,
+      review_id: 'builder-review:00000000-0000-4000-8000-000000000900',
+      reviewer_id: 'builder-user:00000000-0000-4000-8000-000000000901',
+      reviewed_at_ms: 9_000,
+      revision: {
+        revision_receipt_digest: `sha256:${'a'.repeat(64)}`,
+        revision_number: 1,
+      },
+    });
+    assert.deepEqual(accepted, {
+      result_version: 'builder-conversation-candidate-accept-result.v1',
+      draft_id: candidate.draft_id,
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      acceptance_admission: 'sqlite_recorded',
+    });
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 5);
+    assert.deepEqual(stream.conversation.items.at(-1), {
+      item_kind: 'candidate_reviewed',
+      sequence: 5,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      draft_id: candidate.draft_id,
+      decision: 'accepted',
+      candidate_state: 'saved',
+      saved_revision: { revision_number: 1 },
+    });
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /review_id|reviewer_id|reviewed_at_ms|revision_receipt|git_candidate_receipt|candidate_digest|commit_oid|tree_oid|provider|credential/iu,
+    );
+    assert.throws(
+      () => item.service.read_candidate_draft({ draft_id: candidate.draft_id }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => item.service.verify_candidate({
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        candidate_digest: CANDIDATE_DIGEST,
+        conversation_head: terminal.head,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => item.service.reject_candidate({ draft_id: candidate.draft_id }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => item.service.accept_candidate({
+        draft_id: candidate.draft_id,
+        review_id: 'builder-review:00000000-0000-4000-8000-000000000902',
+        reviewer_id: 'builder-user:00000000-0000-4000-8000-000000000903',
+        reviewed_at_ms: 9_001,
+        revision: {
+          revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+          revision_number: 2,
+        },
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(850),
+      nowMs: () => 8_500,
     });
     assert.throws(
       () => restartedService.read_candidate_draft({ draft_id: candidate.draft_id }),

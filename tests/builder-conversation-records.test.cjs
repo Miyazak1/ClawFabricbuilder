@@ -149,6 +149,48 @@ test('supports actor-bound candidate rejection payloads without source or Git ev
   }
 });
 
+test('supports accepted candidate review payloads with a minimal revision reference', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a local timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create timer' },
+    base_revision: null,
+  }, null, 1);
+  const accepted = create('candidate_accepted', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    draft_id: `builder-generation-draft:${'2'.repeat(64)}`,
+    review_id: typedId('review', 2),
+    reviewer_id: typedId('user', 2),
+    reviewed_at_ms: 5678,
+    decision: 'accepted',
+    revision: {
+      revision_receipt_digest: `sha256:${'3'.repeat(64)}`,
+      revision_number: 7,
+    },
+  }, submitted, 2);
+
+  assert.equal(accepted.payload.decision, 'accepted');
+  assert.deepEqual(accepted.payload.revision, {
+    revision_receipt_digest: `sha256:${'3'.repeat(64)}`,
+    revision_number: 7,
+  });
+  assert.equal(Object.isFrozen(accepted.payload.revision), true);
+  assert.doesNotMatch(
+    JSON.stringify(accepted),
+    /source_tree|git_candidate_receipt|commit_oid|tree_oid|credential|provider/iu,
+  );
+
+  for (const drift of [
+    { ...accepted, payload: { ...accepted.payload, decision: 'rejected' } },
+    { ...accepted, payload: { ...accepted.payload, revision: { ...accepted.payload.revision, revision_number: 0 } } },
+    { ...accepted, payload: { ...accepted.payload, revision: { ...accepted.payload.revision, commit_oid: COMMIT_OID } } },
+  ]) {
+    assert.throws(() => sanitizeBuilderConversationEvent(drift), assertRecordError());
+  }
+});
+
 test('rejects non-derived conversation/event/command evidence and payload drift', () => {
   const event = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Build a timer.' },

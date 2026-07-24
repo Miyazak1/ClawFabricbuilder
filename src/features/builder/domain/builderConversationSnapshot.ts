@@ -26,6 +26,10 @@ export type BuilderConversationCandidate = Readonly<{
   source_availability: 'not_loaded';
 }>;
 
+export type BuilderConversationSavedRevision = Readonly<{
+  revision_number: number;
+}>;
+
 export type BuilderConversationItem =
   | Readonly<{
     item_kind: 'user_message';
@@ -69,8 +73,9 @@ export type BuilderConversationItem =
     turn_id: string;
     run_id: string;
     draft_id: string;
-    decision: 'rejected';
-    candidate_state: 'rejected';
+    decision: 'accepted' | 'rejected';
+    candidate_state: 'saved' | 'rejected';
+    saved_revision: BuilderConversationSavedRevision | null;
   }>
   | Readonly<{
     item_kind: 'turn_completed';
@@ -209,6 +214,7 @@ const CANDIDATE_REVIEWED_KEYS = Object.freeze([
   'draft_id',
   'decision',
   'candidate_state',
+  'saved_revision',
 ]);
 const TURN_COMPLETED_KEYS = Object.freeze([
   'item_kind',
@@ -226,6 +232,7 @@ const CANDIDATE_KEYS = Object.freeze([
   'candidate_state',
   'source_availability',
 ]);
+const SAVED_REVISION_KEYS = Object.freeze(['revision_number']);
 
 export class BuilderConversationSnapshotError extends Error {
   readonly code = 'builder_conversation_snapshot_unavailable';
@@ -395,6 +402,13 @@ function safeTimestamp(value: unknown): number {
   return Number(value);
 }
 
+function safeRevisionNumber(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 1024) {
+    throw unavailable();
+  }
+  return Number(value);
+}
+
 function nullableId(value: unknown, pattern: RegExp): string | null {
   return value === null ? null : safePattern(value, pattern);
 }
@@ -434,6 +448,13 @@ function sanitizeCandidate(value: unknown): BuilderConversationCandidate | null 
     summary: safeText(source.summary, 2000, 8192, true),
     candidate_state: 'proposed',
     source_availability: 'not_loaded',
+  };
+}
+
+function sanitizeSavedRevision(value: unknown): BuilderConversationSavedRevision {
+  const source = exactRecord(value, SAVED_REVISION_KEYS);
+  return {
+    revision_number: safeRevisionNumber(source.revision_number),
   };
 }
 
@@ -548,9 +569,24 @@ function sanitizeCandidateReviewed(
   source: Record<string, unknown>,
   sequence: number,
 ): Extract<BuilderConversationItem, { item_kind: 'candidate_reviewed' }> {
+  const decision = source.decision;
+  if (decision !== 'accepted' && decision !== 'rejected') throw unavailable();
+  if (decision === 'accepted') {
+    if (source.candidate_state !== 'saved') throw unavailable();
+    return {
+      item_kind: 'candidate_reviewed' as const,
+      sequence,
+      turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+      run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+      draft_id: safePattern(source.draft_id, DRAFT_ID_PATTERN),
+      decision: 'accepted',
+      candidate_state: 'saved',
+      saved_revision: sanitizeSavedRevision(source.saved_revision),
+    };
+  }
   if (
-    source.decision !== 'rejected'
-    || source.candidate_state !== 'rejected'
+    source.candidate_state !== 'rejected'
+    || source.saved_revision !== null
   ) throw unavailable();
   return {
     item_kind: 'candidate_reviewed' as const,
@@ -560,6 +596,7 @@ function sanitizeCandidateReviewed(
     draft_id: safePattern(source.draft_id, DRAFT_ID_PATTERN),
     decision: 'rejected',
     candidate_state: 'rejected',
+    saved_revision: null,
   };
 }
 
@@ -638,7 +675,7 @@ type ReplayTurn = {
     terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled' | null;
     result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
     candidate_draft_id: string | null;
-    candidate_review: 'rejected' | null;
+    candidate_review: 'accepted' | 'rejected' | null;
     control: 'cancel' | 'interrupt' | null;
   }>;
 };
@@ -716,7 +753,7 @@ function validateCompleteWindow(
         || reviewedRun.candidate_draft_id !== item.draft_id
         || reviewedRun.candidate_review !== null
       ) throw unavailable();
-      reviewedRun.candidate_review = 'rejected';
+      reviewedRun.candidate_review = item.decision;
       continue;
     }
 
@@ -805,7 +842,7 @@ type SuffixRun = {
   terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled' | null;
   result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
   candidate_draft_id: string | null;
-  candidate_review: 'rejected' | null;
+  candidate_review: 'accepted' | 'rejected' | null;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
 };
 
@@ -846,7 +883,7 @@ function validateTruncatedWindow(
   const draftIds = new Set<string>();
   const completedCandidateRuns = new Map<
     string,
-    Readonly<{ turn_id: string; draft_id: string; review: 'rejected' | null }>
+    Readonly<{ turn_id: string; draft_id: string; review: 'accepted' | 'rejected' | null }>
   >();
   let activeTurn: SuffixTurn | null = null;
 
@@ -917,7 +954,7 @@ function validateTruncatedWindow(
       ) throw unavailable();
       completedCandidateRuns.set(item.run_id, {
         ...completedCandidateRun,
-        review: 'rejected',
+        review: item.decision,
       });
       continue;
     }

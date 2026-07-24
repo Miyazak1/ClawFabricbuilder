@@ -125,7 +125,7 @@ function applyRunStarted(state, payload) {
   });
 }
 
-function applyCandidateRejected(state, payload) {
+function applyCandidateReviewed(state, payload) {
   if (state.activeTurnId !== null || state.reviewIds.has(payload.review_id)) fail();
   const turn = state.turns.get(payload.turn_id);
   if (!turn || turn.status !== 'completed' || turn.outcome !== 'candidate_ready') fail();
@@ -145,7 +145,8 @@ function applyCandidateRejected(state, payload) {
     review_id: payload.review_id,
     reviewer_id: payload.reviewer_id,
     reviewed_at_ms: payload.reviewed_at_ms,
-    decision: 'rejected',
+    decision: payload.decision,
+    revision: payload.decision === 'accepted' ? { ...payload.revision } : null,
   };
 }
 
@@ -223,7 +224,8 @@ function applyTurnCompleted(state, payload) {
 const TRANSITIONS = Object.freeze({
   turn_submitted: applyTurnSubmitted,
   turn_steered: applyTurnSteered,
-  candidate_rejected: applyCandidateRejected,
+  candidate_rejected: applyCandidateReviewed,
+  candidate_accepted: applyCandidateReviewed,
   run_started: applyRunStarted,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
@@ -244,7 +246,12 @@ function publicTurn(turn) {
         ...run.candidate_result,
         git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
       },
-      candidate_review: run.candidate_review === null ? null : { ...run.candidate_review },
+      candidate_review: run.candidate_review === null ? null : {
+        ...run.candidate_review,
+        revision: run.candidate_review.revision === null
+          ? null
+          : { ...run.candidate_review.revision },
+      },
     })),
     messages: turn.messages.map((message) => ({ ...message })),
     outcome: turn.outcome,

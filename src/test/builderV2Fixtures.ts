@@ -523,6 +523,35 @@ export function createRejectedTaskStreamWire() {
           draft_id: DRAFT_ID,
           decision: 'rejected',
           candidate_state: 'rejected',
+          saved_revision: null,
+        },
+      ],
+    },
+  };
+}
+
+export function createAcceptedTaskStreamWire(revisionNumber = 1) {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 5,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 5,
+      },
+      items: [
+        ...wire.conversation.items,
+        {
+          item_kind: 'candidate_reviewed',
+          sequence: 5,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          draft_id: DRAFT_ID,
+          decision: 'accepted',
+          candidate_state: 'saved',
+          saved_revision: { revision_number: revisionNumber },
         },
       ],
     },
