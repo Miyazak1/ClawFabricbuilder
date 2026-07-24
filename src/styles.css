@@ -380,6 +380,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1;
 }
 
+.cf-builder-composer-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .cf-builder-command-button {
   min-width: 112px;
 }
@@ -1006,6 +1014,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
   .cf-builder-composer-footer {
     align-items: flex-end;
+  }
+
+  .cf-builder-composer-actions {
+    flex-wrap: wrap;
   }
 
   .cf-builder-composer-tools .cf-builder-status-pill {

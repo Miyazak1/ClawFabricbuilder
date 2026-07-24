@@ -8,6 +8,7 @@ import { useBuilderProjectController } from './useBuilderProjectController';
 import {
   DRAFT_ID,
   PROJECT_ID,
+  createGenerationAnswer,
   createGenerationDraft,
   createReadWire,
   createSaveResult,
@@ -48,7 +49,7 @@ async function renderHook(projectId?: string, strict = false) {
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
-  const answer = vi.fn(async () => null);
+  const answer = vi.fn(async (request) => createGenerationAnswer(request));
   const restoreDraft = vi.fn(async () => draft);
   const saveDraft = vi.fn(async () => createSaveResult(draft, readWire));
   const loadCurrent = vi.fn(async () => readWire);
@@ -92,6 +93,7 @@ async function renderHook(projectId?: string, strict = false) {
   });
   return {
     current: () => latest as UseBuilderProjectControllerResult,
+    answer,
     generate,
     loadCurrent,
     open,
@@ -147,6 +149,28 @@ describe('useBuilderProjectController', () => {
       draft: null,
       savedProject: {
         target: { project_id: PROJECT_ID, revision_number: 1 },
+      },
+    });
+  });
+
+  it('answers through the controller without creating a draft or saving', async () => {
+    const hook = await renderHook();
+    await act(async () => {
+      await hook.current().answer('What does this project do?');
+    });
+
+    expect(hook.answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      instruction: 'What does this project do?',
+      existing_project_id: null,
+    }));
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'new',
+      draft: null,
+      savedProject: null,
+      answer: {
+        result_kind: 'explanation',
+        project_id: PROJECT_ID,
       },
     });
   });

@@ -242,6 +242,7 @@ function visibleConversationProjectId(
 ): string | null {
   return snapshot.draft?.project_id
     ?? snapshot.savedProject?.target.project_id
+    ?? snapshot.answer?.project_id
     ?? null;
 }
 
@@ -385,6 +386,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const generate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     const result = await project.generate(idea);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch);
+  }, [idea, project, readActivityAfterTerminal]);
+
+  const answer = useCallback(async () => {
+    const commandEpoch = workspaceEpochRef.current;
+    const result = await project.answer(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
   }, [idea, project, readActivityAfterTerminal]);
@@ -576,6 +584,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             <BuilderPage
               activeFile={activeFile}
               instruction={idea}
+              onAnswer={answer}
               onGenerate={generate}
               onInstructionChange={setIdea}
               onOpenSettings={() => setView('settings')}

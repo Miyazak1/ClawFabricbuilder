@@ -259,6 +259,29 @@ export async function createGenerationDraft(
   };
 }
 
+export async function createGenerationAnswer(
+  requestValue?: BuilderGenerationRequest,
+) {
+  const request = requestValue ?? await createBuilderGenerationRequest('What does this project do?');
+  return {
+    version: BUILDER_GENERATION_RESULT_PROTOCOL,
+    result_kind: 'explanation',
+    request_id: request.request_digest,
+    project_id: request.existing_project_id ?? PROJECT_ID,
+    existing_project_id: request.existing_project_id,
+    title: 'Current project',
+    summary: 'Explains the current project.',
+    explanation: 'This answer does not change files.',
+    admissions: {
+      conversation: 'sqlite_recorded',
+      draft: 'not_created',
+      save: 'not_performed',
+      preview: 'not_applicable',
+      execution: 'not_evaluated',
+    },
+  };
+}
+
 export async function createRestoredGenerationDraft(
   sourceTreeValue?: Awaited<ReturnType<typeof createSourceTree>>,
 ): Promise<BuilderGenerationDraft> {
@@ -390,6 +413,60 @@ export function createTaskStreamWire() {
       project_source: 'not_included',
       candidate_source: 'not_loaded',
       project_revision: 'not_inferred',
+    },
+  };
+}
+
+export function createAnswerTaskStreamWire() {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
+            text: 'What does this project do?',
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          assistant_message: {
+            message_id: ASSISTANT_MESSAGE_ID,
+            text: 'This answer does not change files.',
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'answered',
+        },
+      ],
     },
   };
 }

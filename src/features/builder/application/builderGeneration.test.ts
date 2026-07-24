@@ -4,6 +4,7 @@ import {
   BUILDER_GENERATION_REQUEST_PROTOCOL,
   BuilderGenerationError,
   createBuilderGenerationRequest,
+  sanitizeBuilderGenerationAnswer,
   sanitizeBuilderGenerationDraft,
   sanitizeBuilderGenerationRequest,
   sanitizeRestoredBuilderGenerationDraft,
@@ -11,6 +12,7 @@ import {
 import {
   DRAFT_ID,
   PROJECT_ID,
+  createGenerationAnswer,
   createGenerationDraft,
   createRestoredGenerationDraft,
   createSourceTree,
@@ -102,6 +104,51 @@ describe('Builder generation v2', () => {
     ]) {
       await expect(sanitizeBuilderGenerationDraft(forged, request)).rejects.toMatchObject({
         code: 'invalid_generated_draft',
+      });
+    }
+  });
+
+  it('accepts an explanation answer without draft, source, or save authority', async () => {
+    const request = await createBuilderGenerationRequest('What does this project do?');
+    const result = await sanitizeBuilderGenerationAnswer(
+      structuredClone(await createGenerationAnswer(request)),
+      request,
+    );
+
+    expect(result).toEqual({
+      version: 'builder-generation-result.v2',
+      result_kind: 'explanation',
+      title: 'Current project',
+      summary: 'Explains the current project.',
+      explanation: 'This answer does not change files.',
+      project_id: PROJECT_ID,
+      existing_project_id: null,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+    expect(result).not.toHaveProperty('request_id');
+    expect(result).not.toHaveProperty('draft_id');
+    expect(result).not.toHaveProperty('source_tree');
+    expect(result).not.toHaveProperty('candidate');
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('rejects explanation route drift, source fields, and saved admissions', async () => {
+    const request = await createBuilderGenerationRequest('What does this project do?');
+    const answer = await createGenerationAnswer(request);
+    for (const forged of [
+      { ...answer, result_kind: 'candidate' },
+      { ...answer, request_id: `sha256:${'f'.repeat(64)}` },
+      { ...answer, source_tree: await createSourceTree() },
+      { ...answer, admissions: { ...answer.admissions, draft: 'candidate_not_saved' } },
+    ]) {
+      await expect(sanitizeBuilderGenerationAnswer(forged, request)).rejects.toMatchObject({
+        code: 'invalid_generated_answer',
       });
     }
   });

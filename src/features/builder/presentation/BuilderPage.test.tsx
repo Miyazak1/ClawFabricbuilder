@@ -9,6 +9,7 @@ import { BuilderPage } from './BuilderPage';
 import {
   DRAFT_ID,
   PROJECT_ID,
+  createGenerationAnswer,
   createGenerationDraft,
   createReadWire,
   createSaveResult,
@@ -43,8 +44,8 @@ async function snapshots() {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
       },
-      async answer() {
-        return null;
+      async answer(request) {
+        return createGenerationAnswer(request);
       },
       async restoreDraft() {
         return draft;
@@ -93,12 +94,14 @@ function click(container: HTMLElement, selector: string): void {
 describe('BuilderPage v2', () => {
   it('renders a continuous composer without pretending a new project is saved', async () => {
     const { fresh } = await snapshots();
+    const onAnswer = vi.fn();
     const onGenerate = vi.fn();
     const onInstructionChange = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
+        onAnswer={onAnswer}
         onGenerate={onGenerate}
         onInstructionChange={onInstructionChange}
         snapshot={fresh}
@@ -111,8 +114,29 @@ describe('BuilderPage v2', () => {
       .toBe('new');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).toContain('Your preview will appear here.');
-    click(container, 'button.cf-builder-command-button');
+    click(container, '[data-builder-make-draft="true"]');
     expect(onGenerate).toHaveBeenCalledOnce();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it('offers a separate Ask command without using the draft generator', async () => {
+    const { fresh } = await snapshots();
+    const onAnswer = vi.fn();
+    const onGenerate = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="What does this project do?"
+        onAnswer={onAnswer}
+        onGenerate={onGenerate}
+        snapshot={fresh}
+      />,
+    );
+
+    click(container, '[data-builder-ask-question="true"]');
+
+    expect(onAnswer).toHaveBeenCalledOnce();
+    expect(onGenerate).not.toHaveBeenCalled();
   });
 
   it('shows an unsaved draft and requires the explicit Save version command', async () => {
@@ -134,6 +158,8 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.textContent).toContain('Save this draft before asking for another change');
     expect(container.textContent).toContain('Review the draft files in Result before saving this version.');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-ask-question="true"]')?.disabled)
+      .toBe(true);
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
   });

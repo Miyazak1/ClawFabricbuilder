@@ -11,6 +11,7 @@ import type {
 import {
   DRAFT_ID,
   PROJECT_ID,
+  createGenerationAnswer,
   createGenerationDraft,
   createReadWire,
   createRestoredGenerationDraft,
@@ -26,7 +27,7 @@ function setup(options: {
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
 } = {}) {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
-  const answer = vi.fn(options.answer ?? (async () => null));
+  const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
@@ -89,6 +90,71 @@ describe('Builder project controller v2', () => {
     expect(result.draft?.draft_id).toBe(DRAFT_ID);
     expect(result.savedProject).toBeNull();
     expect(result.draft?.admissions.save).toBe('not_performed');
+  });
+
+  it('answers a question without generating a draft or creating a version', async () => {
+    const { answer, controller, generate, loadCurrent, saveDraft } = setup();
+    const result = await controller.answer('What does this project do?');
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(answer.mock.calls[0][0]).toMatchObject({
+      version: 'builder-generation-request.v2',
+      instruction: 'What does this project do?',
+      existing_project_id: null,
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(loadCurrent).not.toHaveBeenCalled();
+    expect(result.status).toBe('new');
+    expect(result.answer).toMatchObject({
+      result_kind: 'explanation',
+      project_id: PROJECT_ID,
+      admissions: {
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+      },
+    });
+    expect(result.draft).toBeNull();
+    expect(result.savedProject).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('request_id');
+  });
+
+  it('answers against the selected saved project without saving or replacing the preview', async () => {
+    const { answer, controller, generate, saveDraft } = setup();
+    await controller.open(PROJECT_ID);
+    const before = controller.getSnapshot();
+    const result = await controller.answer('What changed in this project?');
+
+    expect(answer.mock.calls[0][0]).toMatchObject({
+      instruction: 'What changed in this project?',
+      existing_project_id: PROJECT_ID,
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('ready');
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+    expect(result.preview).toBe(before.preview);
+    expect(result.draft).toBeNull();
+    expect(result.answer?.project_id).toBe(PROJECT_ID);
+  });
+
+  it('can recover from a failed answer by generating a draft from the same composer', async () => {
+    const { answer, controller, generate, saveDraft } = setup({
+      answer: async () => {
+        throw new Error('private answer failure');
+      },
+    });
+    const failed = await controller.answer('What does this project do?');
+    expect(failed.status).toBe('answer_failed');
+
+    const result = await controller.generate('Make a timer.');
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(generate).toHaveBeenCalledOnce();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
   });
 
   it('updates from the selected saved project but still does not auto-save', async () => {

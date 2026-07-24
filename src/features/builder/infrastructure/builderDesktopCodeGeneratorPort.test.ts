@@ -80,11 +80,14 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         execution: 'not_evaluated',
       },
     });
-    const answer = vi.fn(async (_request: unknown) => ({
-      version: 'builder-generation-ipc-result.v1',
-      ok: true,
-      result: explanation,
-    }));
+    const answer = vi.fn(async (request: unknown) => {
+      void request;
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: explanation,
+      };
+    });
     const port = createBuilderDesktopCodeGeneratorPort({
       generate: async () => null,
       answer,

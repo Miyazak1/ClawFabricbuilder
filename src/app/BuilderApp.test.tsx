@@ -10,7 +10,9 @@ import {
 } from './builderDesktopBridgeRoot';
 import {
   PROJECT_ID,
+  createAnswerTaskStreamWire,
   createCatalogWire,
+  createGenerationAnswer,
   createGenerationDraft,
   createReadWire,
   createRestoredGenerationDraft,
@@ -49,6 +51,7 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 async function setup(options: Readonly<{
+  answerActivity?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
   restoreAvailable?: boolean;
@@ -67,6 +70,15 @@ async function setup(options: Readonly<{
       version: 'builder-generation-ipc-result.v1',
       ok: true,
       result: latestDraft,
+    };
+  });
+  const answer = vi.fn(async (request: unknown) => {
+    const instruction = (request as { instruction: string }).instruction;
+    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: await createGenerationAnswer(hostRequest),
     };
   });
   const saveDraft = vi.fn(async (request: unknown) => {
@@ -95,7 +107,11 @@ async function setup(options: Readonly<{
   });
   const loadCurrent = vi.fn(async () => readWire);
   const readTaskStream = vi.fn(async () => (
-    options.pendingActivity === true ? pendingCandidateTaskStreamWire() : createTaskStreamWire()
+    options.answerActivity === true
+      ? createAnswerTaskStreamWire()
+      : options.pendingActivity === true
+        ? pendingCandidateTaskStreamWire()
+        : createTaskStreamWire()
   ));
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
@@ -114,7 +130,7 @@ async function setup(options: Readonly<{
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
       generate,
-      answer: async () => null,
+      answer,
       restoreDraft,
       cancel: async () => null,
       availability: async () => null,
@@ -148,6 +164,7 @@ async function setup(options: Readonly<{
   });
   return {
     container,
+    answer,
     generate,
     listCurrent,
     loadCurrent,
@@ -258,6 +275,34 @@ describe('BuilderApp v2', () => {
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('sqlite');
+  });
+
+  it('asks a question through the answer bridge without draft, save, or revision UI', async () => {
+    const { answer, container, generate, readTaskStream, saveDraft } = await setup({
+      answerActivity: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'What does this project do?');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, 'Ask');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+        .toContain('This answer does not change files.');
+    });
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'What does this project do?' });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('builder-generation-draft:');
+    expect(container.textContent).not.toContain('request_id');
   });
 
   it('restores a pending draft from project activity after opening a saved project', async () => {

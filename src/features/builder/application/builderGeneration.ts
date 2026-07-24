@@ -46,10 +46,28 @@ export type BuilderGenerationDraft = Readonly<{
   restart_restore: 'not_persisted' | 'git_sqlite_verified';
 }>;
 
+export type BuilderGenerationAnswer = Readonly<{
+  version: typeof BUILDER_GENERATION_RESULT_PROTOCOL;
+  result_kind: 'explanation';
+  title: string;
+  summary: string;
+  explanation: string;
+  project_id: string;
+  existing_project_id: string | null;
+  admissions: Readonly<{
+    conversation: 'sqlite_recorded';
+    draft: 'not_created';
+    save: 'not_performed';
+    preview: 'not_applicable';
+    execution: 'not_evaluated';
+  }>;
+}>;
+
 export type BuilderGenerationErrorCode =
   | 'invalid_instruction'
   | 'invalid_generation_request'
-  | 'invalid_generated_draft';
+  | 'invalid_generated_draft'
+  | 'invalid_generated_answer';
 
 export class BuilderGenerationError extends Error {
   readonly code: BuilderGenerationErrorCode;
@@ -59,7 +77,9 @@ export class BuilderGenerationError extends Error {
       ? 'Describe what you want to make.'
       : code === 'invalid_generation_request'
         ? 'This project request could not be verified.'
-        : 'The generated draft could not be verified.');
+        : code === 'invalid_generated_answer'
+          ? 'The answer could not be verified.'
+          : 'The generated draft could not be verified.');
     this.name = 'BuilderGenerationError';
     this.code = code;
     this.stack = `${this.name}: ${this.message}`;
@@ -86,6 +106,17 @@ const DRAFT_KEYS = Object.freeze([
   'source_tree',
   'admissions',
   'restart_restore',
+]);
+const ANSWER_KEYS = Object.freeze([
+  'version',
+  'result_kind',
+  'request_id',
+  'project_id',
+  'existing_project_id',
+  'title',
+  'summary',
+  'explanation',
+  'admissions',
 ]);
 const CANDIDATE_KEYS = Object.freeze([
   'candidate_version',
@@ -194,7 +225,11 @@ function safeInstruction(value: unknown, code: BuilderGenerationErrorCode): stri
   return value;
 }
 
-function safeDisplayText(value: unknown, maximum: number): string {
+function safeDisplayText(
+  value: unknown,
+  maximum: number,
+  code: BuilderGenerationErrorCode = 'invalid_generated_draft',
+): string {
   if (
     typeof value !== 'string'
     || value.length === 0
@@ -204,7 +239,7 @@ function safeDisplayText(value: unknown, maximum: number): string {
     || value.normalize('NFC') !== value
     || hasUnpairedSurrogate(value)
     || hasDisallowedControl(value)
-  ) throw invalid('invalid_generated_draft');
+  ) throw invalid(code);
   return value;
 }
 
@@ -409,6 +444,56 @@ export async function sanitizeBuilderGenerationDraft(
   } catch (error) {
     if (error instanceof BuilderGenerationError) throw error;
     throw invalid('invalid_generated_draft');
+  }
+}
+
+export async function sanitizeBuilderGenerationAnswer(
+  value: unknown,
+  expectedRequest: BuilderGenerationRequest,
+): Promise<BuilderGenerationAnswer> {
+  try {
+    const request = await sanitizeBuilderGenerationRequest(expectedRequest);
+    const source = exactRecord(value, ANSWER_KEYS, 'invalid_generated_answer');
+    if (
+      source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
+      || source.result_kind !== 'explanation'
+      || source.request_id !== request.request_digest
+    ) throw invalid('invalid_generated_answer');
+    const projectId = safeProjectId(source.project_id, 'invalid_generated_answer');
+    const existingProjectId = source.existing_project_id === null
+      ? null
+      : safeProjectId(source.existing_project_id, 'invalid_generated_answer');
+    if (
+      existingProjectId !== request.existing_project_id
+      || (existingProjectId !== null && projectId !== existingProjectId)
+    ) throw invalid('invalid_generated_answer');
+    const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_answer');
+    if (
+      admissions.conversation !== 'sqlite_recorded'
+      || admissions.draft !== 'not_created'
+      || admissions.save !== 'not_performed'
+      || admissions.preview !== 'not_applicable'
+      || admissions.execution !== 'not_evaluated'
+    ) throw invalid('invalid_generated_answer');
+    return deepFreeze({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'explanation',
+      title: safeDisplayText(source.title, 80, 'invalid_generated_answer'),
+      summary: safeDisplayText(source.summary, 400, 'invalid_generated_answer'),
+      explanation: safeDisplayText(source.explanation, 4000, 'invalid_generated_answer'),
+      project_id: projectId,
+      existing_project_id: existingProjectId,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationError) throw error;
+    throw invalid('invalid_generated_answer');
   }
 }
 

@@ -1,7 +1,9 @@
 import {
   createBuilderGenerationRequest,
+  sanitizeBuilderGenerationAnswer,
   sanitizeRestoredBuilderGenerationDraft,
   sanitizeBuilderGenerationDraft,
+  type BuilderGenerationAnswer,
   type BuilderGenerationDraft,
 } from './builderGeneration';
 import {
@@ -24,9 +26,11 @@ export type BuilderProjectControllerStatus =
   | 'new'
   | 'opening'
   | 'ready'
+  | 'answering'
   | 'generating'
   | 'draft_ready'
   | 'saving'
+  | 'answer_failed'
   | 'generation_failed'
   | 'save_unknown'
   | 'preview_unavailable'
@@ -46,6 +50,7 @@ export type BuilderProjectControllerSnapshot = Readonly<{
   busy: boolean;
   savedProject: BuilderProjectReadSnapshot | null;
   draft: BuilderGenerationDraft | null;
+  answer: BuilderGenerationAnswer | null;
   preview: BuilderSourceTreePreviewProjection | null;
   error: BuilderProjectControllerError;
 }>;
@@ -60,6 +65,7 @@ export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
+  answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
   save(): Promise<BuilderProjectControllerSnapshot>;
@@ -97,12 +103,17 @@ function snapshot(
   draft: BuilderGenerationDraft | null,
   preview: BuilderSourceTreePreviewProjection | null,
   error: BuilderProjectControllerError,
+  answer: BuilderGenerationAnswer | null = null,
 ): BuilderProjectControllerSnapshot {
   const result = Object.freeze({
     status,
-    busy: status === 'opening' || status === 'generating' || status === 'saving',
+    busy: status === 'opening'
+      || status === 'answering'
+      || status === 'generating'
+      || status === 'saving',
     savedProject,
     draft,
+    answer,
     preview,
     error,
   });
@@ -238,6 +249,14 @@ function savedContainsDraft(
     && saved.source_tree.source_tree_digest === draft.source_tree.source_tree_digest;
 }
 
+function settledStatus(
+  savedProject: BuilderProjectReadSnapshot | null,
+  preview: BuilderSourceTreePreviewProjection | null,
+): 'new' | 'ready' | 'preview_unavailable' {
+  if (savedProject === null) return 'new';
+  return preview === null ? 'preview_unavailable' : 'ready';
+}
+
 export function createBuilderProjectController(
   dependencies: BuilderProjectControllerDependencies,
 ): BuilderProjectController {
@@ -334,12 +353,54 @@ export function createBuilderProjectController(
     });
   }
 
+  async function answer(instruction: string): Promise<BuilderProjectControllerSnapshot> {
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
+    ) return current;
+    const retained = current.savedProject;
+    const retainedPreview = current.preview;
+    return run(async (operationEpoch) => {
+      publish(snapshot('answering', retained, null, retainedPreview, null));
+      try {
+        const request = await createBuilderGenerationRequest(
+          instruction,
+          retained?.target.project_id ?? null,
+        );
+        const answered = await sanitizeBuilderGenerationAnswer(
+          await dependencies.generator.answer(request),
+          request,
+        );
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot(
+          settledStatus(retained, retainedPreview),
+          retained,
+          null,
+          retainedPreview,
+          null,
+          answered,
+        ));
+      } catch (error) {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot(
+          'answer_failed',
+          retained,
+          null,
+          retainedPreview,
+          sanitizeTrustedBuilderGenerationDiagnostic(error),
+        ));
+      }
+    });
+  }
+
   async function generate(instruction: string): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
       || current.busy
       || current.draft !== null
-      || !['new', 'ready', 'generation_failed', 'preview_unavailable'].includes(current.status)
+      || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
     return run(async (operationEpoch) => {
@@ -448,6 +509,7 @@ export function createBuilderProjectController(
       return () => listeners.delete(listener);
     },
     open,
+    answer,
     generate,
     restoreDraft,
     save,

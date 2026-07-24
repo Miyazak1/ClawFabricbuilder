@@ -31,6 +31,7 @@ export type BuilderFileName = string;
 export type BuilderPageProps = {
   instruction: string;
   onInstructionChange?: (value: string) => void;
+  onAnswer?: () => void;
   onGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
   onSave?: () => void;
@@ -48,12 +49,14 @@ const TOOL_VIEWS = Object.freeze([
 const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'new',
   'ready',
+  'answer_failed',
   'generation_failed',
   'preview_unavailable',
 ]);
 
 function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'opening') return 'Opening...';
+  if (status === 'answering') return 'Answering...';
   if (status === 'generating') return 'Making...';
   return 'Saving...';
 }
@@ -263,6 +266,7 @@ function ActivityPanel({
 
 export function BuilderPage({
   instruction,
+  onAnswer,
   onInstructionChange,
   onGenerate,
   onRefreshConversation,
@@ -290,9 +294,14 @@ export function BuilderPage({
     && GENERATABLE_STATUSES.has(status)
     && !hasUnsavedDraft
     && instruction.trim().length > 0;
+  const canAnswer = typeof onAnswer === 'function'
+    && GENERATABLE_STATUSES.has(status)
+    && !hasUnsavedDraft
+    && instruction.trim().length > 0;
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
   const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft;
-  const canOpenSettings = status === 'generation_failed'
+  const failed = status === 'generation_failed' || status === 'answer_failed';
+  const canOpenSettings = failed
     && current?.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
@@ -499,15 +508,28 @@ export function BuilderPage({
                   {hasUnsavedDraft ? 'Save this draft before asking for another change' : saved ? 'Continue this project' : 'Start from an idea'}
                 </span>
               </div>
-              <button
-                className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!canGenerate}
-                onClick={onGenerate}
-                type="button"
-              >
-                <Sparkles aria-hidden="true" className="size-4" />
-                {busy ? busyLabel(status) : saved ? 'Make change' : 'Make draft'}
-              </button>
+              <div className="cf-builder-composer-actions">
+                <button
+                  className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-ask-question="true"
+                  disabled={!canAnswer}
+                  onClick={onAnswer}
+                  type="button"
+                >
+                  <Bot aria-hidden="true" className="size-4" />
+                  {status === 'answering' ? 'Asking...' : 'Ask'}
+                </button>
+                <button
+                  className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-make-draft="true"
+                  disabled={!canGenerate}
+                  onClick={onGenerate}
+                  type="button"
+                >
+                  <Sparkles aria-hidden="true" className="size-4" />
+                  {busy ? busyLabel(status) : saved ? 'Make change' : 'Make draft'}
+                </button>
+              </div>
             </footer>
           </div>
 
@@ -517,20 +539,31 @@ export function BuilderPage({
           {status === 'generating' ? (
             <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Making your draft...</p>
           ) : null}
+          {status === 'answering' ? (
+            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Answering...</p>
+          ) : null}
           {status === 'saving' ? (
             <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Saving this version...</p>
           ) : null}
-          {status === 'generation_failed' ? (
+          {failed ? (
             <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
-              <p>{current?.error === 'builder_generation_provider_unavailable'
-                ? 'AI generation is not configured yet.'
-                : current?.error === 'builder_generation_timeout'
-                  ? 'Making this draft took too long. Try again.'
-                  : current?.error === 'builder_generation_provider_http_error'
-                    ? 'The AI service could not make this draft. Try again.'
-                    : current?.error === 'builder_generation_structured_response_invalid'
-                      ? 'The draft could not be prepared. Try again.'
-                      : 'The draft could not be made. Try again.'}</p>
+              <p>{status === 'answer_failed'
+                ? (current?.error === 'builder_generation_provider_unavailable'
+                  ? 'AI is not configured yet.'
+                  : current?.error === 'builder_generation_timeout'
+                    ? 'Answering took too long. Try again.'
+                    : current?.error === 'builder_generation_provider_http_error'
+                      ? 'The AI service could not answer. Try again.'
+                      : 'The answer could not be prepared. Try again.')
+                : current?.error === 'builder_generation_provider_unavailable'
+                  ? 'AI generation is not configured yet.'
+                  : current?.error === 'builder_generation_timeout'
+                    ? 'Making this draft took too long. Try again.'
+                    : current?.error === 'builder_generation_provider_http_error'
+                      ? 'The AI service could not make this draft. Try again.'
+                      : current?.error === 'builder_generation_structured_response_invalid'
+                        ? 'The draft could not be prepared. Try again.'
+                        : 'The draft could not be made. Try again.'}</p>
               {canOpenSettings ? (
                 <button
                   className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium"
