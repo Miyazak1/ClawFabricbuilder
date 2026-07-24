@@ -112,6 +112,43 @@ test('supports command payloads with exact run attempt and terminal result evide
   assert.deepEqual(Object.keys(terminal.payload).sort(), ['outcome', 'run_id', 'turn_id']);
 });
 
+test('supports actor-bound candidate rejection payloads without source or Git evidence', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a local timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create timer' },
+    base_revision: null,
+  }, null, 1);
+  const rejected = create('candidate_rejected', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    draft_id: `builder-generation-draft:${'1'.repeat(64)}`,
+    review_id: typedId('review', 1),
+    reviewer_id: typedId('user', 1),
+    reviewed_at_ms: 1234,
+    decision: 'rejected',
+  }, submitted, 2);
+
+  assert.equal(rejected.payload.decision, 'rejected');
+  assert.equal(rejected.payload.review_id, typedId('review', 1));
+  assert.equal(rejected.payload.reviewer_id, typedId('user', 1));
+  assert.equal(Object.isFrozen(rejected.payload), true);
+  assert.doesNotMatch(
+    JSON.stringify(rejected),
+    /source_tree|git_candidate_receipt|credential|provider/iu,
+  );
+
+  for (const drift of [
+    { ...rejected, payload: { ...rejected.payload, decision: 'accepted' } },
+    { ...rejected, payload: { ...rejected.payload, review_id: typedId('run', 1) } },
+    { ...rejected, payload: { ...rejected.payload, reviewer_id: typedId('message', 1) } },
+    { ...rejected, payload: { ...rejected.payload, reviewed_at_ms: -1 } },
+  ]) {
+    assert.throws(() => sanitizeBuilderConversationEvent(drift), assertRecordError());
+  }
+});
+
 test('rejects non-derived conversation/event/command evidence and payload drift', () => {
   const event = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Build a timer.' },

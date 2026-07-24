@@ -124,6 +124,20 @@ function candidateEvents() {
   return events;
 }
 
+function rejectedCandidateEvents() {
+  const events = candidateEvents();
+  append(events, 'candidate_rejected', {
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    review_id: id('review', 10),
+    reviewer_id: id('user', 11),
+    reviewed_at_ms: 2_000,
+    decision: 'rejected',
+  }, 10);
+  return events;
+}
+
 function explanationHistory(turnCount) {
   const events = [];
   for (let turn = 1; turn <= turnCount; turn += 1) {
@@ -241,6 +255,23 @@ test('represents a missing conversation as a legal empty result', () => {
       project_revision: 'not_inferred',
     },
   });
+});
+
+test('projects rejected candidates without exposing review identity or Git evidence', () => {
+  const stream = projectBuilderTaskStream(input(rejectedCandidateEvents()));
+  assert.deepEqual(stream.conversation.items.at(-1), {
+    item_kind: 'candidate_reviewed',
+    sequence: 5,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    decision: 'rejected',
+    candidate_state: 'rejected',
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /review_id|reviewer_id|reviewed_at_ms|git_candidate_receipt|candidate_digest|commit_oid|tree_oid|credential|provider/iu,
+  );
 });
 
 test('describes a persisted start as recorded rather than claiming a live run', () => {

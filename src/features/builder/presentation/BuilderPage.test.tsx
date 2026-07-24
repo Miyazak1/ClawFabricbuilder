@@ -14,6 +14,7 @@ import {
   createGenerationDraft,
   createHistoryWire,
   createReadWire,
+  createRejectedTaskStreamWire,
   createSaveResult,
   createSourceTree,
   createTaskStreamWire,
@@ -88,9 +89,9 @@ async function snapshots() {
   return { draftReady, fresh, saved };
 }
 
-async function candidateActivity() {
+async function candidateActivity(rejected = false) {
   const controller = createBuilderConversationController({
-    read: async () => createTaskStreamWire(),
+    read: async () => (rejected ? createRejectedTaskStreamWire() : createTaskStreamWire()),
   });
   return controller.load(PROJECT_ID);
 }
@@ -372,6 +373,27 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
     expect(container.textContent).not.toContain(DRAFT_ID);
+  });
+
+  it('shows rejected draft activity without restoring or exposing internal review data', async () => {
+    const { saved } = await snapshots();
+    const activity = await candidateActivity(true);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-card="Draft rejected"]')?.textContent)
+      .toContain('You returned to the saved version.');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
   });
 
   it('lists arbitrary source-tree paths and reveals their code without assuming three web files', async () => {

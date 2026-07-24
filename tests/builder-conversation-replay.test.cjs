@@ -253,6 +253,66 @@ test('keeps work explanations, plans, and candidates distinct from saved revisio
   }
 });
 
+test('records candidate rejection only after a completed candidate run', () => {
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 100), text: 'Build a tiny project.' },
+    turn_id: id('turn', 100), mode: 'work',
+    task: { task_id: id('task', 100), title: 'Build project' }, base_revision: null,
+  }, 100);
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 100), run_id: id('run', 100), task_id: id('task', 100),
+    attempt_number: 1, retry_of_run_id: null, input_digest: RESULT_A,
+  }, 101);
+  events = append(events, 'run_completed', {
+    turn_id: id('turn', 100), run_id: id('run', 100), terminal_status: 'succeeded',
+    result_kind: 'candidate', result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 101), text: 'A candidate is ready.' },
+  }, 102);
+  events = append(events, 'turn_completed', {
+    turn_id: id('turn', 100), run_id: id('run', 100), outcome: 'candidate_ready',
+  }, 103);
+  events = append(events, 'candidate_rejected', {
+    turn_id: id('turn', 100),
+    run_id: id('run', 100),
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}64`,
+    review_id: id('review', 100),
+    reviewer_id: id('user', 100),
+    reviewed_at_ms: 1234,
+    decision: 'rejected',
+  }, 104);
+
+  const replay = replayBuilderConversation(events);
+  assert.deepEqual(replay.turns[0].runs[0].candidate_review, {
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}64`,
+    review_id: id('review', 100),
+    reviewer_id: id('user', 100),
+    reviewed_at_ms: 1234,
+    decision: 'rejected',
+  });
+  assert.equal(replay.authority.revision_admission, 'not_created');
+
+  assert.throws(() => replayBuilderConversation([...events, events.at(-1)]), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append([...events], 'candidate_rejected', {
+    turn_id: id('turn', 100),
+    run_id: id('run', 100),
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}64`,
+    review_id: id('review', 101),
+    reviewer_id: id('user', 100),
+    reviewed_at_ms: 1235,
+    decision: 'rejected',
+  }, 106)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(events.slice(0, 3), 'candidate_rejected', {
+    turn_id: id('turn', 100),
+    run_id: id('run', 100),
+    draft_id: `builder-generation-draft:${'0'.repeat(62)}64`,
+    review_id: id('review', 101),
+    reviewer_id: id('user', 100),
+    reviewed_at_ms: 1235,
+    decision: 'rejected',
+  }, 105)), assertReplayError);
+});
+
 test('requires terminal outcomes to honor durable interrupt and cancel requests', () => {
   function running(seed) {
     let events = [];
@@ -390,7 +450,7 @@ test('contains all transition rules in replay and none in the SQLite persistence
   );
   for (const eventType of [
     'turn_submitted', 'turn_steered', 'run_started', 'run_interrupt_requested',
-    'run_cancel_requested',
+    'run_cancel_requested', 'candidate_rejected',
     'run_completed', 'turn_completed',
   ]) {
     assert.match(replaySource, new RegExp(eventType, 'u'));

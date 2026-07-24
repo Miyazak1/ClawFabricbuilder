@@ -843,7 +843,42 @@ function createBuilderGenerationMainService(rawOptions) {
 
   async function loadPendingDraftById(draftId) {
     const draft = pendingDrafts.get(draftId);
-    if (draft) return draft;
+    if (draft) {
+      try {
+        const restoredConversation = sanitizeConversationDraft(
+          Reflect.apply(
+            readConversationCandidateDraft,
+            options.conversationService,
+            [{ draft_id: draftId }],
+          ),
+          draftId,
+        );
+        if (
+          restoredConversation.title !== draft.title
+          || restoredConversation.summary !== draft.summary
+          || restoredConversation.conversation_head.sequence !== draft.conversation_head.sequence
+          || restoredConversation.conversation_head.event_id !== draft.conversation_head.event_id
+          || restoredConversation.conversation_head.event_digest !== draft.conversation_head.event_digest
+          || restoredConversation.git_candidate_receipt.request_id !== draft.git_request_id
+          || restoredConversation.candidate_proof.git_request_id !== draft.git_request_id
+          || restoredConversation.candidate_proof.project_id !== draft.candidate_proof.project_id
+          || restoredConversation.candidate_proof.conversation_id !== draft.candidate_proof.conversation_id
+          || restoredConversation.candidate_proof.turn_id !== draft.candidate_proof.turn_id
+          || restoredConversation.candidate_proof.task_id !== draft.candidate_proof.task_id
+          || restoredConversation.candidate_proof.run_id !== draft.candidate_proof.run_id
+          || restoredConversation.candidate_proof.candidate_id !== draft.candidate_proof.candidate_id
+          || restoredConversation.candidate_proof.candidate_digest !== draft.candidate_proof.candidate_digest
+          || restoredConversation.candidate_proof.resulting_tree_digest !== draft.candidate_proof.resulting_tree_digest
+          || restoredConversation.candidate_proof.expected_base_oid !== draft.candidate_proof.expected_base_oid
+          || canonicalJson(restoredConversation.candidate_proof.base_revision)
+            !== canonicalJson(draft.candidate_proof.base_revision)
+        ) fail();
+      } catch (error) {
+        pendingDrafts.delete(draftId);
+        throw error;
+      }
+      return draft;
+    }
     const restoredConversation = sanitizeConversationDraft(
       Reflect.apply(
         readConversationCandidateDraft,

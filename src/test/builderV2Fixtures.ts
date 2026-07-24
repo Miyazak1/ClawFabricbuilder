@@ -502,6 +502,33 @@ export function createTaskStreamWire() {
   };
 }
 
+export function createRejectedTaskStreamWire() {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 5,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 5,
+      },
+      items: [
+        ...wire.conversation.items,
+        {
+          item_kind: 'candidate_reviewed',
+          sequence: 5,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          draft_id: DRAFT_ID,
+          decision: 'rejected',
+          candidate_state: 'rejected',
+        },
+      ],
+    },
+  };
+}
+
 export function createAnswerTaskStreamWire() {
   const wire = createTaskStreamWire();
   return {

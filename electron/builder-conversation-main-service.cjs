@@ -877,6 +877,9 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     );
     const turn = selectedSnapshot.turns.find((item) => item.turn_id === turnId);
     const run = turn?.runs.find((item) => item.run_id === runId);
+    const latestSnapshot = replayBuilderConversation(state.events);
+    const latestTurn = latestSnapshot.turns.find((item) => item.turn_id === turnId);
+    const latestRun = latestTurn?.runs.find((item) => item.run_id === runId);
     if (
       !turn
       || turn.status !== 'completed'
@@ -890,6 +893,9 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       || run.result_digest !== candidateDigest
       || run.candidate_result === null
       || run.candidate_result.git_candidate_receipt.task_id !== taskId
+      || !latestTurn
+      || !latestRun
+      || latestRun.candidate_review !== null
     ) fail();
     return freezeDeep({
       verification_version: 'builder-conversation-candidate-verification.v1',
@@ -932,6 +938,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       || run.status !== 'completed'
       || run.terminal_status !== 'succeeded'
       || run.result_kind !== 'candidate'
+      || run.candidate_review !== null
       || run.result_digest !== receipt.candidate_digest
       || receipt.project_id !== state.conversation.project_id
       || receipt.conversation_id !== state.conversation.conversation_id

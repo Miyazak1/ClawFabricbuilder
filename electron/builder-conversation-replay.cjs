@@ -119,9 +119,34 @@ function applyRunStarted(state, payload) {
     result_kind: null,
     result_digest: null,
     candidate_result: null,
+    candidate_review: null,
     interrupt_request_id: null,
     cancel_request_id: null,
   });
+}
+
+function applyCandidateRejected(state, payload) {
+  if (state.activeTurnId !== null || state.reviewIds.has(payload.review_id)) fail();
+  const turn = state.turns.get(payload.turn_id);
+  if (!turn || turn.status !== 'completed' || turn.outcome !== 'candidate_ready') fail();
+  const run = turn.runs.find((item) => item.run_id === payload.run_id);
+  if (
+    !run
+    || run.status !== 'completed'
+    || run.terminal_status !== 'succeeded'
+    || run.result_kind !== 'candidate'
+    || run.candidate_result === null
+    || run.candidate_result.draft_id !== payload.draft_id
+    || run.candidate_review !== null
+  ) fail();
+  state.reviewIds.add(payload.review_id);
+  run.candidate_review = {
+    draft_id: payload.draft_id,
+    review_id: payload.review_id,
+    reviewer_id: payload.reviewer_id,
+    reviewed_at_ms: payload.reviewed_at_ms,
+    decision: 'rejected',
+  };
 }
 
 function applyRunCancelRequested(state, payload) {
@@ -198,6 +223,7 @@ function applyTurnCompleted(state, payload) {
 const TRANSITIONS = Object.freeze({
   turn_submitted: applyTurnSubmitted,
   turn_steered: applyTurnSteered,
+  candidate_rejected: applyCandidateRejected,
   run_started: applyRunStarted,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
@@ -218,6 +244,7 @@ function publicTurn(turn) {
         ...run.candidate_result,
         git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
       },
+      candidate_review: run.candidate_review === null ? null : { ...run.candidate_review },
     })),
     messages: turn.messages.map((message) => ({ ...message })),
     outcome: turn.outcome,
@@ -246,6 +273,7 @@ function replayBuilderConversation(rawEvents) {
     runIds: new Set(),
     interruptRequestIds: new Set(),
     cancelRequestIds: new Set(),
+    reviewIds: new Set(),
     turns: new Map(),
     turnOrder: [],
     activeTurnId: null,

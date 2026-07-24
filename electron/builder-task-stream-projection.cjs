@@ -190,6 +190,16 @@ function itemFromEvent(event) {
           source_availability: 'not_loaded',
         },
       };
+    case 'candidate_rejected':
+      return {
+        item_kind: 'candidate_reviewed',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        draft_id: payload.draft_id,
+        decision: 'rejected',
+        candidate_state: 'rejected',
+      };
     case 'turn_completed':
       return {
         item_kind: 'turn_completed',

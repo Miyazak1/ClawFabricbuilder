@@ -156,6 +156,7 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
+  if (item.item_kind === 'candidate_reviewed') return <AlertCircle className="size-3.5" />;
   if (item.item_kind === 'run_completed' && item.terminal_status !== 'succeeded') {
     return <AlertCircle className="size-3.5" />;
   }
@@ -171,6 +172,7 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
+  if (item.item_kind === 'candidate_reviewed') return 'Draft rejected';
   if (item.item_kind === 'run_completed') return completionLabel(item);
   return outcomeLabel(item.outcome);
 }
@@ -183,6 +185,7 @@ function activityBody(item: BuilderConversationItem): string {
       ? 'You asked to steer the current work.'
       : 'You asked to stop the current work.';
   }
+  if (item.item_kind === 'candidate_reviewed') return 'You returned to the saved version.';
   if (item.item_kind === 'run_completed') {
     return item.assistant_message?.text
       ?? (item.terminal_status === 'succeeded'

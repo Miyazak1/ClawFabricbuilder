@@ -124,6 +124,8 @@ function eventHead(record) {
 
 function conversationService() {
   let generation = 0;
+  const candidateDrafts = new Map();
+  const rejectedDrafts = new Set();
   const calls = {
     begin: [],
     question: [],
@@ -135,6 +137,9 @@ function conversationService() {
   };
   const service = {
     calls,
+    reject_draft_for_test(draftId) {
+      rejectedDrafts.add(draftId);
+    },
     begin_work(input) {
       calls.begin.push(input);
       generation += 1;
@@ -282,13 +287,27 @@ function conversationService() {
     },
     complete_candidate(input) {
       calls.candidate.push(input);
-      return {
-        head: {
-          sequence: input.context.start_head.sequence + 2,
-          event_id: `builder-conversation-event:${'a'.repeat(64)}`,
-          event_digest: `sha256:${'b'.repeat(64)}`,
-        },
+      const head = {
+        sequence: input.context.start_head.sequence + 2,
+        event_id: `builder-conversation-event:${'a'.repeat(64)}`,
+        event_digest: `sha256:${'b'.repeat(64)}`,
       };
+      const receipt = input.candidate_result.git_candidate_receipt;
+      candidateDrafts.set(input.candidate_result.draft_id, {
+        result_version: 'builder-conversation-candidate-draft-read-result.v1',
+        draft_id: input.candidate_result.draft_id,
+        project_id: receipt.project_id,
+        conversation_id: receipt.conversation_id,
+        turn_id: receipt.turn_id,
+        task_id: receipt.task_id,
+        run_id: receipt.run_id,
+        candidate_digest: receipt.candidate_digest,
+        base_revision: input.context.events[0].payload.base_revision,
+        conversation_head: head,
+        candidate_result: input.candidate_result,
+        verification_admission: 'sqlite_replay_verified',
+      });
+      return { head };
     },
     complete_explanation(input) {
       calls.explanation.push(input);
@@ -319,6 +338,13 @@ function conversationService() {
     },
     read_candidate_draft(input) {
       calls.readCandidate.push(input);
+      if (rejectedDrafts.has(input.draft_id)) {
+        const error = new Error('candidate rejected');
+        error.code = 'builder_conversation_main_service_unavailable';
+        throw error;
+      }
+      const candidate = candidateDrafts.get(input.draft_id);
+      if (candidate !== undefined) return candidate;
       const error = new Error('missing private draft');
       error.code = 'builder_product_metadata_not_found';
       throw error;
@@ -475,6 +501,34 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     electron_registration: false,
     preload_exposure: false,
   });
+});
+
+test('revalidates cached pending drafts against durable conversation rejection', async () => {
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+  const result = await service.generate(request());
+  lifecycle.reject_draft_for_test(result.draft_id);
+
+  await assert.rejects(
+    service.restore_draft({ draft_id: result.draft_id }),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(result.draft_id),
+  );
+  await assert.rejects(
+    service.read_pending_draft({ draft_id: result.draft_id }),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(result.draft_id),
+  );
+  assert.deepEqual(lifecycle.calls.readCandidate, [
+    { draft_id: result.draft_id },
+    { draft_id: result.draft_id },
+  ]);
 });
 
 test('records a provider explanation without creating Git candidate, draft, or save facts', async () => {
@@ -956,7 +1010,10 @@ test('restores a pending draft from conversation proof and verified Git source a
     baseSource.source_tree_digest,
   );
   assert.deepEqual(restoredBaseReads, [{ project_id: PROJECT_ID }]);
-  assert.deepEqual(restoredLifecycle.calls.readCandidate, [{ draft_id: result.draft_id }]);
+  assert.deepEqual(restoredLifecycle.calls.readCandidate, [
+    { draft_id: result.draft_id },
+    { draft_id: result.draft_id },
+  ]);
   assert.doesNotMatch(JSON.stringify(restored), /git_candidate_receipt|verification_receipt|provider|credential|operations/iu);
 });
 

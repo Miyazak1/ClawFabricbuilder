@@ -44,6 +44,9 @@ type MutableConversationItem = {
   result_kind?: string;
   assistant_message?: MutableMessage | null;
   candidate?: MutableCandidate | null;
+  draft_id?: string;
+  decision?: string;
+  candidate_state?: string;
   outcome?: string;
 };
 
@@ -157,6 +160,22 @@ function candidateWire(): MutableWire {
     },
     authority: authority(),
   };
+}
+
+function rejectedCandidateWire(): MutableWire {
+  const wire = candidateWire();
+  wire.conversation.head_sequence = 5;
+  wire.conversation.window.last_sequence = 5;
+  wire.conversation.items.push({
+    item_kind: 'candidate_reviewed',
+    sequence: 5,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    decision: 'rejected',
+    candidate_state: 'rejected',
+  });
+  return wire;
 }
 
 function completedTurnItems(
@@ -310,6 +329,26 @@ describe('Builder conversation snapshot', () => {
     );
   });
 
+  it('accepts rejected candidate review facts without exposing review identity', () => {
+    const wire = rejectedCandidateWire();
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[4]).toEqual({
+      item_kind: 'candidate_reviewed',
+      sequence: 5,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+      decision: 'rejected',
+      candidate_state: 'rejected',
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /review_id|reviewer_id|reviewed_at_ms|git_|receipt|digest|provider|credential|source_tree/iu,
+    );
+  });
+
   it('accepts a bounded truncated window without inventing omitted history', () => {
     const wire = truncatedWire();
 
@@ -399,6 +438,43 @@ describe('Builder conversation snapshot', () => {
     expect(snapshot.conversation.recorded_active_turn_id).toBe(lastTurnId);
   });
 
+  it('accepts a truncated candidate rejection whose reviewed run is in omitted history', () => {
+    const wire = truncatedWire();
+    const omittedTurnId = id('turn', 777);
+    const omittedRunId = id('run', 778);
+    wire.conversation.items = [
+      ...wire.conversation.items,
+      {
+        item_kind: 'candidate_reviewed',
+        sequence: 133,
+        turn_id: omittedTurnId,
+        run_id: omittedRunId,
+        draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
+        decision: 'rejected',
+        candidate_state: 'rejected',
+      },
+    ].slice(1);
+    wire.conversation.head_sequence = 133;
+    wire.conversation.window = {
+      first_sequence: 6,
+      last_sequence: 133,
+      has_earlier: true,
+    };
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items.at(-1)).toEqual({
+      item_kind: 'candidate_reviewed',
+      sequence: 133,
+      turn_id: omittedTurnId,
+      run_id: omittedRunId,
+      draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
+      decision: 'rejected',
+      candidate_state: 'rejected',
+    });
+  });
+
   it('rejects impossible relationships proven inside a truncated suffix', () => {
     const questionCandidate = truncatedWire();
     questionCandidate.conversation.items[0] = {
@@ -486,12 +562,34 @@ describe('Builder conversation snapshot', () => {
       };
     }
 
+    const visibleDraftPoison = truncatedWire();
+    const visibleDraftId = visibleDraftPoison.conversation.items.at(-2)!.candidate!.draft_id;
+    visibleDraftPoison.conversation.items = [
+      ...visibleDraftPoison.conversation.items,
+      {
+        item_kind: 'candidate_reviewed',
+        sequence: 133,
+        turn_id: id('turn', 777),
+        run_id: id('run', 778),
+        draft_id: visibleDraftId,
+        decision: 'rejected',
+        candidate_state: 'rejected',
+      },
+    ].slice(1);
+    visibleDraftPoison.conversation.head_sequence = 133;
+    visibleDraftPoison.conversation.window = {
+      first_sequence: 6,
+      last_sequence: 133,
+      has_earlier: true,
+    };
+
     for (const value of [
       questionCandidate,
       steeringAfterControl,
       completedButActive,
       prefixQuestionCandidate,
       reusedTurn,
+      visibleDraftPoison,
     ]) {
       expectUnavailable(value);
     }
@@ -640,6 +738,17 @@ describe('Builder conversation snapshot', () => {
     const saved = candidateWire();
     saved.conversation.items[2]!.candidate!.candidate_state = 'saved';
     values.push(saved);
+    const badReviewState = rejectedCandidateWire();
+    badReviewState.conversation.items[4]!.candidate_state = 'saved';
+    values.push(badReviewState);
+    const reviewBeforeTurnCompleted = rejectedCandidateWire();
+    reviewBeforeTurnCompleted.conversation.items.splice(
+      3,
+      2,
+      { ...reviewBeforeTurnCompleted.conversation.items[4]!, sequence: 4 },
+      { ...reviewBeforeTurnCompleted.conversation.items[3]!, sequence: 5 },
+    );
+    values.push(reviewBeforeTurnCompleted);
     const badTerminal = candidateWire();
     badTerminal.conversation.items[2]!.terminal_status = 'failed';
     values.push(badTerminal);

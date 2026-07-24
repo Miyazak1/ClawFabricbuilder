@@ -15,6 +15,12 @@ const {
 const {
   replayBuilderConversation,
 } = require('../electron/builder-conversation-replay.cjs');
+const {
+  CONVERSATION_AUTHORITY,
+  CONVERSATION_EVENT_KIND,
+  CONVERSATION_EVENT_VERSION,
+  createBuilderConversationEvent,
+} = require('../electron/builder-conversation-records.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -119,6 +125,36 @@ function candidateResult(context) {
       replay: false,
     },
   };
+}
+
+function rejectCandidate(item, context, terminal, candidate) {
+  const rejected = createBuilderConversationEvent({
+    record_version: CONVERSATION_EVENT_VERSION,
+    record_kind: CONVERSATION_EVENT_KIND,
+    project_id: PROJECT_ID,
+    conversation_id: context.conversation.conversation_id,
+    sequence: terminal.head.sequence + 1,
+    command_id: `builder-command:${uuidFactory(700)()}`,
+    event_type: 'candidate_rejected',
+    previous_event: terminal.head,
+    payload: {
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      draft_id: candidate.draft_id,
+      review_id: `builder-review:${uuidFactory(701)()}`,
+      reviewer_id: `builder-user:${uuidFactory(702)()}`,
+      reviewed_at_ms: 7_000,
+      decision: 'rejected',
+    },
+    authority: { ...CONVERSATION_AUTHORITY },
+  });
+  return item.database.append_conversation_events({
+    project: context.project,
+    conversation: context.conversation,
+    expected_head: terminal.head,
+    events: [rejected],
+    recorded_at_ms: 7_000,
+  });
 }
 
 test('records start and terminal events before allowing a later turn to continue', () => {
@@ -297,6 +333,72 @@ test('restores a main-only candidate draft proof after a real database restart',
       restartedService.read_candidate_draft({ draft_id: candidate.draft_id }),
       before,
     );
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
+test('does not restore or verify a candidate after durable rejection', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    const candidate = candidateResult(context);
+    const terminal = item.service.complete_candidate({
+      context,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    rejectCandidate(item, context, terminal, candidate);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 5);
+    assert.deepEqual(stream.conversation.items.at(-1), {
+      item_kind: 'candidate_reviewed',
+      sequence: 5,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      draft_id: candidate.draft_id,
+      decision: 'rejected',
+      candidate_state: 'rejected',
+    });
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /review_id|reviewer_id|reviewed_at_ms|git_candidate_receipt|candidate_digest|commit_oid|tree_oid|provider|credential/iu,
+    );
+    assert.throws(
+      () => item.service.read_candidate_draft({ draft_id: candidate.draft_id }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => item.service.verify_candidate({
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        candidate_digest: CANDIDATE_DIGEST,
+        conversation_head: terminal.head,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(750),
+      nowMs: () => 7_500,
+    });
+    assert.throws(
+      () => restartedService.read_candidate_draft({ draft_id: candidate.draft_id }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), stream);
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
     try { item.database.close(); } catch { /* already closed during restart check */ }

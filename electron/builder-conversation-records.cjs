@@ -32,6 +32,8 @@ const ID_PATTERNS = Object.freeze({
   turn: /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   task: /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   run: /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  review: /^builder-review:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  actor: /^(?:builder-user|builder-agent):[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   interrupt_request: /^builder-interrupt-request:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   cancel_request: /^builder-cancel-request:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
 });
@@ -63,6 +65,9 @@ const CANDIDATE_RESULT_KEYS = Object.freeze([
 const PAYLOAD_KEYS = Object.freeze({
   turn_submitted: Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision']),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
+  candidate_rejected: Object.freeze([
+    'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'decision',
+  ]),
   run_started: Object.freeze([
     'turn_id', 'run_id', 'task_id', 'attempt_number', 'retry_of_run_id', 'input_digest',
   ]),
@@ -174,6 +179,8 @@ function safeMessageId(value) { return safePattern(value, ID_PATTERNS.message, 8
 function safeTurnId(value) { return safePattern(value, ID_PATTERNS.turn, 88); }
 function safeTaskId(value) { return safePattern(value, ID_PATTERNS.task, 88); }
 function safeRunId(value) { return safePattern(value, ID_PATTERNS.run, 88); }
+function safeReviewId(value) { return safePattern(value, ID_PATTERNS.review, 91); }
+function safeActorId(value) { return safePattern(value, ID_PATTERNS.actor, 96); }
 function safeInterruptRequestId(value) {
   return safePattern(value, ID_PATTERNS.interrupt_request, 104);
 }
@@ -190,6 +197,11 @@ function safeSequence(value) {
 
 function safeAttemptNumber(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > 16) fail();
+  return value;
+}
+
+function safeTimestamp(value) {
+  if (!Number.isSafeInteger(value) || value < 0) fail();
   return value;
 }
 
@@ -275,6 +287,17 @@ function sanitizePayload(eventType, value) {
         turn_id: safeTurnId(valueAt(value, 'turn_id')),
         run_id: nullable(valueAt(value, 'run_id'), safeRunId),
         message: sanitizeMessage(valueAt(value, 'message')),
+      };
+    case 'candidate_rejected':
+      if (valueAt(value, 'decision') !== 'rejected') fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        draft_id: safePattern(valueAt(value, 'draft_id'), DRAFT_ID_PATTERN, 96),
+        review_id: safeReviewId(valueAt(value, 'review_id')),
+        reviewer_id: safeActorId(valueAt(value, 'reviewer_id')),
+        reviewed_at_ms: safeTimestamp(valueAt(value, 'reviewed_at_ms')),
+        decision: 'rejected',
       };
     case 'run_started':
       return {

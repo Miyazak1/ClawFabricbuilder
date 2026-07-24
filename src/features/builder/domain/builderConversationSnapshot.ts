@@ -64,6 +64,15 @@ export type BuilderConversationItem =
     candidate: BuilderConversationCandidate | null;
   }>
   | Readonly<{
+    item_kind: 'candidate_reviewed';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    draft_id: string;
+    decision: 'rejected';
+    candidate_state: 'rejected';
+  }>
+  | Readonly<{
     item_kind: 'turn_completed';
     sequence: number;
     turn_id: string;
@@ -191,6 +200,15 @@ const RUN_COMPLETED_KEYS = Object.freeze([
   'result_kind',
   'assistant_message',
   'candidate',
+]);
+const CANDIDATE_REVIEWED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'draft_id',
+  'decision',
+  'candidate_state',
 ]);
 const TURN_COMPLETED_KEYS = Object.freeze([
   'item_kind',
@@ -526,6 +544,25 @@ function sanitizeRunCompleted(
   };
 }
 
+function sanitizeCandidateReviewed(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'candidate_reviewed' }> {
+  if (
+    source.decision !== 'rejected'
+    || source.candidate_state !== 'rejected'
+  ) throw unavailable();
+  return {
+    item_kind: 'candidate_reviewed' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    draft_id: safePattern(source.draft_id, DRAFT_ID_PATTERN),
+    decision: 'rejected',
+    candidate_state: 'rejected',
+  };
+}
+
 function sanitizeTurnCompleted(
   source: Record<string, unknown>,
   sequence: number,
@@ -574,6 +611,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_CONTROL_KEYS);
   } else if (itemKind === 'run_completed') {
     source = exactRecord(value, RUN_COMPLETED_KEYS);
+  } else if (itemKind === 'candidate_reviewed') {
+    source = exactRecord(value, CANDIDATE_REVIEWED_KEYS);
   } else if (itemKind === 'turn_completed') {
     source = exactRecord(value, TURN_COMPLETED_KEYS);
   } else {
@@ -584,6 +623,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
   if (itemKind === 'run_completed') return sanitizeRunCompleted(source, sequence);
+  if (itemKind === 'candidate_reviewed') return sanitizeCandidateReviewed(source, sequence);
   return sanitizeTurnCompleted(source, sequence);
 }
 
@@ -597,6 +637,8 @@ type ReplayTurn = {
     status: 'running' | 'completed';
     terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled' | null;
     result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
+    candidate_draft_id: string | null;
+    candidate_review: 'rejected' | null;
     control: 'cancel' | 'interrupt' | null;
   }>;
 };
@@ -629,6 +671,7 @@ function validateCompleteWindow(
   const messageIds = new Set<string>();
   const taskIds = new Set<string>();
   const runIds = new Set<string>();
+  const draftIds = new Set<string>();
   let activeTurn: ReplayTurn | null = null;
 
   for (const item of items) {
@@ -660,6 +703,23 @@ function validateCompleteWindow(
       continue;
     }
 
+    if (item.item_kind === 'candidate_reviewed') {
+      if (activeTurn !== null) throw unavailable();
+      const reviewedTurn = turns.get(item.turn_id);
+      const reviewedRun = reviewedTurn?.runs.find((run) => run.run_id === item.run_id) ?? null;
+      if (
+        reviewedTurn === undefined
+        || reviewedRun === null
+        || reviewedRun.status !== 'completed'
+        || reviewedRun.terminal_status !== 'succeeded'
+        || reviewedRun.result_kind !== 'candidate'
+        || reviewedRun.candidate_draft_id !== item.draft_id
+        || reviewedRun.candidate_review !== null
+      ) throw unavailable();
+      reviewedRun.candidate_review = 'rejected';
+      continue;
+    }
+
     if (activeTurn === null || activeTurn.turn_id !== item.turn_id) throw unavailable();
     const currentRun = activeTurn.runs.at(-1) ?? null;
     if (item.item_kind === 'run_started') {
@@ -688,6 +748,8 @@ function validateCompleteWindow(
         status: 'running',
         terminal_status: null,
         result_kind: null,
+        candidate_draft_id: null,
+        candidate_review: null,
         control: null,
       });
       continue;
@@ -713,9 +775,14 @@ function validateCompleteWindow(
         if (messageIds.has(item.assistant_message.message_id)) throw unavailable();
         messageIds.add(item.assistant_message.message_id);
       }
+      if (item.candidate !== null) {
+        if (draftIds.has(item.candidate.draft_id)) throw unavailable();
+        draftIds.add(item.candidate.draft_id);
+      }
       currentRun.status = 'completed';
       currentRun.terminal_status = item.terminal_status;
       currentRun.result_kind = item.result_kind;
+      currentRun.candidate_draft_id = item.candidate?.draft_id ?? null;
       continue;
     }
     if (
@@ -737,6 +804,8 @@ type SuffixRun = {
   status: 'running' | 'completed';
   terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled' | null;
   result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
+  candidate_draft_id: string | null;
+  candidate_review: 'rejected' | null;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
 };
 
@@ -774,6 +843,11 @@ function validateTruncatedWindow(
   const messageIds = new Set<string>();
   const taskIds = new Set<string>();
   const runIds = new Set<string>();
+  const draftIds = new Set<string>();
+  const completedCandidateRuns = new Map<
+    string,
+    Readonly<{ turn_id: string; draft_id: string; review: 'rejected' | null }>
+  >();
   let activeTurn: SuffixTurn | null = null;
 
   for (let index = 0; index < items.length; index += 1) {
@@ -819,6 +893,32 @@ function validateTruncatedWindow(
           )
         ) throw unavailable();
       }
+      continue;
+    }
+
+    if (item.item_kind === 'candidate_reviewed') {
+      if (activeTurn !== null) throw unavailable();
+      const completedCandidateRun = completedCandidateRuns.get(item.run_id) ?? null;
+      if (completedCandidateRun === null) {
+        if (
+          turnIds.has(item.turn_id)
+          || runIds.has(item.run_id)
+          || draftIds.has(item.draft_id)
+        ) throw unavailable();
+        turnIds.add(item.turn_id);
+        runIds.add(item.run_id);
+        draftIds.add(item.draft_id);
+        continue;
+      }
+      if (
+        completedCandidateRun.turn_id !== item.turn_id
+        || completedCandidateRun.draft_id !== item.draft_id
+        || completedCandidateRun.review !== null
+      ) throw unavailable();
+      completedCandidateRuns.set(item.run_id, {
+        ...completedCandidateRun,
+        review: 'rejected',
+      });
       continue;
     }
 
@@ -890,6 +990,8 @@ function validateTruncatedWindow(
         status: 'running',
         terminal_status: null,
         result_kind: null,
+        candidate_draft_id: null,
+        candidate_review: null,
         control: null,
       };
       continue;
@@ -906,6 +1008,8 @@ function validateTruncatedWindow(
           status: 'running',
           terminal_status: null,
           result_kind: null,
+          candidate_draft_id: null,
+          candidate_review: null,
           control: null,
         };
       }
@@ -930,6 +1034,8 @@ function validateTruncatedWindow(
           status: 'running',
           terminal_status: null,
           result_kind: null,
+          candidate_draft_id: null,
+          candidate_review: null,
           control: mayUsePrefixState ? 'unknown' : null,
         };
       }
@@ -952,9 +1058,14 @@ function validateTruncatedWindow(
         if (messageIds.has(item.assistant_message.message_id)) throw unavailable();
         messageIds.add(item.assistant_message.message_id);
       }
+      if (item.candidate !== null) {
+        if (draftIds.has(item.candidate.draft_id)) throw unavailable();
+        draftIds.add(item.candidate.draft_id);
+      }
       currentRun.status = 'completed';
       currentRun.terminal_status = item.terminal_status;
       currentRun.result_kind = item.result_kind;
+      currentRun.candidate_draft_id = item.candidate?.draft_id ?? null;
       continue;
     }
 
@@ -966,6 +1077,17 @@ function validateTruncatedWindow(
       || currentRun.status !== 'completed'
       || !expectedSuffixOutcome(activeTurn, currentRun, item.outcome)
     ) throw unavailable();
+    if (
+      currentRun.terminal_status === 'succeeded'
+      && currentRun.result_kind === 'candidate'
+      && currentRun.candidate_draft_id !== null
+    ) {
+      completedCandidateRuns.set(currentRun.run_id, {
+        turn_id: activeTurn.turn_id,
+        draft_id: currentRun.candidate_draft_id,
+        review: currentRun.candidate_review,
+      });
+    }
     activeTurn = null;
   }
 
