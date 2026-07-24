@@ -4,11 +4,11 @@ const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
 const {
-  createBuilderConversationEvent,
-} = require('./builder-conversation-records.cjs');
-const {
   createBuilderGenerationHostAdapter,
 } = require('./builder-generation-host-adapter.cjs');
+const {
+  sanitizeBuilderGitCandidateReceiptPair,
+} = require('./builder-git-receipt-contract.cjs');
 const {
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
@@ -25,6 +25,8 @@ const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-dra
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
+  'conversationService',
+  'gitAuthority',
   'transport',
   'createUuid',
 ]);
@@ -154,11 +156,13 @@ function sanitizeOptions(value) {
   if (!isPlainObject(value)) fail();
   const keys = Reflect.ownKeys(value);
   if (
-    keys.length < 2
+    keys.length < 3
     || keys.length > OPTION_KEYS.length
     || keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.includes(key))
     || !keys.includes('providerConfigRepository')
     || !keys.includes('projectReadAuthority')
+    || !keys.includes('conversationService')
+    || !keys.includes('gitAuthority')
   ) fail();
   const descriptors = Object.getOwnPropertyDescriptors(value);
   for (const key of keys) {
@@ -170,6 +174,8 @@ function sanitizeOptions(value) {
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
+    conversationService: descriptors.conversationService.value,
+    gitAuthority: descriptors.gitAuthority.value,
     ...(keys.includes('transport') ? { transport: descriptors.transport.value } : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
@@ -189,75 +195,8 @@ function sanitizeBoundAuthority(value) {
   });
 }
 
-function projectUuid(projectId) {
-  const match = PROJECT_ID_PATTERN.exec(projectId);
-  if (!match) fail();
-  return match[1];
-}
-
 function newId(createUuid, prefix) {
   return `${prefix}:${safeUuid(Reflect.apply(createUuid, undefined, []))}`;
-}
-
-function previousEvent(record) {
-  return {
-    sequence: record.sequence,
-    event_id: record.event_id,
-    event_digest: record.event_digest,
-  };
-}
-
-function createConversationEvents({ projectId, instruction, requestDigest, baseRevision, ids }) {
-  const conversationId = `builder-conversation:${projectUuid(projectId)}`;
-  const taskTitle = baseRevision === null ? 'Create Builder project' : 'Update Builder project';
-  const first = createBuilderConversationEvent({
-    record_version: 'builder-conversation-event.v2',
-    record_kind: 'builder_conversation_event',
-    project_id: projectId,
-    conversation_id: conversationId,
-    sequence: 1,
-    command_id: ids.turnCommandId,
-    event_type: 'turn_submitted',
-    previous_event: null,
-    payload: {
-      message: { message_id: ids.messageId, text: instruction },
-      turn_id: ids.turnId,
-      mode: 'work',
-      task: { task_id: ids.taskId, title: taskTitle },
-      base_revision: baseRevision,
-    },
-    authority: {
-      context_authority: 'project_local_conversation',
-      permission_admission: 'not_granted',
-      execution_admission: 'not_granted',
-      revision_admission: 'not_created',
-    },
-  });
-  const second = createBuilderConversationEvent({
-    record_version: 'builder-conversation-event.v2',
-    record_kind: 'builder_conversation_event',
-    project_id: projectId,
-    conversation_id: conversationId,
-    sequence: 2,
-    command_id: ids.runCommandId,
-    event_type: 'run_started',
-    previous_event: previousEvent(first),
-    payload: {
-      turn_id: ids.turnId,
-      run_id: ids.runId,
-      task_id: ids.taskId,
-      attempt_number: 1,
-      retry_of_run_id: null,
-      input_digest: requestDigest,
-    },
-    authority: {
-      context_authority: 'project_local_conversation',
-      permission_admission: 'not_granted',
-      execution_admission: 'not_granted',
-      revision_admission: 'not_created',
-    },
-  });
-  return Object.freeze([first, second]);
 }
 
 function sanitizeReadResult(value, expectedProjectId) {
@@ -342,12 +281,12 @@ function pendingDraftResult(draft) {
     result_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
     draft_id: draft.draft_id,
     restart_restore: 'not_persisted',
-    conversation_event_admission: 'candidate_local_not_recorded',
+    conversation_event_admission: 'sqlite_recorded',
     request: draft.request,
     git_request_id: draft.git_request_id,
     title: draft.title,
     summary: draft.summary,
-    conversation_events: draft.conversation_events,
+    conversation_head: draft.conversation_head,
     candidate: draft.candidate,
   });
 }
@@ -356,8 +295,16 @@ function createBuilderGenerationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
   const bindCurrentAuthority = ownMethod(options.providerConfigRepository, 'bind_current_authority');
   const loadCurrentProject = ownMethod(options.projectReadAuthority, 'load_current');
+  const beginConversationWork = ownMethod(options.conversationService, 'begin_work');
+  const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
+  const completeConversationFailure = ownMethod(options.conversationService, 'complete_failure');
+  const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
+  const persistCandidateCommit = ownMethod(options.gitAuthority, 'persist_candidate_commit');
+  const verifyCandidateReceipt = ownMethod(options.gitAuthority, 'verify_candidate_receipt');
   const pendingDrafts = new Map();
   const inFlight = new Map();
+  const activeContexts = new Map();
+  const generationContexts = new WeakMap();
   let pendingAuthority = null;
   let bindingAuthority = false;
 
@@ -406,31 +353,29 @@ function createBuilderGenerationMainService(rawOptions) {
           await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: existingProjectId }]),
           existingProjectId,
         );
-      const ids = {
-        turnCommandId: newId(options.createUuid, 'builder-command'),
-        runCommandId: newId(options.createUuid, 'builder-command'),
-        messageId: newId(options.createUuid, 'builder-message'),
-        turnId: newId(options.createUuid, 'builder-turn'),
-        taskId: newId(options.createUuid, 'builder-task'),
-        runId: newId(options.createUuid, 'builder-run'),
-      };
-      const conversationEvents = createConversationEvents({
-        projectId,
-        instruction: request.instruction,
-        requestDigest: request.request_digest,
-        baseRevision: base.base_revision,
-        ids,
-      });
-      return freezeDeep({
+      const conversationContext = Reflect.apply(
+        beginConversationWork,
+        options.conversationService,
+        [{
+          project_id: projectId,
+          instruction: request.instruction,
+          request_digest: request.request_digest,
+          base_revision: base.base_revision,
+        }],
+      );
+      activeContexts.set(request.request_digest, conversationContext);
+      const generationContext = freezeDeep({
         project_id: projectId,
         base_revision_evidence: base.base_revision_evidence,
         base_source_tree: base.source_tree,
-        conversation_events: conversationEvents,
-        turn_id: ids.turnId,
-        task_id: ids.taskId,
-        run_id: ids.runId,
+        conversation_events: conversationContext.events,
+        turn_id: conversationContext.ids.turn_id,
+        task_id: conversationContext.ids.task_id,
+        run_id: conversationContext.ids.run_id,
         git_request_id: newId(options.createUuid, 'builder-git-request'),
       });
+      generationContexts.set(generationContext, conversationContext);
+      return generationContext;
     } catch {
       fail();
     }
@@ -450,8 +395,10 @@ function createBuilderGenerationMainService(rawOptions) {
     }
     const existing = inFlight.get(request.request_digest);
     if (existing) return existing;
-    const operation = Promise.resolve(host.generate(request)).then((internal) => {
+    const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
+      const conversationContext = generationContexts.get(context);
+      if (conversationContext === undefined) fail();
       const draftId = `builder-generation-draft:${sha256Canonical({
         draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
         request_id: internal.request_id,
@@ -459,25 +406,115 @@ function createBuilderGenerationMainService(rawOptions) {
         candidate_digest: internal.candidate.candidate_digest,
         run_id: internal.candidate.run_id,
       }).slice('sha256:'.length)}`;
+      const gitCandidateReceipt = await Reflect.apply(
+        persistCandidateCommit,
+        options.gitAuthority,
+        [{
+          request_id: valueAt(context, 'git_request_id'),
+          expected_base_oid: internal.candidate.base_revision_evidence === null
+            ? null
+            : internal.candidate.base_revision_evidence.commit_oid,
+          candidate: internal.candidate,
+        }],
+      );
+      const gitVerificationReceipt = await Reflect.apply(
+        verifyCandidateReceipt,
+        options.gitAuthority,
+        [gitCandidateReceipt],
+      );
+      const receiptPair = sanitizeBuilderGitCandidateReceiptPair(
+        gitCandidateReceipt,
+        gitVerificationReceipt,
+      );
+      const recorded = Reflect.apply(
+        completeConversationCandidate,
+        options.conversationService,
+        [{
+          context: conversationContext,
+          candidate_result: {
+            draft_id: draftId,
+            title: internal.title,
+            summary: internal.summary,
+            git_candidate_receipt: receiptPair.candidate_receipt,
+          },
+          assistant_text: internal.summary,
+        }],
+      );
       const stored = freezeDeep({
         version: internal.version,
         request_id: internal.request_id,
         title: internal.title,
         summary: internal.summary,
-        admissions: internal.admissions,
+        admissions: {
+          ...internal.admissions,
+          conversation: 'sqlite_recorded',
+        },
         candidate: internal.candidate,
         draft_id: draftId,
         request,
         git_request_id: valueAt(context, 'git_request_id'),
-        conversation_events: valueAt(context, 'conversation_events'),
+        conversation_head: recorded.head,
       });
       pendingDrafts.set(draftId, stored);
       return publicDraftResult(stored);
+    }).catch((error) => {
+      const conversationContext = activeContexts.get(request.request_digest);
+      if (conversationContext !== undefined) {
+        let failureCode = 'builder_generation_failed';
+        if (error && typeof error === 'object' && !utilTypes.isProxy(error)) {
+          try {
+            const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+            if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string') {
+              failureCode = descriptor.value;
+            }
+          } catch {
+            failureCode = 'builder_generation_failed';
+          }
+        }
+        try {
+          Reflect.apply(
+            completeConversationFailure,
+            options.conversationService,
+            [{ context: conversationContext, failure_code: failureCode }],
+          );
+        } catch {
+          throw new BuilderGenerationMainServiceError();
+        }
+      }
+      throw error;
     }).finally(() => {
+      activeContexts.delete(request.request_digest);
       if (inFlight.get(request.request_digest) === operation) inFlight.delete(request.request_digest);
     });
     inFlight.set(request.request_digest, operation);
     return operation;
+  }
+
+  function cancel(rawRequest) {
+    let requestId;
+    try {
+      exactObject(rawRequest, ['request_id']);
+      requestId = safeDigest(valueAt(rawRequest, 'request_id'));
+    } catch {
+      return host.cancel(rawRequest);
+    }
+    const context = activeContexts.get(requestId);
+    if (context === undefined) {
+      return Object.freeze({ request_id: requestId, cancelled: false });
+    }
+    let cancelledContext;
+    try {
+      cancelledContext = Reflect.apply(
+        requestConversationCancel,
+        options.conversationService,
+        [{ context }],
+      );
+    } catch {
+      throw new BuilderGenerationMainServiceError();
+    }
+    activeContexts.set(requestId, cancelledContext);
+    host.cancel({ request_id: requestId });
+    return Object.freeze({ request_id: requestId, cancelled: true });
   }
 
   function readPendingDraft(rawRequest) {
@@ -507,6 +544,7 @@ function createBuilderGenerationMainService(rawOptions) {
         draft_id: draftId,
         released: true,
         pending_draft_restart_restore: 'not_persisted',
+        conversation_event_admission: 'sqlite_recorded',
       });
     } catch (error) {
       if (error instanceof BuilderGenerationMainServiceError) throw error;
@@ -517,7 +555,7 @@ function createBuilderGenerationMainService(rawOptions) {
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     generate,
-    cancel: host.cancel,
+    cancel,
     availability: host.availability,
     read_pending_draft: readPendingDraft,
     release_pending_draft: releasePendingDraft,
@@ -525,7 +563,7 @@ function createBuilderGenerationMainService(rawOptions) {
       provider_config_snapshot_bound: true,
       project_read_authority_verified_source: true,
       pending_draft_restart_restore: 'not_persisted',
-      conversation_event_admission: 'candidate_local_not_recorded',
+      conversation_event_admission: 'sqlite_recorded',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,

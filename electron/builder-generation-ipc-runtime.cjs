@@ -14,6 +14,9 @@ const {
   createBuilderGenerationMainService,
 } = require('./builder-generation-main-service.cjs');
 const {
+  createBuilderConversationMainService,
+} = require('./builder-conversation-main-service.cjs');
+const {
   createBuilderProjectSaveAuthority,
 } = require('./builder-project-save-authority.cjs');
 const {
@@ -218,9 +221,16 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return providerConfigRepository.bind_current_authority();
       },
     });
+    const conversationService = createBuilderConversationMainService({
+      metadataAuthority: projectMainAuthority.metadata_authority,
+      createUuid: randomUUID,
+      nowMs: () => Date.now(),
+    });
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
       projectReadAuthority: projectMainAuthority.project_read_authority,
+      conversationService,
+      gitAuthority: projectMainAuthority.git_authority,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
     });
     const saveAuthority = createBuilderProjectSaveAuthority({
@@ -228,6 +238,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       gitAuthority: projectMainAuthority.git_authority,
       metadataAuthority: projectMainAuthority.metadata_authority,
       projectReadAuthority: projectMainAuthority.project_read_authority,
+      conversationService,
       createUuid: randomUUID,
       nowMs: () => Date.now(),
     });
@@ -345,7 +356,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     let failed = false;
     for (const requestId of activeRequestIds()) {
       try {
-        Reflect.apply(service.cancel, undefined, [{ request_id: requestId }]);
+        const result = Reflect.apply(service.cancel, undefined, [{ request_id: requestId }]);
+        if (result?.cancelled !== true) failed = true;
       } catch {
         failed = true;
       }
@@ -397,7 +409,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       const cancelled = cancelActiveRequests();
       const removed = removeInstalledHandlers();
-      const closed = closeProjectMainAuthority();
+      const closed = cancelled ? closeProjectMainAuthority() : false;
       if (!cancelled || !removed || !closed) {
         state = 'cleanup_required';
         fail();

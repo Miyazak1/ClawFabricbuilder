@@ -167,7 +167,7 @@ function sanitizeSaveResult(value: unknown, draft: BuilderGenerationDraft) {
   if (
     evidence.code_authority !== 'git_commit_candidate'
     || evidence.product_authority !== 'sqlite_accepted_project_revision_receipt'
-    || evidence.conversation_event_admission !== 'candidate_local_not_recorded'
+    || evidence.conversation_event_admission !== 'sqlite_recorded'
     || evidence.renderer_authority !== 'draft_id_only'
   ) throw new Error();
   return Object.freeze({

@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -13,12 +14,18 @@ const {
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
+  createBuilderConversationMainService,
+} = require('../electron/builder-conversation-main-service.cjs');
+const {
   BUILDER_PROJECT_BASE_REVISION_EVIDENCE_VERSION,
   createBuilderCodeChangeCandidate,
 } = require('../electron/builder-code-change-kernel.cjs');
 const {
   createDefaultBuilderGitProjectRepository,
 } = require('../electron/builder-git-project-repository.cjs');
+const {
+  createBuilderGitCandidateVerificationReceipt,
+} = require('../electron/builder-git-receipt-contract.cjs');
 const {
   createBuilderProductMetadataDatabase,
 } = require('../electron/builder-product-metadata-database.cjs');
@@ -38,6 +45,26 @@ const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
+const candidateStartEvents = new WeakMap();
+const candidateActionStart = new WeakMap();
+const candidateFullEvents = new WeakMap();
+const candidateActionEvents = new WeakMap();
+const candidateGitReceipts = new WeakMap();
+
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map(
+    (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+  ).join(',')}}`;
+}
+
+function digest(value) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
+}
 
 function uuid(index) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
@@ -82,12 +109,14 @@ function candidate({
   base = createBuilderProjectSourceTree({ files: [] }),
   baseRevision = null,
   baseEvidence = null,
+  priorEvents = [],
   operations,
 }) {
   const turnId = id('turn', index);
   const taskId = id('task', index);
   const runId = id('run', index);
-  let events = [];
+  let events = [...priorEvents];
+  const actionStart = events.length;
   events = append(events, 'turn_submitted', {
     message: { message_id: id('message', index), text: 'Save this draft.' },
     turn_id: turnId,
@@ -103,7 +132,7 @@ function candidate({
     retry_of_run_id: null,
     input_digest: ZERO_DIGEST,
   }, index * 2);
-  return createBuilderCodeChangeCandidate({
+  const value = createBuilderCodeChangeCandidate({
     conversation_events: events,
     turn_id: turnId,
     run_id: runId,
@@ -111,6 +140,9 @@ function candidate({
     base_source_tree: base,
     operations,
   });
+  candidateStartEvents.set(value, events);
+  candidateActionStart.set(value, actionStart);
+  return value;
 }
 
 function pending(candidateValue, {
@@ -118,26 +150,156 @@ function pending(candidateValue, {
   request = 1,
   title = 'Saved project',
   summary = 'A project saved by explicit acceptance.',
+  gitReceipt = null,
 } = {}) {
+  const provisional = gitReceipt ?? {
+    receipt_version: 'builder-git-candidate-receipt.v1',
+    repository_version: 'builder-git-project-repository.v1',
+    project_id: candidateValue.project_id,
+    conversation_id: candidateValue.conversation_id,
+    turn_id: candidateValue.turn_id,
+    task_id: candidateValue.task_id,
+    run_id: candidateValue.run_id,
+    request_id: gitRequestId(request),
+    candidate_id: candidateValue.candidate_id,
+    candidate_digest: candidateValue.candidate_digest,
+    resulting_tree_digest: candidateValue.resulting_tree_digest,
+    semantic_identity_digest: `sha256:${'a'.repeat(64)}`,
+    verification_receipt_digest: `sha256:${'0'.repeat(64)}`,
+    object_format: 'sha1',
+    commit_oid: '1'.repeat(40),
+    tree_oid: '2'.repeat(40),
+    parent_oid: candidateValue.base_revision_evidence?.commit_oid ?? null,
+    expected_base_oid: candidateValue.base_revision_evidence?.commit_oid ?? null,
+    code_authority: 'git_commit_candidate',
+    product_revision_admission: 'not_recorded',
+    replay: false,
+  };
+  const receipt = gitReceipt ?? {
+    ...provisional,
+    verification_receipt_digest: digest(
+      createBuilderGitCandidateVerificationReceipt(provisional),
+    ),
+  };
+  const draftId = `builder-generation-draft:${draft.repeat(64)}`;
+  let events = [...candidateStartEvents.get(candidateValue)];
+  events = append(events, 'run_completed', {
+    turn_id: candidateValue.turn_id,
+    run_id: candidateValue.run_id,
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: candidateValue.candidate_digest,
+    assistant_message: {
+      message_id: id('message', request + 100),
+      text: summary,
+    },
+    candidate_result: {
+      draft_id: draftId,
+      title,
+      summary,
+      git_candidate_receipt: receipt,
+    },
+  }, request * 2 + 100);
+  events = append(events, 'turn_completed', {
+    turn_id: candidateValue.turn_id,
+    run_id: candidateValue.run_id,
+    outcome: 'candidate_ready',
+  }, request * 2 + 101);
+  candidateFullEvents.set(candidateValue, events);
+  candidateActionEvents.set(
+    candidateValue,
+    events.slice(candidateActionStart.get(candidateValue)),
+  );
+  candidateGitReceipts.set(candidateValue, receipt);
   return {
     result_version: 'builder-generation-pending-draft.v1',
-    draft_id: `builder-generation-draft:${draft.repeat(64)}`,
+    draft_id: draftId,
     restart_restore: 'not_persisted',
-    conversation_event_admission: 'candidate_local_not_recorded',
+    conversation_event_admission: 'sqlite_recorded',
     request: {
       version: 'builder-generation-request.v2',
       instruction: 'Save this draft.',
       existing_project_id: candidateValue.base_revision_evidence === null ? null : PROJECT_ID,
       request_digest: ZERO_DIGEST,
     },
-    git_request_id: gitRequestId(request),
+    git_request_id: receipt.request_id,
     title,
     summary,
-    conversation_events: candidateValue.run_binding.conversation_head.event_digest
-      ? [{}, {}]
-      : [{}, {}],
+    conversation_head: {
+      sequence: candidateFullEvents.get(candidateValue).at(-1).sequence,
+      event_id: candidateFullEvents.get(candidateValue).at(-1).event_id,
+      event_digest: candidateFullEvents.get(candidateValue).at(-1).event_digest,
+    },
     candidate: candidateValue,
   };
+}
+
+function conversationServiceFor(draft) {
+  return {
+    verify_candidate(input) {
+      const candidateValue = draft.candidate;
+      assert.deepEqual(input, {
+        project_id: candidateValue.project_id,
+        conversation_id: candidateValue.conversation_id,
+        turn_id: candidateValue.turn_id,
+        task_id: candidateValue.task_id,
+        run_id: candidateValue.run_id,
+        candidate_digest: candidateValue.candidate_digest,
+        conversation_head: draft.conversation_head,
+      });
+      return {
+        verification_version: 'builder-conversation-candidate-verification.v1',
+        ...input,
+        candidate_result: {
+          draft_id: draft.draft_id,
+          title: draft.title,
+          summary: draft.summary,
+          git_candidate_receipt: candidateGitReceipts.get(candidateValue),
+        },
+        verification_admission: 'sqlite_replay_verified',
+      };
+    },
+  };
+}
+
+function projectIdentityResult(createdAtMs = 1) {
+  return {
+    result_version: 'builder-product-metadata-result.v3',
+    operation: 'project_identity_loaded',
+    project: {
+      project_id: PROJECT_ID,
+      created_at_ms: createdAtMs,
+    },
+    metadata_evidence: {},
+  };
+}
+
+function appendCandidateConversation(metadata, candidateValue, recordedAtMs) {
+  const existing = (() => {
+    try {
+      return metadata.load_conversation({
+        project_id: candidateValue.project_id,
+        conversation_id: candidateValue.conversation_id,
+      });
+    } catch (error) {
+      if (error.code === 'builder_product_metadata_not_found') return null;
+      throw error;
+    }
+  })();
+  return metadata.append_conversation_events({
+    project: {
+      project_id: candidateValue.project_id,
+      created_at_ms: existing?.conversation.created_at_ms ?? recordedAtMs,
+    },
+    conversation: {
+      project_id: candidateValue.project_id,
+      conversation_id: candidateValue.conversation_id,
+      created_at_ms: existing?.conversation.created_at_ms ?? recordedAtMs,
+    },
+    expected_head: existing?.current_head ?? null,
+    events: candidateActionEvents.get(candidateValue),
+    recorded_at_ms: recordedAtMs,
+  });
 }
 
 function draftsStore(initialPending) {
@@ -220,6 +382,7 @@ function realAuthorities(t) {
 }
 
 test('saves first and update drafts through real Git, SQLite, and restart read authority', async (t) => {
+  const value = realAuthorities(t);
   const firstCandidate = candidate({
     index: 1,
     operations: [
@@ -228,15 +391,21 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
       { operation: 'upsert', path: 'src/app.js', content: 'document.title = "Hello";\n' },
     ],
   });
-  const firstPending = pending(firstCandidate);
+  const firstGitReceipt = await value.git.persist_candidate_commit({
+    request_id: gitRequestId(1),
+    expected_base_oid: null,
+    candidate: firstCandidate,
+  });
+  const firstPending = pending(firstCandidate, { gitReceipt: firstGitReceipt });
   const generationDrafts = draftsStore(firstPending);
   const stages = [];
-  const value = realAuthorities(t);
+  appendCandidateConversation(value.metadata, firstCandidate, 10_000);
+  const conversationService = createBuilderConversationMainService({
+    metadataAuthority: value.metadata,
+    createUuid: uuidFactory(),
+    nowMs: () => 10_000,
+  });
   const gitAuthority = {
-    async persist_candidate_commit(request) {
-      stages.push('git_persist');
-      return value.git.persist_candidate_commit(request);
-    },
     async verify_candidate_receipt(receipt) {
       stages.push('git_verify');
       return value.git.verify_candidate_receipt(receipt);
@@ -267,6 +436,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
     gitAuthority,
     metadataAuthority,
     projectReadAuthority,
+    conversationService,
     createUuid: uuidFactory(),
     nowMs: () => acceptanceTime,
   });
@@ -279,7 +449,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   assert.equal(saved.operation, 'draft_saved');
   assert.equal(saved.project_id, PROJECT_ID);
   assert.equal(saved.pending_draft_released, true);
-  assert.equal(saved.save_evidence.conversation_event_admission, 'candidate_local_not_recorded');
+  assert.equal(saved.save_evidence.conversation_event_admission, 'sqlite_recorded');
   assert.equal(generationDrafts.released.length, 1);
   assert.doesNotMatch(JSON.stringify(saved), /operations|credential|conversation_events|api\.deepseek/u);
 
@@ -301,12 +471,24 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
       commit_oid: current.product_revision_receipt.commit_oid,
     },
     baseEvidence,
+    priorEvents: candidateFullEvents.get(firstCandidate),
     operations: [
       { operation: 'upsert', path: 'src/app.js', content: 'document.title = "Updated";\n' },
       { operation: 'upsert', path: 'README.md', content: '# Updated\n' },
     ],
   });
-  const updatePending = pending(updateCandidate, { draft: '2', request: 2, title: 'Updated project' });
+  const updateGitReceipt = await value.git.persist_candidate_commit({
+    request_id: gitRequestId(2),
+    expected_base_oid: current.product_revision_receipt.commit_oid,
+    candidate: updateCandidate,
+  });
+  const updatePending = pending(updateCandidate, {
+    draft: '2',
+    request: 2,
+    title: 'Updated project',
+    gitReceipt: updateGitReceipt,
+  });
+  appendCandidateConversation(value.metadata, updateCandidate, 20_000);
   generationDrafts.replace(updatePending);
   const updated = await saveAuthority.save({ draft_id: updatePending.draft_id });
   assert.equal(updated.project_id, PROJECT_ID);
@@ -335,68 +517,26 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
   });
   const draft = pending(value);
   const generationDrafts = draftsStore(draft);
-  let releasePersist;
-  const persistGate = new Promise((resolve) => { releasePersist = resolve; });
-  let persistCalls = 0;
+  let releaseVerify;
+  const verifyGate = new Promise((resolve) => { releaseVerify = resolve; });
+  let verifyCalls = 0;
   let recordCalls = 0;
-  const gitReceipt = {
-    receipt_version: 'builder-git-candidate-receipt.v1',
-    repository_version: 'builder-git-project-repository.v1',
-    project_id: PROJECT_ID,
-    conversation_id: value.conversation_id,
-    turn_id: value.turn_id,
-    task_id: value.task_id,
-    run_id: value.run_id,
-    request_id: draft.git_request_id,
-    candidate_id: value.candidate_id,
-    candidate_digest: value.candidate_digest,
-    resulting_tree_digest: value.resulting_tree_digest,
-    semantic_identity_digest: `sha256:${'a'.repeat(64)}`,
-    verification_receipt_digest: `sha256:${'b'.repeat(64)}`,
-    object_format: 'sha1',
-    commit_oid: '1'.repeat(40),
-    tree_oid: '2'.repeat(40),
-    parent_oid: null,
-    expected_base_oid: null,
-    code_authority: 'git_commit_candidate',
-    product_revision_admission: 'not_recorded',
-    replay: false,
-  };
-  const verification = {
-    receipt_version: 'builder-git-candidate-verification-receipt.v1',
-    repository_version: gitReceipt.repository_version,
-    project_id: PROJECT_ID,
-    conversation_id: value.conversation_id,
-    turn_id: value.turn_id,
-    task_id: value.task_id,
-    run_id: value.run_id,
-    request_id: draft.git_request_id,
-    candidate_id: value.candidate_id,
-    candidate_digest: value.candidate_digest,
-    expected_base_oid: null,
-    commit_oid: gitReceipt.commit_oid,
-    candidate_tree_oid: gitReceipt.tree_oid,
-    resulting_tree_digest: value.resulting_tree_digest,
-    semantic_identity_digest: gitReceipt.semantic_identity_digest,
-    object_format: 'sha1',
-    commit_ref_admission: 'verified',
-    request_ref_admission: 'verified',
-    commit_object_admission: 'verified',
-    verification_admission: 'accepted',
-  };
+  const gitReceipt = candidateGitReceipts.get(value);
+  const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
   const revisionDigest = `sha256:${'c'.repeat(64)}`;
   const saveAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
+    conversationService: conversationServiceFor(draft),
     gitAuthority: {
-      async persist_candidate_commit() {
-        persistCalls += 1;
-        await persistGate;
-        return gitReceipt;
+      async verify_candidate_receipt(receipt) {
+        verifyCalls += 1;
+        assert.deepEqual(receipt, gitReceipt);
+        await verifyGate;
+        return verification;
       },
-      async verify_candidate_receipt() { return verification; },
     },
     metadataAuthority: {
-      load_project_identity() { throw new Error('new project should not load identity'); },
+      load_project_identity() { return projectIdentityResult(25_000); },
       record_project_revision_receipt() {
         recordCalls += 1;
         return {
@@ -433,9 +573,9 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
   const first = saveAuthority.save({ draft_id: draft.draft_id });
   const second = saveAuthority.save({ draft_id: draft.draft_id });
   assert.equal(first, second);
-  releasePersist();
+  releaseVerify();
   assert.deepEqual(await first, await second);
-  assert.equal(persistCalls, 1);
+  assert.equal(verifyCalls, 1);
   assert.equal(recordCalls, 1);
   assert.equal(generationDrafts.released.length, 1);
 });
@@ -449,62 +589,19 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
   const generationDrafts = draftsStore(draft);
   const calls = { git: [], records: [] };
   let metadataFails = true;
-  const gitReceipt = {
-    receipt_version: 'builder-git-candidate-receipt.v1',
-    repository_version: 'builder-git-project-repository.v1',
-    project_id: PROJECT_ID,
-    conversation_id: value.conversation_id,
-    turn_id: value.turn_id,
-    task_id: value.task_id,
-    run_id: value.run_id,
-    request_id: draft.git_request_id,
-    candidate_id: value.candidate_id,
-    candidate_digest: value.candidate_digest,
-    resulting_tree_digest: value.resulting_tree_digest,
-    semantic_identity_digest: `sha256:${'a'.repeat(64)}`,
-    verification_receipt_digest: `sha256:${'b'.repeat(64)}`,
-    object_format: 'sha1',
-    commit_oid: '1'.repeat(40),
-    tree_oid: '2'.repeat(40),
-    parent_oid: null,
-    expected_base_oid: null,
-    code_authority: 'git_commit_candidate',
-    product_revision_admission: 'not_recorded',
-    replay: false,
-  };
-  const verification = {
-    receipt_version: 'builder-git-candidate-verification-receipt.v1',
-    repository_version: 'builder-git-project-repository.v1',
-    project_id: PROJECT_ID,
-    conversation_id: value.conversation_id,
-    turn_id: value.turn_id,
-    task_id: value.task_id,
-    run_id: value.run_id,
-    request_id: draft.git_request_id,
-    candidate_id: value.candidate_id,
-    candidate_digest: value.candidate_digest,
-    expected_base_oid: null,
-    commit_oid: gitReceipt.commit_oid,
-    candidate_tree_oid: gitReceipt.tree_oid,
-    resulting_tree_digest: value.resulting_tree_digest,
-    semantic_identity_digest: gitReceipt.semantic_identity_digest,
-    object_format: 'sha1',
-    commit_ref_admission: 'verified',
-    request_ref_admission: 'verified',
-    commit_object_admission: 'verified',
-    verification_admission: 'accepted',
-  };
+  const gitReceipt = candidateGitReceipts.get(value);
+  const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
   const saveAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
+    conversationService: conversationServiceFor(draft),
     gitAuthority: {
-      async persist_candidate_commit(request) {
-        calls.git.push(request);
-        return { ...gitReceipt, replay: calls.git.length > 1 };
+      async verify_candidate_receipt(receipt) {
+        calls.git.push(receipt);
+        return verification;
       },
-      async verify_candidate_receipt() { return verification; },
     },
     metadataAuthority: {
-      load_project_identity() { throw new Error('new project should not load identity'); },
+      load_project_identity() { return projectIdentityResult(50_000); },
       record_project_revision_receipt(request) {
         calls.records.push(request);
         if (metadataFails) {
@@ -551,7 +648,7 @@ test('keeps pending draft and stable attempt identity after metadata failure fol
   metadataFails = false;
   await saveAuthority.save({ draft_id: draft.draft_id });
   assert.equal(calls.git.length, 2);
-  assert.equal(calls.git[0].request_id, calls.git[1].request_id);
+  assert.deepEqual(calls.git[0], calls.git[1]);
   assert.equal(calls.records[0].idempotency.idempotency_key, calls.records[1].idempotency.idempotency_key);
   assert.equal(calls.records[0].review.review_id, calls.records[1].review.review_id);
   assert.equal(calls.records[0].review.reviewed_at_ms, calls.records[1].review.reviewed_at_ms);
@@ -567,59 +664,14 @@ test('maps CAS conflict without releasing the pending draft', async () => {
   const generationDrafts = draftsStore(draft);
   const saveAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
+    conversationService: conversationServiceFor(draft),
     gitAuthority: {
-      async persist_candidate_commit() {
-        return {
-          receipt_version: 'builder-git-candidate-receipt.v1',
-          repository_version: 'builder-git-project-repository.v1',
-          project_id: PROJECT_ID,
-          conversation_id: value.conversation_id,
-          turn_id: value.turn_id,
-          task_id: value.task_id,
-          run_id: value.run_id,
-          request_id: draft.git_request_id,
-          candidate_id: value.candidate_id,
-          candidate_digest: value.candidate_digest,
-          resulting_tree_digest: value.resulting_tree_digest,
-          semantic_identity_digest: `sha256:${'a'.repeat(64)}`,
-          verification_receipt_digest: `sha256:${'b'.repeat(64)}`,
-          object_format: 'sha1',
-          commit_oid: '1'.repeat(40),
-          tree_oid: '2'.repeat(40),
-          parent_oid: null,
-          expected_base_oid: null,
-          code_authority: 'git_commit_candidate',
-          product_revision_admission: 'not_recorded',
-          replay: false,
-        };
-      },
       async verify_candidate_receipt(receipt) {
-        return {
-          receipt_version: 'builder-git-candidate-verification-receipt.v1',
-          repository_version: receipt.repository_version,
-          project_id: receipt.project_id,
-          conversation_id: receipt.conversation_id,
-          turn_id: receipt.turn_id,
-          task_id: receipt.task_id,
-          run_id: receipt.run_id,
-          request_id: receipt.request_id,
-          candidate_id: receipt.candidate_id,
-          candidate_digest: receipt.candidate_digest,
-          expected_base_oid: receipt.expected_base_oid,
-          commit_oid: receipt.commit_oid,
-          candidate_tree_oid: receipt.tree_oid,
-          resulting_tree_digest: receipt.resulting_tree_digest,
-          semantic_identity_digest: receipt.semantic_identity_digest,
-          object_format: receipt.object_format,
-          commit_ref_admission: 'verified',
-          request_ref_admission: 'verified',
-          commit_object_admission: 'verified',
-          verification_admission: 'accepted',
-        };
+        return createBuilderGitCandidateVerificationReceipt(receipt);
       },
     },
     metadataAuthority: {
-      load_project_identity() { throw new Error('new project should not load identity'); },
+      load_project_identity() { return projectIdentityResult(60_000); },
       record_project_revision_receipt() {
         const error = new Error('private current drift');
         error.code = 'builder_product_metadata_conflict';
@@ -654,7 +706,8 @@ test('rejects malformed save authority input with fixed redacted errors', async 
   const generationDrafts = draftsStore(draft);
   const saveAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
-    gitAuthority: { persist_candidate_commit() {}, verify_candidate_receipt() {} },
+    conversationService: conversationServiceFor(draft),
+    gitAuthority: { verify_candidate_receipt() {} },
     metadataAuthority: { load_project_identity() {}, record_project_revision_receipt() {} },
     projectReadAuthority: { load_current() {} },
     createUuid: uuidFactory(),
@@ -664,6 +717,38 @@ test('rejects malformed save authority input with fixed redacted errors', async 
     saveAuthority.save({ draft_id: 'bad private draft' }),
     expectSaveError('builder_project_save_invalid'),
   );
+
+  let driftVerifyCalls = 0;
+  const driftAuthority = createBuilderProjectSaveAuthority({
+    generationDrafts,
+    conversationService: {
+      verify_candidate(input) {
+        return {
+          verification_version: 'builder-conversation-candidate-verification.v1',
+          ...input,
+          project_id: 'builder-project:223e4567-e89b-42d3-a456-426614174000',
+          verification_admission: 'sqlite_replay_verified',
+        };
+      },
+    },
+    gitAuthority: {
+      verify_candidate_receipt() {
+        driftVerifyCalls += 1;
+      },
+    },
+    metadataAuthority: {
+      load_project_identity() {},
+      record_project_revision_receipt() {},
+    },
+    projectReadAuthority: { load_current() {} },
+    createUuid: uuidFactory(),
+    nowMs: () => 1,
+  });
+  await assert.rejects(
+    driftAuthority.save({ draft_id: draft.draft_id }),
+    expectSaveError('builder_project_save_invalid'),
+  );
+  assert.equal(driftVerifyCalls, 0);
 
   let trapCalls = 0;
   const hostile = new Proxy({}, {
@@ -678,9 +763,9 @@ test('rejects malformed save authority input with fixed redacted errors', async 
   });
   const hostileAuthority = createBuilderProjectSaveAuthority({
     generationDrafts,
+    conversationService: conversationServiceFor(draft),
     gitAuthority: {
-      persist_candidate_commit() { throw hostile; },
-      verify_candidate_receipt() {},
+      verify_candidate_receipt() { throw hostile; },
     },
     metadataAuthority: { load_project_identity() {}, record_project_revision_receipt() {} },
     projectReadAuthority: { load_current() {} },
@@ -695,7 +780,7 @@ test('rejects malformed save authority input with fixed redacted errors', async 
 
   generationDrafts.replace({
     ...draft,
-    conversation_events: new Proxy([{}, {}], {
+    conversation_head: new Proxy({}, {
       get() {
         trapCalls += 1;
         throw new Error('private event trap');

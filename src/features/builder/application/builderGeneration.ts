@@ -37,7 +37,7 @@ export type BuilderGenerationDraft = Readonly<{
   }> | null;
   source_tree: BuilderProjectSourceTree;
   admissions: Readonly<{
-    conversation: 'candidate_local_not_recorded';
+    conversation: 'sqlite_recorded';
     draft: 'candidate_not_saved';
     save: 'not_performed';
     preview: 'not_evaluated';
@@ -365,7 +365,7 @@ export async function sanitizeBuilderGenerationDraft(
     }
     const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_draft');
     if (
-      admissions.conversation !== 'candidate_local_not_recorded'
+      admissions.conversation !== 'sqlite_recorded'
       || admissions.draft !== 'candidate_not_saved'
       || admissions.save !== 'not_performed'
       || admissions.preview !== 'not_evaluated'
@@ -392,7 +392,7 @@ export async function sanitizeBuilderGenerationDraft(
       ),
       source_tree: sourceTree,
       admissions: {
-        conversation: 'candidate_local_not_recorded',
+        conversation: 'sqlite_recorded',
         draft: 'candidate_not_saved',
         save: 'not_performed',
         preview: 'not_evaluated',

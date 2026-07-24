@@ -97,6 +97,27 @@ test('provider settings IPC runtime is wired only through Electron main and prel
   assert.doesNotMatch(preload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage/iu);
 });
 
+test('conversation lifecycle authority stays main-only and cannot dispatch providers or mutate Git', () => {
+  const lifecycle = fs.readFileSync(
+    path.join(root, 'electron', 'builder-conversation-main-service.cjs'),
+    'utf8',
+  );
+  const generationRuntime = fs.readFileSync(
+    path.join(root, 'electron', 'builder-generation-ipc-runtime.cjs'),
+    'utf8',
+  );
+  assert.match(lifecycle, /sqlite_conversation_event_chain/u);
+  assert.match(lifecycle, /append_conversation_events/u);
+  assert.match(lifecycle, /load_conversation/u);
+  assert.match(lifecycle, /verify_candidate:\s*verifyCandidate/u);
+  assert.match(lifecycle, /builder-git-receipt-contract\.cjs/u);
+  assert.match(generationRuntime, /createBuilderConversationMainService/u);
+  assert.doesNotMatch(
+    lifecycle,
+    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
+  );
+});
+
 test('package identity and dependencies remain Builder-only', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(packageJson.name, 'clawfabric-builder');

@@ -247,7 +247,7 @@ export async function createGenerationDraft(
       },
     source_tree: sourceTree,
     admissions: {
-      conversation: 'candidate_local_not_recorded',
+      conversation: 'sqlite_recorded',
       draft: 'candidate_not_saved',
       save: 'not_performed',
       preview: 'not_evaluated',
@@ -273,7 +273,7 @@ export function createSaveResult(
     save_evidence: {
       code_authority: 'git_commit_candidate',
       product_authority: 'sqlite_accepted_project_revision_receipt',
-      conversation_event_admission: 'candidate_local_not_recorded',
+      conversation_event_admission: 'sqlite_recorded',
       renderer_authority: 'draft_id_only',
     },
   };

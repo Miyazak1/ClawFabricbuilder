@@ -119,7 +119,28 @@ function runtimeWithService(service, probes = {}) {
             probes.serviceOptions = options;
             assert.equal(options.transport, context.__sentinelTransport);
             assert.equal(options.projectReadAuthority, context.__projectMainAuthority.project_read_authority);
+            assert.equal(options.conversationService, context.__conversationService);
+            assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
             return service;
+          },
+        };
+      }
+      if (specifier === './builder-conversation-main-service.cjs') {
+        return {
+          createBuilderConversationMainService: (options) => {
+            probes.conversationOptions = options;
+            assert.equal(
+              options.metadataAuthority,
+              context.__projectMainAuthority.metadata_authority,
+            );
+            context.__conversationService = {
+              begin_work() {},
+              complete_candidate() {},
+              complete_failure() {},
+              request_cancel() {},
+              verify_candidate() {},
+            };
+            return context.__conversationService;
           },
         };
       }
@@ -424,6 +445,10 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.deepEqual(Object.keys(probes.projectMainAuthorityOptions), ['userDataPath']);
   assert.equal(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
+  assert.equal(probes.serviceOptions.conversationService,
+    runtimeModule.context.__conversationService);
+  assert.equal(probes.serviceOptions.gitAuthority,
+    runtimeModule.context.__projectMainAuthority.git_authority);
   assert.equal(probes.saveOptions.generationDrafts, service);
   assert.equal(probes.saveOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
@@ -431,6 +456,8 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__projectMainAuthority.metadata_authority);
   assert.equal(probes.saveOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
+  assert.equal(probes.saveOptions.conversationService,
+    runtimeModule.context.__conversationService);
   assert.equal(runtime.dispose(), false);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
 });
@@ -626,6 +653,45 @@ test('cancels every accepted generation before removing its cancel channel', asy
   assert.equal(cancelRequests[0].request_id, hostRequestDigest());
   await cancelled;
   assert.deepEqual([...ipcMain.handlers.keys()], []);
+});
+
+test('does not close project authority when an active generation lacks durable cancellation', async (t) => {
+  let resolveGeneration;
+  const service = {
+    generate() {
+      return new Promise((resolve) => { resolveGeneration = resolve; });
+    },
+    cancel(body) {
+      return { request_id: body.request_id, cancelled: false };
+    },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const runtimeModule = runtimeWithService(service);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  const body = vm.runInContext('({ instruction: "Make a timer." })', runtimeModule.context);
+  const operation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, body);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.throws(() => runtime.dispose(), {
+    code: 'builder_generation_ipc_runtime_unavailable',
+  });
+  assert.deepEqual([...ipcMain.handlers.keys()], []);
+  resolveGeneration(vm.runInContext(`({
+    version: "builder-generation-result.v2",
+    request_id: "${hostRequestDigest()}"
+  })`, runtimeModule.context));
+  await operation;
+  assert.equal(runtime.dispose(), true);
 });
 
 test('contains no preload, renderer, settings write, generic provider, or legacy revision authority', () => {

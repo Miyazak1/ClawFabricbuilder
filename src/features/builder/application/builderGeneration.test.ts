@@ -76,7 +76,7 @@ describe('Builder generation v2', () => {
       'src/main.py',
     ]);
     expect(result.admissions).toEqual({
-      conversation: 'candidate_local_not_recorded',
+      conversation: 'sqlite_recorded',
       draft: 'candidate_not_saved',
       save: 'not_performed',
       preview: 'not_evaluated',

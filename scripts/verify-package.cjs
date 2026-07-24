@@ -59,6 +59,7 @@ for (const expected of [
   '/electron/builder-conversation-authority-contract.cjs',
   '/electron/builder-conversation-records.cjs',
   '/electron/builder-conversation-replay.cjs',
+  '/electron/builder-conversation-main-service.cjs',
   '/electron/builder-product-metadata-schema.cjs',
   '/electron/builder-product-metadata-database.cjs',
   '/electron/builder-project-source-tree.cjs',
@@ -97,6 +98,7 @@ for (const forbiddenTest of [
   '/tests/builder-generation-ipc-adapter.test.cjs',
   '/tests/builder-generation-ipc-runtime.test.cjs',
   '/tests/builder-generation-main-service.test.cjs',
+  '/tests/builder-conversation-main-service.test.cjs',
   '/tests/builder-project-workspace-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-adapter.test.cjs',
   '/tests/builder-provider-settings-ipc-runtime.test.cjs',
@@ -209,6 +211,7 @@ const packagedGenerationHost = packagedSource('electron/builder-generation-host-
 const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
 const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation-ipc-runtime.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
+const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
   'clawfabric-builder:project-workspace:open',
@@ -480,6 +483,7 @@ assert.doesNotMatch(
 );
 assert.match(packagedGenerationIpcRuntime, /createBuilderGenerationIpcAdapter/u);
 assert.match(packagedGenerationIpcRuntime, /createBuilderGenerationMainService/u);
+assert.match(packagedGenerationIpcRuntime, /createBuilderConversationMainService/u);
 assert.match(packagedGenerationIpcRuntime, /bind_current_authority/u);
 assert.doesNotMatch(
   packagedGenerationIpcRuntime,
@@ -498,12 +502,22 @@ assert.doesNotMatch(
 );
 assert.match(packagedGenerationMainService, /createBuilderGenerationHostAdapter/u);
 assert.match(packagedGenerationMainService, /bind_current_authority/u);
+assert.match(packagedGenerationMainService, /conversation_event_admission:\s*'sqlite_recorded'/u);
 assert.match(packagedGenerationMainService, /credential_exposed_to_renderer:\s*false/u);
 assert.match(packagedGenerationMainService, /electron_registration:\s*false/u);
 assert.match(packagedGenerationMainService, /preload_exposure:\s*false/u);
 assert.doesNotMatch(
   packagedGenerationMainService,
   /ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider-secret-store|builder-provider-config-repository|local-provider-executor/iu,
+);
+assert.match(packagedConversationMainService, /sqlite_conversation_event_chain/u);
+assert.match(packagedConversationMainService, /begin_work:\s*beginWork/u);
+assert.match(packagedConversationMainService, /verify_candidate:\s*verifyCandidate/u);
+assert.match(packagedConversationMainService, /interrupted_without_provider_redispatch/u);
+assert.match(packagedConversationMainService, /builder-git-receipt-contract\.cjs/u);
+assert.doesNotMatch(
+  packagedConversationMainService,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
 );
 assert.match(packagedWindowControlsIpcRuntime, /builder-window-controls-ipc-runtime\.v1/u);
 assert.match(packagedWindowControlsIpcRuntime, /activeWindow/u);
