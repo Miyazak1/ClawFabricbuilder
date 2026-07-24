@@ -56,6 +56,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
   assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 14);
+  assert.doesNotMatch(preload, /taskStream|conversationStream|projectActivity|readStream/u);
   assert.doesNotMatch(
     preload,
     /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,

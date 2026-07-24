@@ -15,9 +15,11 @@ const unpackedArchive = path.join(unpacked, 'resources', 'app.asar.unpacked');
 const builtIndex = path.join(root, 'dist', 'index.html');
 const workspacePackageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
-const secretMaterial = /(?:real-key-value|private-settings-marker|private-secret-marker|Authorization:\s*Bearer|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|sk-[A-Za-z0-9_-]{16,})/iu;
+const secretMaterial = /(?:real-key-value|private-settings-marker|private-secret-marker|Authorization:\s*Bearer|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|\bsk-[A-Za-z0-9_-]{16,})/iu;
 const apiKeyLiteralAssignment = /["'`]?api(?:[_-]?key|Key)["'`]?\s*[:=]\s*(["'])(?=[^"'`\r\n]{16,}\1)[^"'`\r\n]+\1/iu;
 
+assert.equal(secretMaterial.test('builder-task-stream-projection.cjs'), false);
+assert.equal(secretMaterial.test(`sk-${'a'.repeat(24)}`), true);
 assert.equal(apiKeyLiteralAssignment.test('apiKey:'), false);
 assert.equal(apiKeyLiteralAssignment.test('apiKey: value'), false);
 assert.equal(apiKeyLiteralAssignment.test("apiKey: 'abcdefghijklmnopqrstuvwx'"), true);
@@ -60,6 +62,7 @@ for (const expected of [
   '/electron/builder-conversation-records.cjs',
   '/electron/builder-conversation-replay.cjs',
   '/electron/builder-conversation-main-service.cjs',
+  '/electron/builder-task-stream-projection.cjs',
   '/electron/builder-product-metadata-schema.cjs',
   '/electron/builder-product-metadata-database.cjs',
   '/electron/builder-project-source-tree.cjs',
@@ -212,6 +215,7 @@ const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation
 const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation-ipc-runtime.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
+const packagedTaskStreamProjection = packagedSource('electron/builder-task-stream-projection.cjs');
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
   'clawfabric-builder:project-workspace:open',
@@ -513,11 +517,25 @@ assert.doesNotMatch(
 assert.match(packagedConversationMainService, /sqlite_conversation_event_chain/u);
 assert.match(packagedConversationMainService, /begin_work:\s*beginWork/u);
 assert.match(packagedConversationMainService, /verify_candidate:\s*verifyCandidate/u);
+assert.match(packagedConversationMainService, /read_stream:\s*readStream/u);
 assert.match(packagedConversationMainService, /interrupted_without_provider_redispatch/u);
 assert.match(packagedConversationMainService, /builder-git-receipt-contract\.cjs/u);
 assert.doesNotMatch(
   packagedConversationMainService,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
+);
+assert.match(packagedTaskStreamProjection, /builder-task-stream-read-result\.v1/u);
+assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_ITEMS = 128/u);
+assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
+assert.match(packagedTaskStreamProjection, /replayBuilderConversation/u);
+assert.match(packagedTaskStreamProjection, /Object\.getPrototypeOf\(value\) !== Array\.prototype/u);
+assert.doesNotMatch(packagedTaskStreamProjection, /events\.map\(itemFromEvent\)/u);
+assert.match(packagedTaskStreamProjection, /recorded_state:\s*'started'/u);
+assert.match(packagedTaskStreamProjection, /candidate_state:\s*'proposed'/u);
+assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/u);
+assert.doesNotMatch(
+  packagedTaskStreamProjection,
+  /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
 );
 assert.match(packagedWindowControlsIpcRuntime, /builder-window-controls-ipc-runtime\.v1/u);
 assert.match(packagedWindowControlsIpcRuntime, /activeWindow/u);

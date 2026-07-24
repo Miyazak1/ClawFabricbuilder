@@ -102,6 +102,10 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
     path.join(root, 'electron', 'builder-conversation-main-service.cjs'),
     'utf8',
   );
+  const taskStream = fs.readFileSync(
+    path.join(root, 'electron', 'builder-task-stream-projection.cjs'),
+    'utf8',
+  );
   const generationRuntime = fs.readFileSync(
     path.join(root, 'electron', 'builder-generation-ipc-runtime.cjs'),
     'utf8',
@@ -110,11 +114,20 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(lifecycle, /append_conversation_events/u);
   assert.match(lifecycle, /load_conversation/u);
   assert.match(lifecycle, /verify_candidate:\s*verifyCandidate/u);
+  assert.match(lifecycle, /read_stream:\s*readStream/u);
   assert.match(lifecycle, /builder-git-receipt-contract\.cjs/u);
+  assert.match(taskStream, /builder-task-stream-read-result\.v1/u);
+  assert.match(taskStream, /MAX_PUBLIC_ITEMS = 128/u);
+  assert.match(taskStream, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
+  assert.match(taskStream, /replayBuilderConversation/u);
   assert.match(generationRuntime, /createBuilderConversationMainService/u);
   assert.doesNotMatch(
     lifecycle,
     /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
+  );
+  assert.doesNotMatch(
+    taskStream,
+    /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
   );
 });
 

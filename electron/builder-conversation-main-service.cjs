@@ -14,6 +14,10 @@ const {
 const {
   sanitizeBuilderGitCandidateReceipt,
 } = require('./builder-git-receipt-contract.cjs');
+const {
+  BuilderTaskStreamProjectionError,
+  projectBuilderTaskStream,
+} = require('./builder-task-stream-projection.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -788,6 +792,25 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     });
   }
 
+  function readStream(rawRequest) {
+    try {
+      exactObject(rawRequest, ['project_id']);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      const conversationId = `builder-conversation:${projectUuid(projectId)}`;
+      const state = load(projectId, conversationId);
+      return projectBuilderTaskStream({
+        project_id: projectId,
+        conversation: state === null ? null : {
+          conversation_id: state.conversation.conversation_id,
+          created_at_ms: state.conversation.created_at_ms,
+          events: state.events,
+        },
+      });
+    } catch {
+      throw new BuilderTaskStreamProjectionError();
+    }
+  }
+
   return Object.freeze({
     service_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
     begin_work: beginWork,
@@ -795,6 +818,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     complete_failure: completeFailure,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
+    read_stream: readStream,
     authority: Object.freeze({
       storage: 'sqlite_conversation_event_chain',
       provider_dispatch: false,

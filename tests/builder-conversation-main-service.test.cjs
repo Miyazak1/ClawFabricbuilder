@@ -124,6 +124,105 @@ test('records start and terminal events before allowing a later turn to continue
   }
 });
 
+test('restores the same renderer-safe task stream after a real database restart', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    item.service.complete_candidate({
+      context,
+      candidate_result: candidateResult(context),
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const before = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(before.stream_version, 'builder-task-stream-read-result.v1');
+    assert.equal(before.conversation.head_sequence, 4);
+    assert.equal(before.conversation.items[1].recorded_state, 'started');
+    assert.equal(before.conversation.items[2].candidate.candidate_state, 'proposed');
+    assert.equal(before.conversation.items[2].candidate.source_availability, 'not_loaded');
+    assert.doesNotMatch(
+      JSON.stringify(before),
+      /git_candidate_receipt|candidate_digest|commit_oid|tree_oid|credential|provider|running|save_admission/iu,
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(300),
+      nowMs: () => 3_000,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), before);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    fs.rmSync(item.root, { recursive: true, force: true });
+  }
+});
+
+test('returns a legal empty stream when the project has no conversation', () => {
+  const item = fixture();
+  try {
+    assert.deepEqual(item.service.read_stream({ project_id: PROJECT_ID }), {
+      stream_version: 'builder-task-stream-read-result.v1',
+      project_id: PROJECT_ID,
+      conversation: null,
+      authority: {
+        conversation: 'sqlite_canonical_event_replay_or_absent',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    });
+    assert.throws(() => item.service.read_stream({
+      project_id: PROJECT_ID,
+      extra: 'private-marker',
+    }), {
+      code: 'builder_task_stream_unavailable',
+      message: 'Project activity is unavailable.',
+      retryable: true,
+    });
+  } finally {
+    item.close();
+  }
+});
+
+test('reads a restarted active run as recorded without mutating durable events', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    const request = {
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+    };
+    const beforeRestart = item.database.load_conversation(request);
+    assert.equal(beforeRestart.current_head.sequence, 2);
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const durableBeforeRead = restartedDatabase.load_conversation(request);
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(400),
+      nowMs: () => 4_000,
+    });
+    const stream = restartedService.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 2);
+    assert.equal(stream.conversation.recorded_active_turn_id, context.ids.turn_id);
+    assert.equal(stream.conversation.items.at(-1).recorded_state, 'started');
+    assert.doesNotMatch(JSON.stringify(stream), /running|live/iu);
+    const durableAfterRead = restartedDatabase.load_conversation(request);
+    assert.deepEqual(durableAfterRead, durableBeforeRead);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    fs.rmSync(item.root, { recursive: true, force: true });
+  }
+});
+
 test('recovers a running turn as interrupted without redispatching a provider', () => {
   const item = fixture();
   let restartedDatabase = null;
@@ -205,6 +304,6 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
   );
   assert.doesNotMatch(
     source,
-    /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit/iu,
+    /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit|builder-git-project-repository/iu,
   );
 });
