@@ -74,6 +74,34 @@ describe('Builder project history controller', () => {
     expect(controller.getSnapshot().history?.project_id).toBe(OTHER_PROJECT_ID);
   });
 
+  it('reloads with a fresh read instead of reusing an in-flight history request', async () => {
+    let resolveOld!: (value: unknown) => void;
+    let resolveFresh!: (value: unknown) => void;
+    const oldRead = new Promise<unknown>((resolve) => {
+      resolveOld = resolve;
+    });
+    const freshRead = new Promise<unknown>((resolve) => {
+      resolveFresh = resolve;
+    });
+    const listHistory = vi.fn()
+      .mockReturnValueOnce(oldRead)
+      .mockReturnValueOnce(freshRead);
+    const controller = createBuilderProjectHistoryController({ listHistory });
+    const oldLoad = controller.load(PROJECT_ID);
+    await Promise.resolve();
+
+    const reloaded = controller.reload();
+    await Promise.resolve();
+    expect(listHistory).toHaveBeenCalledTimes(2);
+    resolveFresh(await createHistoryWire());
+    const result = await reloaded;
+    resolveOld(await createHistoryWire(PROJECT_ID, 1));
+    await oldLoad;
+
+    expect(result.history?.current.revision_number).toBe(2);
+    expect(controller.getSnapshot().history?.current.revision_number).toBe(2);
+  });
+
   it('fails closed for invalid project identity and clears when no project is selected', async () => {
     const listHistory = vi.fn(async () => createHistoryWire());
     const controller = createBuilderProjectHistoryController({ listHistory });

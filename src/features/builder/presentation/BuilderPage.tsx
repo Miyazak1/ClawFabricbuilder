@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Eye,
   FileCode2,
+  History,
   Play,
   RefreshCw,
   Save,
@@ -22,8 +23,13 @@ import {
   type BuilderProjectControllerSnapshot,
   type BuilderProjectControllerStatus,
 } from '../application/builderProjectController';
+import {
+  isTrustedBuilderProjectHistorySnapshot,
+  type BuilderProjectHistorySnapshot,
+} from '../application/builderProjectHistoryController';
 import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
 import type { BuilderConversationItem } from '../domain/builderConversationSnapshot';
+import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 
 export type BuilderFileName = string;
@@ -34,9 +40,11 @@ export type BuilderPageProps = {
   onAnswer?: () => void;
   onGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
+  onRefreshHistory?: () => Promise<unknown> | void;
   onSave?: () => void;
   onOpenSettings?: () => void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
+  historySnapshot?: BuilderProjectHistorySnapshot;
   snapshot: BuilderProjectControllerSnapshot;
   activeFile: BuilderFileName | null;
   onSelectFile?: (file: BuilderFileName) => void;
@@ -78,6 +86,13 @@ function visibleActivitySnapshot(
   return isTrustedBuilderConversationControllerSnapshot(value) ? value : null;
 }
 
+function visibleHistorySnapshot(
+  value: BuilderProjectHistorySnapshot | undefined,
+): BuilderProjectHistorySnapshot | null {
+  if (value === undefined) return null;
+  return isTrustedBuilderProjectHistorySnapshot(value) ? value : null;
+}
+
 function activityItems(
   snapshot: BuilderConversationControllerSnapshot | null,
 ): readonly BuilderConversationItem[] {
@@ -93,6 +108,18 @@ function activityMessage(
   if (snapshot.status === 'unavailable') return 'Activity is unavailable.';
   if (snapshot.status === 'stale') return 'Activity could not be refreshed.';
   if (snapshot.conversation?.state === 'absent') return 'No activity yet.';
+  return null;
+}
+
+function versionHistoryMessage(
+  snapshot: BuilderProjectHistorySnapshot | null,
+  hasSavedProject: boolean,
+): string | null {
+  if (!hasSavedProject) return 'Save a version to see history.';
+  if (snapshot === null || snapshot.status === 'idle') return 'Loading versions...';
+  if (snapshot.status === 'loading') return 'Loading versions...';
+  if (snapshot.status === 'unavailable') return 'Versions are unavailable.';
+  if (snapshot.status === 'stale') return 'Versions could not be refreshed.';
   return null;
 }
 
@@ -163,6 +190,97 @@ function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
     : 'Activity keeps this draft summary only and cannot reopen unsaved files.';
 }
 
+function VersionItem({ revision }: Readonly<{ revision: BuilderProjectHistoryRevision }>) {
+  return (
+    <li
+      className="cf-builder-version-item"
+      data-builder-version-card={`Version ${revision.revision_number}`}
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <History className="size-3.5" />
+      </div>
+      <div className="min-w-0">
+        <div className="cf-builder-version-title">
+          <span className="truncate">Version {revision.revision_number}</span>
+          {revision.is_current ? (
+            <span className="cf-builder-version-current">Current</span>
+          ) : null}
+        </div>
+        <p className="cf-builder-version-name">{revision.title}</p>
+        <p className="cf-builder-version-summary">{revision.summary}</p>
+      </div>
+    </li>
+  );
+}
+
+function VersionHistoryPanel({
+  hasSavedProject,
+  onRefresh,
+  snapshot,
+}: Readonly<{
+  hasSavedProject: boolean;
+  onRefresh?: () => Promise<unknown> | void;
+  snapshot: BuilderProjectHistorySnapshot | null;
+}>) {
+  const revisions = snapshot?.history?.revisions ?? [];
+  const message = versionHistoryMessage(snapshot, hasSavedProject);
+  const canRefresh = hasSavedProject
+    && snapshot !== null
+    && snapshot.project_id !== null
+    && !snapshot.busy
+    && typeof onRefresh === 'function';
+  return (
+    <aside
+      aria-label="Project versions"
+      className="cf-builder-version-panel"
+      data-builder-version-history="true"
+      data-builder-version-history-status={snapshot?.status ?? 'idle'}
+    >
+      <header className="cf-builder-side-header">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">Versions</p>
+          <h3 className="truncate text-sm font-semibold">Saved history</h3>
+        </div>
+        <button
+          aria-label="Refresh versions"
+          className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!canRefresh}
+          onClick={() => {
+            void onRefresh?.();
+          }}
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" className="size-3.5" />
+        </button>
+      </header>
+      <div className="cf-builder-version-body-wrap">
+        {snapshot?.status === 'refreshing' ? (
+          <p className="cf-builder-version-status" role="status">Refreshing versions...</p>
+        ) : null}
+        {revisions.length === 0 ? (
+          <div className="cf-builder-empty cf-builder-version-empty flex min-h-24 items-center justify-center border border-dashed px-3 text-center text-sm">
+            {message ?? 'No saved versions yet.'}
+          </div>
+        ) : (
+          <ol className="cf-builder-version-list">
+            {revisions.map((revision) => (
+              <VersionItem
+                key={revision.revision_receipt_digest}
+                revision={revision}
+              />
+            ))}
+          </ol>
+        )}
+        {revisions.length > 0 && message !== null ? (
+          <p className="cf-builder-version-status" role={snapshot?.status === 'stale' ? 'alert' : 'status'}>
+            {message}
+          </p>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
 function ActivityItem({
   hasUnsavedDraft,
   item,
@@ -218,7 +336,7 @@ function ActivityPanel({
       data-builder-activity="true"
       data-builder-activity-status={snapshot?.status ?? 'idle'}
     >
-      <header className="cf-builder-activity-header">
+      <header className="cf-builder-side-header">
         <div className="min-w-0">
           <p className="text-xs font-medium text-muted-foreground">Activity</p>
           <h3 className="truncate text-sm font-semibold">Project work</h3>
@@ -270,9 +388,11 @@ export function BuilderPage({
   onInstructionChange,
   onGenerate,
   onRefreshConversation,
+  onRefreshHistory,
   onSave,
   onOpenSettings,
   conversationSnapshot,
+  historySnapshot,
   snapshot,
   activeFile,
   onSelectFile,
@@ -305,6 +425,7 @@ export function BuilderPage({
     && current?.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
+  const history = visibleHistorySnapshot(historySnapshot);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [toolView, setToolView] = useState<(typeof TOOL_VIEWS)[number]['id']>('preview');
 
@@ -481,11 +602,18 @@ export function BuilderPage({
                 </pre>
               </section>
             </div>
-            <ActivityPanel
-              hasUnsavedDraft={hasUnsavedDraft}
-              onRefresh={onRefreshConversation}
-              snapshot={activity}
-            />
+            <div className="cf-builder-side-stack">
+              <VersionHistoryPanel
+                hasSavedProject={saved !== null}
+                onRefresh={onRefreshHistory}
+                snapshot={history}
+              />
+              <ActivityPanel
+                hasUnsavedDraft={hasUnsavedDraft}
+                onRefresh={onRefreshConversation}
+                snapshot={activity}
+              />
+            </div>
           </div>
         </section>
 

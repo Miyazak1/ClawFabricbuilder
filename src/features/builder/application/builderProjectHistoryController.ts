@@ -28,6 +28,7 @@ export type BuilderProjectHistoryController = Readonly<{
   subscribe(listener: () => void): () => void;
   load(projectId?: string | null): Promise<BuilderProjectHistorySnapshot>;
   refresh(): Promise<BuilderProjectHistorySnapshot>;
+  reload(): Promise<BuilderProjectHistorySnapshot>;
   dispose(): void;
 }>;
 
@@ -146,6 +147,12 @@ export function createBuilderProjectHistoryController(
     },
     refresh() {
       if (current.project_id === null) return Promise.resolve(current);
+      return run(current.project_id, 'refresh');
+    },
+    reload() {
+      if (current.project_id === null || disposed) return Promise.resolve(current);
+      generation += 1;
+      active = null;
       return run(current.project_id, 'refresh');
     },
     dispose() {

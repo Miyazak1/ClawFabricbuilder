@@ -40,6 +40,7 @@ import {
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
+import { useBuilderProjectHistoryController } from '../features/builder/hooks/useBuilderProjectHistoryController';
 import { BuilderPage, type BuilderFileName } from '../features/builder/presentation/BuilderPage';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
@@ -250,6 +251,12 @@ function visibleConversationProjectId(
     ?? null;
 }
 
+function visibleHistoryProjectId(
+  snapshot: ReturnType<typeof useBuilderProjectController>['snapshot'],
+): string | null {
+  return snapshot.savedProject?.target.project_id ?? null;
+}
+
 type BuilderVisibleProjectSnapshot = ReturnType<typeof useBuilderProjectController>['snapshot'];
 type BuilderVisibleConversationSnapshot = ReturnType<typeof useBuilderConversationController>['snapshot'];
 
@@ -341,6 +348,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.taskStream,
     visibleConversationProjectId(project.snapshot),
   );
+  const history = useBuilderProjectHistoryController(
+    ports.workspace,
+    visibleHistoryProjectId(project.snapshot),
+  );
 
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
@@ -413,8 +424,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (savedProjectId !== null) {
       setProjectId(savedProjectId);
       await catalog.refresh().catch(() => undefined);
+      if (history.snapshot.project_id === savedProjectId) {
+        await history.reload().catch(() => undefined);
+      } else {
+        await history.load(savedProjectId).catch(() => undefined);
+      }
     }
-  }, [catalog, project, readActivityAfterTerminal]);
+  }, [catalog, history, project, readActivityAfterTerminal]);
   const windowControlsAvailable = windowControls !== null;
 
   const publishWindowMaximized = useCallback((maximized: boolean) => {
@@ -598,7 +614,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onSave={save}
               onSelectFile={setActiveFile}
               onRefreshConversation={conversation.refresh}
+              onRefreshHistory={history.refresh}
               conversationSnapshot={conversation.snapshot}
+              historySnapshot={history.snapshot}
               snapshot={project.snapshot}
             />
           )}

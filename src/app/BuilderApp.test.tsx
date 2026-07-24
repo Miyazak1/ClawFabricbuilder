@@ -14,6 +14,7 @@ import {
   createCatalogWire,
   createGenerationAnswer,
   createGenerationDraft,
+  createHistoryWire,
   createReadWire,
   createRestoredGenerationDraft,
   createSaveResult,
@@ -126,7 +127,9 @@ async function setup(options: Readonly<{
   const listCurrent = vi.fn(async () => (
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
-  const listHistory = vi.fn(async () => ({ revisions: [] }));
+  const listHistory = vi.fn(async (request: unknown) => (
+    createHistoryWire((request as { project_id: string }).project_id, 1)
+  ));
   const bridge: BuilderDesktopBridgeRoot = {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
@@ -168,6 +171,7 @@ async function setup(options: Readonly<{
     container,
     answer,
     generate,
+    listHistory,
     listCurrent,
     loadCurrent,
     open,
@@ -333,7 +337,14 @@ describe('BuilderApp v2', () => {
   });
 
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {
-    const { container, loadCurrent, readTaskStream, restoreDraft, saveDraft } = await setup();
+    const {
+      container,
+      listHistory,
+      loadCurrent,
+      readTaskStream,
+      restoreDraft,
+      saveDraft,
+    } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -357,8 +368,17 @@ describe('BuilderApp v2', () => {
     });
     expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(listHistory).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      limit: 128,
+    });
     expect(restoreDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
+        .toContain('Current');
+    });
+    expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|parent_oid|credential|provider/iu);
   });
 
   it('keeps project instruction state when visiting Settings and returning', async () => {

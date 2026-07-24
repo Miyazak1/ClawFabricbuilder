@@ -340,7 +340,7 @@ export async function createCatalogWire() {
   };
 }
 
-export async function createHistoryWire(projectId = PROJECT_ID) {
+export async function createHistoryWire(projectId = PROJECT_ID, revisionCount: 1 | 2 = 2) {
   const firstReceiptDigest = await digest({ history: 'one', project_id: projectId });
   const secondReceiptDigest = await digest({
     history: 'two',
@@ -358,8 +358,34 @@ export async function createHistoryWire(projectId = PROJECT_ID) {
     tree_oid: TREE_OID,
     parent_oid: null,
     selected_at_ms: 1234,
-    is_current: false,
+    is_current: revisionCount === 1,
   };
+  if (revisionCount === 1) {
+    return {
+      result_version: BUILDER_PROJECT_READ_RESULT_VERSION,
+      operation: 'history_listed',
+      project_id: projectId,
+      current: {
+        project_id: projectId,
+        title: first.title,
+        summary: first.summary,
+        revision_receipt_digest: first.revision_receipt_digest,
+        revision_number: first.revision_number,
+        object_format: 'sha1',
+        commit_oid: first.commit_oid,
+        tree_oid: first.tree_oid,
+        parent_oid: first.parent_oid,
+      },
+      revisions: [first],
+      authority_evidence: {
+        product_authority: 'sqlite_product_revision_receipt',
+        code_authority: 'git_commit_tree',
+        source_read_admission: 'verified',
+        current_selection: 'sqlite_current_project_revision',
+        history_selection: 'sqlite_project_revision_receipts',
+      },
+    };
+  }
   const second = {
     project_id: projectId,
     title: 'Version two',

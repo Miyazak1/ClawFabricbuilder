@@ -5,12 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBuilderProjectController } from '../application/builderProjectController';
 import { createBuilderConversationController } from '../application/builderConversationController';
+import { createBuilderProjectHistoryController } from '../application/builderProjectHistoryController';
 import { BuilderPage } from './BuilderPage';
 import {
   DRAFT_ID,
   PROJECT_ID,
   createGenerationAnswer,
   createGenerationDraft,
+  createHistoryWire,
   createReadWire,
   createSaveResult,
   createTaskStreamWire,
@@ -84,6 +86,13 @@ async function snapshots() {
 async function candidateActivity() {
   const controller = createBuilderConversationController({
     read: async () => createTaskStreamWire(),
+  });
+  return controller.load(PROJECT_ID);
+}
+
+async function savedHistory() {
+  const controller = createBuilderProjectHistoryController({
+    listHistory: async () => createHistoryWire(PROJECT_ID, 1),
   });
   return controller.load(PROJECT_ID);
 }
@@ -175,6 +184,32 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+  });
+
+  it('shows read-only saved version history without exposing receipt or Git evidence', async () => {
+    const { saved } = await snapshots();
+    const history = await savedHistory();
+    const onRefreshHistory = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        historySnapshot={history}
+        instruction=""
+        onRefreshHistory={onRefreshHistory}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-version-history="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
+      .toContain('Current');
+    expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
+      .toContain('Version one');
+    click(container, 'button[aria-label="Refresh versions"]');
+    expect(onRefreshHistory).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toMatch(
+      /sha256:|commit_oid|tree_oid|parent_oid|sqlite|credential|provider/iu,
+    );
   });
 
   it('does not treat a restored activity candidate as an available unsaved draft', async () => {

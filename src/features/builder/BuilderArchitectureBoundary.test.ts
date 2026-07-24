@@ -20,6 +20,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'domain/builderProviderSettings.ts',
   'hooks/useBuilderConversationController.ts',
   'hooks/useBuilderProjectCatalogController.ts',
+  'hooks/useBuilderProjectHistoryController.ts',
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
@@ -122,6 +123,10 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'application', 'builderProjectHistoryController.ts'),
       'utf8',
     );
+    const historyHook = readFileSync(
+      join(BUILDER_ROOT, 'hooks', 'useBuilderProjectHistoryController.ts'),
+      'utf8',
+    );
 
     expect(ports).toContain('open(request: Readonly<{ project_id: string | null }>)');
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
@@ -145,5 +150,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(historyController).toContain("port.listHistory({");
     expect(historyController).toContain('limit: BUILDER_PROJECT_HISTORY_LIMIT');
     expect(historyController).not.toMatch(/saveDraft|generate|optimistic|source_tree|commit_oid|tree_oid/u);
+    expect(historyHook).toContain('createBuilderProjectHistoryController({ listHistory })');
+    expect(historyHook).not.toMatch(/saveDraft|generate|source_tree|ipcRenderer|localStorage/u);
   });
 });
