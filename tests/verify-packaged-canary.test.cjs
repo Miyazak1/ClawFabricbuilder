@@ -17,9 +17,11 @@ const {
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
+  assertTaskStreamPendingCandidateFacts,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
+  createUpdateDraftViaUi,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
@@ -33,6 +35,7 @@ const {
   runCli,
   runPackagedCanary,
   sanitizeLaunchEnvironment,
+  saveUpdateDraftViaUi,
   summarizePng,
   updateProjectViaUi,
 } = require('../scripts/verify-packaged-canary.cjs');
@@ -105,7 +108,8 @@ class FakeLocator {
     if (this.selector === SELECTORS.previewFrame && name === 'sandbox') return '';
     if (this.page.failPreviewAttributes) return 'unsafe';
     if (this.selector === SELECTORS.previewFrame && name === 'srcdoc') {
-      return `<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><body><main>Focus timer preview ${this.page.savedRevision}</main></body>`;
+      const previewRevision = Math.max(this.page.savedRevision, this.page.candidateTurns);
+      return `<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><body><main>Focus timer preview ${previewRevision}</main></body>`;
     }
     return null;
   }
@@ -163,6 +167,8 @@ class FakeRole {
     this.page.events.push(['roleClick', this.role, this.name]);
     if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
+    if (this.name === 'Make draft') this.page.recordCandidateDraft(1);
+    if (this.name === 'Make change') this.page.recordCandidateDraft(this.page.savedRevision + 1);
     if (this.name === 'Save version' && this.page.persistSave) {
       const revision = await this.page.commitSave();
       this.page.draftSaved = revision > 0;
@@ -209,6 +215,7 @@ class FakePage {
   constructor() {
     this.artifactsAllowed = false;
     this.alertVisible = false;
+    this.candidateTurns = 0;
     this.draftSaved = false;
     this.persistSave = true;
     this.events = [];
@@ -229,7 +236,10 @@ class FakePage {
     this.versionLabel = 'Version 1';
     this.values = new Map();
     this.listeners = new Map();
-    this.commitSave = async () => this.savedRevision + 1;
+    this.commitSave = async () => Math.max(this.savedRevision + 1, this.candidateTurns);
+    this.recordCandidateDraft = (candidateTurns) => {
+      this.candidateTurns = Math.max(this.candidateTurns, candidateTurns);
+    };
   }
 
   emitRequest(url) {
@@ -494,7 +504,7 @@ function taskStreamConversation(selectedProjectId, revisionNumber) {
   };
 }
 
-function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
+function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1, candidateTurns = revisionNumber) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
   const revision = revisionEvidence(selectedProjectId, revisionNumber);
@@ -513,7 +523,7 @@ function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1) {
     : {
       stream_version: 'builder-task-stream-read-result.v1',
       project_id: projectId,
-      conversation: saved ? taskStreamConversation(selectedProjectId, revisionNumber) : null,
+      conversation: saved ? taskStreamConversation(selectedProjectId, candidateTurns) : null,
       authority: {
         conversation: 'sqlite_canonical_event_replay_or_absent',
         project_source: 'not_included',
@@ -570,13 +580,19 @@ function installBridge(page) {
     },
     projectWorkspace: {
       async listCurrent() {
-        return bridgeEvidence(null, page.draftSaved, Math.max(1, page.savedRevision)).catalog;
+        return bridgeEvidence(
+          null,
+          page.draftSaved,
+          Math.max(1, page.savedRevision),
+          Math.max(1, page.savedRevision, page.candidateTurns),
+        ).catalog;
       },
       async loadCurrent(request) {
         return bridgeEvidence(
           request.project_id,
           page.draftSaved,
           Math.max(1, page.savedRevision),
+          Math.max(1, page.savedRevision, page.candidateTurns),
         ).current;
       },
       async saveDraft() { throw new Error('must not write through bridge'); },
@@ -587,7 +603,12 @@ function installBridge(page) {
     },
     taskStream: {
       async read(request) {
-        return bridgeEvidence(request.project_id, page.draftSaved, Math.max(1, page.savedRevision))
+        return bridgeEvidence(
+          request.project_id,
+          page.draftSaved,
+          Math.max(1, page.savedRevision),
+          Math.max(1, page.savedRevision, page.candidateTurns),
+        )
           .task_stream;
       },
     },
@@ -595,7 +616,7 @@ function installBridge(page) {
 }
 
 function fakeElectron(page) {
-  const durableStore = { revision: 0 };
+  const durableStore = { candidateTurns: 0, revision: 0 };
   const fake = {
     appEvents: [],
     launches: [],
@@ -603,12 +624,18 @@ function fakeElectron(page) {
     async launch(options) {
       fake.launches.push(options);
       const activePage = fake.launches.length === 1 ? page : new FakePage();
+      activePage.candidateTurns = durableStore.candidateTurns;
       activePage.savedRevision = durableStore.revision;
       activePage.draftSaved = durableStore.revision > 0;
       activePage.versionLabel = `Version ${Math.max(1, durableStore.revision)}`;
       activePage.commitSave = async () => {
-        durableStore.revision += 1;
+        durableStore.revision = Math.max(durableStore.revision + 1, durableStore.candidateTurns);
+        durableStore.candidateTurns = Math.max(durableStore.candidateTurns, durableStore.revision);
         return durableStore.revision;
+      };
+      activePage.recordCandidateDraft = (candidateTurns) => {
+        durableStore.candidateTurns = Math.max(durableStore.candidateTurns, candidateTurns);
+        activePage.candidateTurns = durableStore.candidateTurns;
       };
       fake.pages.push(activePage);
       const requestListeners = [];
@@ -634,6 +661,7 @@ function fakeElectron(page) {
               argument.projectId,
               durableStore.revision > 0,
               Math.max(1, durableStore.revision),
+              Math.max(1, durableStore.revision, durableStore.candidateTurns),
             );
           };
           activePage.artifactsAllowed = true;
@@ -1004,6 +1032,47 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(unsavedWait >= 0 && unsavedWait < preSaveRead);
   assert.ok(preSaveRead < saveClick);
   assert.ok(saveClick < versionWait);
+});
+
+test('keeps an update candidate pending before the explicit Version 2 save', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+  ).current.product_revision_receipt;
+  const pending = await createUpdateDraftViaUi(page, firstRevision);
+  const pendingEvidence = await readSanitizedBridgeEvidence(page, firstRevision.project_id);
+  const pendingFacts = assertTaskStreamPendingCandidateFacts(pendingEvidence, firstRevision, 2);
+
+  assert.deepEqual(pending, {
+    previous_revision_verified_before_save: true,
+    unsaved_draft_observed: true,
+  });
+  assert.equal(page.savedRevision, 1);
+  assert.equal(page.versionLabel, 'Version 1');
+  assert.deepEqual(pendingFacts, {
+    candidate_ready_count: 2,
+    candidate_result_count: 2,
+    head_sequence: 8,
+    item_count: 8,
+    latest_candidate_distinct_from_saved_revision: true,
+    saved_revision_number: 1,
+    source_availability: 'not_loaded',
+  });
+  assert.deepEqual(await saveUpdateDraftViaUi(page, firstRevision), {
+    saved_via_ui: true,
+  });
+  assert.equal(page.savedRevision, 2);
+  assert.equal(page.versionLabel, 'Version 2');
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['New project', 'Make draft', 'Save version', 'Make change', 'Save version'],
+  );
 });
 
 test('verifies Version 1 before saving a second unsaved draft as Version 2', async (t) => {
@@ -1513,6 +1582,11 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       saved_via_ui: true,
       unsaved_draft_observed: true,
     },
+    pending_update_restart: {
+      save_remained_explicit: true,
+      saved_revision_visible: true,
+      unsaved_draft_restored: true,
+    },
     update: {
       previous_revision_verified_before_save: true,
       saved_via_ui: true,
@@ -1533,10 +1607,17 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.match(result.project.tree_oid, /^[0-9a-f]{40}$/u);
   assert.equal(result.project.restart_revision_unchanged, true);
   assert.equal(result.project.restart_new_revision_observed, true);
+  assert.equal(result.project.pending_update_revision_unchanged, true);
+  assert.equal(result.project.pending_update_restart_revision_unchanged, true);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
+  assert.equal(result.preview.pending_update_restart_srcdoc_unchanged, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
   assert.equal(result.preview.initial.sandbox, 'empty');
   assert.equal(result.preview.initial.script_src, 'none');
+  assert.equal(result.preview.pending_update.sandbox, 'empty');
+  assert.equal(result.preview.pending_update.script_src, 'none');
+  assert.equal(result.preview.pending_update_restart.sandbox, 'empty');
+  assert.equal(result.preview.pending_update_restart.script_src, 'none');
   assert.equal(result.preview.updated.sandbox, 'empty');
   assert.equal(result.preview.updated.script_src, 'none');
   assert.deepEqual(result.task_stream, {
@@ -1546,6 +1627,24 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       head_sequence: 4,
       item_count: 4,
       latest_candidate_bound_to_revision: true,
+      source_availability: 'not_loaded',
+    },
+    pending_update: {
+      candidate_ready_count: 2,
+      candidate_result_count: 2,
+      head_sequence: 8,
+      item_count: 8,
+      latest_candidate_distinct_from_saved_revision: true,
+      saved_revision_number: 1,
+      source_availability: 'not_loaded',
+    },
+    pending_update_restart: {
+      candidate_ready_count: 2,
+      candidate_result_count: 2,
+      head_sequence: 8,
+      item_count: 8,
+      latest_candidate_distinct_from_saved_revision: true,
+      saved_revision_number: 1,
       source_availability: 'not_loaded',
     },
     updated: {
@@ -1564,6 +1663,8 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       latest_candidate_bound_to_revision: true,
       source_availability: 'not_loaded',
     },
+    pending_update_advanced_candidate_count: true,
+    pending_update_restart_unchanged: true,
     restart_unchanged: true,
     update_advanced_candidate_count: true,
   });
@@ -1588,8 +1689,11 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     'schema_version',
     'update_instruction_digest',
   ]);
-  assert.equal(electron.launches.length, 2);
+  assert.equal(electron.launches.length, 3);
   assert.deepEqual(electron.appEvents, [
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
     ['context'],
     ['contextOn', 'request'],
     ['firstWindow'],
@@ -1606,15 +1710,24 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   }
   const allPageEvents = electron.pages.flatMap((candidate) => candidate.events);
   const scopedLocators = allPageEvents.filter((event) => event[0] === 'scopedLocator');
-  assert.equal(scopedLocators.length, 1);
+  assert.equal(scopedLocators.length, 2);
   assert.equal(scopedLocators[0][1], SELECTORS.projectCatalog);
   assert.equal(
     scopedLocators[0][2],
     'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
   );
+  assert.equal(scopedLocators[1][1], SELECTORS.projectCatalog);
+  assert.equal(
+    scopedLocators[1][2],
+    'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
+  );
   const scopedTexts = allPageEvents.filter((event) => event[0] === 'scopedText');
   assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
     ['Unsaved draft', { exact: true }],
+    ['Unsaved draft', { exact: true }],
+    ['Focus timer', { exact: true }],
+    ['A timer.', { exact: true }],
+    ['Version 1', { exact: true }],
     ['Unsaved draft', { exact: true }],
     ['Focus timer', { exact: true }],
     ['A timer.', { exact: true }],
@@ -1675,8 +1788,12 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.project.parent_oid, result.project.initial_commit_oid);
   assert.equal(result.project.restart_revision_unchanged, true);
   assert.equal(result.project.restart_new_revision_observed, true);
+  assert.equal(result.project.pending_update_restart_revision_unchanged, true);
+  assert.equal(result.draft.pending_update_restart.unsaved_draft_restored, true);
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
+  assert.equal(result.preview.pending_update_restart_srcdoc_unchanged, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
+  assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
   assert.equal(result.task_stream.restart_unchanged, true);
   assert.deepEqual(copied.map(([source, target]) => [
@@ -1689,7 +1806,10 @@ test('copies only saved provider profile files and runs without provider input o
     [path.join('builder-provider-secrets-v1', secretName), path.join('builder-provider-secrets-v1', secretName)],
   ]);
   assert.deepEqual(copied.map(([source]) => source), [localState, localState, current, secret]);
-  const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
+  const roleClicks = electron.pages
+    .flatMap((candidate) => candidate.events)
+    .filter((event) => event[0] === 'roleClick')
+    .map((event) => event[2]);
   assert.deepEqual(roleClicks, [
     'New project',
     'Make draft',
@@ -1700,8 +1820,11 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), false);
-  assert.equal(electron.launches.length, 2);
+  assert.equal(electron.launches.length, 3);
   assert.deepEqual(electron.appEvents, [
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
     ['context'],
     ['contextOn', 'request'],
     ['firstWindow'],
@@ -2154,7 +2277,12 @@ test('cleanup attempts guarded remove when app close fails', async (t) => {
       return {
         async close() { throw new Error('close failed'); },
         async firstWindow() {
-          page.evaluate = async (callback, argument) => bridgeEvidence(argument.projectId, page.draftSaved);
+          page.evaluate = async (callback, argument) => bridgeEvidence(
+            argument.projectId,
+            page.draftSaved,
+            Math.max(1, page.savedRevision),
+            Math.max(1, page.savedRevision, page.candidateTurns),
+          );
           page.artifactsAllowed = true;
           return page;
         },
@@ -2196,6 +2324,7 @@ test('cleanup refuses user data replacement before recursive remove', async (t) 
             argument.projectId,
             page.draftSaved,
             Math.max(1, page.savedRevision),
+            Math.max(1, page.savedRevision, page.candidateTurns),
           );
           page.artifactsAllowed = true;
           return page;

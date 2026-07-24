@@ -82,6 +82,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_update_generation_terminal_failed: 'Packaged canary update generation did not reach a terminal preview state.',
   canary_draft_failed: 'Packaged canary unsaved draft evidence failed.',
   canary_update_draft_failed: 'Packaged canary update draft evidence failed.',
+  canary_pending_draft_restart_failed: 'Packaged canary pending draft restart restore failed.',
   canary_save_failed: 'Packaged canary draft save failed.',
   canary_update_save_failed: 'Packaged canary update draft save failed.',
   canary_save_persistence_failed: 'Packaged canary draft was not persisted.',
@@ -115,6 +116,7 @@ const ERROR_STAGES = Object.freeze({
   canary_update_generation_terminal_failed: 'update_generation_terminal',
   canary_draft_failed: 'draft',
   canary_update_draft_failed: 'update_draft',
+  canary_pending_draft_restart_failed: 'pending_draft_restart',
   canary_save_failed: 'save',
   canary_update_save_failed: 'update_save',
   canary_save_persistence_failed: 'save_persistence',
@@ -1349,7 +1351,7 @@ async function generateProjectViaUi(page, idea) {
   });
 }
 
-async function updateProjectViaUi(page, currentProject, instruction = CANARY_UPDATE_INSTRUCTION) {
+async function createUpdateDraftViaUi(page, currentProject, instruction = CANARY_UPDATE_INSTRUCTION) {
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
     await clickByRole(page, 'button', 'Make change');
@@ -1364,9 +1366,17 @@ async function updateProjectViaUi(page, currentProject, instruction = CANARY_UPD
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     const preSave = await readSanitizedBridgeEvidence(page, currentProject.project_id);
     assertExactRevision(preSave, currentProject);
+    assertTaskStreamPendingCandidateFacts(preSave, currentProject, currentProject.revision_number + 1);
   } catch {
     fail('canary_update_draft_failed');
   }
+  return Object.freeze({
+    previous_revision_verified_before_save: true,
+    unsaved_draft_observed: true,
+  });
+}
+
+async function saveUpdateDraftViaUi(page, currentProject) {
   try {
     await clickByRole(page, 'button', 'Save version');
   } catch {
@@ -1379,8 +1389,16 @@ async function updateProjectViaUi(page, currentProject, instruction = CANARY_UPD
   }
   await assertVisibleVersion(page, currentProject.revision_number + 1);
   return Object.freeze({
-    previous_revision_verified_before_save: true,
     saved_via_ui: true,
+  });
+}
+
+async function updateProjectViaUi(page, currentProject, instruction = CANARY_UPDATE_INSTRUCTION) {
+  const pendingDraft = await createUpdateDraftViaUi(page, currentProject, instruction);
+  const savedDraft = await saveUpdateDraftViaUi(page, currentProject);
+  return Object.freeze({
+    ...pendingDraft,
+    ...savedDraft,
     unsaved_draft_observed: true,
   });
 }
@@ -1409,6 +1427,29 @@ async function failRestartVersion(page) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
   }
   fail('canary_version_failed');
+}
+
+async function readPendingUpdateDraftRestoreEvidence(page, currentProject, expectedCandidateTurns) {
+  try {
+    await page.locator(SELECTORS.unsavedDraft)
+      .getByText('Unsaved draft', { exact: true })
+      .waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    await assertVisibleVersion(page, currentProject.revision_number);
+    const evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
+    assertExactRevision(evidence, currentProject);
+    return Object.freeze({
+      evidence,
+      task_stream: assertTaskStreamPendingCandidateFacts(evidence, currentProject, expectedCandidateTurns),
+      ui: Object.freeze({
+        save_remained_explicit: true,
+        saved_revision_visible: true,
+        unsaved_draft_restored: true,
+      }),
+    });
+  } catch {
+    fail('canary_pending_draft_restart_failed');
+  }
 }
 
 async function readOnlyBridgeEvidence(page, projectId = null) {
@@ -2160,6 +2201,14 @@ function assertRevisionAdvance(previousRevision, nextRevision) {
   ) fail('canary_evidence_failed');
 }
 
+function sameCatalogProjectRevision(left, right) {
+  return left.project_id === right.project_id
+    && left.revision_number === right.revision_number
+    && left.revision_receipt_digest === right.revision_receipt_digest
+    && left.commit_oid === right.commit_oid
+    && left.tree_oid === right.tree_oid;
+}
+
 function exactRevisionFromReadEvidence(evidence, expectedProject) {
   try {
     return assertExactRevision(evidence, expectedProject);
@@ -2220,6 +2269,71 @@ function assertTaskStreamCandidateFacts(evidence, expectedRevision, expectedCand
     head_sequence: conversation.head_sequence,
     item_count: conversation.item_count,
     latest_candidate_bound_to_revision: true,
+    source_availability: 'not_loaded',
+  });
+}
+
+function assertTaskStreamPendingCandidateFacts(evidence, expectedSavedRevision, expectedCandidateTurns) {
+  const sanitized = assertReadEvidence(evidence);
+  const stream = sanitized.task_stream;
+  const current = sanitized.current;
+  if (
+    stream === null
+    || current === null
+    || stream.project_id !== expectedSavedRevision.project_id
+    || current.product_revision_receipt.project_id !== expectedSavedRevision.project_id
+    || current.product_revision_receipt.revision_number !== expectedSavedRevision.revision_number
+    || current.product_revision_receipt.revision_receipt_digest
+      !== expectedSavedRevision.revision_receipt_digest
+    || current.product_revision_receipt.commit_oid !== expectedSavedRevision.commit_oid
+    || current.product_revision_receipt.tree_oid !== expectedSavedRevision.tree_oid
+    || expectedCandidateTurns <= expectedSavedRevision.revision_number
+    || stream.conversation === null
+    || stream.conversation.conversation_id !== expectedSavedRevision.conversation_id
+    || stream.conversation.recorded_active_turn_id !== null
+  ) fail('canary_evidence_failed');
+
+  const conversation = stream.conversation;
+  const facts = conversation.item_facts;
+  const counts = facts.counts;
+  const expectedItemCount = expectedCandidateTurns * 4;
+  if (
+    conversation.window.first_sequence !== 1
+    || conversation.window.last_sequence !== expectedItemCount
+    || conversation.window.has_earlier !== false
+    || conversation.head_sequence !== expectedItemCount
+    || conversation.item_count !== expectedItemCount
+    || counts.user_message_count !== expectedCandidateTurns
+    || counts.run_started_count !== expectedCandidateTurns
+    || counts.run_completed_count !== expectedCandidateTurns
+    || counts.turn_completed_count !== expectedCandidateTurns
+    || counts.candidate_result_count !== expectedCandidateTurns
+    || counts.candidate_ready_count !== expectedCandidateTurns
+  ) fail('canary_evidence_failed');
+
+  const latestCandidate = facts.latestCandidate;
+  const latestTurn = facts.latestTurn;
+  if (
+    latestCandidate === null
+    || latestTurn === null
+    || latestCandidate.turn_id === expectedSavedRevision.turn_id
+    || latestCandidate.run_id === expectedSavedRevision.run_id
+    || latestCandidate.terminal_status !== 'succeeded'
+    || latestCandidate.result_kind !== 'candidate'
+    || latestCandidate.candidate === null
+    || latestCandidate.candidate.source_availability !== 'not_loaded'
+    || latestTurn.turn_id !== latestCandidate.turn_id
+    || latestTurn.run_id !== latestCandidate.run_id
+    || latestTurn.outcome !== 'candidate_ready'
+  ) fail('canary_evidence_failed');
+
+  return Object.freeze({
+    candidate_ready_count: counts.candidate_ready_count,
+    candidate_result_count: counts.candidate_result_count,
+    head_sequence: conversation.head_sequence,
+    item_count: conversation.item_count,
+    latest_candidate_distinct_from_saved_revision: true,
+    saved_revision_number: expectedSavedRevision.revision_number,
     source_availability: 'not_loaded',
   });
 }
@@ -2481,14 +2595,48 @@ async function runPackagedCanary(rawInput, options = {}) {
     const initialRevision = exactRevisionFromReadEvidence(initialCurrentEvidence, initialProject);
     const initialTaskStream = assertTaskStreamCandidateFacts(initialCurrentEvidence, initialRevision, 1);
     const initialPreviewEvidence = await capturePreviewEvidence(page, gate);
-    const updateDraft = await updateProjectViaUi(page, initialRevision);
-    const updatedEvidence = await readSanitizedBridgeEvidence(page);
+    const pendingUpdateDraft = await createUpdateDraftViaUi(page, initialRevision);
+    const pendingUpdateEvidence = await readSanitizedBridgeEvidence(page, initialProject.project_id);
+    const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
+    if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
+    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2);
+    const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
+    if (pendingUpdatePreviewEvidence.srcdoc_digest === initialPreviewEvidence.srcdoc_digest) {
+      fail('canary_preview_failed');
+    }
+    await closeApp(app);
+    app = null;
+
+    app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
+    const pendingRestartApplicationObserver = attachApplicationNetworkRecorder(recorder, app);
+    const pendingRestartPage = await app.firstWindow();
+    if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
+    await assertCustomChromeControls(pendingRestartPage);
+    await openProjectFromCatalogById(pendingRestartPage, initialRevision, 'canary_restart_open_failed');
+    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2);
+    const pendingRestartProject = projectFromReadEvidence(pendingRestart.evidence, 1);
+    if (!sameCatalogProjectRevision(pendingRestartProject, initialProject)) {
+      fail('canary_pending_draft_restart_failed');
+    }
+    const pendingRestartTaskStreamUnchanged = (
+      digestCanonical(pendingRestart.task_stream) === digestCanonical(pendingUpdateTaskStream)
+    );
+    if (!pendingRestartTaskStreamUnchanged) fail('canary_pending_draft_restart_failed');
+    const pendingRestartPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
+    if (pendingRestartPreviewEvidence.srcdoc_digest !== pendingUpdatePreviewEvidence.srcdoc_digest) {
+      fail('canary_pending_draft_restart_failed');
+    }
+    const updateDraft = Object.freeze({
+      ...pendingUpdateDraft,
+      ...(await saveUpdateDraftViaUi(pendingRestartPage, initialRevision)),
+    });
+    const updatedEvidence = await readSanitizedBridgeEvidence(pendingRestartPage);
     const updatedProject = projectFromReadEvidence(updatedEvidence, 2);
-    const updatedCurrentEvidence = await readSanitizedBridgeEvidence(page, updatedProject.project_id);
+    const updatedCurrentEvidence = await readSanitizedBridgeEvidence(pendingRestartPage, updatedProject.project_id);
     const updatedRevision = exactRevisionFromReadEvidence(updatedCurrentEvidence, updatedProject);
     assertRevisionAdvance(initialRevision, updatedRevision);
     const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2);
-    const updatedPreviewEvidence = await capturePreviewEvidence(page, gate);
+    const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (updatedPreviewEvidence.srcdoc_digest === initialPreviewEvidence.srcdoc_digest) {
       fail('canary_preview_failed');
     }
@@ -2543,14 +2691,18 @@ async function runPackagedCanary(rawInput, options = {}) {
       custom_chrome: customChrome,
       draft: Object.freeze({
         initial: initialDraft,
+        pending_update_restart: pendingRestart.ui,
         update: updateDraft,
       }),
       input: redactInput(input),
       network,
       preview: Object.freeze({
         initial: initialPreviewEvidence,
+        pending_update: pendingUpdatePreviewEvidence,
+        pending_update_restart: pendingRestartPreviewEvidence,
         updated: updatedPreviewEvidence,
         restart: restartPreviewEvidence,
+        pending_update_restart_srcdoc_unchanged: true,
         update_changed_srcdoc: true,
         restart_srcdoc_unchanged: true,
       }),
@@ -2561,6 +2713,9 @@ async function runPackagedCanary(rawInput, options = {}) {
         initial_revision_receipt_digest: initialProject.revision_receipt_digest,
         initial_tree_oid: initialProject.tree_oid,
         parent_oid: updatedRevision.parent_oid,
+        pending_update_restart_catalog_project_count: pendingRestart.evidence.catalog.projects.length,
+        pending_update_restart_revision_unchanged: true,
+        pending_update_revision_unchanged: true,
         previous_revision_receipt_digest: updatedRevision.previous_revision_receipt_digest,
         restart_catalog_project_count: restartEvidence.catalog.projects.length,
         restart_new_revision_observed: true,
@@ -2578,8 +2733,13 @@ async function runPackagedCanary(rawInput, options = {}) {
       }),
       task_stream: Object.freeze({
         initial: initialTaskStream,
+        pending_update: pendingUpdateTaskStream,
+        pending_update_restart: pendingRestart.task_stream,
         updated: updatedTaskStream,
         restart: restartTaskStream,
+        pending_update_advanced_candidate_count: pendingUpdateTaskStream.candidate_ready_count
+          === initialTaskStream.candidate_ready_count + 1,
+        pending_update_restart_unchanged: true,
         update_advanced_candidate_count: updatedTaskStream.candidate_ready_count
           === initialTaskStream.candidate_ready_count + 1,
         restart_unchanged: true,
@@ -2681,9 +2841,11 @@ module.exports = {
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
+  assertTaskStreamPendingCandidateFacts,
   captureGuardedUserDataRoot,
   capturePreviewEvidence,
   copySavedProviderProfile,
+  createUpdateDraftViaUi,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,
   fillProviderSettingsViaUi,
@@ -2698,6 +2860,7 @@ module.exports = {
   runPackagedCanary,
   sanitizeInput,
   sanitizeLaunchEnvironment,
+  saveUpdateDraftViaUi,
   summarizePng,
   updateProjectViaUi,
   waitForGenerationTerminal,
