@@ -340,6 +340,65 @@ export async function createCatalogWire() {
   };
 }
 
+export async function createHistoryWire(projectId = PROJECT_ID) {
+  const firstReceiptDigest = await digest({ history: 'one', project_id: projectId });
+  const secondReceiptDigest = await digest({
+    history: 'two',
+    previous_revision_receipt_digest: firstReceiptDigest,
+    project_id: projectId,
+  });
+  const first = {
+    project_id: projectId,
+    title: 'Version one',
+    summary: 'The first saved Builder version.',
+    revision_number: 1,
+    revision_receipt_digest: firstReceiptDigest,
+    previous_revision_receipt_digest: null,
+    commit_oid: COMMIT_OID,
+    tree_oid: TREE_OID,
+    parent_oid: null,
+    selected_at_ms: 1234,
+    is_current: false,
+  };
+  const second = {
+    project_id: projectId,
+    title: 'Version two',
+    summary: 'The second saved Builder version.',
+    revision_number: 2,
+    revision_receipt_digest: secondReceiptDigest,
+    previous_revision_receipt_digest: first.revision_receipt_digest,
+    commit_oid: 'c'.repeat(40),
+    tree_oid: 'd'.repeat(40),
+    parent_oid: first.commit_oid,
+    selected_at_ms: 2234,
+    is_current: true,
+  };
+  return {
+    result_version: BUILDER_PROJECT_READ_RESULT_VERSION,
+    operation: 'history_listed',
+    project_id: projectId,
+    current: {
+      project_id: projectId,
+      title: second.title,
+      summary: second.summary,
+      revision_receipt_digest: second.revision_receipt_digest,
+      revision_number: second.revision_number,
+      object_format: 'sha1',
+      commit_oid: second.commit_oid,
+      tree_oid: second.tree_oid,
+      parent_oid: second.parent_oid,
+    },
+    revisions: [second, first],
+    authority_evidence: {
+      product_authority: 'sqlite_product_revision_receipt',
+      code_authority: 'git_commit_tree',
+      source_read_admission: 'verified',
+      current_selection: 'sqlite_current_project_revision',
+      history_selection: 'sqlite_project_revision_receipts',
+    },
+  };
+}
+
 export function createTaskStreamWire() {
   return {
     stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,

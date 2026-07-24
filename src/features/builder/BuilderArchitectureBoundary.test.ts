@@ -10,10 +10,12 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'application/builderConversationController.ts',
   'application/builderPorts.ts',
   'application/builderProjectCatalogController.ts',
+  'application/builderProjectHistoryController.ts',
   'application/builderProjectController.ts',
   'components/BuilderStaticPreview.tsx',
   'domain/builderConversationSnapshot.ts',
   'domain/builderProjectCatalog.ts',
+  'domain/builderProjectHistory.ts',
   'domain/builderProjectSnapshot.ts',
   'domain/builderProviderSettings.ts',
   'hooks/useBuilderConversationController.ts',
@@ -116,9 +118,14 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'application', 'builderConversationController.ts'),
       'utf8',
     );
+    const historyController = readFileSync(
+      join(BUILDER_ROOT, 'application', 'builderProjectHistoryController.ts'),
+      'utf8',
+    );
 
     expect(ports).toContain('open(request: Readonly<{ project_id: string | null }>)');
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
+    expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).not.toMatch(/commit\(|source_tree.*Promise|revision.*Promise/u);
@@ -135,5 +142,8 @@ describe('Builder v2 architecture boundary', () => {
     expect(taskStreamPort).not.toMatch(/saveDraft|generate|projectWorkspace|providerSettings/u);
     expect(conversationController).toContain("port.read({ project_id: projectId })");
     expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);
+    expect(historyController).toContain("port.listHistory({");
+    expect(historyController).toContain('limit: BUILDER_PROJECT_HISTORY_LIMIT');
+    expect(historyController).not.toMatch(/saveDraft|generate|optimistic|source_tree|commit_oid|tree_oid/u);
   });
 });
