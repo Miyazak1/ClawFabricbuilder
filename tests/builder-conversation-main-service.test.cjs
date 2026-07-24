@@ -18,6 +18,7 @@ const {
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
+const QUESTION_DIGEST = `sha256:${'0'.repeat(64)}`;
 const CANDIDATE_DIGEST = `sha256:${'2'.repeat(64)}`;
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: `sha256:${'3'.repeat(64)}`,
@@ -31,6 +32,24 @@ function uuidFactory(start = 1) {
     value += 1;
     return `00000000-0000-4000-8000-${suffix}`;
   };
+}
+
+function removeRoot(root) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!error || typeof error !== 'object' || !['EBUSY', 'ENOTEMPTY', 'EPERM'].includes(error.code)) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (attempt + 1));
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new Error('Temporary test directory could not be removed.');
 }
 
 function fixture() {
@@ -48,7 +67,7 @@ function fixture() {
     service,
     close() {
       database.close();
-      fs.rmSync(root, { recursive: true, force: true });
+      removeRoot(root);
     },
   };
 }
@@ -58,6 +77,15 @@ function begin(service, baseRevision = null, instruction = 'Build a focused time
     project_id: PROJECT_ID,
     instruction,
     request_digest: REQUEST_DIGEST,
+    base_revision: baseRevision,
+  });
+}
+
+function beginQuestion(service, baseRevision = null, question = 'What changed in this project?') {
+  return service.begin_question({
+    project_id: PROJECT_ID,
+    question,
+    request_digest: QUESTION_DIGEST,
     base_revision: baseRevision,
   });
 }
@@ -124,6 +152,81 @@ test('records start and terminal events before allowing a later turn to continue
   }
 });
 
+test('records a question explanation without creating task, candidate, or revision facts', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = beginQuestion(item.service);
+    assert.equal(context.mode, 'question');
+    assert.equal(context.ids.task_id, null);
+    assert.equal(context.start_head.sequence, 2);
+    assert.deepEqual(context.events.map((event) => event.event_type), [
+      'turn_submitted',
+      'run_started',
+    ]);
+    assert.equal(context.events[0].payload.mode, 'question');
+    assert.equal(context.events[0].payload.task, null);
+    assert.equal(context.events[1].payload.task_id, null);
+
+    const terminal = item.service.complete_explanation({
+      context,
+      assistant_text: 'This project is saved locally and can be revised without creating a new version.',
+    });
+    assert.equal(terminal.head.sequence, 4);
+    assert.equal(terminal.snapshot.active_turn_id, null);
+    assert.equal(terminal.snapshot.turns[0].mode, 'question');
+    assert.equal(terminal.snapshot.turns[0].task, null);
+    assert.equal(terminal.snapshot.turns[0].outcome, 'answered');
+    assert.equal(terminal.snapshot.turns[0].runs[0].result_kind, 'explanation');
+    assert.equal(terminal.snapshot.turns[0].runs[0].candidate_result, null);
+
+    const followup = beginQuestion(item.service, null, 'Can I ask another question before saving?');
+    assert.equal(followup.project.created_at_ms, context.project.created_at_ms);
+    assert.equal(followup.conversation.created_at_ms, context.conversation.created_at_ms);
+    assert.equal(followup.start_head.sequence, 6);
+    assert.equal(followup.events[0].payload.mode, 'question');
+    assert.equal(followup.events[0].payload.task, null);
+    const followupTerminal = item.service.complete_explanation({
+      context: followup,
+      assistant_text: 'Yes. Questions can continue without creating a saved version.',
+    });
+    assert.equal(followupTerminal.head.sequence, 8);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 8);
+    assert.equal(stream.conversation.items[0].mode, 'question');
+    assert.equal(stream.conversation.items[0].task, null);
+    assert.equal(stream.conversation.items[1].task_id, null);
+    assert.equal(stream.conversation.items[2].result_kind, 'explanation');
+    assert.equal(stream.conversation.items[2].candidate, null);
+    assert.equal(stream.conversation.items[3].outcome, 'answered');
+    assert.equal(stream.conversation.items[4].mode, 'question');
+    assert.equal(stream.conversation.items[4].task, null);
+    assert.equal(stream.conversation.items[6].result_kind, 'explanation');
+    assert.equal(stream.conversation.items[6].candidate, null);
+    assert.equal(stream.conversation.items[7].outcome, 'answered');
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /candidate_digest|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission|provider|credential/iu,
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(800),
+      nowMs: () => 8_000,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), stream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
 test('restores the same renderer-safe task stream after a real database restart', () => {
   const item = fixture();
   let restartedDatabase = null;
@@ -157,7 +260,8 @@ test('restores the same renderer-safe task stream after a real database restart'
     assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), before);
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
-    fs.rmSync(item.root, { recursive: true, force: true });
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
   }
 });
 
@@ -195,7 +299,8 @@ test('restores a main-only candidate draft proof after a real database restart',
     );
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
-    fs.rmSync(item.root, { recursive: true, force: true });
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
   }
 });
 
@@ -257,7 +362,8 @@ test('reads a restarted active run as recorded without mutating durable events',
     assert.deepEqual(durableAfterRead, durableBeforeRead);
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
-    fs.rmSync(item.root, { recursive: true, force: true });
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
   }
 });
 
@@ -293,7 +399,8 @@ test('recovers a running turn as interrupted without redispatching a provider', 
     assert.equal(replayed.turns[1].status, 'active');
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
-    fs.rmSync(item.root, { recursive: true, force: true });
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
   }
 });
 
@@ -327,10 +434,21 @@ test('records fixed failed, cancelled, and timeout-interrupted terminal outcomes
 test('rejects forged contexts and stays isolated from provider, IPC, renderer, and Git authority', () => {
   const item = fixture();
   try {
+    const work = begin(item.service);
+    const question = beginQuestion(item.service, BASE_REVISION);
     assert.throws(() => item.service.complete_candidate({
       context: Object.freeze({}),
-      candidate_result: candidateResult(begin(item.service)),
+      candidate_result: candidateResult(work),
       assistant_text: 'Ready.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.complete_candidate({
+      context: question,
+      candidate_result: candidateResult(work),
+      assistant_text: 'Ready.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.complete_explanation({
+      context: work,
+      assistant_text: 'This is an answer.',
     }), { code: 'builder_conversation_main_service_unavailable' });
   } finally {
     item.close();

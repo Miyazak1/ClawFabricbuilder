@@ -336,6 +336,16 @@ function sanitizeBeginRequest(value) {
   });
 }
 
+function sanitizeQuestionRequest(value) {
+  exactObject(value, ['project_id', 'question', 'request_digest', 'base_revision']);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    question: safeText(valueAt(value, 'question'), 12_000, 48_000),
+    request_digest: safeDigest(valueAt(value, 'request_digest')),
+    base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+  });
+}
+
 function trustedContext(value) {
   if (!value || typeof value !== 'object' || !TRUSTED_CONTEXTS.has(value)) fail();
   return value;
@@ -403,8 +413,10 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
-  function projectCreatedAt(projectId, baseRevision, now) {
-    if (baseRevision === null) return now;
+  function projectCreatedAt(projectId, baseRevision, now, loadedState) {
+    if (baseRevision === null) {
+      return loadedState === null ? now : safeTimestamp(loadedState.conversation.created_at_ms);
+    }
     try {
       const loaded = Reflect.apply(options.loadProjectIdentity, options.metadataAuthority, [{
         project_id: projectId,
@@ -493,20 +505,20 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     });
   }
 
-  function beginWork(rawRequest) {
-    const request = sanitizeBeginRequest(rawRequest);
+  function beginTurn(request, mode) {
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
     const conversationId = `builder-conversation:${projectUuid(request.project_id)}`;
+    let state = load(request.project_id, conversationId);
+    if (state === null && request.base_revision !== null) fail();
     const project = freezeDeep({
       project_id: request.project_id,
       created_at_ms: projectCreatedAt(
         request.project_id,
         request.base_revision,
         recordedAtMs,
+        state,
       ),
     });
-    let state = load(request.project_id, conversationId);
-    if (state === null && request.base_revision !== null) fail();
     const conversation = freezeDeep({
       project_id: request.project_id,
       conversation_id: conversationId,
@@ -514,6 +526,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     });
     state = recoverActive(state, project, conversation, recordedAtMs);
     const priorHead = state?.head ?? null;
+    const taskId = mode === 'work' ? newId(options.createUuid, 'builder-task') : null;
     const ids = freezeDeep({
       turn_command_id: newId(options.createUuid, 'builder-command'),
       run_command_id: newId(options.createUuid, 'builder-command'),
@@ -526,7 +539,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       message_id: newId(options.createUuid, 'builder-message'),
       assistant_message_id: newId(options.createUuid, 'builder-message'),
       turn_id: newId(options.createUuid, 'builder-turn'),
-      task_id: newId(options.createUuid, 'builder-task'),
+      task_id: taskId,
       run_id: newId(options.createUuid, 'builder-run'),
     });
     const first = eventAt({
@@ -537,13 +550,18 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       eventType: 'turn_submitted',
       previous: priorHead,
       payload: {
-        message: { message_id: ids.message_id, text: request.instruction },
-        turn_id: ids.turn_id,
-        mode: 'work',
-        task: {
-          task_id: ids.task_id,
-          title: request.base_revision === null ? 'Create Builder project' : 'Update Builder project',
+        message: {
+          message_id: ids.message_id,
+          text: mode === 'work' ? request.instruction : request.question,
         },
+        turn_id: ids.turn_id,
+        mode,
+        task: mode === 'work'
+          ? {
+            task_id: ids.task_id,
+            title: request.base_revision === null ? 'Create Builder project' : 'Update Builder project',
+          }
+          : null,
         base_revision: request.base_revision,
       },
     });
@@ -557,7 +575,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       payload: {
         turn_id: ids.turn_id,
         run_id: ids.run_id,
-        task_id: ids.task_id,
+        task_id: mode === 'work' ? ids.task_id : null,
         attempt_number: 1,
         retry_of_run_id: null,
         input_digest: request.request_digest,
@@ -572,6 +590,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     });
     const context = freezeDeep({
       context_version: 'builder-conversation-run-context.v1',
+      mode,
       project,
       conversation,
       request_digest: request.request_digest,
@@ -584,9 +603,18 @@ function recoverActive(state, project, conversation, recordedAtMs) {
     return context;
   }
 
+  function beginWork(rawRequest) {
+    return beginTurn(sanitizeBeginRequest(rawRequest), 'work');
+  }
+
+  function beginQuestion(rawRequest) {
+    return beginTurn(sanitizeQuestionRequest(rawRequest), 'question');
+  }
+
   function completeCandidate(rawRequest) {
     exactObject(rawRequest, ['context', 'candidate_result', 'assistant_text']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (context.mode !== 'work' || context.ids.task_id === null) fail();
     const candidateResult = exactObject(valueAt(rawRequest, 'candidate_result'), [
       'draft_id', 'title', 'summary', 'git_candidate_receipt',
     ]);
@@ -641,6 +669,60 @@ function recoverActive(state, project, conversation, recordedAtMs) {
         turn_id: context.ids.turn_id,
         run_id: context.ids.run_id,
         outcome: 'candidate_ready',
+      },
+    });
+    return append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [first, second],
+      recordedAtMs,
+    });
+  }
+
+  function completeExplanation(rawRequest) {
+    exactObject(rawRequest, ['context', 'assistant_text']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (context.mode !== 'question' || context.ids.task_id !== null) fail();
+    const assistantText = safeText(valueAt(rawRequest, 'assistant_text'), 8_000, 32_000);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const resultDigest = sha256Canonical({
+      explanation_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
+      request_digest: context.request_digest,
+      run_id: context.ids.run_id,
+      assistant_text: assistantText,
+    });
+    const first = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: context.ids.terminal_command_id,
+      eventType: 'run_completed',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        terminal_status: 'succeeded',
+        result_kind: 'explanation',
+        result_digest: resultDigest,
+        assistant_message: {
+          message_id: context.ids.assistant_message_id,
+          text: assistantText,
+        },
+        candidate_result: null,
+      },
+    });
+    const second = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: first.sequence + 1,
+      commandId: context.ids.turn_terminal_command_id,
+      eventType: 'turn_completed',
+      previous: eventHead(first),
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        outcome: 'answered',
       },
     });
     return append({
@@ -734,7 +816,9 @@ function recoverActive(state, project, conversation, recordedAtMs) {
         }),
         assistant_message: cancelled || interrupted ? null : {
           message_id: context.ids.assistant_message_id,
-          text: 'The draft could not be made.',
+          text: context.mode === 'question'
+            ? 'The answer could not be prepared.'
+            : 'The draft could not be made.',
         },
         candidate_result: null,
       },
@@ -914,8 +998,10 @@ function recoverActive(state, project, conversation, recordedAtMs) {
 
   return Object.freeze({
     service_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
+    begin_question: beginQuestion,
     begin_work: beginWork,
     complete_candidate: completeCandidate,
+    complete_explanation: completeExplanation,
     complete_failure: completeFailure,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
@@ -927,6 +1013,7 @@ function recoverActive(state, project, conversation, recordedAtMs) {
       renderer_exposure: false,
       restart_running_recovery: 'interrupted_without_provider_redispatch',
       candidate_draft_restore: 'sqlite_index_replay_verified',
+      question_explanation: 'sqlite_event_chain_without_git_revision',
     }),
   });
 }
