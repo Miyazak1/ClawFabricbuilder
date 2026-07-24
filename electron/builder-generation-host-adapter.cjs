@@ -3,7 +3,9 @@
 const { types: utilTypes } = require('node:util');
 
 const {
+  createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  projectBuilderExplanationResult,
   projectBuilderGenerationResult,
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
@@ -17,7 +19,7 @@ const {
 const BUILDER_GENERATION_AVAILABILITY_VERSION = 'builder-generation-availability.v1';
 const BUILDER_PROVIDER_SECRET_RESOLUTION_VERSION = 'builder-provider-secret-resolution.v1';
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
-const CONTEXT_KEYS = Object.freeze([
+const GENERATION_CONTEXT_KEYS = Object.freeze([
   'project_id',
   'base_revision_evidence',
   'base_source_tree',
@@ -26,6 +28,15 @@ const CONTEXT_KEYS = Object.freeze([
   'task_id',
   'run_id',
   'git_request_id',
+]);
+const EXPLANATION_CONTEXT_KEYS = Object.freeze([
+  'project_id',
+  'base_revision_evidence',
+  'base_source_tree',
+  'conversation_events',
+  'turn_id',
+  'task_id',
+  'run_id',
 ]);
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
@@ -192,10 +203,14 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const readProviderConfig = requiredMethod(options.readProviderConfig);
   const resolveSecret = requiredMethod(options.resolveSecret);
   const buildGenerationContext = requiredMethod(options.buildGenerationContext, 'builder_generation_base_unavailable');
+  const buildExplanationContext = options.buildExplanationContext === undefined
+    ? null
+    : requiredMethod(options.buildExplanationContext, 'builder_generation_base_unavailable');
   const transport = options.transport === undefined
     ? createBuilderOpenAICompatibleTransport()
     : requiredMethod(options.transport);
   const inFlight = new Map();
+  const explanationInFlight = new Map();
 
   function providerAuthority() {
     try {
@@ -210,11 +225,11 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  async function generationContext(request, signal) {
+  async function boundedContext(request, signal, buildContext, keys) {
     if (signal.aborted) fail('builder_generation_cancelled');
     let removeAbortListener = () => {};
     try {
-      const resolution = Promise.resolve(Reflect.apply(buildGenerationContext, undefined, [request]));
+      const resolution = Promise.resolve(Reflect.apply(buildContext, undefined, [request]));
       const aborted = new Promise((_resolve, reject) => {
         const onAbort = () => reject(new BuilderGenerationHostAdapterError('builder_generation_cancelled'));
         removeAbortListener = () => signal.removeEventListener('abort', onAbort);
@@ -222,7 +237,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
       });
       return exactObject(
         await Promise.race([resolution, aborted]),
-        CONTEXT_KEYS,
+        keys,
         'builder_generation_base_unavailable',
       );
     } catch {
@@ -234,7 +249,12 @@ function createBuilderGenerationHostAdapter(options = {}) {
   }
 
   async function run(request, controller) {
-    const context = await generationContext(request, controller.signal);
+    const context = await boundedContext(
+      request,
+      controller.signal,
+      buildGenerationContext,
+      GENERATION_CONTEXT_KEYS,
+    );
     let descriptor;
     try {
       descriptor = createBuilderGenerationPromptDescriptor({
@@ -281,6 +301,55 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  async function runExplanation(request, controller) {
+    if (buildExplanationContext === null) fail('builder_generation_base_unavailable');
+    const context = await boundedContext(
+      request,
+      controller.signal,
+      buildExplanationContext,
+      EXPLANATION_CONTEXT_KEYS,
+    );
+    let descriptor;
+    try {
+      descriptor = createBuilderExplanationPromptDescriptor({
+        request,
+        base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
+      });
+    } catch (error) {
+      mapKernelError(error);
+    }
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const { config, credential } = providerAuthority();
+    let transportResult;
+    try {
+      transportResult = await Reflect.apply(transport, undefined, [{
+        base_url: config.base_url,
+        model: config.model,
+        credential,
+        messages: [
+          { role: 'system', content: descriptor.system_instruction },
+          { role: 'user', content: descriptor.user_instruction },
+        ],
+        timeout_ms: config.timeout_ms,
+        ...(config.temperature === null ? {} : { temperature: config.temperature }),
+        ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
+      }, { signal: controller.signal }]);
+    } catch (error) {
+      mapTransportError(error, controller.signal);
+    }
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const generatedText = sanitizeTransportResult(transportResult);
+    try {
+      const answer = projectBuilderExplanationResult({
+        request,
+        generated_text: generatedText,
+      });
+      return Object.freeze({ ...answer, context });
+    } catch (error) {
+      mapKernelError(error);
+    }
+  }
+
   function generate(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -297,11 +366,31 @@ function createBuilderGenerationHostAdapter(options = {}) {
     return entry.promise;
   }
 
+  function explain(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationHostAdapterError('builder_generation_request_invalid'));
+    }
+    const existing = explanationInFlight.get(request.request_digest);
+    if (existing) return existing.promise;
+    const controller = new AbortController();
+    const entry = { controller, promise: null };
+    entry.promise = runExplanation(request, controller).finally(() => {
+      if (explanationInFlight.get(request.request_digest) === entry) {
+        explanationInFlight.delete(request.request_digest);
+      }
+    });
+    explanationInFlight.set(request.request_digest, entry);
+    return entry.promise;
+  }
+
   function cancel(rawRequest) {
     const requestId = sanitizeCancelRequest(rawRequest);
     const entry = inFlight.get(requestId);
-    if (!entry) return Object.freeze({ request_id: requestId, cancelled: false });
-    entry.controller.abort();
+    const explanationEntry = explanationInFlight.get(requestId);
+    if (!entry && !explanationEntry) return Object.freeze({ request_id: requestId, cancelled: false });
+    if (entry) entry.controller.abort();
+    if (explanationEntry) explanationEntry.controller.abort();
     return Object.freeze({ request_id: requestId, cancelled: true });
   }
 
@@ -324,7 +413,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  return Object.freeze({ generate, cancel, availability });
+  return Object.freeze({ generate, explain, cancel, availability });
 }
 
 module.exports = Object.freeze({

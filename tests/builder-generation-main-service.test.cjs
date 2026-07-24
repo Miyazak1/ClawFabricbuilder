@@ -104,6 +104,16 @@ function providerOutput(overrides = {}) {
   };
 }
 
+function providerExplanation(overrides = {}) {
+  return {
+    kind: 'builder_conversation_explanation',
+    title: 'Current project',
+    summary: 'Explains the current project.',
+    explanation: 'The current project is saved locally. This answer does not change files.',
+    ...overrides,
+  };
+}
+
 function eventHead(record) {
   return {
     sequence: record.sequence,
@@ -116,7 +126,9 @@ function conversationService() {
   let generation = 0;
   const calls = {
     begin: [],
+    question: [],
     candidate: [],
+    explanation: [],
     failure: [],
     cancel: [],
     readCandidate: [],
@@ -198,6 +210,76 @@ function conversationService() {
         },
       };
     },
+    begin_question(input) {
+      calls.question.push(input);
+      generation += 1;
+      const suffix = UUIDS[(generation + 4) % UUIDS.length];
+      const projectUuid = input.project_id.slice('builder-project:'.length);
+      const conversationId = `builder-conversation:${projectUuid}`;
+      const turnId = `builder-turn:${suffix}`;
+      const runId = `builder-run:${suffix}`;
+      const first = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.project_id,
+        conversation_id: conversationId,
+        sequence: 1,
+        command_id: `builder-command:${UUIDS[(generation + 5) % UUIDS.length]}`,
+        event_type: 'turn_submitted',
+        previous_event: null,
+        payload: {
+          message: {
+            message_id: `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`,
+            text: input.question,
+          },
+          turn_id: turnId,
+          mode: 'question',
+          task: null,
+          base_revision: input.base_revision,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
+      const second = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.project_id,
+        conversation_id: conversationId,
+        sequence: 2,
+        command_id: `builder-command:${UUIDS[(generation + 7) % UUIDS.length]}`,
+        event_type: 'run_started',
+        previous_event: eventHead(first),
+        payload: {
+          turn_id: turnId,
+          run_id: runId,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          input_digest: input.request_digest,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
+      return {
+        context_version: 'builder-conversation-run-context.v1',
+        mode: 'question',
+        project: {
+          project_id: input.project_id,
+          created_at_ms: 1,
+        },
+        conversation: {
+          project_id: input.project_id,
+          conversation_id: conversationId,
+          created_at_ms: 1,
+        },
+        request_digest: input.request_digest,
+        start_head: eventHead(second),
+        events: [first, second],
+        ids: {
+          turn_id: turnId,
+          task_id: null,
+          run_id: runId,
+        },
+      };
+    },
     complete_candidate(input) {
       calls.candidate.push(input);
       return {
@@ -205,6 +287,16 @@ function conversationService() {
           sequence: input.context.start_head.sequence + 2,
           event_id: `builder-conversation-event:${'a'.repeat(64)}`,
           event_digest: `sha256:${'b'.repeat(64)}`,
+        },
+      };
+    },
+    complete_explanation(input) {
+      calls.explanation.push(input);
+      return {
+        head: {
+          sequence: input.context.start_head.sequence + 2,
+          event_id: `builder-conversation-event:${'e'.repeat(64)}`,
+          event_digest: `sha256:${'f'.repeat(64)}`,
         },
       };
     },
@@ -385,6 +477,66 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   });
 });
 
+test('records a provider explanation without creating Git candidate, draft, or save facts', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const reads = [];
+  const transportInputs = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(query) {
+          reads.push(query);
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation()),
+      };
+    },
+  });
+
+  const result = await service.answer(request({
+    instruction: 'What does this project do?',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.deepEqual(reads, [{ project_id: PROJECT_ID }]);
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, PROJECT_ID);
+  assert.equal(result.admissions.conversation, 'sqlite_recorded');
+  assert.equal(result.admissions.draft, 'not_created');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.match(result.explanation, /does not change files/u);
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.question[0].question, 'What does this project do?');
+  assert.equal(lifecycle.calls.question[0].base_revision.revision_receipt_digest, `sha256:${'1'.repeat(64)}`);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(git.receipts.length, 0);
+  assert.equal(transportInputs.length, 1);
+  assert.match(transportInputs[0].messages[1].content, /export const saved = true/u);
+  assert.equal(Object.hasOwn(result, 'draft_id'), false);
+  assert.equal(Object.hasOwn(result, 'source_tree'), false);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /candidate|git_request|operations|source_tree|credential|provider\.example|builder-model/u,
+  );
+});
+
 test('records a fixed terminal lifecycle outcome when provider generation fails', async () => {
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
@@ -472,6 +624,136 @@ test('records cancellation intent before aborting provider work and fails closed
   assert.equal(lifecycle.calls.cancel.length, 1);
   assert.equal(lifecycle.calls.failure.length, 1);
   assert.equal(lifecycle.calls.failure[0].context.cancel_requested, true);
+
+  const answerLifecycle = conversationService();
+  const answerGit = gitAuthority();
+  let answerSignal;
+  const answerService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: answerLifecycle,
+      gitAuthority: answerGit,
+    }),
+    transport: async (_input, options) => {
+      answerSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          const error = new Error(PRIVATE_MARKER);
+          error.code = 'builder_provider_cancelled';
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  const question = request({ instruction: 'What is this project?' });
+  const answer = answerService.answer(question);
+  while (answerSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(answerService.cancel({ request_id: question.request_digest }), {
+    request_id: question.request_digest,
+    cancelled: true,
+  });
+  await assert.rejects(answer, { code: 'builder_generation_cancelled' });
+  assert.equal(answerLifecycle.calls.question.length, 1);
+  assert.equal(answerLifecycle.calls.cancel.length, 1);
+  assert.equal(answerLifecycle.calls.explanation.length, 0);
+  assert.equal(answerLifecycle.calls.failure.length, 1);
+  assert.equal(answerLifecycle.calls.failure[0].context.cancel_requested, true);
+  assert.equal(answerGit.receipts.length, 0);
+});
+
+test('rejects same-digest cross-route concurrency before creating a second conversation context', async () => {
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let generationSignal;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+    }),
+    transport: async (_input, options) => {
+      generationSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          const error = new Error(PRIVATE_MARKER);
+          error.code = 'builder_provider_cancelled';
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  const shared = request({
+    instruction: 'Explain or change this project.',
+    existingProjectId: PROJECT_ID,
+  });
+  const generation = service.generate(shared);
+  while (generationSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  await assert.rejects(service.answer(shared), { code: 'builder_generation_service_unavailable' });
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.cancel.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 0);
+
+  assert.deepEqual(service.cancel({ request_id: shared.request_digest }), {
+    request_id: shared.request_digest,
+    cancelled: true,
+  });
+  await assert.rejects(generation, { code: 'builder_generation_cancelled' });
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.cancel.length, 1);
+  assert.equal(lifecycle.calls.failure.length, 1);
+  assert.equal(lifecycle.calls.failure[0].context.ids.task_id === null, false);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.explanation.length, 0);
+  assert.equal(git.receipts.length, 0);
+
+  const answerLifecycle = conversationService();
+  const answerGit = gitAuthority();
+  let answerSignal;
+  const answerService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: answerLifecycle,
+      gitAuthority: answerGit,
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+    }),
+    transport: async (_input, options) => {
+      answerSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          const error = new Error(PRIVATE_MARKER);
+          error.code = 'builder_provider_cancelled';
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  const answer = answerService.answer(shared);
+  while (answerSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  await assert.rejects(answerService.generate(shared), { code: 'builder_generation_service_unavailable' });
+  assert.equal(answerLifecycle.calls.begin.length, 0);
+  assert.equal(answerLifecycle.calls.question.length, 1);
+  assert.equal(answerLifecycle.calls.cancel.length, 0);
+  assert.equal(answerLifecycle.calls.failure.length, 0);
+
+  assert.deepEqual(answerService.cancel({ request_id: shared.request_digest }), {
+    request_id: shared.request_digest,
+    cancelled: true,
+  });
+  await assert.rejects(answer, { code: 'builder_generation_cancelled' });
+  assert.equal(answerLifecycle.calls.begin.length, 0);
+  assert.equal(answerLifecycle.calls.question.length, 1);
+  assert.equal(answerLifecycle.calls.cancel.length, 1);
+  assert.equal(answerLifecycle.calls.failure.length, 1);
+  assert.equal(answerLifecycle.calls.failure[0].context.ids.task_id, null);
+  assert.equal(answerLifecycle.calls.candidate.length, 0);
+  assert.equal(answerLifecycle.calls.explanation.length, 0);
+  assert.equal(answerGit.receipts.length, 0);
 });
 
 test('does not abort provider work before a durable conversation context exists', async () => {

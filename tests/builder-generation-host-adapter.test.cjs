@@ -60,6 +60,16 @@ function providerOutput(overrides = {}) {
   };
 }
 
+function providerExplanation(overrides = {}) {
+  return {
+    kind: 'builder_conversation_explanation',
+    title: 'Current project',
+    summary: 'Explains the current project.',
+    explanation: 'The current project is a local app. This answer does not change source.',
+    ...overrides,
+  };
+}
+
 function sourceTree(files = []) {
   return createBuilderProjectSourceTree({ files });
 }
@@ -129,6 +139,19 @@ function contextFor(raw = request(), overrides = {}) {
   };
 }
 
+function explanationContextFor(raw = request(), overrides = {}) {
+  const base = overrides.base_source_tree ?? sourceTree();
+  return {
+    project_id: PROJECT_ID,
+    base_revision_evidence: overrides.base_revision_evidence ?? null,
+    base_source_tree: base,
+    conversation_events: overrides.conversation_events ?? events({ requestDigest: raw.request_digest }),
+    turn_id: TURN_ID,
+    task_id: null,
+    run_id: RUN_ID,
+  };
+}
+
 function providerConfig() {
   return createBuilderProviderConfig({
     base_url: 'https://provider.example/v1',
@@ -154,6 +177,7 @@ function dependencies(overrides = {}) {
       credential: 'real-key-value',
     }),
     buildGenerationContext: (raw) => contextFor(raw),
+    buildExplanationContext: (raw) => explanationContextFor(raw),
     transport: async () => ({
       transport_version: 'builder-openai-compatible-transport.v1',
       generated_text: JSON.stringify(providerOutput()),
@@ -191,7 +215,39 @@ test('generates an unsaved code-change candidate from verified base context', as
   assert.equal(transportInput[0].base_url, 'https://provider.example/v1');
   assert.equal(transportInput[0].credential, 'real-key-value');
   assert.equal(transportInput[1].signal instanceof AbortSignal, true);
+  assert.match(transportInput[0].messages[0].content, /builder_code_change_operations/u);
+  assert.doesNotMatch(transportInput[0].messages[0].content, /builder_conversation_explanation/u);
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
+});
+
+test('generates a bounded explanation without candidate or Git context', async () => {
+  const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
+  const base = sourceTree([{ path: 'src/app.js', content: 'export const saved = true;\n' }]);
+  let transportInput;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildExplanationContext: (raw) => explanationContextFor(raw, { base_source_tree: base }),
+    transport: async (...args) => {
+      transportInput = args;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation()),
+      };
+    },
+  }));
+
+  const result = await adapter.explain(rawRequest);
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.equal(result.context.task_id, null);
+  assert.equal(result.context.project_id, PROJECT_ID);
+  assert.match(transportInput[0].messages[0].content, /builder_conversation_explanation/u);
+  assert.doesNotMatch(transportInput[0].messages[0].content, /builder_code_change_operations/u);
+  assert.match(transportInput[0].messages[1].content, /export const saved = true/u);
+  assert.equal(transportInput[1].signal instanceof AbortSignal, true);
+  assert.equal(Object.hasOwn(result, 'candidate'), false);
+  assert.equal(Object.hasOwn(result.context, 'git_request_id'), false);
+  assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model|candidate_digest|git_request|operations/iu);
 });
 
 test('passes verified current source into the prompt for an existing project', async () => {
@@ -276,6 +332,22 @@ test('cancels only the exact active request and propagates abort to transport', 
     request_id: raw.request_digest,
     cancelled: false,
   });
+
+  const answerAdapter = createBuilderGenerationHostAdapter(dependencies({
+    transport: async (_input, control) => new Promise((_resolve, reject) => {
+      control.signal.addEventListener('abort', () => {
+        const error = new Error('cancelled');
+        error.code = 'builder_provider_cancelled';
+        reject(error);
+      }, { once: true });
+    }),
+  }));
+  const answer = answerAdapter.explain(raw);
+  assert.deepEqual(answerAdapter.cancel({ request_id: raw.request_digest }), {
+    request_id: raw.request_digest,
+    cancelled: true,
+  });
+  await assert.rejects(answer, { code: 'builder_generation_cancelled' });
 });
 
 test('cancels a stalled base read without invoking provider authority', async () => {

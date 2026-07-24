@@ -19,9 +19,12 @@ const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2';
 const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-descriptor.v2';
 const BUILDER_GENERATED_OPERATIONS_KIND = 'builder_code_change_operations';
+const BUILDER_GENERATED_EXPLANATION_KIND = 'builder_conversation_explanation';
 
 const MAX_INSTRUCTION_CODE_POINTS = 4000;
 const MAX_INSTRUCTION_UTF8_BYTES = 16 * 1024;
+const MAX_EXPLANATION_CODE_POINTS = 4000;
+const MAX_EXPLANATION_UTF8_BYTES = 16 * 1024;
 const MAX_GENERATED_TEXT_BYTES = MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES;
 const MAX_PROMPT_DESCRIPTOR_BYTES = MAX_SOURCE_TREE_UTF8_BYTES + (96 * 1024);
 
@@ -48,6 +51,7 @@ const RESULT_INPUT_KEYS = Object.freeze([
   'generated_text',
 ]);
 const PROVIDER_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'operations']);
+const EXPLANATION_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'explanation']);
 const RAW_OPERATION_KEYS = Object.freeze(['operation', 'path', 'content']);
 
 const JSON_OUTPUT_EXAMPLE = JSON.stringify({
@@ -59,8 +63,14 @@ const JSON_OUTPUT_EXAMPLE = JSON.stringify({
     { operation: 'upsert', path: 'src/app.js', content: 'console.log("ready");\n' },
   ],
 });
+const EXPLANATION_OUTPUT_EXAMPLE = JSON.stringify({
+  kind: BUILDER_GENERATED_EXPLANATION_KIND,
+  title: 'Current project',
+  summary: 'Explains the saved project without changing files.',
+  explanation: 'The project is a small local app. No source files were changed by this answer.',
+});
 
-const SYSTEM_INSTRUCTION = [
+const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'Create or revise one small software project.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
   'Use exactly the keys kind, title, summary, and operations.',
@@ -76,10 +86,27 @@ const SYSTEM_INSTRUCTION = [
   'Prefer a small coherent change over a broad scaffold when the request is ambiguous.',
 ].join('\n');
 
-const OUTPUT_CONTRACT = Object.freeze({
+const EXPLANATION_SYSTEM_INSTRUCTION = [
+  'Answer one bounded question about the current local software project.',
+  'Return one JSON object only, with no markdown fence or surrounding text.',
+  'Use exactly the keys kind, title, summary, and explanation.',
+  `Set kind to ${BUILDER_GENERATED_EXPLANATION_KIND}.`,
+  `Example JSON object: ${EXPLANATION_OUTPUT_EXAMPLE}`,
+  'Do not include source-change operations.',
+  'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
+  'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
+  'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
+].join('\n');
+
+const CODE_CHANGE_OUTPUT_CONTRACT = Object.freeze({
   kind: BUILDER_GENERATED_OPERATIONS_KIND,
   exact_keys: Object.freeze(['kind', 'title', 'summary', 'operations']),
   operation_keys: Object.freeze(['operation', 'path', 'content']),
+  format: 'json_object_only',
+});
+const EXPLANATION_OUTPUT_CONTRACT = Object.freeze({
+  kind: BUILDER_GENERATED_EXPLANATION_KIND,
+  exact_keys: Object.freeze(['kind', 'title', 'summary', 'explanation']),
   format: 'json_object_only',
 });
 
@@ -296,7 +323,7 @@ function sanitizePromptInput(value) {
   return { request, baseSourceTree };
 }
 
-function createBuilderGenerationPromptDescriptor(value) {
+function promptDescriptor(value, promptVersion, systemInstruction, outputContract) {
   try {
     const { request, baseSourceTree } = sanitizePromptInput(value);
     const userContext = {
@@ -312,15 +339,10 @@ function createBuilderGenerationPromptDescriptor(value) {
     const descriptor = {
       version: BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
       request_id: request.request_digest,
-      prompt_version: BUILDER_CODE_PROJECT_PROMPT_VERSION,
-      system_instruction: SYSTEM_INSTRUCTION,
+      prompt_version: promptVersion,
+      system_instruction: systemInstruction,
       user_instruction: canonicalJson(userContext, 'builder_generation_request_invalid'),
-      output_contract: {
-        kind: OUTPUT_CONTRACT.kind,
-        exact_keys: [...OUTPUT_CONTRACT.exact_keys],
-        operation_keys: [...OUTPUT_CONTRACT.operation_keys],
-        format: OUTPUT_CONTRACT.format,
-      },
+      output_contract: outputContract,
       max_generated_text_bytes: MAX_GENERATED_TEXT_BYTES,
     };
     if (Buffer.byteLength(canonicalJson(descriptor, 'builder_generation_request_invalid'), 'utf8')
@@ -332,6 +354,33 @@ function createBuilderGenerationPromptDescriptor(value) {
     if (error instanceof BuilderGenerationKernelError) throw error;
     fail('builder_generation_request_invalid');
   }
+}
+
+function createBuilderGenerationPromptDescriptor(value) {
+  return promptDescriptor(
+    value,
+    BUILDER_CODE_PROJECT_PROMPT_VERSION,
+    CODE_CHANGE_SYSTEM_INSTRUCTION,
+    {
+      kind: CODE_CHANGE_OUTPUT_CONTRACT.kind,
+      exact_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.exact_keys],
+      operation_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.operation_keys],
+      format: CODE_CHANGE_OUTPUT_CONTRACT.format,
+    },
+  );
+}
+
+function createBuilderExplanationPromptDescriptor(value) {
+  return promptDescriptor(
+    value,
+    'builder-project-explanation.v1',
+    EXPLANATION_SYSTEM_INSTRUCTION,
+    {
+      kind: EXPLANATION_OUTPUT_CONTRACT.kind,
+      exact_keys: [...EXPLANATION_OUTPUT_CONTRACT.exact_keys],
+      format: EXPLANATION_OUTPUT_CONTRACT.format,
+    },
+  );
 }
 
 function sanitizeGeneratedOperations(value) {
@@ -379,7 +428,36 @@ function sanitizeGeneratedOperations(value) {
   };
 }
 
-function parseGeneratedText(value) {
+function sanitizeGeneratedExplanation(value) {
+  assertExactObject(value, EXPLANATION_OUTPUT_KEYS, 'builder_generation_structured_response_invalid');
+  if (valueAt(value, 'kind', 'builder_generation_structured_response_invalid')
+    !== BUILDER_GENERATED_EXPLANATION_KIND) fail('builder_generation_structured_response_invalid');
+  return {
+    title: safeText(
+      valueAt(value, 'title', 'builder_generation_structured_response_invalid'),
+      80,
+      512,
+      false,
+      'builder_generation_structured_response_invalid',
+    ),
+    summary: safeText(
+      valueAt(value, 'summary', 'builder_generation_structured_response_invalid'),
+      400,
+      2 * 1024,
+      false,
+      'builder_generation_structured_response_invalid',
+    ),
+    explanation: safeText(
+      valueAt(value, 'explanation', 'builder_generation_structured_response_invalid'),
+      MAX_EXPLANATION_CODE_POINTS,
+      MAX_EXPLANATION_UTF8_BYTES,
+      true,
+      'builder_generation_structured_response_invalid',
+    ),
+  };
+}
+
+function parseProviderOutputText(value) {
   if (
     typeof value !== 'string'
     || value.length === 0
@@ -395,7 +473,11 @@ function parseGeneratedText(value) {
   } catch {
     fail('builder_generation_structured_response_invalid');
   }
-  return sanitizeGeneratedOperations(parsed);
+  if (!isPlainObject(parsed)) fail('builder_generation_structured_response_invalid');
+  const kind = valueAt(parsed, 'kind', 'builder_generation_structured_response_invalid');
+  if (kind === BUILDER_GENERATED_OPERATIONS_KIND) return { result_kind: 'candidate', ...sanitizeGeneratedOperations(parsed) };
+  if (kind === BUILDER_GENERATED_EXPLANATION_KIND) return { result_kind: 'explanation', ...sanitizeGeneratedExplanation(parsed) };
+  fail('builder_generation_structured_response_invalid');
 }
 
 function projectBuilderGenerationResult(value) {
@@ -404,9 +486,10 @@ function projectBuilderGenerationResult(value) {
     const request = sanitizeBuilderGenerationRequestInternal(
       valueAt(value, 'request', 'builder_generation_request_invalid'),
     );
-    const generated = parseGeneratedText(
+    const generated = parseProviderOutputText(
       valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
     );
+    if (generated.result_kind !== 'candidate') fail('builder_generation_structured_response_invalid');
     let candidate;
     try {
       candidate = createBuilderCodeChangeCandidate({
@@ -426,6 +509,7 @@ function projectBuilderGenerationResult(value) {
     if (candidate.request_digest !== request.request_digest) fail('builder_generation_request_invalid');
     return freezeDeep({
       version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'candidate',
       request_id: request.request_digest,
       title: generated.title,
       summary: generated.summary,
@@ -444,7 +528,39 @@ function projectBuilderGenerationResult(value) {
   }
 }
 
+function projectBuilderExplanationResult(value) {
+  try {
+    assertExactObject(value, ['request', 'generated_text'], 'builder_generation_request_invalid');
+    const request = sanitizeBuilderGenerationRequestInternal(
+      valueAt(value, 'request', 'builder_generation_request_invalid'),
+    );
+    const generated = parseProviderOutputText(
+      valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
+    );
+    if (generated.result_kind !== 'explanation') fail('builder_generation_structured_response_invalid');
+    return freezeDeep({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'explanation',
+      request_id: request.request_digest,
+      title: generated.title,
+      summary: generated.summary,
+      explanation: generated.explanation,
+      admissions: {
+        conversation: 'explanation_local_not_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationKernelError) throw error;
+    fail('builder_generation_structured_response_invalid');
+  }
+}
+
 module.exports = Object.freeze({
+  BUILDER_GENERATED_EXPLANATION_KIND,
   BUILDER_GENERATED_OPERATIONS_KIND,
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
   BUILDER_GENERATION_REQUEST_PROTOCOL,
@@ -453,6 +569,8 @@ module.exports = Object.freeze({
   BuilderGenerationKernelError,
   createBuilderGenerationRequest,
   sanitizeBuilderGenerationRequest,
+  createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  projectBuilderExplanationResult,
   projectBuilderGenerationResult,
 });

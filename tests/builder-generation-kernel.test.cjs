@@ -7,12 +7,15 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  BUILDER_GENERATED_EXPLANATION_KIND,
   BUILDER_GENERATED_OPERATIONS_KIND,
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
   createBuilderGenerationRequest,
+  createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  projectBuilderExplanationResult,
   projectBuilderGenerationResult,
   sanitizeBuilderGenerationRequest,
 } = require('../electron/builder-generation-kernel.cjs');
@@ -145,6 +148,16 @@ function generatedText(overrides = {}) {
   });
 }
 
+function generatedExplanationText(overrides = {}) {
+  return JSON.stringify({
+    kind: BUILDER_GENERATED_EXPLANATION_KIND,
+    title: 'Current project',
+    summary: 'Explains the current local project.',
+    explanation: 'The current project is a local Builder project. This answer does not change files.',
+    ...overrides,
+  });
+}
+
 function expectKernelError(fn, code, forbidden = []) {
   assert.throws(fn, (error) => {
     assert.ok(error instanceof BuilderGenerationKernelError);
@@ -210,6 +223,7 @@ test('builds a deterministic operations prompt without exposing host identities'
     format: 'json_object_only',
   });
   assert.match(first.system_instruction, /You may generate general source code in any language/iu);
+  assert.doesNotMatch(first.system_instruction, /builder_conversation_explanation|question\/explanation request/iu);
   assert.match(first.system_instruction, /imports, process APIs, networking code/iu);
   assert.doesNotMatch(first.system_instruction, /index\.html.*styles\.css.*app\.js/iu);
   assert.deepEqual(JSON.parse(first.user_instruction), {
@@ -218,6 +232,25 @@ test('builds a deterministic operations prompt without exposing host identities'
     current_source_tree: { files: [] },
   });
   assert.doesNotMatch(first.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
+});
+
+test('builds a route-specific explanation prompt without allowing source operations', () => {
+  const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
+  const base = sourceTree([{ path: 'src/app.js', content: 'export const saved = true;\n' }]);
+  const descriptor = createBuilderExplanationPromptDescriptor({ request: rawRequest, base_source_tree: base });
+
+  assert.equal(descriptor.version, BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION);
+  assert.equal(descriptor.prompt_version, 'builder-project-explanation.v1');
+  assert.equal(descriptor.request_id, rawRequest.request_digest);
+  assert.deepEqual(descriptor.output_contract, {
+    kind: BUILDER_GENERATED_EXPLANATION_KIND,
+    exact_keys: ['kind', 'title', 'summary', 'explanation'],
+    format: 'json_object_only',
+  });
+  assert.match(descriptor.system_instruction, /Do not include source-change operations/u);
+  assert.doesNotMatch(descriptor.system_instruction, /builder_code_change_operations|operation must be upsert/u);
+  assert.match(descriptor.user_instruction, /export const saved = true/u);
+  assert.doesNotMatch(descriptor.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
 });
 
 test('includes verified source text for existing-project revision prompts', () => {
@@ -249,6 +282,7 @@ test('projects provider operations into a host-owned unsaved code-change candida
   });
 
   assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'candidate');
   assert.equal(result.request_id, rawRequest.request_digest);
   assert.equal(result.title, 'Focus timer');
   assert.equal(result.candidate.candidate_version, 'builder-code-change-candidate.v2');
@@ -261,6 +295,55 @@ test('projects provider operations into a host-owned unsaved code-change candida
   assert.equal(result.admissions.save, 'not_performed');
   assert.equal(result.admissions.conversation, 'candidate_local_not_recorded');
   assert.ok(result.candidate.resulting_source_tree.files.some((file) => file.path === 'src/app.js'));
+});
+
+test('projects provider explanation without creating a candidate or source change', () => {
+  const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
+  const result = projectBuilderExplanationResult({
+    request: rawRequest,
+    generated_text: generatedExplanationText(),
+  });
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.equal(result.title, 'Current project');
+  assert.match(result.explanation, /does not change files/u);
+  assert.deepEqual(result.admissions, {
+    conversation: 'explanation_local_not_recorded',
+    draft: 'not_created',
+    save: 'not_performed',
+    preview: 'not_applicable',
+    execution: 'not_evaluated',
+  });
+  assert.doesNotMatch(JSON.stringify(result), /candidate|source_tree|revision_receipt|commit_oid|credential|provider/iu);
+});
+
+test('rejects provider output when it belongs to the other generation route', () => {
+  const rawRequest = request({ instruction: 'Explain or change this project.' });
+  const candidateContext = {
+    request: rawRequest,
+    base_revision_evidence: null,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+  };
+
+  expectKernelError(
+    () => projectBuilderGenerationResult({
+      ...candidateContext,
+      generated_text: generatedExplanationText(),
+    }),
+    'builder_generation_structured_response_invalid',
+  );
+  expectKernelError(
+    () => projectBuilderExplanationResult({
+      request: rawRequest,
+      generated_text: generatedText(),
+    }),
+    'builder_generation_structured_response_invalid',
+  );
 });
 
 test('cross-binds existing-project base evidence to conversation and source tree', () => {
@@ -392,6 +475,18 @@ test('classifies malformed generated text and rejects forged provider authority'
       title: 'A',
       summary: 'B',
       operations: [{ operation: 'upsert', path: 'safe.txt', content: 'api_key=abcd1234abcd1234abcd1234' }],
+    },
+    {
+      kind: BUILDER_GENERATED_EXPLANATION_KIND,
+      title: 'A',
+      summary: 'B',
+      explanation: `Bearer ${'a'.repeat(24)}`,
+    },
+    {
+      kind: BUILDER_GENERATED_EXPLANATION_KIND,
+      title: 'A',
+      summary: 'B',
+      explanation: '',
     },
   ]) {
     expectKernelError(

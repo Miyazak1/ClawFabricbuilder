@@ -24,6 +24,8 @@ const {
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
+const GENERATE_OPERATION_PREFIX = 'generate:';
+const ANSWER_OPERATION_PREFIX = 'answer:';
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
@@ -452,8 +454,10 @@ function createBuilderGenerationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
   const bindCurrentAuthority = ownMethod(options.providerConfigRepository, 'bind_current_authority');
   const loadCurrentProject = ownMethod(options.projectReadAuthority, 'load_current');
+  const beginConversationQuestion = ownMethod(options.conversationService, 'begin_question');
   const beginConversationWork = ownMethod(options.conversationService, 'begin_work');
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
+  const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
   const completeConversationFailure = ownMethod(options.conversationService, 'complete_failure');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
@@ -464,6 +468,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const inFlight = new Map();
   const activeContexts = new Map();
   const generationContexts = new WeakMap();
+  const explanationContexts = new WeakMap();
   let pendingAuthority = null;
   let bindingAuthority = false;
 
@@ -496,6 +501,20 @@ function createBuilderGenerationMainService(rawOptions) {
     return Reflect.apply(authority.resolveSecret, authority.receiver, [secretRef]);
   }
 
+  function operationKey(prefix, requestDigest) {
+    return `${prefix}${requestDigest}`;
+  }
+
+  function rejectIfOtherRouteInFlight(prefix, requestDigest) {
+    const otherPrefix = prefix === GENERATE_OPERATION_PREFIX
+      ? ANSWER_OPERATION_PREFIX
+      : GENERATE_OPERATION_PREFIX;
+    if (inFlight.has(operationKey(otherPrefix, requestDigest))) {
+      return Promise.reject(new BuilderGenerationMainServiceError());
+    }
+    return null;
+  }
+
   async function buildGenerationContext(request) {
     try {
       const existingProjectId = request.existing_project_id;
@@ -522,7 +541,10 @@ function createBuilderGenerationMainService(rawOptions) {
           base_revision: base.base_revision,
         }],
       );
-      activeContexts.set(request.request_digest, conversationContext);
+      activeContexts.set(
+        operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
+        conversationContext,
+      );
       const generationContext = freezeDeep({
         project_id: projectId,
         base_revision_evidence: base.base_revision_evidence,
@@ -540,20 +562,119 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  async function buildExplanationContext(request) {
+    try {
+      const existingProjectId = request.existing_project_id;
+      const projectId = existingProjectId === null
+        ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
+        : existingProjectId;
+      const base = existingProjectId === null
+        ? {
+          base_revision: null,
+          base_revision_evidence: null,
+          source_tree: createBuilderProjectSourceTree({ files: [] }),
+        }
+        : sanitizeReadResult(
+          await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: existingProjectId }]),
+          existingProjectId,
+        );
+      const conversationContext = Reflect.apply(
+        beginConversationQuestion,
+        options.conversationService,
+        [{
+          project_id: projectId,
+          question: request.instruction,
+          request_digest: request.request_digest,
+          base_revision: base.base_revision,
+        }],
+      );
+      activeContexts.set(
+        operationKey(ANSWER_OPERATION_PREFIX, request.request_digest),
+        conversationContext,
+      );
+      const explanationContext = freezeDeep({
+        project_id: projectId,
+        base_revision_evidence: base.base_revision_evidence,
+        base_source_tree: base.source_tree,
+        conversation_events: conversationContext.events,
+        turn_id: conversationContext.ids.turn_id,
+        task_id: conversationContext.ids.task_id,
+        run_id: conversationContext.ids.run_id,
+      });
+      explanationContexts.set(explanationContext, conversationContext);
+      return explanationContext;
+    } catch {
+      fail();
+    }
+  }
+
   const host = createBuilderGenerationHostAdapter({
     readProviderConfig,
     resolveSecret,
     buildGenerationContext,
+    buildExplanationContext,
     ...(Object.hasOwn(options, 'transport') ? { transport: options.transport } : {}),
   });
+
+  function publicExplanationResult(answer, request) {
+    const context = valueAt(answer, 'context');
+    return freezeDeep({
+      version: answer.version,
+      result_kind: 'explanation',
+      request_id: answer.request_id,
+      project_id: valueAt(context, 'project_id'),
+      existing_project_id: request.existing_project_id,
+      title: answer.title,
+      summary: answer.summary,
+      explanation: answer.explanation,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+  }
+
+  function failureCodeFrom(error) {
+    if (error && typeof error === 'object' && !utilTypes.isProxy(error)) {
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+        if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string') {
+          return descriptor.value;
+        }
+      } catch {
+        return 'builder_generation_failed';
+      }
+    }
+    return 'builder_generation_failed';
+  }
+
+  function recordFailure(key, error) {
+    const conversationContext = activeContexts.get(key);
+    if (conversationContext === undefined) return;
+    try {
+      Reflect.apply(
+        completeConversationFailure,
+        options.conversationService,
+        [{ context: conversationContext, failure_code: failureCodeFrom(error) }],
+      );
+    } catch {
+      throw new BuilderGenerationMainServiceError();
+    }
+  }
 
   async function generate(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    const existing = inFlight.get(request.request_digest);
+    const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
+    const existing = inFlight.get(key);
     if (existing) return existing;
+    const routeConflict = rejectIfOtherRouteInFlight(GENERATE_OPERATION_PREFIX, request.request_digest);
+    if (routeConflict) return routeConflict;
     const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
       const conversationContext = generationContexts.get(context);
@@ -622,35 +743,47 @@ function createBuilderGenerationMainService(rawOptions) {
       pendingDrafts.set(draftId, stored);
       return publicDraftResult(stored);
     }).catch((error) => {
-      const conversationContext = activeContexts.get(request.request_digest);
-      if (conversationContext !== undefined) {
-        let failureCode = 'builder_generation_failed';
-        if (error && typeof error === 'object' && !utilTypes.isProxy(error)) {
-          try {
-            const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
-            if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string') {
-              failureCode = descriptor.value;
-            }
-          } catch {
-            failureCode = 'builder_generation_failed';
-          }
-        }
-        try {
-          Reflect.apply(
-            completeConversationFailure,
-            options.conversationService,
-            [{ context: conversationContext, failure_code: failureCode }],
-          );
-        } catch {
-          throw new BuilderGenerationMainServiceError();
-        }
-      }
+      recordFailure(key, error);
       throw error;
     }).finally(() => {
-      activeContexts.delete(request.request_digest);
-      if (inFlight.get(request.request_digest) === operation) inFlight.delete(request.request_digest);
+      activeContexts.delete(key);
+      if (inFlight.get(key) === operation) inFlight.delete(key);
     });
-    inFlight.set(request.request_digest, operation);
+    inFlight.set(key, operation);
+    return operation;
+  }
+
+  async function answer(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const routeConflict = rejectIfOtherRouteInFlight(ANSWER_OPERATION_PREFIX, request.request_digest);
+    if (routeConflict) return routeConflict;
+    const operation = Promise.resolve(host.explain(request)).then((internal) => {
+      const context = valueAt(internal, 'context');
+      const conversationContext = explanationContexts.get(context);
+      if (conversationContext === undefined) fail();
+      Reflect.apply(
+        completeConversationExplanation,
+        options.conversationService,
+        [{
+          context: conversationContext,
+          assistant_text: internal.explanation,
+        }],
+      );
+      return publicExplanationResult(internal, request);
+    }).catch((error) => {
+      recordFailure(key, error);
+      throw error;
+    }).finally(() => {
+      activeContexts.delete(key);
+      if (inFlight.get(key) === operation) inFlight.delete(key);
+    });
+    inFlight.set(key, operation);
     return operation;
   }
 
@@ -662,21 +795,30 @@ function createBuilderGenerationMainService(rawOptions) {
     } catch {
       return host.cancel(rawRequest);
     }
-    const context = activeContexts.get(requestId);
-    if (context === undefined) {
+    const keys = [
+      operationKey(GENERATE_OPERATION_PREFIX, requestId),
+      operationKey(ANSWER_OPERATION_PREFIX, requestId),
+    ];
+    let cancelled = false;
+    for (const key of keys) {
+      const context = activeContexts.get(key);
+      if (context === undefined) continue;
+      let cancelledContext;
+      try {
+        cancelledContext = Reflect.apply(
+          requestConversationCancel,
+          options.conversationService,
+          [{ context }],
+        );
+      } catch {
+        throw new BuilderGenerationMainServiceError();
+      }
+      activeContexts.set(key, cancelledContext);
+      cancelled = true;
+    }
+    if (!cancelled) {
       return Object.freeze({ request_id: requestId, cancelled: false });
     }
-    let cancelledContext;
-    try {
-      cancelledContext = Reflect.apply(
-        requestConversationCancel,
-        options.conversationService,
-        [{ context }],
-      );
-    } catch {
-      throw new BuilderGenerationMainServiceError();
-    }
-    activeContexts.set(requestId, cancelledContext);
     host.cancel({ request_id: requestId });
     return Object.freeze({ request_id: requestId, cancelled: true });
   }
@@ -783,6 +925,7 @@ function createBuilderGenerationMainService(rawOptions) {
 
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
+    answer,
     generate,
     cancel,
     availability: host.availability,
