@@ -237,6 +237,8 @@ function visibleConversationProjectId(
     ?? null;
 }
 
+type BuilderVisibleProjectSnapshot = ReturnType<typeof useBuilderProjectController>['snapshot'];
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
@@ -302,22 +304,34 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     void catalog.refresh().catch(() => undefined);
   }, [catalog]);
 
+  const readActivityAfterTerminal = useCallback(async (
+    result: BuilderVisibleProjectSnapshot,
+    commandEpoch: number,
+  ) => {
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    const conversationProjectId = visibleConversationProjectId(result);
+    if (conversationProjectId === null) return;
+    await conversation.load(conversationProjectId).catch(() => undefined);
+  }, [conversation]);
+
   const generate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
-    await project.generate(idea);
+    const result = await project.generate(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
-  }, [idea, project]);
+    await readActivityAfterTerminal(result, commandEpoch);
+  }, [idea, project, readActivityAfterTerminal]);
 
   const save = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     const result = await project.save();
     if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch);
     const savedProjectId = durableProjectId(result);
     if (savedProjectId !== null) {
       setProjectId(savedProjectId);
       await catalog.refresh().catch(() => undefined);
     }
-  }, [catalog, project]);
+  }, [catalog, project, readActivityAfterTerminal]);
   const windowControlsAvailable = windowControls !== null;
 
   const publishWindowMaximized = useCallback((maximized: boolean) => {

@@ -77,6 +77,20 @@ describe('useBuilderConversationController', () => {
     expect(latest().snapshot.conversation?.state).toBe('absent');
   });
 
+  it('supports explicit terminal loads without an automatic project selection', async () => {
+    const read = vi.fn(async () => absentWire());
+    const latest = renderHook({ read }, null);
+
+    expect(latest().snapshot.status).toBe('idle');
+    expect(read).not.toHaveBeenCalled();
+    await act(async () => {
+      await latest().load(PROJECT_ID);
+    });
+
+    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(latest().snapshot.status).toBe('absent');
+  });
+
   it('supports manual refresh without optimistic messages', async () => {
     const resolvers: Array<(value: unknown) => void> = [];
     const read = vi.fn(() => new Promise<unknown>((next) => {

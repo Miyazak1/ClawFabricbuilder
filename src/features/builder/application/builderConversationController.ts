@@ -122,14 +122,19 @@ export function createBuilderConversationController(
       return () => listeners.delete(listener);
     },
     load(projectId = null) {
-      generation += 1;
-      active = null;
       if (projectId === null || projectId === undefined) {
+        generation += 1;
+        active = null;
         return Promise.resolve(publish(snapshot('idle', null, null, null)));
       }
       if (!PROJECT_ID_PATTERN.test(projectId)) {
+        generation += 1;
+        active = null;
         return Promise.resolve(publish(snapshot('unavailable', null, null, 'unavailable')));
       }
+      if (current.project_id === projectId && active !== null) return active;
+      generation += 1;
+      active = null;
       return run(projectId, 'load');
     },
     refresh() {

@@ -141,6 +141,21 @@ describe('Builder conversation controller', () => {
     expect(result.error).toBeNull();
   });
 
+  it('coalesces repeated loads for the same in-flight project', async () => {
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise<unknown>((next) => {
+      resolve = next;
+    });
+    const { controller, read } = setup(async () => pending);
+
+    const first = controller.load(PROJECT_ID);
+    const second = controller.load(PROJECT_ID);
+    resolve(absentWire());
+
+    expect(await first).toBe(await second);
+    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+  });
+
   it('retains the previous stream during manual refresh and marks it stale on failure', async () => {
     const { controller, read } = setup(async () => readyWire());
     await controller.load(PROJECT_ID);

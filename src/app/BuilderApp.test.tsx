@@ -183,13 +183,13 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
         .toContain('I prepared a draft for review.');
     });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('sqlite');
   });
 
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {
-    const { container, loadCurrent, saveDraft } = await setup();
+    const { container, loadCurrent, readTaskStream, saveDraft } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -200,6 +200,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
+    readTaskStream.mockClear();
     click(container, 'Save version');
     await waitFor(() => {
       expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
@@ -211,6 +212,7 @@ describe('BuilderApp v2', () => {
       draft_id: expect.stringMatching(/^builder-generation-draft:/u),
     });
     expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
   });
 

@@ -15,6 +15,7 @@ import type { BuilderTaskStreamPort } from '../application/builderPorts';
 
 export type UseBuilderConversationControllerResult = Readonly<{
   snapshot: BuilderConversationControllerSnapshot;
+  load: BuilderConversationController['load'];
   refresh(): Promise<BuilderConversationControllerSnapshot>;
 }>;
 
@@ -35,7 +36,9 @@ export function useBuilderConversationController(
   );
 
   useLayoutEffect(() => {
-    void controller.load(projectId ?? null).catch(() => undefined);
+    const selectedProjectId = projectId ?? null;
+    if (controller.getSnapshot().project_id === selectedProjectId) return;
+    void controller.load(selectedProjectId).catch(() => undefined);
   }, [controller, projectId]);
 
   useLayoutEffect(() => {
@@ -51,6 +54,10 @@ export function useBuilderConversationController(
     };
   }, [controller]);
 
+  const load = useCallback<BuilderConversationController['load']>(
+    (nextProjectId) => controller.load(nextProjectId).catch(() => controller.getSnapshot()),
+    [controller],
+  );
   const refresh = useCallback(() => controller.refresh(), [controller]);
-  return useMemo(() => Object.freeze({ snapshot, refresh }), [refresh, snapshot]);
+  return useMemo(() => Object.freeze({ snapshot, load, refresh }), [load, refresh, snapshot]);
 }
