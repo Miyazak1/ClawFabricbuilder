@@ -481,6 +481,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
   const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
+  const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
@@ -490,6 +491,8 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
+  const retryableContexts = new Map();
+  const pendingRetryContexts = new Map();
   const generationContexts = new WeakMap();
   const explanationContexts = new WeakMap();
   let pendingAuthority = null;
@@ -538,8 +541,79 @@ function createBuilderGenerationMainService(rawOptions) {
     return null;
   }
 
+  function baseRevisionFromConversationContext(context) {
+    const submitted = context.events.find((event) => (
+      event.event_type === 'turn_submitted'
+      && event.payload.turn_id === context.ids.turn_id
+    ));
+    if (submitted === undefined) fail();
+    const baseRevision = submitted.payload.base_revision;
+    return baseRevision === null ? null : freezeDeep({
+      revision_receipt_digest: safeDigest(baseRevision.revision_receipt_digest),
+      commit_oid: safeOid(baseRevision.commit_oid),
+    });
+  }
+
+  function sameBaseRevision(left, right) {
+    if (left === null || right === null) return left === right;
+    return left.revision_receipt_digest === right.revision_receipt_digest
+      && left.commit_oid === right.commit_oid;
+  }
+
+  async function baseForGeneration(request, projectId, expectedBaseRevision) {
+    if (expectedBaseRevision === null) {
+      if (request.existing_project_id !== null) fail();
+      return {
+        base_revision: null,
+        base_revision_evidence: null,
+        source_tree: createBuilderProjectSourceTree({ files: [] }),
+      };
+    }
+    if (request.existing_project_id !== projectId) fail();
+    const base = sanitizeReadResult(
+      await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: projectId }]),
+      projectId,
+    );
+    if (!sameBaseRevision(base.base_revision, expectedBaseRevision)) fail();
+    return base;
+  }
+
+  function generationContextFromConversation(request, base, conversationContext) {
+    const generationContext = freezeDeep({
+      project_id: conversationContext.project.project_id,
+      base_revision_evidence: base.base_revision_evidence,
+      base_source_tree: base.source_tree,
+      conversation_events: conversationContext.events,
+      turn_id: conversationContext.ids.turn_id,
+      task_id: conversationContext.ids.task_id,
+      run_id: conversationContext.ids.run_id,
+      git_request_id: newId(options.createUuid, 'builder-git-request'),
+    });
+    generationContexts.set(generationContext, conversationContext);
+    return generationContext;
+  }
+
   async function buildGenerationContext(request) {
     try {
+      const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
+      const retryableContext = pendingRetryContexts.get(key);
+      if (retryableContext !== undefined) {
+        pendingRetryContexts.delete(key);
+        const failureCode = retryableContext.run_terminal_failure_code;
+        if (retryableContext.mode !== 'work' || typeof failureCode !== 'string') fail();
+        const retriedContext = Reflect.apply(
+          retryConversationFailure,
+          options.conversationService,
+          [{ context: retryableContext, failure_code: failureCode }],
+        );
+        const base = await baseForGeneration(
+          request,
+          retriedContext.project.project_id,
+          baseRevisionFromConversationContext(retriedContext),
+        );
+        activeContexts.set(key, retriedContext);
+        return generationContextFromConversation(request, base, retriedContext);
+      }
       const existingProjectId = request.existing_project_id;
       const projectId = existingProjectId === null
         ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
@@ -568,18 +642,8 @@ function createBuilderGenerationMainService(rawOptions) {
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,
       );
-      const generationContext = freezeDeep({
-        project_id: projectId,
-        base_revision_evidence: base.base_revision_evidence,
-        base_source_tree: base.source_tree,
-        conversation_events: conversationContext.events,
-        turn_id: conversationContext.ids.turn_id,
-        task_id: conversationContext.ids.task_id,
-        run_id: conversationContext.ids.run_id,
-        git_request_id: newId(options.createUuid, 'builder-git-request'),
-      });
-      generationContexts.set(generationContext, conversationContext);
-      return generationContext;
+      retryableContexts.delete(key);
+      return generationContextFromConversation(request, base, conversationContext);
     } catch {
       fail();
     }
@@ -678,26 +742,24 @@ function createBuilderGenerationMainService(rawOptions) {
     const conversationContext = activeContexts.get(key);
     if (conversationContext === undefined) return;
     try {
-      Reflect.apply(
+      const failedContext = Reflect.apply(
         recordConversationRetryableFailure,
         options.conversationService,
         [{ context: conversationContext, failure_code: failureCodeFrom(error) }],
       );
+      retryableContexts.set(key, failedContext);
     } catch {
       throw new BuilderGenerationMainServiceError();
     }
   }
 
-  async function generate(rawRequest) {
-    let request;
-    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
-      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
-    }
+  function startGenerate(request, retryableContext) {
     const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
     const routeConflict = rejectIfOtherRouteInFlight(GENERATE_OPERATION_PREFIX, request.request_digest);
     if (routeConflict) return routeConflict;
+    if (retryableContext !== null) pendingRetryContexts.set(key, retryableContext);
     const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
       const conversationContext = generationContexts.get(context);
@@ -764,16 +826,40 @@ function createBuilderGenerationMainService(rawOptions) {
         restart_restore: 'not_persisted',
       });
       pendingDrafts.set(draftId, stored);
+      retryableContexts.delete(key);
       return publicDraftResult(stored);
     }).catch((error) => {
       recordFailure(key, error);
       throw error;
     }).finally(() => {
+      pendingRetryContexts.delete(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
     inFlight.set(key, operation);
     return operation;
+  }
+
+  async function generate(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    return startGenerate(request, null);
+  }
+
+  async function retryGenerate(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    const retryableContext = retryableContexts.get(
+      operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
+    );
+    if (retryableContext === undefined) {
+      return Promise.reject(new BuilderGenerationMainServiceError());
+    }
+    return startGenerate(request, retryableContext);
   }
 
   async function answer(rawRequest) {
@@ -1012,6 +1098,7 @@ function createBuilderGenerationMainService(rawOptions) {
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     answer,
     generate,
+    retry_generate: retryGenerate,
     cancel,
     availability: host.availability,
     restore_draft: restoreDraft,

@@ -148,6 +148,7 @@ function conversationService() {
     explanation: [],
     failure: [],
     completeFailure: [],
+    retry: [],
     cancel: [],
     readCandidate: [],
     rejectCandidate: [],
@@ -224,7 +225,10 @@ function conversationService() {
         },
         request_digest: input.request_digest,
         start_head: eventHead(second),
+        attempt_number: 1,
+        mode: 'work',
         events: [first, second],
+        run_terminal_failure_code: null,
         ids: {
           turn_id: turnId,
           task_id: taskId,
@@ -294,7 +298,9 @@ function conversationService() {
         },
         request_digest: input.request_digest,
         start_head: eventHead(second),
+        attempt_number: 1,
         events: [first, second],
+        run_terminal_failure_code: null,
         ids: {
           turn_id: turnId,
           task_id: null,
@@ -351,6 +357,42 @@ function conversationService() {
       return {
         ...input.context,
         run_terminal_failure_code: input.failure_code,
+      };
+    },
+    retry_after_failure(input) {
+      calls.retry.push(input);
+      generation += 1;
+      const suffix = UUIDS[(generation + 4) % UUIDS.length];
+      return {
+        ...input.context,
+        attempt_number: input.context.attempt_number + 1,
+        ids: {
+          ...input.context.ids,
+          run_id: `builder-run:${suffix}`,
+        },
+        events: [
+          ...input.context.events,
+          createBuilderConversationEvent({
+            record_version: CONVERSATION_EVENT_VERSION,
+            record_kind: CONVERSATION_EVENT_KIND,
+            project_id: input.context.project.project_id,
+            conversation_id: input.context.conversation.conversation_id,
+            sequence: input.context.start_head.sequence + 1,
+            command_id: `builder-command:${UUIDS[(generation + 7) % UUIDS.length]}`,
+            event_type: 'run_started',
+            previous_event: input.context.start_head,
+            payload: {
+              turn_id: input.context.ids.turn_id,
+              run_id: `builder-run:${suffix}`,
+              task_id: input.context.ids.task_id,
+              attempt_number: input.context.attempt_number + 1,
+              retry_of_run_id: input.context.ids.run_id,
+              input_digest: input.context.request_digest,
+            },
+            authority: { ...CONVERSATION_AUTHORITY },
+          }),
+        ],
+        run_terminal_failure_code: null,
       };
     },
     request_cancel(input) {
@@ -688,6 +730,84 @@ test('records a retryable terminal run outcome when provider generation fails', 
   assert.equal(lifecycle.calls.failure.length, 1);
   assert.equal(lifecycle.calls.failure[0].failure_code, 'builder_generation_timeout');
   assert.equal(lifecycle.calls.completeFailure.length, 0);
+});
+
+test('retries a provider failure as a second run on the same turn', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-explicit-retry-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  t.after(() => {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  let now = 7_500;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(300),
+    nowMs: () => now++,
+  });
+  const generationIds = [
+    UUIDS[0],
+    createUniqueUuidFactory(500)(),
+    createUniqueUuidFactory(501)(),
+  ];
+  const fallbackGenerationUuid = createUniqueUuidFactory(600);
+  let transportAttempts = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      createUuid: () => generationIds.shift() ?? fallbackGenerationUuid(),
+    }),
+    transport: async () => {
+      transportAttempts += 1;
+      if (transportAttempts === 1) {
+        const error = new Error(PRIVATE_MARKER);
+        error.code = 'builder_provider_failed';
+        throw error;
+      }
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  const rawRequest = request();
+  await assert.rejects(
+    service.generate(rawRequest),
+    (error) => error.code === 'builder_generation_failed'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
+  assert.equal(failedStream.conversation.head_sequence, 3);
+  assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
+  await assert.rejects(
+    service.retry_generate(request({ instruction: 'Different retry should not bind.' })),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && transportAttempts === 1,
+  );
+
+  const result = await service.retry_generate(rawRequest);
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.request_id, rawRequest.request_digest);
+  const stream = conversation.read_stream({ project_id: PROJECT_ID });
+  assert.equal(stream.conversation.head_sequence, 6);
+  assert.equal(stream.conversation.recorded_active_turn_id, null);
+  assert.equal(stream.conversation.items[0].turn_id, stream.conversation.items[3].turn_id);
+  assert.deepEqual(stream.conversation.items[3], {
+    item_kind: 'run_started',
+    sequence: 4,
+    turn_id: stream.conversation.items[0].turn_id,
+    run_id: stream.conversation.items[3].run_id,
+    task_id: stream.conversation.items[0].task.task_id,
+    attempt_number: 2,
+    retry_of_run_id: stream.conversation.items[1].run_id,
+    recorded_state: 'started',
+  });
+  assert.equal(stream.conversation.items[4].item_kind, 'run_completed');
+  assert.equal(stream.conversation.items[4].run_id, stream.conversation.items[3].run_id);
+  assert.equal(stream.conversation.items[4].result_kind, 'candidate');
+  assert.equal(stream.conversation.items[5].outcome, 'candidate_ready');
+  assert.doesNotMatch(JSON.stringify(stream), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
 });
 
 test('records real provider failures as retryable activity and closes them before distinct new work', async (t) => {
