@@ -437,6 +437,14 @@ describe('BuilderPage v2', () => {
 
     click(container, '#builder-tool-tab-changes');
 
+    const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
+    expect(reviewStrip).not.toBeNull();
+    expect(reviewStrip?.textContent).toContain('Review before saving');
+    expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
+    expect(reviewStrip?.textContent).toContain('Preview and changes are ready.');
+    expect(reviewStrip?.textContent).not.toMatch(
+      /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
+    );
     const changesPanel = container.querySelector('[data-builder-changes-panel="true"]');
     expect(changesPanel).not.toBeNull();
     expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)

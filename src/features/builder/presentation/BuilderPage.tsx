@@ -38,6 +38,7 @@ import {
   type BuilderSourceTreeChange,
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
+import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourceTreePreview';
 
 export type BuilderFileName = string;
 
@@ -222,6 +223,13 @@ function changesSummary(changes: BuilderSourceTreeChanges): string {
     changes.deleted_count === 0 ? null : `${changes.deleted_count} removed`,
   ].filter((part): part is string => part !== null);
   return `${changes.total_count} file ${changes.total_count === 1 ? 'change' : 'changes'}: ${parts.join(', ')}.`;
+}
+
+function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null, hasContent: boolean): string {
+  if (preview !== null) return 'Preview and changes are ready.';
+  return hasContent
+    ? 'Review the files and changes before saving.'
+    : 'Review this draft before saving.';
 }
 
 function changeLabel(change: BuilderSourceTreeChange): string {
@@ -690,6 +698,36 @@ export function BuilderPage({
           ) : null}
         </div>
       </header>
+
+      {hasUnsavedDraft ? (
+        <section
+          aria-label="Draft review"
+          className="cf-builder-review-checkpoint"
+          data-builder-review-checkpoint="true"
+        >
+          <div className="cf-builder-review-icon" aria-hidden="true">
+            <GitCompareArrows className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="cf-builder-review-title">Review before saving</h2>
+            <p className="cf-builder-review-summary" data-builder-review-summary="true">
+              {changesSummary(changes)}
+            </p>
+            <p className="cf-builder-review-note">
+              {reviewPreviewStatus(preview, hasContent)}
+            </p>
+          </div>
+          <button
+            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+            data-builder-review-open-changes="true"
+            onClick={() => setToolView('changes')}
+            type="button"
+          >
+            <GitCompareArrows aria-hidden="true" className="size-3.5" />
+            Changes
+          </button>
+        </section>
+      ) : null}
 
       <div className="cf-builder-surface-body">
         <section aria-label="Project area" className="cf-builder-panel cf-builder-output-panel border">
