@@ -193,6 +193,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
 });
 
 const UNAVAILABLE_TASK_STREAM: BuilderTaskStreamPort = Object.freeze({
@@ -321,6 +325,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
         return ports.generator.restoreDraft(request);
       },
+      cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
+        return ports.generator.cancel(request);
+      },
     });
     const workspace: BuilderProjectWorkspacePort = Object.freeze({
       open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
@@ -414,6 +421,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
   }, [idea, project, readActivityAfterTerminal]);
+
+  const cancel = useCallback(async () => {
+    const commandEpoch = workspaceEpochRef.current;
+    const result = await project.cancel();
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch);
+  }, [project, readActivityAfterTerminal]);
 
   const save = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -611,6 +625,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onGenerate={generate}
               onInstructionChange={setIdea}
               onOpenSettings={() => setView('settings')}
+              onCancel={cancel}
               onSave={save}
               onSelectFile={setActiveFile}
               onRefreshConversation={conversation.refresh}

@@ -129,6 +129,29 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('forwards only request id when cancelling active AI work', async () => {
+    const request = await createBuilderGenerationRequest('Make a timer.');
+    const cancel = vi.fn(async (request: unknown) => ({
+      request_id: (request as { request_id: string }).request_id,
+      cancelled: true,
+    }));
+    const port = createBuilderDesktopCodeGeneratorPort({
+      generate: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      cancel,
+      availability: async () => null,
+    });
+
+    const result = await port.cancel({ request_id: request.request_digest });
+
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({ request_id: request.request_digest });
+    expect(cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(cancel.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(result).toEqual({ request_id: request.request_digest, cancelled: true });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('maps restored draft parent drift to a fixed diagnostic', async () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       generate: async () => null,
@@ -198,5 +221,24 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         BuilderDesktopCodeGeneratorPortError,
       );
     }
+  });
+
+  it('rejects malformed cancel results without exposing bridge details', async () => {
+    const request = await createBuilderGenerationRequest('Make a timer.');
+    const port = createBuilderDesktopCodeGeneratorPort({
+      generate: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      cancel: async () => ({
+        request_id: `sha256:${'9'.repeat(64)}`,
+        cancelled: true,
+        provider: 'private',
+      }),
+      availability: async () => null,
+    });
+
+    await expect(port.cancel({ request_id: request.request_digest })).rejects.toBeInstanceOf(
+      BuilderDesktopCodeGeneratorPortError,
+    );
   });
 });

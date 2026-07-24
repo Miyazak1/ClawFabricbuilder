@@ -27,6 +27,7 @@ const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const FAILURE_CODES = new Set<BuilderGenerationDiagnosticCode>(
   Object.keys(BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY) as BuilderGenerationDiagnosticCode[],
 );
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 function portError(
   code: BuilderGenerationDiagnosticCode = 'builder_generation_failed',
@@ -207,6 +208,23 @@ function unwrapGenerationEnvelope(value: unknown): unknown {
   throw portError(code);
 }
 
+function unwrapCancelResult(value: unknown, expectedRequestId: string): Readonly<{
+  request_id: string;
+  cancelled: boolean;
+}> {
+  const result = exactDataRecord(value, ['request_id', 'cancelled']);
+  if (
+    result.request_id !== expectedRequestId
+    || typeof result.request_id !== 'string'
+    || !DIGEST_PATTERN.test(result.request_id)
+    || typeof result.cancelled !== 'boolean'
+  ) throw portError();
+  return Object.freeze({
+    request_id: result.request_id,
+    cancelled: result.cancelled,
+  });
+}
+
 export function createBuilderDesktopCodeGeneratorPort(
   value: unknown,
 ): BuilderCodeGeneratorPort {
@@ -226,6 +244,11 @@ export function createBuilderDesktopCodeGeneratorPort(
       return callBridge(bridge, bridge.restoreDraft, [{
         draft_id: request.draft_id,
       }]).then(unwrapGenerationEnvelope);
+    },
+    cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
+      return callBridge(bridge, bridge.cancel, [{
+        request_id: request.request_id,
+      }]).then((result) => unwrapCancelResult(result, request.request_id));
     },
   });
 }

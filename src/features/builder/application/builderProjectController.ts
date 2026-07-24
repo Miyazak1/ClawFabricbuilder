@@ -68,6 +68,7 @@ export type BuilderProjectController = Readonly<{
   answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
+  cancel(): Promise<BuilderProjectControllerSnapshot>;
   save(): Promise<BuilderProjectControllerSnapshot>;
   dispose(): void;
 }>;
@@ -95,6 +96,7 @@ const SAVE_EVIDENCE_KEYS = Object.freeze([
   'renderer_authority',
 ]);
 const SELECTION_RESULT_KEYS = Object.freeze(['result_version', 'operation', 'project_id']);
+const CANCEL_RESULT_KEYS = Object.freeze(['request_id', 'cancelled']);
 const TRUSTED_SNAPSHOTS = new WeakSet<object>();
 
 function snapshot(
@@ -162,6 +164,12 @@ function exactRecord(value: unknown, keys: readonly string[]): Record<string, un
 function safeDigest(value: unknown): string {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) throw new Error();
   return value;
+}
+
+function sanitizeCancelResult(value: unknown, requestId: string): boolean {
+  const source = exactRecord(value, CANCEL_RESULT_KEYS);
+  if (source.request_id !== requestId || typeof source.cancelled !== 'boolean') throw new Error();
+  return source.cancelled;
 }
 
 function sanitizeSaveResult(value: unknown, draft: BuilderGenerationDraft) {
@@ -265,6 +273,10 @@ export function createBuilderProjectController(
   let epoch = 0;
   let disposed = false;
   let inFlight: Promise<BuilderProjectControllerSnapshot> | null = null;
+  let activeGeneration: Readonly<{
+    before: BuilderProjectControllerSnapshot;
+    requestId: string;
+  }> | null = null;
   const listeners = new Set<() => void>();
 
   function publish(next: BuilderProjectControllerSnapshot): BuilderProjectControllerSnapshot {
@@ -314,9 +326,16 @@ export function createBuilderProjectController(
     return running;
   }
 
+  function clearActiveGeneration(requestId: string, operationEpoch: number): void {
+    if (operationEpoch === epoch && activeGeneration?.requestId === requestId) {
+      activeGeneration = null;
+    }
+  }
+
   async function open(projectId?: string): Promise<BuilderProjectControllerSnapshot> {
     epoch += 1;
     inFlight = null;
+    activeGeneration = null;
     if (projectId === undefined) {
       return run(async (operationEpoch) => {
         publish(snapshot('opening', null, null, null, null));
@@ -362,17 +381,22 @@ export function createBuilderProjectController(
     ) return current;
     const retained = current.savedProject;
     const retainedPreview = current.preview;
+    const before = current;
     return run(async (operationEpoch) => {
       publish(snapshot('answering', retained, null, retainedPreview, null));
+      let requestId: string | null = null;
       try {
         const request = await createBuilderGenerationRequest(
           instruction,
           retained?.target.project_id ?? null,
         );
+        requestId = request.request_digest;
+        activeGeneration = Object.freeze({ before, requestId });
         const answered = await sanitizeBuilderGenerationAnswer(
           await dependencies.generator.answer(request),
           request,
         );
+        clearActiveGeneration(request.request_digest, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
           settledStatus(retained, retainedPreview),
@@ -383,6 +407,7 @@ export function createBuilderProjectController(
           answered,
         ));
       } catch (error) {
+        if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
           'answer_failed',
@@ -403,21 +428,27 @@ export function createBuilderProjectController(
       || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
+    const before = current;
     return run(async (operationEpoch) => {
       publish(snapshot('generating', retained, null, current.preview, null));
+      let requestId: string | null = null;
       try {
         const request = await createBuilderGenerationRequest(
           instruction,
           retained?.target.project_id ?? null,
         );
+        requestId = request.request_digest;
+        activeGeneration = Object.freeze({ before, requestId });
         const draft = await sanitizeBuilderGenerationDraft(
           await dependencies.generator.generate(request),
           request,
         );
+        clearActiveGeneration(request.request_digest, operationEpoch);
         if (!draftMatchesSavedBase(draft, retained)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
         return withPreview('draft_ready', retained, draft, operationEpoch);
       } catch (error) {
+        if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
           'generation_failed',
@@ -455,6 +486,28 @@ export function createBuilderProjectController(
         return publish(beforeRestore);
       }
     });
+  }
+
+  async function cancel(): Promise<BuilderProjectControllerSnapshot> {
+    const target = activeGeneration;
+    if (
+      disposed
+      || target === null
+      || !['answering', 'generating'].includes(current.status)
+    ) return current;
+    try {
+      const cancelled = sanitizeCancelResult(
+        await dependencies.generator.cancel({ request_id: target.requestId }),
+        target.requestId,
+      );
+      if (!cancelled || disposed || activeGeneration !== target) return current;
+      epoch += 1;
+      inFlight = null;
+      activeGeneration = null;
+      return publish(target.before);
+    } catch {
+      return current;
+    }
   }
 
   async function save(): Promise<BuilderProjectControllerSnapshot> {
@@ -512,11 +565,13 @@ export function createBuilderProjectController(
     answer,
     generate,
     restoreDraft,
+    cancel,
     save,
     dispose() {
       if (disposed) return;
       disposed = true;
       epoch += 1;
+      activeGeneration = null;
       listeners.clear();
     },
   });

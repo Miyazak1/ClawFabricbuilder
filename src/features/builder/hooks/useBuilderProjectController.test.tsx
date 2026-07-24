@@ -41,16 +41,33 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-async function renderHook(projectId?: string, strict = false) {
+async function renderHook(
+  projectId?: string,
+  strict = false,
+  options: Readonly<{ deferGenerate?: boolean }> = {},
+) {
   const readWire = await createReadWire();
   let latest: UseBuilderProjectControllerResult | null = null;
   let draft = await createGenerationDraft();
+  let resolveGenerate: (() => Promise<void>) | null = null;
   const generate = vi.fn(async (request) => {
+    if (options.deferGenerate === true) {
+      return new Promise<unknown>((resolve) => {
+        resolveGenerate = async () => {
+          draft = await createGenerationDraft(request, readWire.source_tree);
+          resolve(draft);
+        };
+      });
+    }
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
   const answer = vi.fn(async (request) => createGenerationAnswer(request));
   const restoreDraft = vi.fn(async () => draft);
+  const cancel = vi.fn(async (request: Readonly<{ request_id: string }>) => ({
+    request_id: request.request_id,
+    cancelled: true,
+  }));
   const saveDraft = vi.fn(async () => createSaveResult(draft, readWire));
   const loadCurrent = vi.fn(async () => readWire);
   const open = vi.fn(async (request: { project_id: string | null }) => (
@@ -62,7 +79,7 @@ async function renderHook(projectId?: string, strict = false) {
       }
       : readWire
   ));
-  const generator = { generate, answer, restoreDraft };
+  const generator = { generate, answer, restoreDraft, cancel };
   const workspace = {
     open,
     saveDraft,
@@ -95,10 +112,14 @@ async function renderHook(projectId?: string, strict = false) {
   return {
     current: () => latest as UseBuilderProjectControllerResult,
     answer,
+    cancel,
     generate,
     loadCurrent,
     open,
     restoreDraft,
+    async resolveGenerate() {
+      await resolveGenerate?.();
+    },
     async selectProject(selectedProjectId?: string) {
       await act(async () => {
         root.render(<Harness selectedProjectId={selectedProjectId} />);
@@ -174,6 +195,34 @@ describe('useBuilderProjectController', () => {
         project_id: PROJECT_ID,
       },
     });
+  });
+
+  it('exposes cancellation for the active generation request only', async () => {
+    const hook = await renderHook(undefined, false, { deferGenerate: true });
+    let generation!: Promise<unknown>;
+    await act(async () => {
+      generation = hook.current().generate('Make a timer.');
+    });
+    await waitFor(() => {
+      expect(hook.generate).toHaveBeenCalledOnce();
+    });
+    await act(async () => {
+      await hook.current().cancel();
+    });
+
+    expect(hook.cancel).toHaveBeenCalledExactlyOnceWith({
+      request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+    });
+    expect(hook.cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'new',
+      draft: null,
+    });
+    await act(async () => {
+      await hook.resolveGenerate();
+      await generation;
+    });
+    expect(hook.current().snapshot.draft).toBeNull();
   });
 
   it('keeps the controller alive when the first save selects its durable project', async () => {

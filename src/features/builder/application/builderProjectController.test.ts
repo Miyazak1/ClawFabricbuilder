@@ -22,6 +22,7 @@ function setup(options: {
   generate?: BuilderCodeGeneratorPort['generate'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
+  cancel?: BuilderCodeGeneratorPort['cancel'];
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
@@ -29,6 +30,10 @@ function setup(options: {
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
+  const cancel = vi.fn(options.cancel ?? (async (request) => ({
+    request_id: request.request_id,
+    cancelled: true,
+  })));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
   }));
@@ -50,10 +55,10 @@ function setup(options: {
     listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { generate, answer, restoreDraft },
+    generator: { generate, answer, restoreDraft, cancel },
     workspace,
   });
-  return { answer, controller, generate, loadCurrent, open, restoreDraft, saveDraft };
+  return { answer, cancel, controller, generate, loadCurrent, open, restoreDraft, saveDraft };
 }
 
 describe('Builder project controller v2', () => {
@@ -170,6 +175,40 @@ describe('Builder project controller v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('draft_ready');
     expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+  });
+
+  it('cancels an active generation by request id without saving or accepting late drafts', async () => {
+    let resolveGenerate!: (value: unknown) => void;
+    const pending = new Promise<unknown>((resolve) => {
+      resolveGenerate = resolve;
+    });
+    const { cancel, controller, generate, saveDraft } = setup({
+      generate: async () => pending,
+    });
+    const generation = controller.generate('Make a timer.');
+    expect(controller.getSnapshot().status).toBe('generating');
+    for (let attempt = 0; attempt < 20 && generate.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(generate).toHaveBeenCalledOnce();
+
+    const cancelled = await controller.cancel();
+
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+    });
+    expect(cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(cancel.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(cancelled.status).toBe('new');
+    expect(cancelled.draft).toBeNull();
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    resolveGenerate(await createGenerationDraft());
+    await generation;
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'new',
+      draft: null,
+    });
   });
 
   it('rejects a generated draft that is based on stale project revision evidence', async () => {

@@ -53,6 +53,7 @@ async function waitFor(assertion: () => void): Promise<void> {
 
 async function setup(options: Readonly<{
   answerActivity?: boolean;
+  deferredGenerate?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
   restoreAvailable?: boolean;
@@ -63,9 +64,22 @@ async function setup(options: Readonly<{
   let selectedProjectId: string | null = null;
   let latestDraft = await createGenerationDraft();
   let restoredDraft = await createRestoredGenerationDraft(readWire.source_tree);
+  let resolveGenerate: (() => Promise<void>) | null = null;
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    if (options.deferredGenerate === true) {
+      return new Promise<unknown>((resolve) => {
+        resolveGenerate = async () => {
+          latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
+          resolve({
+            version: 'builder-generation-ipc-result.v1',
+            ok: true,
+            result: latestDraft,
+          });
+        };
+      });
+    }
     latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
     return {
       version: 'builder-generation-ipc-result.v1',
@@ -106,6 +120,10 @@ async function setup(options: Readonly<{
       result: restoredDraft,
     };
   });
+  const cancel = vi.fn(async (request: unknown) => ({
+    request_id: (request as { request_id: string }).request_id,
+    cancelled: true,
+  }));
   const loadCurrent = vi.fn(async () => readWire);
   const readTaskStream = vi.fn(async () => (
     options.answerActivity === true
@@ -136,7 +154,7 @@ async function setup(options: Readonly<{
       generate,
       answer,
       restoreDraft,
-      cancel: async () => null,
+      cancel,
       availability: async () => null,
     },
     projectWorkspace: {
@@ -170,6 +188,7 @@ async function setup(options: Readonly<{
   return {
     container,
     answer,
+    cancel,
     generate,
     listHistory,
     listCurrent,
@@ -177,6 +196,9 @@ async function setup(options: Readonly<{
     open,
     readTaskStream,
     restoreDraft,
+    async resolveGenerate() {
+      await resolveGenerate?.();
+    },
     saveDraft,
   };
 }
@@ -262,6 +284,41 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+  });
+
+  it('cancels active draft generation through request-id-only control', async () => {
+    const { cancel, container, generate, resolveGenerate, saveDraft } = await setup({
+      deferredGenerate: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, 'Make draft');
+
+    await waitFor(() => {
+      expect(generate).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    });
+    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    click(container, 'Stop');
+
+    await waitFor(() => {
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ request_id: expected.request_digest });
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    });
+    expect(cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(cancel.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(saveDraft).not.toHaveBeenCalled();
   });
 
   it('loads the visible project activity through the read-only task stream bridge', async () => {

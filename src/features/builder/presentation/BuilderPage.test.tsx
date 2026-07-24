@@ -52,6 +52,9 @@ async function snapshots() {
       async restoreDraft() {
         return draft;
       },
+      async cancel(request) {
+        return { request_id: request.request_id, cancelled: true };
+      },
     },
     workspace: {
       async open(request) {
@@ -149,6 +152,49 @@ describe('BuilderPage v2', () => {
 
     expect(onAnswer).toHaveBeenCalledOnce();
     expect(onGenerate).not.toHaveBeenCalled();
+  });
+
+  it('shows Stop only while AI work is active', async () => {
+    const { fresh } = await snapshots();
+    const controller = createBuilderProjectController({
+      generator: {
+        generate: async () => new Promise(() => undefined),
+        answer: async () => null,
+        restoreDraft: async () => null,
+        cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
+      },
+      workspace: {
+        open: async () => null,
+        saveDraft: async () => null,
+        loadCurrent: async () => null,
+        listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
+      },
+    });
+    void controller.generate('Make a timer.');
+    const onCancel = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCancel={onCancel}
+        snapshot={controller.getSnapshot()}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    click(container, '[data-builder-cancel-work="true"]');
+    expect(onCancel).toHaveBeenCalledOnce();
+
+    const idle = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCancel={onCancel}
+        snapshot={fresh}
+      />,
+    );
+    expect(idle.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
   });
 
   it('shows an unsaved draft and requires the explicit Save version command', async () => {
@@ -263,6 +309,7 @@ describe('BuilderPage v2', () => {
         },
         answer: async () => null,
         restoreDraft: async () => null,
+        cancel: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -292,6 +339,7 @@ describe('BuilderPage v2', () => {
         generate: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
+        cancel: async () => null,
       },
       workspace: {
         open: async () => null,

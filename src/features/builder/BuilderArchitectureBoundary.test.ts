@@ -133,6 +133,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
+    expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
     expect(ports).not.toMatch(/commit\(|source_tree.*Promise|revision.*Promise/u);
     expect(controller).toContain("saveDraft({ draft_id: draft.draft_id })");
     expect(controller).toContain("restoreDraft({ draft_id: draftId })");
@@ -142,6 +143,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).toContain('answer: methods.answer');
     expect(generationPort).toContain('draft_id: request.draft_id');
+    expect(generationPort).toContain('request_id: request.request_id');
     expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request/u);
     expect(taskStreamPort).toContain("const BRIDGE_KEYS = Object.freeze(['read'])");
     expect(taskStreamPort).not.toMatch(/saveDraft|generate|projectWorkspace|providerSettings/u);

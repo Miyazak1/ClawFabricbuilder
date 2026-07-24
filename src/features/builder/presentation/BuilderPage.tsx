@@ -38,6 +38,7 @@ export type BuilderPageProps = {
   instruction: string;
   onInstructionChange?: (value: string) => void;
   onAnswer?: () => void;
+  onCancel?: () => void;
   onGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
@@ -385,6 +386,7 @@ function ActivityPanel({
 export function BuilderPage({
   instruction,
   onAnswer,
+  onCancel,
   onInstructionChange,
   onGenerate,
   onRefreshConversation,
@@ -419,6 +421,8 @@ export function BuilderPage({
     && !hasUnsavedDraft
     && instruction.trim().length > 0;
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
+  const canCancel = typeof onCancel === 'function'
+    && (status === 'answering' || status === 'generating');
   const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft;
   const failed = status === 'generation_failed' || status === 'answer_failed';
   const canOpenSettings = failed
@@ -637,6 +641,17 @@ export function BuilderPage({
                 </span>
               </div>
               <div className="cf-builder-composer-actions">
+                {canCancel ? (
+                  <button
+                    className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium"
+                    data-builder-cancel-work="true"
+                    onClick={onCancel}
+                    type="button"
+                  >
+                    <StopCircle aria-hidden="true" className="size-4" />
+                    Stop
+                  </button>
+                ) : null}
                 <button
                   className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
                   data-builder-ask-question="true"
