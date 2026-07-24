@@ -460,11 +460,35 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
-function recoverActive(state, project, conversation, recordedAtMs) {
+  function recoverActive(state, project, conversation, recordedAtMs) {
     if (state === null || state.snapshot.active_turn_id === null) return state;
     const turn = state.snapshot.turns.find((item) => item.turn_id === state.snapshot.active_turn_id);
     const run = turn?.runs.at(-1);
-    if (!turn || !run || run.status !== 'running') fail();
+    if (!turn || !run) fail();
+    if (run.status === 'completed') {
+      if (!['failed', 'interrupted', 'cancelled'].includes(run.terminal_status)) fail();
+      const completed = eventAt({
+        projectId: project.project_id,
+        conversationId: conversation.conversation_id,
+        sequence: state.head.sequence + 1,
+        commandId: newId(options.createUuid, 'builder-command'),
+        eventType: 'turn_completed',
+        previous: state.head,
+        payload: {
+          turn_id: turn.turn_id,
+          run_id: run.run_id,
+          outcome: run.terminal_status,
+        },
+      });
+      return append({
+        project,
+        conversation,
+        expectedHead: state.head,
+        events: [completed],
+        recordedAtMs,
+      });
+    }
+    if (run.status !== 'running') fail();
     const events = [];
     let previous = state.head;
     let terminalStatus;

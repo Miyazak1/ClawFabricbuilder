@@ -794,6 +794,62 @@ test('records a retryable failed run without completing the turn before delibera
   }
 });
 
+test('closes a retryable failed turn before starting a distinct new turn', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    item.service.record_retryable_failure({
+      context: first,
+      failure_code: 'builder_generation_failed',
+    });
+    const failedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(failedStream.conversation.head_sequence, 3);
+    assert.equal(failedStream.conversation.recorded_active_turn_id, first.ids.turn_id);
+
+    const second = begin(item.service, null, 'Try a different timer layout');
+    assert.equal(second.start_head.sequence, 6);
+    assert.notEqual(second.ids.turn_id, first.ids.turn_id);
+    assert.notEqual(second.ids.run_id, first.ids.run_id);
+    assert.deepEqual(second.events.map((event) => event.event_type), [
+      'turn_submitted',
+      'run_started',
+      'run_completed',
+      'turn_completed',
+      'turn_submitted',
+      'run_started',
+    ]);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 6);
+    assert.equal(stream.conversation.recorded_active_turn_id, second.ids.turn_id);
+    assert.deepEqual(stream.conversation.items[3], {
+      item_kind: 'turn_completed',
+      sequence: 4,
+      turn_id: first.ids.turn_id,
+      run_id: first.ids.run_id,
+      outcome: 'failed',
+    });
+    assert.deepEqual(stream.conversation.items[4], {
+      item_kind: 'user_message',
+      sequence: 5,
+      turn_id: second.ids.turn_id,
+      message: {
+        message_id: second.ids.message_id,
+        text: 'Try a different timer layout',
+      },
+      message_kind: 'submitted',
+      mode: 'work',
+      task: {
+        task_id: second.ids.task_id,
+        title: 'Create Builder project',
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(stream), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+  } finally {
+    item.close();
+  }
+});
+
 test('rejects forged contexts and stays isolated from provider, IPC, renderer, and Git authority', () => {
   const item = fixture();
   try {
