@@ -28,8 +28,53 @@ const BASE_REVISION = Object.freeze({
 function uuid(index) { return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`; }
 function id(kind, index) { return `builder-${kind}:${uuid(index)}`; }
 
+function idIndex(value) {
+  return Number.parseInt(value.slice(-12), 16);
+}
+
+function candidateResult(turnId, runId, candidateDigest) {
+  const index = idIndex(runId);
+  return {
+    draft_id: `builder-generation-draft:${index.toString(16).padStart(64, '0')}`,
+    title: 'Generated project',
+    summary: 'A generated project candidate.',
+    git_candidate_receipt: {
+      receipt_version: 'builder-git-candidate-receipt.v1',
+      repository_version: 'builder-git-project-repository.v1',
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: turnId,
+      task_id: id('task', index),
+      run_id: runId,
+      request_id: id('git-request', index),
+      candidate_id: `builder-code-change-candidate:${index.toString(16).padStart(64, '0')}`,
+      candidate_digest: candidateDigest,
+      resulting_tree_digest: RESULT_A,
+      semantic_identity_digest: RESULT_B,
+      verification_receipt_digest: RESULT_A,
+      object_format: 'sha1',
+      commit_oid: '1'.repeat(40),
+      tree_oid: '2'.repeat(40),
+      parent_oid: null,
+      expected_base_oid: null,
+      code_authority: 'git_commit_candidate',
+      product_revision_admission: 'not_recorded',
+      replay: false,
+    },
+  };
+}
+
 function append(events, eventType, payload, commandIndex = events.length + 1) {
   const previous = events.at(-1) ?? null;
+  const normalizedPayload = eventType === 'run_completed'
+    ? {
+      ...payload,
+      candidate_result: payload.candidate_result
+        ?? (payload.result_kind === 'candidate'
+          ? candidateResult(payload.turn_id, payload.run_id, payload.result_digest)
+          : null),
+    }
+    : payload;
   const event = createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -41,7 +86,7 @@ function append(events, eventType, payload, commandIndex = events.length + 1) {
     previous_event: previous === null ? null : {
       sequence: previous.sequence, event_id: previous.event_id, event_digest: previous.event_digest,
     },
-    payload,
+    payload: normalizedPayload,
     authority: { ...CONVERSATION_AUTHORITY },
   });
   return [...events, event];
@@ -208,7 +253,7 @@ test('keeps work explanations, plans, and candidates distinct from saved revisio
   }
 });
 
-test('treats interrupt and cancel as requests rather than guaranteed terminal outcomes', () => {
+test('requires terminal outcomes to honor durable interrupt and cancel requests', () => {
   function running(seed) {
     let events = [];
     events = append(events, 'turn_submitted', {
@@ -232,10 +277,7 @@ test('treats interrupt and cancel as requests rather than guaranteed terminal ou
     result_kind: 'candidate', result_digest: RESULT_B,
     assistant_message: { message_id: id('message', 71), text: 'The result arrived first.' },
   }, 73);
-  assert.equal(
-    replayBuilderConversation(successAfterInterruptRequest).turns[0].runs[0].terminal_status,
-    'succeeded',
-  );
+  assert.throws(() => replayBuilderConversation(successAfterInterruptRequest), assertReplayError);
 
   let cancelledRequest = running(80);
   cancelledRequest = append(cancelledRequest, 'run_cancel_requested', {
@@ -246,10 +288,7 @@ test('treats interrupt and cancel as requests rather than guaranteed terminal ou
     result_kind: 'failure', result_digest: RESULT_B,
     assistant_message: { message_id: id('message', 81), text: 'The attempt failed first.' },
   }, 83);
-  assert.equal(
-    replayBuilderConversation(failureAfterCancelRequest).turns[0].runs[0].terminal_status,
-    'failed',
-  );
+  assert.throws(() => replayBuilderConversation(failureAfterCancelRequest), assertReplayError);
 
   assert.throws(() => replayBuilderConversation(append(interruptedRequest, 'run_cancel_requested', {
     turn_id: id('turn', 70), run_id: id('run', 70), request_id: id('cancel-request', 70),

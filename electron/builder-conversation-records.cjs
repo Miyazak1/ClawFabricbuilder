@@ -3,6 +3,10 @@
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
+const {
+  sanitizeBuilderGitCandidateReceipt,
+} = require('./builder-git-receipt-contract.cjs');
+
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
 const MAX_EVENT_SEQUENCE = 4_096;
@@ -19,6 +23,7 @@ const CONVERSATION_AUTHORITY = Object.freeze({
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const ID_PATTERNS = Object.freeze({
   conversation: /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   event: /^builder-conversation-event:[0-9a-f]{64}$/u,
@@ -52,6 +57,9 @@ const MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const TASK_KEYS = Object.freeze(['task_id', 'title']);
 const ASSISTANT_MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
+const CANDIDATE_RESULT_KEYS = Object.freeze([
+  'draft_id', 'title', 'summary', 'git_candidate_receipt',
+]);
 const PAYLOAD_KEYS = Object.freeze({
   turn_submitted: Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision']),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
@@ -62,7 +70,7 @@ const PAYLOAD_KEYS = Object.freeze({
   run_cancel_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   run_completed: Object.freeze([
     'turn_id', 'run_id', 'terminal_status', 'result_kind', 'result_digest',
-    'assistant_message',
+    'assistant_message', 'candidate_result',
   ]),
   turn_completed: Object.freeze(['turn_id', 'run_id', 'outcome']),
 });
@@ -226,6 +234,22 @@ function sanitizeBaseRevision(value) {
   };
 }
 
+function sanitizeCandidateResult(value, turnId, runId, resultDigest) {
+  assertExactObject(value, CANDIDATE_RESULT_KEYS);
+  const receipt = sanitizeBuilderGitCandidateReceipt(valueAt(value, 'git_candidate_receipt'));
+  if (
+    receipt.turn_id !== turnId
+    || receipt.run_id !== runId
+    || receipt.candidate_digest !== resultDigest
+  ) fail();
+  return {
+    draft_id: safePattern(valueAt(value, 'draft_id'), DRAFT_ID_PATTERN, 96),
+    title: safeText(valueAt(value, 'title'), 160, 1_024, false),
+    summary: safeText(valueAt(value, 'summary'), 2_000, 8_192, true),
+    git_candidate_receipt: receipt,
+  };
+}
+
 function nullable(value, sanitizer) { return value === null ? null : sanitizer(value); }
 
 function sanitizePayload(eventType, value) {
@@ -283,13 +307,26 @@ function sanitizePayload(eventType, value) {
         valueAt(value, 'assistant_message'), (item) => sanitizeMessage(item, true),
       );
       if (assistantMessage === null && !['interrupted', 'cancelled'].includes(terminalStatus)) fail();
+      const turnId = safeTurnId(valueAt(value, 'turn_id'));
+      const runId = safeRunId(valueAt(value, 'run_id'));
+      const resultDigest = safeDigest(valueAt(value, 'result_digest'));
+      const candidateResult = valueAt(value, 'candidate_result') === null
+        ? null
+        : sanitizeCandidateResult(
+          valueAt(value, 'candidate_result'),
+          turnId,
+          runId,
+          resultDigest,
+        );
+      if ((resultKind === 'candidate') !== (candidateResult !== null)) fail();
       return {
-        turn_id: safeTurnId(valueAt(value, 'turn_id')),
-        run_id: safeRunId(valueAt(value, 'run_id')),
+        turn_id: turnId,
+        run_id: runId,
         terminal_status: terminalStatus,
         result_kind: resultKind,
-        result_digest: safeDigest(valueAt(value, 'result_digest')),
+        result_digest: resultDigest,
         assistant_message: assistantMessage,
+        candidate_result: candidateResult,
       };
     }
     case 'turn_completed': {
@@ -364,6 +401,15 @@ function sanitizeCore(value, keys) {
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   const conversationId = safeConversationId(valueAt(value, 'conversation_id'));
   if (conversationId !== expectedConversationId(projectId)) fail();
+  const payload = sanitizePayload(eventType, valueAt(value, 'payload'));
+  if (
+    eventType === 'run_completed'
+    && payload.candidate_result !== null
+    && (
+      payload.candidate_result.git_candidate_receipt.project_id !== projectId
+      || payload.candidate_result.git_candidate_receipt.conversation_id !== conversationId
+    )
+  ) fail();
   return {
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -373,7 +419,7 @@ function sanitizeCore(value, keys) {
     command_id: safeCommandId(valueAt(value, 'command_id')),
     event_type: eventType,
     previous_event: sanitizePrevious(valueAt(value, 'previous_event'), sequence),
-    payload: sanitizePayload(eventType, valueAt(value, 'payload')),
+    payload,
     authority: sanitizeAuthority(valueAt(value, 'authority')),
   };
 }

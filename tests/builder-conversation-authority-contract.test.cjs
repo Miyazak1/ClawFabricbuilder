@@ -135,17 +135,18 @@ test('accepts a continuation only when its first event follows the exact prior h
     turn_id: initial[0].payload.turn_id,
     run_id: initial[1].payload.run_id,
     terminal_status: 'succeeded',
-    result_kind: 'candidate',
+    result_kind: 'explanation',
     result_digest: DIGEST,
     assistant_message: {
       message_id: 'builder-message:00000000-0000-4000-8000-000000000005',
-      text: 'The first draft is ready.',
+      text: 'The project context is ready.',
     },
+    candidate_result: null,
   }, initial[1]);
   const terminal = event(4, 'turn_completed', {
     turn_id: initial[0].payload.turn_id,
     run_id: initial[1].payload.run_id,
-    outcome: 'candidate_ready',
+    outcome: 'responded',
   }, completed);
   const safe = sanitizeAppendConversationEventsRequest(request({
     expected_head: expectedHead,

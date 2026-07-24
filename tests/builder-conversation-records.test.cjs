@@ -98,6 +98,7 @@ test('supports command payloads with exact run attempt and terminal result evide
     turn_id: typedId('turn', 1), run_id: typedId('run', 1), terminal_status: 'succeeded',
     result_kind: 'explanation', result_digest: DIGEST_A,
     assistant_message: { message_id: typedId('message', 2), text: 'This project is local.' },
+    candidate_result: null,
   }, started, 3);
   const terminal = create('turn_completed', {
     turn_id: typedId('turn', 1), run_id: typedId('run', 1), outcome: 'answered',

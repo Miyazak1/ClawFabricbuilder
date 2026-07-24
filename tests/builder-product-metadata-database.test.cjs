@@ -103,17 +103,18 @@ function terminalConversationEvents(initial) {
     turn_id: initial[0].payload.turn_id,
     run_id: initial[1].payload.run_id,
     terminal_status: 'succeeded',
-    result_kind: 'candidate',
+    result_kind: 'explanation',
     result_digest: digest('b'),
     assistant_message: {
       message_id: `builder-message:${uuid(205)}`,
       text: 'The draft is ready to review.',
     },
+    candidate_result: null,
   }, initial[1]);
   const terminal = conversationEvent(4, 'turn_completed', {
     turn_id: initial[0].payload.turn_id,
     run_id: initial[1].payload.run_id,
-    outcome: 'candidate_ready',
+    outcome: 'responded',
   }, completed);
   return [completed, terminal];
 }

@@ -118,6 +118,7 @@ function applyRunStarted(state, payload) {
     terminal_status: null,
     result_kind: null,
     result_digest: null,
+    candidate_result: null,
     interrupt_request_id: null,
     cancel_request_id: null,
   });
@@ -152,6 +153,8 @@ function applyRunCompleted(state, payload) {
   const cancelled = run.cancel_request_id !== null;
   if ((payload.terminal_status === 'interrupted' && !interrupted)
     || (payload.terminal_status === 'cancelled' && !cancelled)
+    || (interrupted && payload.terminal_status !== 'interrupted')
+    || (cancelled && payload.terminal_status !== 'cancelled')
     || (interrupted && cancelled)) fail();
   if (payload.terminal_status === 'succeeded') {
     if (turn.mode === 'question' && payload.result_kind !== 'explanation') fail();
@@ -162,6 +165,12 @@ function applyRunCompleted(state, payload) {
   run.terminal_status = payload.terminal_status;
   run.result_kind = payload.result_kind;
   run.result_digest = payload.result_digest;
+  run.candidate_result = payload.candidate_result === null ? null : {
+    draft_id: payload.candidate_result.draft_id,
+    title: payload.candidate_result.title,
+    summary: payload.candidate_result.summary,
+    git_candidate_receipt: { ...payload.candidate_result.git_candidate_receipt },
+  };
   if (payload.assistant_message !== null) {
     turn.messages.push(addMessage(state, payload.assistant_message, 'assistant', 'run_result'));
   }
@@ -203,7 +212,13 @@ function publicTurn(turn) {
     status: turn.status,
     task: turn.task === null ? null : { ...turn.task },
     base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
-    runs: turn.runs.map((run) => ({ ...run })),
+    runs: turn.runs.map((run) => ({
+      ...run,
+      candidate_result: run.candidate_result === null ? null : {
+        ...run.candidate_result,
+        git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
+      },
+    })),
     messages: turn.messages.map((message) => ({ ...message })),
     outcome: turn.outcome,
   };
