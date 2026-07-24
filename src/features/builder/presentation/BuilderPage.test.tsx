@@ -131,6 +131,7 @@ async function savedHistory() {
 }
 
 type ReadWire = Awaited<ReturnType<typeof createReadWire>>;
+type SourceTree = Awaited<ReturnType<typeof createSourceTree>>;
 
 async function readWireAsRevision(
   wire: ReadWire,
@@ -170,6 +171,10 @@ async function changedDraftSnapshot() {
     { path: 'styles.css', content: 'main { color: black; }\n' },
     { path: 'src/add.ts', content: 'const added = true;\n' },
   ]);
+  return draftSnapshotFromSourceTrees(baseTree, draftTree);
+}
+
+async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: SourceTree) {
   const readWire = await createReadWire(baseTree);
   const request = await createBuilderGenerationRequest('Update the saved project.', PROJECT_ID);
   const rawDraft = await createGenerationDraft(request, draftTree);
@@ -535,6 +540,33 @@ describe('BuilderPage v2', () => {
     onSelectFile.mockClear();
     click(container, '[data-builder-change-card="Added src/add.ts"] button');
     expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
+  });
+
+  it('shows truncated diff lines with a single omission marker', async () => {
+    const longBefore = 'before-'.repeat(50);
+    const longAfter = 'after-'.repeat(50);
+    const draftReady = await draftSnapshotFromSourceTrees(
+      await createSourceTree([{ path: 'index.html', content: `${longBefore}\n` }]),
+      await createSourceTree([{ path: 'index.html', content: `${longAfter}\n` }]),
+    );
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Update the saved project."
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '#builder-tool-tab-changes');
+
+    const diffTexts = [...container.querySelectorAll(
+      '[data-builder-change-diff="index.html"] .cf-builder-change-diff-text',
+    )].map((node) => node.textContent ?? '');
+    expect(diffTexts).toEqual([
+      `${longBefore.slice(0, 240)}...`,
+      `${longAfter.slice(0, 240)}...`,
+    ]);
+    expect(diffTexts.join('\n')).not.toContain('... ...');
   });
 
   it('shows Git/SQLite revision number only for a verified saved snapshot', async () => {

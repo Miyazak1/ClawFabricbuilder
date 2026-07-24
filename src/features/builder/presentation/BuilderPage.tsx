@@ -362,7 +362,7 @@ function ChangesPanel({
                             {diffMarker(line.line_kind)}
                           </span>
                           <code className="cf-builder-change-diff-text">
-                            {line.text}{line.truncated ? ' ...' : ''}
+                            {line.text}
                           </code>
                         </div>
                       ))}
