@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { UseBuilderProjectControllerResult } from './useBuilderProjectController';
 import { useBuilderProjectController } from './useBuilderProjectController';
+import { BuilderGenerationDiagnosticError } from '../application/builderPorts';
 import {
   DRAFT_ID,
   PROJECT_ID,
@@ -44,13 +45,16 @@ async function waitFor(assertion: () => void): Promise<void> {
 async function renderHook(
   projectId?: string,
   strict = false,
-  options: Readonly<{ deferGenerate?: boolean }> = {},
+  options: Readonly<{ deferGenerate?: boolean; failGenerate?: boolean }> = {},
 ) {
   const readWire = await createReadWire();
   let latest: UseBuilderProjectControllerResult | null = null;
   let draft = await createGenerationDraft();
   let resolveGenerate: (() => Promise<void>) | null = null;
   const generate = vi.fn(async (request) => {
+    if (options.failGenerate === true) {
+      throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+    }
     if (options.deferGenerate === true) {
       return new Promise<unknown>((resolve) => {
         resolveGenerate = async () => {
@@ -128,6 +132,7 @@ async function renderHook(
     answer,
     cancel,
     generate,
+    retry,
     loadCurrent,
     open,
     rejectDraft,
@@ -225,6 +230,33 @@ describe('useBuilderProjectController', () => {
         result_kind: 'explanation',
         project_id: PROJECT_ID,
       },
+    });
+  });
+
+  it('exposes retry generation without creating a save', async () => {
+    const hook = await renderHook(undefined, false, { failGenerate: true });
+    await act(async () => {
+      await hook.current().generate('Make a timer.');
+    });
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'generation_failed',
+      retryableGeneration: true,
+    });
+
+    await act(async () => {
+      await hook.current().retryGenerate();
+    });
+
+    expect(hook.generate).toHaveBeenCalledOnce();
+    expect(hook.retry).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      instruction: 'Make a timer.',
+      existing_project_id: null,
+    }));
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'draft_ready',
+      retryableGeneration: false,
+      draft: { draft_id: DRAFT_ID },
     });
   });
 

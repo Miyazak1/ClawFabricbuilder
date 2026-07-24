@@ -25,6 +25,7 @@ import {
   type BuilderProjectControllerSnapshot,
   type BuilderProjectControllerStatus,
 } from '../application/builderProjectController';
+import { BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY } from '../application/builderPorts';
 import {
   isTrustedBuilderProjectHistorySnapshot,
   type BuilderProjectHistorySnapshot,
@@ -48,6 +49,7 @@ export type BuilderPageProps = {
   onAnswer?: () => void;
   onCancel?: () => void;
   onGenerate?: () => void;
+  onRetryGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
@@ -74,6 +76,16 @@ const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'generation_failed',
   'preview_unavailable',
 ]);
+
+function isBuilderGenerationDiagnosticCode(
+  value: BuilderProjectControllerSnapshot['error'],
+): value is keyof typeof BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY {
+  return value !== null && Object.hasOwn(BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY, value);
+}
+
+function isRetryableGenerationError(value: BuilderProjectControllerSnapshot['error']): boolean {
+  return isBuilderGenerationDiagnosticCode(value) && BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY[value];
+}
 
 function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'opening') return 'Opening...';
@@ -563,6 +575,7 @@ export function BuilderPage({
   onCancel,
   onInstructionChange,
   onGenerate,
+  onRetryGenerate,
   onRefreshConversation,
   onRefreshHistory,
   onRejectDraft,
@@ -607,6 +620,10 @@ export function BuilderPage({
     && (status === 'answering' || status === 'generating');
   const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft && !viewingHistory;
   const failed = status === 'generation_failed' || status === 'answer_failed';
+  const canRetryGenerate = typeof onRetryGenerate === 'function'
+    && status === 'generation_failed'
+    && current?.retryableGeneration === true
+    && isRetryableGenerationError(current.error);
   const canOpenSettings = failed
     && current?.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
@@ -989,6 +1006,17 @@ export function BuilderPage({
                   type="button"
                 >
                   Check AI settings
+                </button>
+              ) : null}
+              {canRetryGenerate ? (
+                <button
+                  className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium"
+                  data-builder-retry-draft="true"
+                  onClick={onRetryGenerate}
+                  type="button"
+                >
+                  <RefreshCw aria-hidden="true" className="size-4" />
+                  Retry
                 </button>
               ) : null}
             </div>

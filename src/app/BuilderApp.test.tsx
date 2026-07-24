@@ -58,6 +58,7 @@ async function waitFor(assertion: () => void): Promise<void> {
 async function setup(options: Readonly<{
   answerActivity?: boolean;
   deferredGenerate?: boolean;
+  failGenerate?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
   pendingAfterRevisionView?: boolean;
@@ -90,6 +91,16 @@ async function setup(options: Readonly<{
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    if (options.failGenerate === true) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_provider_http_error',
+          retryable: true,
+        },
+      };
+    }
     if (options.deferredGenerate === true) {
       return new Promise<unknown>((resolve) => {
         resolveGenerate = async () => {
@@ -102,6 +113,16 @@ async function setup(options: Readonly<{
         };
       });
     }
+    latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: latestDraft,
+    };
+  });
+  const retry = vi.fn(async (request: unknown) => {
+    const instruction = (request as { instruction: string }).instruction;
+    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
     latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
     return {
       version: 'builder-generation-ipc-result.v1',
@@ -218,7 +239,7 @@ async function setup(options: Readonly<{
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
       generate,
-      retry: generate,
+      retry,
       answer,
       restoreDraft,
       rejectDraft,
@@ -259,6 +280,7 @@ async function setup(options: Readonly<{
     answer,
     cancel,
     generate,
+    retry,
     listHistory,
     loadRevision,
     listCurrent,
@@ -447,6 +469,40 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+  });
+
+  it('retries a failed draft through the retry bridge and refreshes activity', async () => {
+    const { container, generate, readTaskStream, retry, saveDraft } = await setup({
+      failGenerate: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, 'Make draft');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
+    });
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a different timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, 'Retry');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(retry).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(container.textContent).not.toMatch(/request_digest|existing_project_id|provider|credential/iu);
   });
 
   it('cancels active draft generation through request-id-only control', async () => {

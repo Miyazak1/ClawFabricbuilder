@@ -451,6 +451,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     await readActivityAfterTerminal(result, commandEpoch);
   }, [idea, project, readActivityAfterTerminal]);
 
+  const retryGenerate = useCallback(async () => {
+    const commandEpoch = workspaceEpochRef.current;
+    const result = await project.retryGenerate();
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch);
+  }, [project, readActivityAfterTerminal]);
+
   const answer = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     const result = await project.answer(idea);
@@ -681,6 +688,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onInstructionChange={setIdea}
               onInspectRevision={inspectRevision}
               onOpenSettings={() => setView('settings')}
+              onRetryGenerate={retryGenerate}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
               onSave={save}

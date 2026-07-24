@@ -21,6 +21,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   snapshot: BuilderProjectControllerSnapshot;
   answer: BuilderProjectController['answer'];
   generate: BuilderProjectController['generate'];
+  retryGenerate: BuilderProjectController['retryGenerate'];
   restoreDraft: BuilderProjectController['restoreDraft'];
   inspectRevision: BuilderProjectController['inspectRevision'];
   showCurrentRevision: BuilderProjectController['showCurrentRevision'];
@@ -38,6 +39,7 @@ const UNAVAILABLE_SNAPSHOT: BuilderProjectControllerSnapshot = Object.freeze({
   answer: null,
   preview: null,
   error: 'unavailable',
+  retryableGeneration: false,
 });
 
 export function useBuilderProjectController(
@@ -86,6 +88,10 @@ export function useBuilderProjectController(
     (instruction) => controller.answer(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
+  const retryGenerate = useCallback<BuilderProjectController['retryGenerate']>(
+    () => controller.retryGenerate().catch(() => UNAVAILABLE_SNAPSHOT),
+    [controller],
+  );
   const save = useCallback<BuilderProjectController['save']>(
     () => controller.save().catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
@@ -117,6 +123,7 @@ export function useBuilderProjectController(
       snapshot,
       answer,
       generate,
+      retryGenerate,
       restoreDraft,
       inspectRevision,
       showCurrentRevision,
@@ -128,6 +135,7 @@ export function useBuilderProjectController(
       snapshot,
       answer,
       generate,
+      retryGenerate,
       restoreDraft,
       inspectRevision,
       showCurrentRevision,

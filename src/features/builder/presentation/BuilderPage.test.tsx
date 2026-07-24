@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBuilderProjectController } from '../application/builderProjectController';
 import { createBuilderConversationController } from '../application/builderConversationController';
 import { createBuilderProjectHistoryController } from '../application/builderProjectHistoryController';
+import { BuilderGenerationDiagnosticError } from '../application/builderPorts';
 import { BuilderPage } from './BuilderPage';
 import {
   DRAFT_ID,
@@ -361,6 +362,46 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-ask-question="true"]');
 
     expect(onAnswer).toHaveBeenCalledOnce();
+    expect(onGenerate).not.toHaveBeenCalled();
+  });
+
+  it('offers Retry for a retryable draft failure without using Make draft', async () => {
+    const controller = createBuilderProjectController({
+      generator: {
+        generate: async () => {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        },
+        retry: async (request) => createGenerationDraft(request),
+        answer: async () => null,
+        restoreDraft: async () => null,
+        rejectDraft: async () => null,
+        cancel: async () => null,
+      },
+      workspace: {
+        open: async () => null,
+        saveDraft: async () => null,
+        loadCurrent: async () => null,
+        loadRevision: async () => null,
+        listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
+      },
+    });
+    const failed = await controller.generate('Make a timer.');
+    const onGenerate = vi.fn();
+    const onRetryGenerate = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a different timer."
+        onGenerate={onGenerate}
+        onRetryGenerate={onRetryGenerate}
+        snapshot={failed}
+      />,
+    );
+
+    click(container, '[data-builder-retry-draft="true"]');
+
+    expect(onRetryGenerate).toHaveBeenCalledOnce();
     expect(onGenerate).not.toHaveBeenCalled();
   });
 

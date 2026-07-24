@@ -48,10 +48,16 @@ export class BuilderGenerationDiagnosticError extends Error {
 export function sanitizeTrustedBuilderGenerationDiagnostic(
   error: unknown,
 ): BuilderGenerationDiagnosticCode {
+  return trustedBuilderGenerationDiagnosticCode(error) ?? 'builder_generation_failed';
+}
+
+export function trustedBuilderGenerationDiagnosticCode(
+  error: unknown,
+): BuilderGenerationDiagnosticCode | null {
   if ((typeof error !== 'object' && typeof error !== 'function') || error === null) {
-    return 'builder_generation_failed';
+    return null;
   }
-  return TRUSTED_DIAGNOSTICS.get(error) ?? 'builder_generation_failed';
+  return TRUSTED_DIAGNOSTICS.get(error) ?? null;
 }
 
 export interface BuilderCodeGeneratorPort {

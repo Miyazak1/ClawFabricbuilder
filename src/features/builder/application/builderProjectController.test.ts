@@ -8,6 +8,7 @@ import type {
   BuilderCodeGeneratorPort,
   BuilderProjectWorkspacePort,
 } from './builderPorts';
+import { BuilderGenerationDiagnosticError } from './builderPorts';
 import {
   DRAFT_ID,
   PROJECT_ID,
@@ -302,7 +303,7 @@ describe('Builder project controller v2', () => {
 
   it('rejects a generated draft that is based on stale project revision evidence', async () => {
     const readWire = await createReadWire();
-    const { controller } = setup({
+    const { controller, retry } = setup({
       generate: async (request) => {
         const draft = await createGenerationDraft(request, readWire.source_tree);
         return {
@@ -321,6 +322,7 @@ describe('Builder project controller v2', () => {
     expect(result).toMatchObject({
       status: 'generation_failed',
       error: 'builder_generation_failed',
+      retryableGeneration: false,
       draft: null,
       savedProject: {
         target: {
@@ -328,6 +330,152 @@ describe('Builder project controller v2', () => {
           revision_receipt_digest: readWire.product_revision_receipt.revision_receipt_digest,
         },
       },
+    });
+    const retryResult = await controller.retryGenerate();
+    expect(retryResult).toBe(result);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('retries a trusted generation failure through the retry authority only', async () => {
+    const { controller, generate, retry, saveDraft } = setup({
+      generate: async () => {
+        throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+      },
+      retry: async (request) => createGenerationDraft(request),
+    });
+
+    const failed = await controller.generate('Make a timer.');
+    expect(failed).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_provider_http_error',
+      retryableGeneration: true,
+    });
+
+    const result = await controller.retryGenerate();
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      instruction: 'Make a timer.',
+      existing_project_id: null,
+    }));
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.retryableGeneration).toBe(false);
+    expect(result.draft?.request_id).toBe(retry.mock.calls[0][0].request_digest);
+  });
+
+  it('does not expose retry for trusted non-retryable generation failures', async () => {
+    const { controller, retry } = setup({
+      generate: async () => {
+        throw new BuilderGenerationDiagnosticError('builder_generation_provider_unavailable');
+      },
+    });
+
+    const result = await controller.generate('Make a timer.');
+
+    expect(result).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_provider_unavailable',
+      retryableGeneration: false,
+    });
+    const retryResult = await controller.retryGenerate();
+    expect(retryResult).toBe(result);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('starts distinct new work from a failed generation without using retry authority', async () => {
+    let attempts = 0;
+    const { controller, generate, retry } = setup({
+      generate: async (request) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        }
+        return createGenerationDraft(request);
+      },
+    });
+
+    await controller.generate('Make a timer.');
+    const result = await controller.generate('Make a different timer.');
+
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(retry).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.retryableGeneration).toBe(false);
+  });
+
+  it('does not restore stale retry affordance when cancelling fresh generation after failure', async () => {
+    let attempts = 0;
+    let resolveSecondStart!: () => void;
+    const secondStarted = new Promise<void>((resolve) => {
+      resolveSecondStart = resolve;
+    });
+    const secondPending = new Promise<unknown>(() => undefined);
+    const { cancel, controller, retry } = setup({
+      generate: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        }
+        resolveSecondStart();
+        return secondPending;
+      },
+    });
+
+    const failed = await controller.generate('Make a timer.');
+    expect(failed.retryableGeneration).toBe(true);
+    void controller.generate('Make a different timer.').catch(() => undefined);
+    await secondStarted;
+    const cancelled = await controller.cancel();
+
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+    });
+    expect(cancelled).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_provider_http_error',
+      retryableGeneration: false,
+      draft: null,
+    });
+    const retryResult = await controller.retryGenerate();
+    expect(retryResult).toBe(cancelled);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('does not restore stale retry affordance when cancelling an answer after generation failure', async () => {
+    let resolveAnswerStart!: () => void;
+    const answerStarted = new Promise<void>((resolve) => {
+      resolveAnswerStart = resolve;
+    });
+    const answerPending = new Promise<unknown>(() => undefined);
+    const { answer, cancel, controller, retry } = setup({
+      generate: async () => {
+        throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+      },
+      answer: async () => {
+        resolveAnswerStart();
+        return answerPending;
+      },
+    });
+
+    const failed = await controller.generate('Make a timer.');
+    expect(failed.retryableGeneration).toBe(true);
+    void controller.answer('What went wrong?').catch(() => undefined);
+    await answerStarted;
+    const cancelled = await controller.cancel();
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(cancelled).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_provider_http_error',
+      retryableGeneration: false,
+      draft: null,
+    });
+    const retryResult = await controller.retryGenerate();
+    expect(retryResult).toBe(cancelled);
+    expect(retry).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     });
   });
 
@@ -572,6 +720,7 @@ describe('Builder project controller v2', () => {
     expect(result).toMatchObject({
       status: 'generation_failed',
       error: 'builder_generation_failed',
+      retryableGeneration: false,
     });
     expect(JSON.stringify(result)).not.toContain('provider.invalid');
   });
