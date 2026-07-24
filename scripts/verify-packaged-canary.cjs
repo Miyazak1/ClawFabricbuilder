@@ -9,7 +9,8 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v4';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v5';
+const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
@@ -40,6 +41,7 @@ const SELECTORS = Object.freeze({
   baseUrl: '#builder-provider-base-url',
   currentVersion: '[data-builder-current-version="true"]',
   idea: '#builder-idea',
+  questionAnswer: '[data-builder-activity-card="Assistant"]',
   maxTokens: '#builder-provider-max-tokens',
   model: '#builder-provider-model',
   providerPanel: '[data-builder-provider-settings-panel="true"]',
@@ -78,6 +80,8 @@ const ERROR_MESSAGES = Object.freeze({
   canary_settings_save_failed: 'Packaged canary settings save failed.',
   canary_saved_profile_failed: 'Packaged canary saved profile setup failed.',
   canary_new_project_failed: 'Packaged canary new project failed.',
+  canary_question_failed: 'Packaged canary question did not produce a visible answer.',
+  canary_question_evidence_failed: 'Packaged canary question evidence failed.',
   canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
   canary_update_generation_terminal_failed: 'Packaged canary update generation did not reach a terminal preview state.',
   canary_draft_failed: 'Packaged canary unsaved draft evidence failed.',
@@ -112,6 +116,8 @@ const ERROR_STAGES = Object.freeze({
   canary_settings_save_failed: 'settings_save',
   canary_saved_profile_failed: 'saved_profile',
   canary_new_project_failed: 'new_project',
+  canary_question_failed: 'question',
+  canary_question_evidence_failed: 'question_evidence',
   canary_generation_terminal_failed: 'generation_terminal',
   canary_update_generation_terminal_failed: 'update_generation_terminal',
   canary_draft_failed: 'draft',
@@ -578,6 +584,7 @@ function redactInput(input) {
   return Object.freeze({
     credential_source: credentialSource,
     idea_digest: digestText(input.idea),
+    question_digest: digestText(CANARY_QUESTION),
     schema_version: input.schema_version,
     update_instruction_digest: digestText(CANARY_UPDATE_INSTRUCTION),
   });
@@ -1351,7 +1358,55 @@ async function generateProjectViaUi(page, idea) {
   });
 }
 
-async function createUpdateDraftViaUi(page, currentProject, instruction = CANARY_UPDATE_INSTRUCTION) {
+async function askProjectQuestionViaUi(
+  page,
+  currentProject,
+  question = CANARY_QUESTION,
+  expectedCandidateTurns = currentProject.revision_number,
+  expectedQuestionTurns = 1,
+) {
+  try {
+    await page.locator(SELECTORS.idea).fill(question);
+    await clickByRole(page, 'button', 'Ask');
+    const answer = page.locator(SELECTORS.questionAnswer).waitFor({ state: 'visible' })
+      .then(() => 'answer', () => 'answer_timeout');
+    const alert = page.getByRole('alert').waitFor({ state: 'visible' })
+      .then(() => 'alert', () => 'alert_unavailable');
+    const outcome = await Promise.race([answer, alert]);
+    if (outcome !== 'answer') fail('canary_question_failed');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_question_failed');
+  }
+  try {
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
+    const evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
+    assertExactRevision(evidence, currentProject);
+    return Object.freeze({
+      saved_revision_unchanged: true,
+      task_stream: assertTaskStreamExplanationFacts(
+        evidence,
+        currentProject,
+        expectedCandidateTurns,
+        expectedQuestionTurns,
+      ),
+      ui_answer_observed: true,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) {
+      if (error.code === 'canary_question_evidence_failed') throw error;
+      fail('canary_question_evidence_failed');
+    }
+    fail('canary_question_evidence_failed');
+  }
+}
+
+async function createUpdateDraftViaUi(
+  page,
+  currentProject,
+  instruction = CANARY_UPDATE_INSTRUCTION,
+  expectedQuestionTurns = 0,
+) {
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
     await clickByRole(page, 'button', 'Make change');
@@ -1366,7 +1421,12 @@ async function createUpdateDraftViaUi(page, currentProject, instruction = CANARY
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     const preSave = await readSanitizedBridgeEvidence(page, currentProject.project_id);
     assertExactRevision(preSave, currentProject);
-    assertTaskStreamPendingCandidateFacts(preSave, currentProject, currentProject.revision_number + 1);
+    assertTaskStreamPendingCandidateFacts(
+      preSave,
+      currentProject,
+      currentProject.revision_number + 1,
+      expectedQuestionTurns,
+    );
   } catch {
     fail('canary_update_draft_failed');
   }
@@ -1429,7 +1489,12 @@ async function failRestartVersion(page) {
   fail('canary_version_failed');
 }
 
-async function readPendingUpdateDraftRestoreEvidence(page, currentProject, expectedCandidateTurns) {
+async function readPendingUpdateDraftRestoreEvidence(
+  page,
+  currentProject,
+  expectedCandidateTurns,
+  expectedQuestionTurns = 0,
+) {
   try {
     await page.locator(SELECTORS.unsavedDraft)
       .getByText('Unsaved draft', { exact: true })
@@ -1440,7 +1505,12 @@ async function readPendingUpdateDraftRestoreEvidence(page, currentProject, expec
     assertExactRevision(evidence, currentProject);
     return Object.freeze({
       evidence,
-      task_stream: assertTaskStreamPendingCandidateFacts(evidence, currentProject, expectedCandidateTurns),
+      task_stream: assertTaskStreamPendingCandidateFacts(
+        evidence,
+        currentProject,
+        expectedCandidateTurns,
+        expectedQuestionTurns,
+      ),
       ui: Object.freeze({
         save_remained_explicit: true,
         saved_revision_visible: true,
@@ -1762,32 +1832,59 @@ function sanitizeTaskStreamItem(value) {
 
 function taskStreamItemCounts(items) {
   const counts = {
+    answer_count: 0,
     candidate_ready_count: 0,
     candidate_result_count: 0,
+    explanation_result_count: 0,
     run_completed_count: 0,
     run_started_count: 0,
     turn_completed_count: 0,
     user_message_count: 0,
   };
   let latestCandidate = null;
+  let latestExplanation = null;
   let latestTurn = null;
+  const runStartedByRunId = new Map();
+  const userMessageByTurnId = new Map();
   for (const item of items) {
-    if (item.item_kind === 'user_message') counts.user_message_count += 1;
-    if (item.item_kind === 'run_started') counts.run_started_count += 1;
+    if (item.item_kind === 'user_message') {
+      counts.user_message_count += 1;
+      userMessageByTurnId.set(item.turn_id, item);
+    }
+    if (item.item_kind === 'run_started') {
+      counts.run_started_count += 1;
+      runStartedByRunId.set(item.run_id, item);
+    }
     if (item.item_kind === 'run_completed') {
       counts.run_completed_count += 1;
       if (item.result_kind === 'candidate' && item.candidate !== null) {
         counts.candidate_result_count += 1;
         latestCandidate = item;
       }
+      if (item.result_kind === 'explanation') {
+        counts.explanation_result_count += 1;
+        latestExplanation = item;
+      }
     }
     if (item.item_kind === 'turn_completed') {
       counts.turn_completed_count += 1;
       if (item.outcome === 'candidate_ready') counts.candidate_ready_count += 1;
+      if (item.outcome === 'answered') counts.answer_count += 1;
       latestTurn = item;
     }
   }
-  return Object.freeze({ counts: Object.freeze(counts), latestCandidate, latestTurn });
+  return Object.freeze({
+    counts: Object.freeze(counts),
+    latestCandidate,
+    latestExplanation,
+    latestExplanationRunStarted: latestExplanation === null
+      ? null
+      : runStartedByRunId.get(latestExplanation.run_id) ?? null,
+    latestExplanationUserMessage: latestExplanation === null
+      ? null
+      : userMessageByTurnId.get(latestExplanation.turn_id) ?? null,
+    latestTurn,
+  });
 }
 
 function sanitizeTaskStreamConversation(value, projectId) {
@@ -2218,7 +2315,12 @@ function exactRevisionFromReadEvidence(evidence, expectedProject) {
   }
 }
 
-function assertTaskStreamCandidateFacts(evidence, expectedRevision, expectedCandidateTurns) {
+function assertTaskStreamCandidateFacts(
+  evidence,
+  expectedRevision,
+  expectedCandidateTurns,
+  expectedQuestionTurns = 0,
+) {
   const sanitized = assertReadEvidence(evidence);
   const stream = sanitized.task_stream;
   if (
@@ -2232,19 +2334,22 @@ function assertTaskStreamCandidateFacts(evidence, expectedRevision, expectedCand
   const conversation = stream.conversation;
   const facts = conversation.item_facts;
   const counts = facts.counts;
-  const expectedItemCount = expectedCandidateTurns * 4;
+  const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
+  const expectedItemCount = expectedTurnCount * 4;
   if (
     conversation.window.first_sequence !== 1
     || conversation.window.last_sequence !== expectedItemCount
     || conversation.window.has_earlier !== false
     || conversation.head_sequence !== expectedItemCount
     || conversation.item_count !== expectedItemCount
-    || counts.user_message_count !== expectedCandidateTurns
-    || counts.run_started_count !== expectedCandidateTurns
-    || counts.run_completed_count !== expectedCandidateTurns
-    || counts.turn_completed_count !== expectedCandidateTurns
+    || counts.user_message_count !== expectedTurnCount
+    || counts.run_started_count !== expectedTurnCount
+    || counts.run_completed_count !== expectedTurnCount
+    || counts.turn_completed_count !== expectedTurnCount
     || counts.candidate_result_count !== expectedCandidateTurns
     || counts.candidate_ready_count !== expectedCandidateTurns
+    || counts.explanation_result_count !== expectedQuestionTurns
+    || counts.answer_count !== expectedQuestionTurns
   ) fail('canary_evidence_failed');
 
   const latestCandidate = facts.latestCandidate;
@@ -2264,8 +2369,10 @@ function assertTaskStreamCandidateFacts(evidence, expectedRevision, expectedCand
   ) fail('canary_evidence_failed');
 
   return Object.freeze({
+    answer_count: counts.answer_count,
     candidate_ready_count: counts.candidate_ready_count,
     candidate_result_count: counts.candidate_result_count,
+    explanation_result_count: counts.explanation_result_count,
     head_sequence: conversation.head_sequence,
     item_count: conversation.item_count,
     latest_candidate_bound_to_revision: true,
@@ -2273,7 +2380,101 @@ function assertTaskStreamCandidateFacts(evidence, expectedRevision, expectedCand
   });
 }
 
-function assertTaskStreamPendingCandidateFacts(evidence, expectedSavedRevision, expectedCandidateTurns) {
+function assertTaskStreamExplanationFacts(
+  evidence,
+  expectedRevision,
+  expectedCandidateTurns,
+  expectedQuestionTurns,
+) {
+  const sanitized = assertReadEvidence(evidence);
+  const stream = sanitized.task_stream;
+  const current = sanitized.current;
+  if (
+    stream === null
+    || current === null
+    || stream.project_id !== expectedRevision.project_id
+    || current.product_revision_receipt.project_id !== expectedRevision.project_id
+    || current.product_revision_receipt.revision_number !== expectedRevision.revision_number
+    || current.product_revision_receipt.revision_receipt_digest !== expectedRevision.revision_receipt_digest
+    || current.product_revision_receipt.commit_oid !== expectedRevision.commit_oid
+    || current.product_revision_receipt.tree_oid !== expectedRevision.tree_oid
+    || expectedQuestionTurns < 1
+    || stream.conversation === null
+    || stream.conversation.conversation_id !== expectedRevision.conversation_id
+    || stream.conversation.recorded_active_turn_id !== null
+  ) fail('canary_question_evidence_failed');
+
+  const conversation = stream.conversation;
+  const facts = conversation.item_facts;
+  const counts = facts.counts;
+  const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
+  const expectedItemCount = expectedTurnCount * 4;
+  if (
+    conversation.window.first_sequence !== 1
+    || conversation.window.last_sequence !== expectedItemCount
+    || conversation.window.has_earlier !== false
+    || conversation.head_sequence !== expectedItemCount
+    || conversation.item_count !== expectedItemCount
+    || counts.user_message_count !== expectedTurnCount
+    || counts.run_started_count !== expectedTurnCount
+    || counts.run_completed_count !== expectedTurnCount
+    || counts.turn_completed_count !== expectedTurnCount
+    || counts.candidate_result_count !== expectedCandidateTurns
+    || counts.candidate_ready_count !== expectedCandidateTurns
+    || counts.explanation_result_count !== expectedQuestionTurns
+    || counts.answer_count !== expectedQuestionTurns
+  ) fail('canary_question_evidence_failed');
+
+  const latestExplanation = facts.latestExplanation;
+  const latestCandidate = facts.latestCandidate;
+  const latestExplanationRunStarted = facts.latestExplanationRunStarted;
+  const latestExplanationUserMessage = facts.latestExplanationUserMessage;
+  const latestTurn = facts.latestTurn;
+  if (
+    latestExplanation === null
+    || latestCandidate === null
+    || latestExplanationRunStarted === null
+    || latestExplanationUserMessage === null
+    || latestTurn === null
+    || latestCandidate.candidate === null
+    || latestCandidate.candidate.source_availability !== 'not_loaded'
+    || latestExplanationUserMessage.turn_id !== latestExplanation.turn_id
+    || latestExplanationUserMessage.message_kind !== 'submitted'
+    || latestExplanationUserMessage.mode !== 'question'
+    || latestExplanationUserMessage.task !== null
+    || latestExplanationRunStarted.turn_id !== latestExplanation.turn_id
+    || latestExplanationRunStarted.run_id !== latestExplanation.run_id
+    || latestExplanationRunStarted.task_id !== null
+    || latestExplanationUserMessage.sequence >= latestExplanationRunStarted.sequence
+    || latestExplanationRunStarted.sequence >= latestExplanation.sequence
+    || latestExplanation.sequence >= latestTurn.sequence
+    || latestExplanation.terminal_status !== 'succeeded'
+    || latestExplanation.result_kind !== 'explanation'
+    || latestExplanation.candidate !== null
+    || latestExplanation.assistant_message === null
+    || latestTurn.turn_id !== latestExplanation.turn_id
+    || latestTurn.run_id !== latestExplanation.run_id
+    || latestTurn.outcome !== 'answered'
+  ) fail('canary_question_evidence_failed');
+
+  return Object.freeze({
+    answer_count: counts.answer_count,
+    candidate_ready_count: counts.candidate_ready_count,
+    candidate_result_count: counts.candidate_result_count,
+    explanation_result_count: counts.explanation_result_count,
+    head_sequence: conversation.head_sequence,
+    item_count: conversation.item_count,
+    revision_unchanged: true,
+    source_availability: 'not_loaded',
+  });
+}
+
+function assertTaskStreamPendingCandidateFacts(
+  evidence,
+  expectedSavedRevision,
+  expectedCandidateTurns,
+  expectedQuestionTurns = 0,
+) {
   const sanitized = assertReadEvidence(evidence);
   const stream = sanitized.task_stream;
   const current = sanitized.current;
@@ -2296,19 +2497,22 @@ function assertTaskStreamPendingCandidateFacts(evidence, expectedSavedRevision, 
   const conversation = stream.conversation;
   const facts = conversation.item_facts;
   const counts = facts.counts;
-  const expectedItemCount = expectedCandidateTurns * 4;
+  const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
+  const expectedItemCount = expectedTurnCount * 4;
   if (
     conversation.window.first_sequence !== 1
     || conversation.window.last_sequence !== expectedItemCount
     || conversation.window.has_earlier !== false
     || conversation.head_sequence !== expectedItemCount
     || conversation.item_count !== expectedItemCount
-    || counts.user_message_count !== expectedCandidateTurns
-    || counts.run_started_count !== expectedCandidateTurns
-    || counts.run_completed_count !== expectedCandidateTurns
-    || counts.turn_completed_count !== expectedCandidateTurns
+    || counts.user_message_count !== expectedTurnCount
+    || counts.run_started_count !== expectedTurnCount
+    || counts.run_completed_count !== expectedTurnCount
+    || counts.turn_completed_count !== expectedTurnCount
     || counts.candidate_result_count !== expectedCandidateTurns
     || counts.candidate_ready_count !== expectedCandidateTurns
+    || counts.explanation_result_count !== expectedQuestionTurns
+    || counts.answer_count !== expectedQuestionTurns
   ) fail('canary_evidence_failed');
 
   const latestCandidate = facts.latestCandidate;
@@ -2328,8 +2532,10 @@ function assertTaskStreamPendingCandidateFacts(evidence, expectedSavedRevision, 
   ) fail('canary_evidence_failed');
 
   return Object.freeze({
+    answer_count: counts.answer_count,
     candidate_ready_count: counts.candidate_ready_count,
     candidate_result_count: counts.candidate_result_count,
+    explanation_result_count: counts.explanation_result_count,
     head_sequence: conversation.head_sequence,
     item_count: conversation.item_count,
     latest_candidate_distinct_from_saved_revision: true,
@@ -2595,11 +2801,17 @@ async function runPackagedCanary(rawInput, options = {}) {
     const initialRevision = exactRevisionFromReadEvidence(initialCurrentEvidence, initialProject);
     const initialTaskStream = assertTaskStreamCandidateFacts(initialCurrentEvidence, initialRevision, 1);
     const initialPreviewEvidence = await capturePreviewEvidence(page, gate);
-    const pendingUpdateDraft = await createUpdateDraftViaUi(page, initialRevision);
+    const question = await askProjectQuestionViaUi(page, initialRevision, CANARY_QUESTION, 1, 1);
+    const pendingUpdateDraft = await createUpdateDraftViaUi(
+      page,
+      initialRevision,
+      CANARY_UPDATE_INSTRUCTION,
+      1,
+    );
     const pendingUpdateEvidence = await readSanitizedBridgeEvidence(page, initialProject.project_id);
     const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
     if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
-    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2);
+    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 1);
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
     if (pendingUpdatePreviewEvidence.srcdoc_digest === initialPreviewEvidence.srcdoc_digest) {
       fail('canary_preview_failed');
@@ -2613,7 +2825,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
     await assertCustomChromeControls(pendingRestartPage);
     await openProjectFromCatalogById(pendingRestartPage, initialRevision, 'canary_restart_open_failed');
-    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2);
+    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 1);
     const pendingRestartProject = projectFromReadEvidence(pendingRestart.evidence, 1);
     if (!sameCatalogProjectRevision(pendingRestartProject, initialProject)) {
       fail('canary_pending_draft_restart_failed');
@@ -2635,7 +2847,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     const updatedCurrentEvidence = await readSanitizedBridgeEvidence(pendingRestartPage, updatedProject.project_id);
     const updatedRevision = exactRevisionFromReadEvidence(updatedCurrentEvidence, updatedProject);
     assertRevisionAdvance(initialRevision, updatedRevision);
-    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2);
+    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 1);
     const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (updatedPreviewEvidence.srcdoc_digest === initialPreviewEvidence.srcdoc_digest) {
       fail('canary_preview_failed');
@@ -2668,7 +2880,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       fail('canary_restart_preview_failed');
     }
     const restartProject = projectFromReadEvidence(restartEvidence, 2);
-    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2);
+    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 1);
     const restartPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     const network = recorder.snapshot();
     if (network.renderer_unexpected_network_count !== 0) fail('canary_evidence_failed');
@@ -2696,6 +2908,9 @@ async function runPackagedCanary(rawInput, options = {}) {
       }),
       input: redactInput(input),
       network,
+      question: Object.freeze({
+        after_initial_save: question,
+      }),
       preview: Object.freeze({
         initial: initialPreviewEvidence,
         pending_update: pendingUpdatePreviewEvidence,
@@ -2733,12 +2948,15 @@ async function runPackagedCanary(rawInput, options = {}) {
       }),
       task_stream: Object.freeze({
         initial: initialTaskStream,
+        question: question.task_stream,
         pending_update: pendingUpdateTaskStream,
         pending_update_restart: pendingRestart.task_stream,
         updated: updatedTaskStream,
         restart: restartTaskStream,
         pending_update_advanced_candidate_count: pendingUpdateTaskStream.candidate_ready_count
           === initialTaskStream.candidate_ready_count + 1,
+        question_did_not_advance_candidate_count: question.task_stream.candidate_ready_count
+          === initialTaskStream.candidate_ready_count,
         pending_update_restart_unchanged: true,
         update_advanced_candidate_count: updatedTaskStream.candidate_ready_count
           === initialTaskStream.candidate_ready_count + 1,
@@ -2832,6 +3050,7 @@ async function main() {
 module.exports = {
   BuilderPackagedCanaryError,
   CANARY_INPUT_VERSION,
+  CANARY_QUESTION,
   CANARY_RESULT_VERSION,
   PACKAGED_CANARY_SENTINEL,
   PACKAGED_CANARY_USER_DATA_PATH,
@@ -2841,7 +3060,9 @@ module.exports = {
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
+  assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
+  askProjectQuestionViaUi,
   captureGuardedUserDataRoot,
   capturePreviewEvidence,
   copySavedProviderProfile,

@@ -8,6 +8,7 @@ const test = require('node:test');
 
 const {
   CANARY_INPUT_VERSION,
+  CANARY_RESULT_VERSION,
 } = require('../scripts/verify-packaged-canary.cjs');
 const {
   DEEPSEEK_CANARY_IDEA,
@@ -134,10 +135,11 @@ test('decorates real canary output with redacted DeepSeek V4 evidence only', asy
         input: Object.freeze({
           credential_source: 'stdin',
           idea_digest: 'sha256:'.concat('1'.repeat(64)),
+          question_digest: 'sha256:'.concat('3'.repeat(64)),
           schema_version: CANARY_INPUT_VERSION,
           update_instruction_digest: 'sha256:'.concat('2'.repeat(64)),
         }),
-        result_version: 'builder-packaged-canary-result.v4',
+        result_version: CANARY_RESULT_VERSION,
       });
     },
   });
@@ -149,7 +151,7 @@ test('decorates real canary output with redacted DeepSeek V4 evidence only', asy
     argv: ['--execute'],
     env: { PATH: 'C:\\Windows\\System32' },
   });
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v4');
+  assert.equal(result.result_version, CANARY_RESULT_VERSION);
   assert.equal(result.deepseek_v4.provider_family, 'deepseek_v4_openai_compatible');
   assert.equal(result.deepseek_v4.schema_version, DEEPSEEK_CANARY_INPUT_VERSION);
   assert.match(result.deepseek_v4.endpoint_digest, /^sha256:[0-9a-f]{64}$/u);
@@ -193,11 +195,11 @@ test('CLI requires explicit execute and writes only redacted result JSON', async
         provider_family: 'deepseek_v4_openai_compatible',
         schema_version: DEEPSEEK_CANARY_INPUT_VERSION,
       }),
-      result_version: 'builder-packaged-canary-result.v4',
+      result_version: CANARY_RESULT_VERSION,
     }),
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v4');
+  assert.equal(result.result_version, CANARY_RESULT_VERSION);
   assert.equal(packet.includes('real-deepseek-v4-key'), false);
   assert.equal(packet.includes('deepseek-v4-flash'), false);
   assert.equal(packet.includes('api.deepseek.com'), false);

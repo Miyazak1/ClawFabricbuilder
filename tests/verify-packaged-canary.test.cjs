@@ -11,13 +11,17 @@ const { PNG } = require('pngjs');
 const {
   BuilderPackagedCanaryError,
   CANARY_INPUT_VERSION,
+  CANARY_QUESTION,
+  CANARY_RESULT_VERSION,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
   assertCustomChromeControls,
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
+  assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
+  askProjectQuestionViaUi,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
@@ -169,6 +173,7 @@ class FakeRole {
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
     if (this.name === 'Make draft') this.page.recordCandidateDraft(1);
     if (this.name === 'Make change') this.page.recordCandidateDraft(this.page.savedRevision + 1);
+    if (this.name === 'Ask') this.page.recordQuestion();
     if (this.name === 'Save version' && this.page.persistSave) {
       const revision = await this.page.commitSave();
       this.page.draftSaved = revision > 0;
@@ -232,6 +237,7 @@ class FakePage {
     this.keepPasswordValue = false;
     this.previewVisible = true;
     this.projectStatus = 'ready';
+    this.questionTurns = 0;
     this.savedRevision = 0;
     this.versionLabel = 'Version 1';
     this.values = new Map();
@@ -239,6 +245,9 @@ class FakePage {
     this.commitSave = async () => Math.max(this.savedRevision + 1, this.candidateTurns);
     this.recordCandidateDraft = (candidateTurns) => {
       this.candidateTurns = Math.max(this.candidateTurns, candidateTurns);
+    };
+    this.recordQuestion = () => {
+      this.questionTurns += 1;
     };
   }
 
@@ -423,7 +432,7 @@ function revisionEvidence(selectedProjectId, revisionNumber) {
   return { candidate, current, receipt, sourceTree, verification };
 }
 
-function taskStreamConversation(selectedProjectId, revisionNumber) {
+function taskStreamConversation(selectedProjectId, candidateTurns, questionTurns = 0) {
   const items = [];
   const userMessageIds = [
     'builder-message:10101010-1010-4010-8010-101010101010',
@@ -433,13 +442,29 @@ function taskStreamConversation(selectedProjectId, revisionNumber) {
     'builder-message:12121212-1212-4212-8212-121212121212',
     'builder-message:14141414-1414-4414-8414-141414141414',
   ];
-  for (let revision = 1; revision <= revisionNumber; revision += 1) {
+  const questionUserMessageIds = [
+    'builder-message:15151515-1515-4515-8515-151515151515',
+  ];
+  const questionAssistantMessageIds = [
+    'builder-message:16161616-1616-4616-8616-161616161616',
+  ];
+  const questionTurnIds = [
+    'builder-turn:17171717-1717-4717-8717-171717171717',
+  ];
+  const questionRunIds = [
+    'builder-run:18181818-1818-4818-8818-181818181818',
+  ];
+  let sequence = 0;
+  function takeSequence() {
+    sequence += 1;
+    return sequence;
+  }
+  function pushCandidateTurn(revision) {
     const evidence = revisionEvidence(selectedProjectId, revision);
-    const itemBase = (revision - 1) * 4;
     items.push(
       {
         item_kind: 'user_message',
-        sequence: itemBase + 1,
+        sequence: takeSequence(),
         turn_id: evidence.receipt.turn_id,
         message: {
           message_id: userMessageIds[revision - 1],
@@ -454,7 +479,7 @@ function taskStreamConversation(selectedProjectId, revisionNumber) {
       },
       {
         item_kind: 'run_started',
-        sequence: itemBase + 2,
+        sequence: takeSequence(),
         turn_id: evidence.receipt.turn_id,
         run_id: evidence.receipt.run_id,
         task_id: evidence.receipt.task_id,
@@ -464,7 +489,7 @@ function taskStreamConversation(selectedProjectId, revisionNumber) {
       },
       {
         item_kind: 'run_completed',
-        sequence: itemBase + 3,
+        sequence: takeSequence(),
         turn_id: evidence.receipt.turn_id,
         run_id: evidence.receipt.run_id,
         terminal_status: 'succeeded',
@@ -483,12 +508,67 @@ function taskStreamConversation(selectedProjectId, revisionNumber) {
       },
       {
         item_kind: 'turn_completed',
-        sequence: itemBase + 4,
+        sequence: takeSequence(),
         turn_id: evidence.receipt.turn_id,
         run_id: evidence.receipt.run_id,
         outcome: 'candidate_ready',
       },
     );
+  }
+  function pushQuestionTurn(index) {
+    const turnId = questionTurnIds[index - 1];
+    const runId = questionRunIds[index - 1];
+    items.push(
+      {
+        item_kind: 'user_message',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        message: {
+          message_id: questionUserMessageIds[index - 1],
+          text: CANARY_QUESTION,
+        },
+        message_kind: 'submitted',
+        mode: 'question',
+        task: null,
+      },
+      {
+        item_kind: 'run_started',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        task_id: null,
+        attempt_number: 1,
+        retry_of_run_id: null,
+        recorded_state: 'started',
+      },
+      {
+        item_kind: 'run_completed',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        terminal_status: 'succeeded',
+        result_kind: 'explanation',
+        assistant_message: {
+          message_id: questionAssistantMessageIds[index - 1],
+          text: 'It is a focus timer. Review the timer duration before changing it.',
+        },
+        candidate: null,
+      },
+      {
+        item_kind: 'turn_completed',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        outcome: 'answered',
+      },
+    );
+  }
+  if (candidateTurns >= 1) pushCandidateTurn(1);
+  for (let question = 1; question <= questionTurns; question += 1) {
+    pushQuestionTurn(question);
+  }
+  for (let revision = 2; revision <= candidateTurns; revision += 1) {
+    pushCandidateTurn(revision);
   }
   return {
     conversation_id: revisionEvidence(selectedProjectId, 1).receipt.conversation_id,
@@ -504,7 +584,13 @@ function taskStreamConversation(selectedProjectId, revisionNumber) {
   };
 }
 
-function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1, candidateTurns = revisionNumber) {
+function bridgeEvidence(
+  projectId = null,
+  saved = true,
+  revisionNumber = 1,
+  candidateTurns = revisionNumber,
+  questionTurns = 0,
+) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
   const revision = revisionEvidence(selectedProjectId, revisionNumber);
@@ -523,7 +609,7 @@ function bridgeEvidence(projectId = null, saved = true, revisionNumber = 1, cand
     : {
       stream_version: 'builder-task-stream-read-result.v1',
       project_id: projectId,
-      conversation: saved ? taskStreamConversation(selectedProjectId, candidateTurns) : null,
+      conversation: saved ? taskStreamConversation(selectedProjectId, candidateTurns, questionTurns) : null,
       authority: {
         conversation: 'sqlite_canonical_event_replay_or_absent',
         project_source: 'not_included',
@@ -586,6 +672,7 @@ function installBridge(page) {
           page.draftSaved,
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
+          page.questionTurns,
         ).catalog;
       },
       async loadCurrent(request) {
@@ -594,6 +681,7 @@ function installBridge(page) {
           page.draftSaved,
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
+          page.questionTurns,
         ).current;
       },
       async saveDraft() { throw new Error('must not write through bridge'); },
@@ -609,6 +697,7 @@ function installBridge(page) {
           page.draftSaved,
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
+          page.questionTurns,
         )
           .task_stream;
       },
@@ -617,7 +706,7 @@ function installBridge(page) {
 }
 
 function fakeElectron(page) {
-  const durableStore = { candidateTurns: 0, revision: 0 };
+  const durableStore = { candidateTurns: 0, questionTurns: 0, revision: 0 };
   const fake = {
     appEvents: [],
     launches: [],
@@ -626,6 +715,7 @@ function fakeElectron(page) {
       fake.launches.push(options);
       const activePage = fake.launches.length === 1 ? page : new FakePage();
       activePage.candidateTurns = durableStore.candidateTurns;
+      activePage.questionTurns = durableStore.questionTurns;
       activePage.savedRevision = durableStore.revision;
       activePage.draftSaved = durableStore.revision > 0;
       activePage.versionLabel = `Version ${Math.max(1, durableStore.revision)}`;
@@ -637,6 +727,10 @@ function fakeElectron(page) {
       activePage.recordCandidateDraft = (candidateTurns) => {
         durableStore.candidateTurns = Math.max(durableStore.candidateTurns, candidateTurns);
         activePage.candidateTurns = durableStore.candidateTurns;
+      };
+      activePage.recordQuestion = () => {
+        durableStore.questionTurns += 1;
+        activePage.questionTurns = durableStore.questionTurns;
       };
       fake.pages.push(activePage);
       const requestListeners = [];
@@ -663,6 +757,7 @@ function fakeElectron(page) {
               durableStore.revision > 0,
               Math.max(1, durableStore.revision),
               Math.max(1, durableStore.revision, durableStore.candidateTurns),
+              durableStore.questionTurns,
             );
           };
           activePage.artifactsAllowed = true;
@@ -1035,6 +1130,72 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('answers a saved-project question without creating a draft or revision', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+    1,
+    0,
+  ).current.product_revision_receipt;
+  const answer = await askProjectQuestionViaUi(page, firstRevision);
+  const evidence = await readSanitizedBridgeEvidence(page, firstRevision.project_id);
+
+  assert.equal(page.savedRevision, 1);
+  assert.equal(page.candidateTurns, 1);
+  assert.equal(page.questionTurns, 1);
+  assert.deepEqual(answer, {
+    saved_revision_unchanged: true,
+    task_stream: {
+      answer_count: 1,
+      candidate_ready_count: 1,
+      candidate_result_count: 1,
+      explanation_result_count: 1,
+      head_sequence: 8,
+      item_count: 8,
+      revision_unchanged: true,
+      source_availability: 'not_loaded',
+    },
+    ui_answer_observed: true,
+  });
+  assert.deepEqual(
+    assertTaskStreamExplanationFacts(evidence, firstRevision, 1, 1),
+    answer.task_stream,
+  );
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['New project', 'Make draft', 'Save version', 'Ask'],
+  );
+});
+
+test('rejects explanations that are not bound to a taskless question turn', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const expectedRevision = bridgeEvidence(projectId, true, 1, 1, 1).current.product_revision_receipt;
+
+  const workExplanation = bridgeEvidence(projectId, true, 1, 1, 1);
+  workExplanation.task_stream.conversation.items[4].mode = 'work';
+  workExplanation.task_stream.conversation.items[4].task = {
+    task_id: expectedRevision.task_id,
+    title: 'Not a question',
+  };
+  assert.throws(
+    () => assertTaskStreamExplanationFacts(workExplanation, expectedRevision, 1, 1),
+    (error) => error.code === 'canary_question_evidence_failed',
+  );
+
+  const taskedExplanation = bridgeEvidence(projectId, true, 1, 1, 1);
+  taskedExplanation.task_stream.conversation.items[5].task_id = expectedRevision.task_id;
+  assert.throws(
+    () => assertTaskStreamExplanationFacts(taskedExplanation, expectedRevision, 1, 1),
+    (error) => error.code === 'canary_question_evidence_failed',
+  );
+});
+
 test('keeps an update candidate pending before the explicit Version 2 save', async (t) => {
   const page = new FakePage();
   installBridge(page);
@@ -1057,8 +1218,10 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.savedRevision, 1);
   assert.equal(page.versionLabel, 'Version 1');
   assert.deepEqual(pendingFacts, {
+    answer_count: 0,
     candidate_ready_count: 2,
     candidate_result_count: 2,
+    explanation_result_count: 0,
     head_sequence: 8,
     item_count: 8,
     latest_candidate_distinct_from_saved_revision: true,
@@ -1220,6 +1383,53 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'version',
+    },
+    {
+      code: 'canary_question_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.failRoleClicks.add('button:Ask');
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await askProjectQuestionViaUi(page, first);
+      },
+      stage: 'question',
+    },
+    {
+      code: 'canary_question_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.failWaitFor.add(SELECTORS.questionAnswer);
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await askProjectQuestionViaUi(page, first);
+      },
+      stage: 'question',
+    },
+    {
+      code: 'canary_question_evidence_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.candidateTurns = 1;
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await askProjectQuestionViaUi(page, first, CANARY_QUESTION, 1, 2);
+      },
+      stage: 'question_evidence',
     },
     {
       code: 'canary_update_generation_terminal_failed',
@@ -1575,7 +1785,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v4');
+  assert.equal(result.result_version, CANARY_RESULT_VERSION);
   assert.equal(result.safe_storage.credential_status, 'stored');
   assert.deepEqual(result.draft, {
     initial: {
@@ -1621,50 +1831,87 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(result.preview.pending_update_restart.script_src, 'none');
   assert.equal(result.preview.updated.sandbox, 'empty');
   assert.equal(result.preview.updated.script_src, 'none');
+  assert.deepEqual(result.question, {
+    after_initial_save: {
+      saved_revision_unchanged: true,
+      task_stream: {
+        answer_count: 1,
+        candidate_ready_count: 1,
+        candidate_result_count: 1,
+        explanation_result_count: 1,
+        head_sequence: 8,
+        item_count: 8,
+        revision_unchanged: true,
+        source_availability: 'not_loaded',
+      },
+      ui_answer_observed: true,
+    },
+  });
   assert.deepEqual(result.task_stream, {
     initial: {
+      answer_count: 0,
       candidate_ready_count: 1,
       candidate_result_count: 1,
+      explanation_result_count: 0,
       head_sequence: 4,
       item_count: 4,
       latest_candidate_bound_to_revision: true,
       source_availability: 'not_loaded',
     },
-    pending_update: {
-      candidate_ready_count: 2,
-      candidate_result_count: 2,
+    question: {
+      answer_count: 1,
+      candidate_ready_count: 1,
+      candidate_result_count: 1,
+      explanation_result_count: 1,
       head_sequence: 8,
       item_count: 8,
+      revision_unchanged: true,
+      source_availability: 'not_loaded',
+    },
+    pending_update: {
+      answer_count: 1,
+      candidate_ready_count: 2,
+      candidate_result_count: 2,
+      explanation_result_count: 1,
+      head_sequence: 12,
+      item_count: 12,
       latest_candidate_distinct_from_saved_revision: true,
       saved_revision_number: 1,
       source_availability: 'not_loaded',
     },
     pending_update_restart: {
+      answer_count: 1,
       candidate_ready_count: 2,
       candidate_result_count: 2,
-      head_sequence: 8,
-      item_count: 8,
+      explanation_result_count: 1,
+      head_sequence: 12,
+      item_count: 12,
       latest_candidate_distinct_from_saved_revision: true,
       saved_revision_number: 1,
       source_availability: 'not_loaded',
     },
     updated: {
+      answer_count: 1,
       candidate_ready_count: 2,
       candidate_result_count: 2,
-      head_sequence: 8,
-      item_count: 8,
+      explanation_result_count: 1,
+      head_sequence: 12,
+      item_count: 12,
       latest_candidate_bound_to_revision: true,
       source_availability: 'not_loaded',
     },
     restart: {
+      answer_count: 1,
       candidate_ready_count: 2,
       candidate_result_count: 2,
-      head_sequence: 8,
-      item_count: 8,
+      explanation_result_count: 1,
+      head_sequence: 12,
+      item_count: 12,
       latest_candidate_bound_to_revision: true,
       source_availability: 'not_loaded',
     },
     pending_update_advanced_candidate_count: true,
+    question_did_not_advance_candidate_count: true,
     pending_update_restart_unchanged: true,
     restart_unchanged: true,
     update_advanced_candidate_count: true,
@@ -1673,6 +1920,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(JSON.stringify(result).includes(parsed.provider.model), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.base_url), false);
   assert.equal(JSON.stringify(result).includes(parsed.executable_path), false);
+  assert.equal(JSON.stringify(result).includes(CANARY_QUESTION), false);
   const resultPacket = JSON.stringify(result);
   for (const forbidden of [
     '"head_digest"',
@@ -1687,6 +1935,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.deepEqual(Object.keys(result.input).sort(), [
     'credential_source',
     'idea_digest',
+    'question_digest',
     'schema_version',
     'update_instruction_digest',
   ]);
@@ -1773,10 +2022,11 @@ test('copies only saved provider profile files and runs without provider input o
     userDataPath,
   });
 
-  assert.equal(result.result_version, 'builder-packaged-canary-result.v4');
+  assert.equal(result.result_version, CANARY_RESULT_VERSION);
   assert.deepEqual(result.input, {
     credential_source: 'saved_profile',
     idea_digest: result.input.idea_digest,
+    question_digest: result.input.question_digest,
     schema_version: CANARY_INPUT_VERSION,
     update_instruction_digest: result.input.update_instruction_digest,
   });
@@ -1794,8 +2044,12 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.preview.restart_srcdoc_unchanged, true);
   assert.equal(result.preview.pending_update_restart_srcdoc_unchanged, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
+  assert.equal(result.question.after_initial_save.saved_revision_unchanged, true);
+  assert.equal(result.question.after_initial_save.ui_answer_observed, true);
+  assert.equal(result.task_stream.question_did_not_advance_candidate_count, true);
   assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
+  assert.equal(result.task_stream.updated.answer_count, 1);
   assert.equal(result.task_stream.restart_unchanged, true);
   assert.deepEqual(copied.map(([source, target]) => [
     path.relative(parsed.source_user_data_path, source),
@@ -1815,6 +2069,7 @@ test('copies only saved provider profile files and runs without provider input o
     'New project',
     'Make draft',
     'Save version',
+    'Ask',
     'Make change',
     'Save version',
   ]);
@@ -2283,6 +2538,7 @@ test('cleanup attempts guarded remove when app close fails', async (t) => {
             page.draftSaved,
             Math.max(1, page.savedRevision),
             Math.max(1, page.savedRevision, page.candidateTurns),
+            page.questionTurns,
           );
           page.artifactsAllowed = true;
           return page;
@@ -2326,6 +2582,7 @@ test('cleanup refuses user data replacement before recursive remove', async (t) 
             page.draftSaved,
             Math.max(1, page.savedRevision),
             Math.max(1, page.savedRevision, page.candidateTurns),
+            page.questionTurns,
           );
           page.artifactsAllowed = true;
           return page;
@@ -2385,6 +2642,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make draft['"]\)/u);
+  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Ask['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
   assert.match(source, /artifacts_after_password_clear/u);
   assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v3['"]/u);
