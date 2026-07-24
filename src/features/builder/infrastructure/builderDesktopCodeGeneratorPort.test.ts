@@ -21,6 +21,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     });
     const port = createBuilderDesktopCodeGeneratorPort({
       generate,
+      restoreDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -46,6 +47,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
           retryable: true,
         },
       }),
+      restoreDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     });
@@ -62,10 +64,12 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     {},
     {
       generate: async (): Promise<unknown> => null,
+      restoreDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
     },
     {
       generate: async (): Promise<unknown> => null,
+      restoreDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
       availability: async (): Promise<unknown> => null,
       provider: 'renderer-owned',
@@ -88,6 +92,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     ]) {
       const port = createBuilderDesktopCodeGeneratorPort({
         generate: async (): Promise<unknown> => response,
+        restoreDraft: async (): Promise<unknown> => null,
         cancel: async (): Promise<unknown> => null,
         availability: async (): Promise<unknown> => null,
       });

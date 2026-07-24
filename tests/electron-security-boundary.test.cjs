@@ -49,6 +49,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /saveDraft/u);
   assert.match(preload, /listCurrent/u);
   assert.match(preload, /codeGenerator/u);
+  assert.match(preload, /restoreDraft/u);
+  assert.match(preload, /clawfabric-builder:code-generator:restore-draft/u);
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /taskStream/u);
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
@@ -57,7 +59,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 15);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 16);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   assert.doesNotMatch(
     preload,

@@ -373,6 +373,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   assert.equal(lifecycle.calls.candidate.length, 1);
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.doesNotMatch(JSON.stringify(result), /credential|provider\.example|builder-model|operations|conversation_events|git_request_id/iu);
+  assert.deepEqual(await service.restore_draft({ draft_id: result.draft_id }), result);
   assert.deepEqual(service.authority, {
     provider_config_snapshot_bound: true,
     project_read_authority_verified_source: true,
@@ -579,16 +580,24 @@ test('uses read authority for existing projects and stores a main-only pending d
 });
 
 test('restores a pending draft from conversation proof and verified Git source after memory loss', async () => {
+  const baseSource = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const restoredBaseReads = [];
   const lifecycle = conversationService();
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
-    ...repositories({ conversationService: lifecycle, gitAuthority: git }),
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: { load_current: () => readResult(baseSource) },
+    }),
     transport: async () => ({
       transport_version: 'builder-openai-compatible-transport.v1',
       generated_text: JSON.stringify(providerOutput()),
     }),
   });
-  const result = await service.generate(request());
+  const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
   const recorded = lifecycle.calls.candidate[0].candidate_result;
 
   const restoredLifecycle = conversationService();
@@ -603,7 +612,10 @@ test('restores a pending draft from conversation proof and verified Git source a
       task_id: recorded.git_candidate_receipt.task_id,
       run_id: recorded.git_candidate_receipt.run_id,
       candidate_digest: recorded.git_candidate_receipt.candidate_digest,
-      base_revision: null,
+      base_revision: {
+        revision_receipt_digest: result.base_revision_evidence.revision_receipt_digest,
+        commit_oid: result.base_revision_evidence.commit_oid,
+      },
       conversation_head: {
         sequence: 4,
         event_id: `builder-conversation-event:${'a'.repeat(64)}`,
@@ -623,7 +635,16 @@ test('restores a pending draft from conversation proof and verified Git source a
     read_admission: 'verified',
   });
   const restoredService = createBuilderGenerationMainService({
-    ...repositories({ conversationService: restoredLifecycle, gitAuthority: restoredGit }),
+    ...repositories({
+      conversationService: restoredLifecycle,
+      gitAuthority: restoredGit,
+      projectReadAuthority: {
+        load_current(query) {
+          restoredBaseReads.push(query);
+          return readResult(baseSource);
+        },
+      },
+    }),
     transport: async () => {
       throw new Error('provider must not be called for pending restore');
     },
@@ -638,6 +659,23 @@ test('restores a pending draft from conversation proof and verified Git source a
   assert.equal(pending.candidate_proof.request_digest, null);
   assert.deepEqual(restoredLifecycle.calls.readCandidate, [{ draft_id: result.draft_id }]);
   assert.doesNotMatch(JSON.stringify(pending), /source_tree|operations|provider|credential/iu);
+
+  const restored = await restoredService.restore_draft({ draft_id: result.draft_id });
+  assert.equal(restored.version, 'builder-generation-result.v2');
+  assert.equal(restored.request_id, null);
+  assert.equal(restored.draft_id, result.draft_id);
+  assert.equal(restored.project_id, PROJECT_ID);
+  assert.equal(restored.existing_project_id, PROJECT_ID);
+  assert.equal(restored.restart_restore, 'git_sqlite_verified');
+  assert.equal(restored.candidate.candidate_digest, result.candidate.candidate_digest);
+  assert.equal(restored.source_tree.source_tree_digest, result.source_tree.source_tree_digest);
+  assert.equal(
+    restored.base_revision_evidence.source_tree_digest,
+    baseSource.source_tree_digest,
+  );
+  assert.deepEqual(restoredBaseReads, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(restoredLifecycle.calls.readCandidate, [{ draft_id: result.draft_id }]);
+  assert.doesNotMatch(JSON.stringify(restored), /git_candidate_receipt|verification_receipt|provider|credential|operations/iu);
 });
 
 test('generates through persisted provider authority without exposing its credential', async (t) => {

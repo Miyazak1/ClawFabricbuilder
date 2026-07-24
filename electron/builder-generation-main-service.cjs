@@ -11,6 +11,7 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 const {
+  BUILDER_GENERATION_RESULT_PROTOCOL,
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
@@ -404,6 +405,35 @@ function publicDraftResult(draft) {
   });
 }
 
+function publicRestoredDraftResult(draft, baseRevisionEvidence) {
+  const proof = draft.candidate_proof;
+  return freezeDeep({
+    version: BUILDER_GENERATION_RESULT_PROTOCOL,
+    request_id: proof.request_digest,
+    draft_id: draft.draft_id,
+    title: draft.title,
+    summary: draft.summary,
+    project_id: proof.project_id,
+    existing_project_id: proof.base_revision === null ? null : proof.project_id,
+    candidate: {
+      candidate_version: 'builder-code-change-candidate.v2',
+      candidate_id: proof.candidate_id,
+      candidate_digest: proof.candidate_digest,
+      resulting_tree_digest: proof.resulting_tree_digest,
+    },
+    base_revision_evidence: baseRevisionEvidence,
+    source_tree: publicSourceTree(draft.source_tree),
+    admissions: {
+      conversation: 'sqlite_recorded',
+      draft: 'candidate_not_saved',
+      save: 'not_performed',
+      preview: 'not_evaluated',
+      execution: 'not_evaluated',
+    },
+    restart_restore: draft.restart_restore,
+  });
+}
+
 function pendingDraftResult(draft) {
   return freezeDeep({
     result_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
@@ -651,41 +681,79 @@ function createBuilderGenerationMainService(rawOptions) {
     return Object.freeze({ request_id: requestId, cancelled: true });
   }
 
+  async function baseRevisionEvidenceForRestoredDraft(proof) {
+    if (proof.base_revision === null) return null;
+    const base = sanitizeReadResult(
+      await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{
+        project_id: proof.project_id,
+      }]),
+      proof.project_id,
+    );
+    if (
+      base.base_revision === null
+      || base.base_revision.revision_receipt_digest !== proof.base_revision.revision_receipt_digest
+      || base.base_revision.commit_oid !== proof.base_revision.commit_oid
+    ) {
+      throw new BuilderGenerationMainServiceError('builder_generation_parent_unavailable');
+    }
+    return base.base_revision_evidence;
+  }
+
+  async function loadPendingDraftById(draftId) {
+    const draft = pendingDrafts.get(draftId);
+    if (draft) return draft;
+    const restoredConversation = sanitizeConversationDraft(
+      Reflect.apply(
+        readConversationCandidateDraft,
+        options.conversationService,
+        [{ draft_id: draftId }],
+      ),
+      draftId,
+    );
+    const verified = sanitizeVerifiedCandidateRead(
+      await Reflect.apply(
+        readVerifiedCandidate,
+        options.gitAuthority,
+        [restoredConversation.git_candidate_receipt],
+      ),
+      restoredConversation.git_candidate_receipt,
+    );
+    const restored = freezeDeep({
+      title: restoredConversation.title,
+      summary: restoredConversation.summary,
+      draft_id: draftId,
+      git_request_id: restoredConversation.git_candidate_receipt.request_id,
+      conversation_head: restoredConversation.conversation_head,
+      candidate_proof: restoredConversation.candidate_proof,
+      source_tree: verified.source_tree,
+      restart_restore: 'git_sqlite_verified',
+    });
+    pendingDrafts.set(draftId, restored);
+    return restored;
+  }
+
   async function readPendingDraft(rawRequest) {
     try {
       exactObject(rawRequest, ['draft_id']);
       const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
-      const draft = pendingDrafts.get(draftId);
-      if (draft) return pendingDraftResult(draft);
-      const restoredConversation = sanitizeConversationDraft(
-        Reflect.apply(
-          readConversationCandidateDraft,
-          options.conversationService,
-          [{ draft_id: draftId }],
-        ),
-        draftId,
-      );
-      const verified = sanitizeVerifiedCandidateRead(
-        await Reflect.apply(
-          readVerifiedCandidate,
-          options.gitAuthority,
-          [restoredConversation.git_candidate_receipt],
-        ),
-        restoredConversation.git_candidate_receipt,
-      );
-      const restored = freezeDeep({
-        title: restoredConversation.title,
-        summary: restoredConversation.summary,
-        draft_id: draftId,
-        git_request_id: restoredConversation.git_candidate_receipt.request_id,
-        conversation_head: restoredConversation.conversation_head,
-        candidate_proof: restoredConversation.candidate_proof,
-        source_tree: verified.source_tree,
-        restart_restore: 'git_sqlite_verified',
-      });
-      pendingDrafts.set(draftId, restored);
-      return pendingDraftResult(restored);
+      return pendingDraftResult(await loadPendingDraftById(draftId));
     } catch {
+      fail();
+    }
+  }
+
+  async function restoreDraft(rawRequest) {
+    try {
+      exactObject(rawRequest, ['draft_id']);
+      const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
+      const draft = await loadPendingDraftById(draftId);
+      if (Object.hasOwn(draft, 'candidate')) return publicDraftResult(draft);
+      return publicRestoredDraftResult(
+        draft,
+        await baseRevisionEvidenceForRestoredDraft(draft.candidate_proof),
+      );
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
       fail();
     }
   }
@@ -718,6 +786,7 @@ function createBuilderGenerationMainService(rawOptions) {
     generate,
     cancel,
     availability: host.availability,
+    restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
     release_pending_draft: releasePendingDraft,
     authority: Object.freeze({

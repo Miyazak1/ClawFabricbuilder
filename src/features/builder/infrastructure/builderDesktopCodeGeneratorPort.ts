@@ -10,11 +10,12 @@ export type BuilderGenerationDiagnosticCode = ApplicationBuilderGenerationDiagno
 
 type BuilderCodeGeneratorBridge = Readonly<{
   generate(request: unknown): Promise<unknown>;
+  restoreDraft(request: unknown): Promise<unknown>;
   cancel(request: unknown): Promise<unknown>;
   availability(): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = new Set(['generate', 'cancel', 'availability']);
+const BRIDGE_KEYS = new Set(['generate', 'restoreDraft', 'cancel', 'availability']);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
 const MAX_DATA_GRAPH_UTF8_BYTES = 1024 * 1024;
@@ -147,6 +148,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
     }
     return Object.freeze({
       generate: methods.generate,
+      restoreDraft: methods.restoreDraft,
       cancel: methods.cancel,
       availability: methods.availability,
     });

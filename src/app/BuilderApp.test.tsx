@@ -84,6 +84,7 @@ async function setup() {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
       generate,
+      restoreDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
     },

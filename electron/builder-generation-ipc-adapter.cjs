@@ -5,6 +5,7 @@ const { types: utilTypes } = require('node:util');
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
+const RESTORE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:restore-draft';
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const MAX_PLAIN_DATA_NODES = 20_000;
 const MAX_PLAIN_DATA_ENTRIES = 20_000;
@@ -12,6 +13,7 @@ const MAX_PLAIN_DATA_UTF8_BYTES = 1024 * 1024;
 const MAX_PLAIN_DATA_DEPTH = 64;
 const OPTION_KEYS = Object.freeze([
   'generate',
+  'restoreDraft',
   'cancel',
   'availability',
   'mainWindowRef',
@@ -29,6 +31,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_failed: 'The project draft could not be generated.',
 });
 const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
+  builder_generation_parent_unavailable: true,
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
@@ -235,7 +238,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
     }
   }
 
-  async function invokeGenerate(event, rawArguments) {
+  async function invokeResult(event, rawArguments, method) {
     try {
       assertActiveSender(event, options.mainWindowRef);
       if (rawArguments.length !== 1) throw ipcError('builder_generation_request_invalid');
@@ -243,7 +246,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       throw normalizeError(error);
     }
     try {
-      const result = await Reflect.apply(options.generate, undefined, rawArguments);
+      const result = await Reflect.apply(method, undefined, rawArguments);
       return Object.freeze({
         version: GENERATE_RESULT_VERSION,
         ok: true,
@@ -265,7 +268,14 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
         channel: GENERATE_CHANNEL,
         method: 'generate',
         invoke(event, ...rawArguments) {
-          return invokeGenerate(event, rawArguments);
+          return invokeResult(event, rawArguments, options.generate);
+        },
+      }),
+      restoreDraft: Object.freeze({
+        channel: RESTORE_DRAFT_CHANNEL,
+        method: 'restoreDraft',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.restoreDraft);
         },
       }),
       cancel: Object.freeze({
@@ -283,7 +293,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['generate', 'cancel', 'availability']),
+    exposed_methods: Object.freeze(['generate', 'restoreDraft', 'cancel', 'availability']),
     authority: Object.freeze({
       host_adapter_injected: true,
       active_renderer_required: true,
@@ -300,6 +310,7 @@ module.exports = Object.freeze({
   GENERATE_CHANNEL,
   CANCEL_CHANNEL,
   AVAILABILITY_CHANNEL,
+  RESTORE_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
   createBuilderGenerationIpcAdapter,

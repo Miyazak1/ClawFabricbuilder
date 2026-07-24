@@ -12,6 +12,7 @@ const {
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_CHANNEL,
+  RESTORE_DRAFT_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
 const {
   OPEN_PROJECT_CHANNEL,
@@ -107,9 +108,11 @@ function runtimeWithService(service, probes = {}) {
           GENERATE_CHANNEL,
           CANCEL_CHANNEL,
           AVAILABILITY_CHANNEL,
+          RESTORE_DRAFT_CHANNEL,
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
+              restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
               cancel: { invoke: (_event, body) => options.cancel(body) },
               availability: { invoke: () => options.availability() },
             },
@@ -307,6 +310,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v2');
   assert.deepEqual(runtime.channels, [
     GENERATE_CHANNEL,
+    RESTORE_DRAFT_CHANNEL,
     CANCEL_CHANNEL,
     AVAILABILITY_CHANNEL,
     OPEN_PROJECT_CHANNEL,
@@ -364,6 +368,10 @@ test('keeps active-renderer and request validation inside the controlled adapter
       && !`${error.message}:${error.stack}`.includes('marker'),
   );
   await assert.rejects(
+    ipcMain.handlers.get(RESTORE_DRAFT_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
     ipcMain.handlers.get(CANCEL_CHANNEL)({ sender: mainWindow.webContents }, { request_id: 'bad' }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
@@ -394,7 +402,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     && error.stack === `${error.name}: ${error.message}`
   ));
   assert.deepEqual([...ipcMain.handlers.keys()], []);
-  assert.deepEqual(ipcMain.removed, [GENERATE_CHANNEL]);
+  assert.deepEqual(ipcMain.removed, [RESTORE_DRAFT_CHANNEL, GENERATE_CHANNEL]);
   assert.equal(runtime.dispose(), false);
 
   const removalFailure = fakeIpcMain(CANCEL_CHANNEL, GENERATE_CHANNEL);
@@ -408,6 +416,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.equal(removalFailure.handlers.has(GENERATE_CHANNEL), true);
+  assert.equal(removalFailure.handlers.has(RESTORE_DRAFT_CHANNEL), false);
   assert.throws(() => cleanupRuntime.dispose(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
@@ -541,6 +550,47 @@ test('registers a read-only task stream channel backed by the conversation servi
     },
   });
   assert.deepEqual(probes.readStreamRequests, [{ project_id: PROJECT_ID }]);
+  runtime.dispose();
+});
+
+test('registers a read-only draft restore channel backed by generation service', async (t) => {
+  const restoreRequests = [];
+  const runtimeModule = runtimeWithService({
+    generate() { return Promise.reject(new Error('not used')); },
+    restore_draft(body) {
+      restoreRequests.push({ draft_id: body.draft_id });
+      return {
+        version: 'builder-generation-result.v2',
+        draft_id: body.draft_id,
+        restart_restore: 'git_sqlite_verified',
+      };
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  });
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const draftId = `builder-generation-draft:${'c'.repeat(64)}`;
+  const restored = await ipcMain.handlers.get(RESTORE_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ draft_id: ${JSON.stringify(draftId)} })`, runtimeModule.context),
+  );
+  assert.deepEqual(restored, {
+    version: 'builder-generation-result.v2',
+    draft_id: draftId,
+    restart_restore: 'git_sqlite_verified',
+  });
+  assert.deepEqual(restoreRequests, [{ draft_id: draftId }]);
   runtime.dispose();
 });
 

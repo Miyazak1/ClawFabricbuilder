@@ -9,6 +9,7 @@ const {
   GENERATE_CHANNEL,
   CANCEL_CHANNEL,
   AVAILABILITY_CHANNEL,
+  RESTORE_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
   createBuilderGenerationIpcAdapter,
@@ -26,6 +27,10 @@ function adapter(overrides = {}) {
     generate: async (request) => {
       calls.push(['generate', request]);
       return { result: 'generated' };
+    },
+    restoreDraft: async (request) => {
+      calls.push(['restoreDraft', request]);
+      return { result: 'restored' };
     },
     cancel: (request) => {
       calls.push(['cancel', request]);
@@ -49,10 +54,10 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   assert.equal(value.adapter_id, 'builder_code_generation.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'builderCodeGenerator');
   assert.equal(value.preload_namespace, 'window.clawfabricBuilder.codeGenerator');
-  assert.deepEqual(value.exposed_methods, ['generate', 'cancel', 'availability']);
+  assert.deepEqual(value.exposed_methods, ['generate', 'restoreDraft', 'cancel', 'availability']);
   assert.deepEqual(
     Object.values(value.channels).map(({ channel }) => channel),
-    [GENERATE_CHANNEL, CANCEL_CHANNEL, AVAILABILITY_CHANNEL],
+    [GENERATE_CHANNEL, RESTORE_DRAFT_CHANNEL, CANCEL_CHANNEL, AVAILABILITY_CHANNEL],
   );
   assert.deepEqual(
     await value.channels.generate.invoke({ sender: windowRef.webContents }, request),
@@ -60,6 +65,16 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       version: GENERATE_RESULT_VERSION,
       ok: true,
       result: { result: 'generated' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.restoreDraft.invoke({ sender: windowRef.webContents }, {
+      draft_id: `builder-generation-draft:${'b'.repeat(64)}`,
+    }),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'restored' },
     },
   );
   assert.deepEqual(
@@ -72,6 +87,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   );
   assert.deepEqual(calls, [
     ['generate', request],
+    ['restoreDraft', { draft_id: `builder-generation-draft:${'b'.repeat(64)}` }],
     ['cancel', cancellation],
     ['availability'],
   ]);
@@ -102,6 +118,10 @@ test('rejects inactive renderers and argument-count drift before invoking host a
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
+    value.channels.restoreDraft.invoke({ sender: windowRef.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
     value.channels.cancel.invoke(
       { sender: windowRef.webContents },
       { request_id: `sha256:${'a'.repeat(64)}` },
@@ -120,6 +140,7 @@ test('rejects inactive renderers and argument-count drift before invoking host a
 test('returns only fixed plain-data diagnostics for known and unknown generate failures', async () => {
   const windowRef = activeWindow();
   for (const [code, retryable] of [
+    ['builder_generation_parent_unavailable', true],
     ['builder_generation_provider_unavailable', false],
     ['builder_generation_timeout', true],
     ['builder_generation_provider_http_error', true],
@@ -132,6 +153,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     modified.stack = 'modified-private-stack';
     const known = createBuilderGenerationIpcAdapter({
       generate: () => { throw modified; },
+      restoreDraft: () => { throw modified; },
       cancel: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
@@ -145,6 +167,12 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     assert.equal(Object.isFrozen(result), true);
     assert.equal(Object.isFrozen(result.error), true);
     assert.doesNotMatch(JSON.stringify(result), /modified-private-marker|modified-private-stack/u);
+    const restored = await known.channels.restoreDraft.invoke({ sender: windowRef.webContents }, {});
+    assert.deepEqual(restored, {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code, retryable },
+    });
   }
 
   const hostile = createBuilderGenerationIpcAdapter({
@@ -152,6 +180,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       const error = new Error('unknown-private-marker');
       error.code = 'unknown_private_code';
       error.raw_body = 'raw-private-body';
+      throw error;
+    },
+    restoreDraft: () => {
+      const error = new Error('restore-private-marker');
+      error.code = 'builder_generation_parent_unavailable';
       throw error;
     },
     cancel: () => {
@@ -173,6 +206,14 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     (error) => error.code === 'builder_generation_failed'
       && !error.message.includes('unknown-private-marker'),
   );
+  assert.deepEqual(
+    await hostile.channels.restoreDraft.invoke({ sender: windowRef.webContents }, {}),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code: 'builder_generation_parent_unavailable', retryable: true },
+    },
+  );
   await assert.rejects(
     hostile.channels.cancel.invoke({ sender: windowRef.webContents }, {}),
     (error) => error.code === 'builder_generation_failed'
@@ -186,6 +227,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
 
   const generateOnlyCode = createBuilderGenerationIpcAdapter({
     generate: async () => ({}),
+    restoreDraft: async () => ({}),
     cancel: () => {
       const error = new Error('control-private-marker');
       error.code = 'builder_generation_provider_http_error';
@@ -216,6 +258,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
   });
   const paired = createBuilderGenerationIpcAdapter({
     generate: () => pending,
+    restoreDraft: async () => ({}),
     cancel: () => {
       const error = new Error('cancel-private-marker');
       error.code = 'builder_generation_cancelled';
@@ -239,7 +282,6 @@ test('keeps cancellation and other control failures as rejected generate invocat
   for (const code of [
     'builder_generation_request_invalid',
     'builder_generation_forbidden',
-    'builder_generation_parent_unavailable',
   ]) {
     const controlled = createBuilderGenerationIpcAdapter({
       generate: () => {
@@ -247,6 +289,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
         error.code = code;
         throw error;
       },
+      restoreDraft: async () => ({}),
       cancel: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
@@ -274,6 +317,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
   for (const result of [new Proxy({ result: 'proxy-private-marker' }, {}), accessor, symbolic, polluted]) {
     const value = createBuilderGenerationIpcAdapter({
       generate: async () => result,
+      restoreDraft: async () => result,
       cancel: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
@@ -304,6 +348,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
   for (const result of [sparse, cyclic, deep, nodeHeavy, entryHeavy, byteHeavy]) {
     const value = createBuilderGenerationIpcAdapter({
       generate: async () => result,
+      restoreDraft: async () => result,
       cancel: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
@@ -323,6 +368,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
   let trapCalls = 0;
   const valid = {
     generate: async () => ({}),
+    restoreDraft: async () => ({}),
     cancel: () => ({}),
     availability: () => ({}),
     mainWindowRef: activeWindow,
