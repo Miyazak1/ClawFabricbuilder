@@ -500,6 +500,7 @@ function sanitizeReads(value, expectedResourceIds) {
   const reads = exactArray(value, expectedCount, expectedCount);
   const seenResources = new Set();
   const seenToolCalls = new Set();
+  const result = [];
   for (const read of reads) {
     const descriptors = exactObject(read, READ_KEYS);
     const resourceId = safePattern(descriptors.resource_id.value, RESOURCE_ID_PATTERN);
@@ -511,10 +512,16 @@ function sanitizeReads(value, expectedResourceIds) {
     ) fail();
     seenResources.add(resourceId);
     seenToolCalls.add(toolCallId);
+    result.push({
+      resource_id: resourceId,
+      status: 'succeeded',
+      tool_call_id: toolCallId,
+    });
   }
   for (const resourceId of expectedResourceIds) {
     if (!seenResources.has(resourceId)) fail();
   }
+  return freezeDeep(result);
 }
 
 function sourceContextDigest(binding, privateContext) {
@@ -553,7 +560,7 @@ function sanitizeSourceContextResult(value) {
   );
   const binding = sanitizeContext(descriptors.context.value);
   const privateContext = sanitizePrivateSourceContext(descriptors.private_source_context.value);
-  sanitizeReads(descriptors.reads.value, privateContext.resource_ids);
+  const reads = sanitizeReads(descriptors.reads.value, privateContext.resource_ids);
   const headDigest = sha256Canonical({
     event_digest: binding.head_event_digest,
     event_id: binding.head_event_id,
@@ -571,7 +578,17 @@ function sanitizeSourceContextResult(value) {
       head_sequence: binding.head_sequence,
       head_digest: headDigest,
     },
+    reads,
   });
+}
+
+function sanitizeBuilderPlanProposalSourceContextResult(rawResult) {
+  try {
+    return sanitizeSourceContextResult(rawResult);
+  } catch (error) {
+    if (error instanceof BuilderPlanProposalRecordError) throw error;
+    fail();
+  }
 }
 
 function sanitizeContextBinding(value) {
@@ -764,5 +781,6 @@ module.exports = freezeDeep({
   PLAN_PROPOSAL_RECORD_KIND,
   BuilderPlanProposalRecordError,
   createBuilderPlanProposalRecord,
+  sanitizeBuilderPlanProposalSourceContextResult,
   sanitizeBuilderPlanProposalRecord,
 });

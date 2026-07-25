@@ -67,6 +67,9 @@ function head(event) {
 
 function append(events, type, payload, index) {
   const previous = events.at(-1) ?? null;
+  const normalizedPayload = type === 'run_completed'
+    ? { ...payload, plan_admission: payload.plan_admission ?? null }
+    : payload;
   events.push(createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -76,7 +79,7 @@ function append(events, type, payload, index) {
     command_id: id('command', index),
     event_type: type,
     previous_event: head(previous),
-    payload,
+    payload: normalizedPayload,
     authority: { ...CONVERSATION_AUTHORITY },
   }));
   return events;

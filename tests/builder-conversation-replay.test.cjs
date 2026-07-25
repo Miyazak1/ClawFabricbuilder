@@ -1,12 +1,14 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const test = require('node:test');
 
 const {
   CONVERSATION_EVENT_VERSION,
   CONVERSATION_EVENT_KIND,
   CONVERSATION_AUTHORITY,
+  createBuilderConversationPlanAdmission,
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
@@ -179,6 +181,46 @@ function existingToolCall(record) {
   };
 }
 
+function eventHeadDigest(event) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(JSON.stringify({
+    event_digest: event.event_digest,
+    event_id: event.event_id,
+    sequence: event.sequence,
+  }), 'utf8').digest('hex')}`;
+}
+
+function planAdmission(previous, callRecord, resultRecord, resultDigest = RESULT_B, overrides = {}) {
+  return createBuilderConversationPlanAdmission({
+    admission_version: 'builder-conversation-plan-admission.v1',
+    admission_kind: 'builder_conversation_plan_admission',
+    admission_authority: 'trusted_conversation_main_service_complete_plan_v1',
+    project_id: callRecord.project_id,
+    conversation_id: callRecord.conversation_id,
+    turn_id: callRecord.turn_id,
+    task_id: callRecord.task_id,
+    run_id: callRecord.run_id,
+    attempt_number: 1,
+    plan_record_digest: resultDigest,
+    source_context_result_version: 'builder-tool-source-context-result.v1',
+    collector_authority: 'main_tool_source_context_collector_v1',
+    context_digest: `sha256:${'d'.repeat(64)}`,
+    context_status: 'succeeded',
+    file_count: 1,
+    total_content_bytes: 32,
+    head_sequence: previous.sequence,
+    head_digest: eventHeadDigest(previous),
+    tool_reads: [{
+      resource_id: callRecord.resource.resource_id,
+      tool_call_id: callRecord.tool_call_id,
+      tool_call_record_digest: callRecord.record_digest,
+      tool_result_record_digest: resultRecord.record_digest,
+      result_summary_digest: resultRecord.result.summary_digest,
+      result_status: 'succeeded',
+    }],
+    ...overrides,
+  });
+}
+
 function toolRuntimeAdmission(record) {
   const index = idIndex(record.step_id);
   const dispatch = createBuilderToolDispatchAdmission({
@@ -220,6 +262,7 @@ function append(events, eventType, payload, commandIndex = events.length + 1) {
         ?? (payload.result_kind === 'candidate'
           ? candidateResult(payload.turn_id, payload.run_id, payload.result_digest)
           : null),
+      plan_admission: payload.plan_admission ?? null,
     }
     : payload;
   const event = createBuilderConversationEvent({
@@ -456,6 +499,74 @@ test('replays tool call requests and fixed-code results only inside an active wo
   }, 210)), assertReplayError);
 });
 
+test('permits only successful plan terminal after closed tool calls', async () => {
+  const record = await toolCallRecord({
+    turnId: id('turn', 70),
+    taskId: id('task', 70),
+    runId: id('run', 70),
+    stepId: id('run-step', 70),
+    toolCallId: id('tool-call', 70),
+  });
+  const succeeded = toolResultRecord(record, {
+    result: {
+      status: 'succeeded',
+      summary_code: 'completed_without_raw_output',
+    },
+  });
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 70), text: 'Inspect and plan a focused update.' },
+    turn_id: id('turn', 70), mode: 'work',
+    task: { task_id: id('task', 70), title: 'Plan update' }, base_revision: null,
+  }, 70);
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 70), run_id: id('run', 70), task_id: id('task', 70),
+    attempt_number: 1, retry_of_run_id: null, input_digest: RESULT_A,
+  }, 71);
+  events = append(events, 'tool_call_requested', {
+    tool_call_record: record,
+  }, 72);
+  const pendingPlan = append(events, 'run_completed', {
+    turn_id: id('turn', 70), run_id: id('run', 70), terminal_status: 'succeeded',
+    result_kind: 'plan', result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 71), text: 'Here is a proposed plan.' },
+    plan_admission: planAdmission(events.at(-1), record, succeeded),
+  }, 73);
+  assert.throws(() => replayBuilderConversation(pendingPlan), assertReplayError);
+
+  const withSucceededResult = append(events, 'tool_call_result_recorded', {
+    tool_result_record: succeeded,
+  }, 73);
+  const planCompleted = append(withSucceededResult, 'run_completed', {
+    turn_id: id('turn', 70), run_id: id('run', 70), terminal_status: 'succeeded',
+    result_kind: 'plan', result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 71), text: 'Here is a proposed plan.' },
+    plan_admission: planAdmission(withSucceededResult.at(-1), record, succeeded),
+  }, 74);
+  const planTurnCompleted = append(planCompleted, 'turn_completed', {
+    turn_id: id('turn', 70), run_id: id('run', 70), outcome: 'plan_proposed',
+  }, 75);
+  const replay = replayBuilderConversation(planTurnCompleted);
+  assert.equal(replay.turns[0].runs[0].result_kind, 'plan');
+  assert.equal(replay.turns[0].outcome, 'plan_proposed');
+
+  const failed = toolResultRecord(record);
+  const withFailedResult = append(events, 'tool_call_result_recorded', {
+    tool_result_record: failed,
+  }, 73);
+  assert.throws(() => replayBuilderConversation(append(withFailedResult, 'run_completed', {
+    turn_id: id('turn', 70), run_id: id('run', 70), terminal_status: 'succeeded',
+    result_kind: 'plan', result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 71), text: 'Here is a proposed plan.' },
+    plan_admission: planAdmission(withFailedResult.at(-1), record, succeeded),
+  }, 74)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(withSucceededResult, 'run_completed', {
+    turn_id: id('turn', 70), run_id: id('run', 70), terminal_status: 'succeeded',
+    result_kind: 'candidate', result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 71), text: 'A candidate is ready.' },
+  }, 74)), assertReplayError);
+});
+
 test('keeps cancellation distinct from interruption and permits a deliberate retry', () => {
   let events = [];
   events = append(events, 'turn_submitted', {
@@ -487,7 +598,7 @@ test('keeps cancellation distinct from interruption and permits a deliberate ret
   assert.equal(replay.turns[0].runs[1].status, 'running');
 });
 
-test('keeps work explanations, plans, and candidates distinct from saved revisions', () => {
+test('keeps work explanations, plans, and candidates distinct from saved revisions', async () => {
   const cases = [
     { resultKind: 'explanation', outcome: 'responded', seed: 40 },
     { resultKind: 'plan', outcome: 'plan_proposed', seed: 50 },
@@ -504,14 +615,38 @@ test('keeps work explanations, plans, and candidates distinct from saved revisio
       turn_id: id('turn', seed), run_id: id('run', seed), task_id: id('task', seed),
       attempt_number: 1, retry_of_run_id: null, input_digest: RESULT_A,
     }, seed + 1);
+    let planAdmissionEvidence = null;
+    if (resultKind === 'plan') {
+      const record = await toolCallRecord({
+        turnId: id('turn', seed),
+        taskId: id('task', seed),
+        runId: id('run', seed),
+        stepId: id('run-step', seed),
+        toolCallId: id('tool-call', seed),
+      });
+      events = append(events, 'tool_call_requested', {
+        tool_call_record: record,
+      }, seed + 2);
+      const resultRecord = toolResultRecord(record, {
+        result: {
+          status: 'succeeded',
+          summary_code: 'completed_without_raw_output',
+        },
+      });
+      events = append(events, 'tool_call_result_recorded', {
+        tool_result_record: resultRecord,
+      }, seed + 3);
+      planAdmissionEvidence = planAdmission(events.at(-1), record, resultRecord);
+    }
     events = append(events, 'run_completed', {
       turn_id: id('turn', seed), run_id: id('run', seed), terminal_status: 'succeeded',
       result_kind: resultKind, result_digest: RESULT_B,
       assistant_message: { message_id: id('message', seed + 1), text: 'Here is the result.' },
-    }, seed + 2);
+      ...(planAdmissionEvidence === null ? {} : { plan_admission: planAdmissionEvidence }),
+    }, resultKind === 'plan' ? seed + 4 : seed + 2);
     events = append(events, 'turn_completed', {
       turn_id: id('turn', seed), run_id: id('run', seed), outcome,
-    }, seed + 3);
+    }, resultKind === 'plan' ? seed + 5 : seed + 3);
     const replay = replayBuilderConversation(events);
     assert.equal(replay.turns[0].runs[0].result_kind, resultKind);
     assert.equal(replay.turns[0].outcome, outcome);

@@ -43,6 +43,12 @@ const {
   FILESYSTEM_READ_TOOL_RUNTIME_ID,
   createBuilderToolRuntimeInvocationAdmission,
 } = require('../electron/builder-tool-runtime-invocation-admission.cjs');
+const {
+  createBuilderProjectSourceTree,
+} = require('../electron/builder-project-source-tree.cjs');
+const {
+  createBuilderPlanProposalRecord,
+} = require('../electron/builder-plan-proposal-records.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -154,6 +160,81 @@ function candidateResult(context) {
       replay: false,
     },
   };
+}
+
+function sourceContextAuthority() {
+  return {
+    collector_authority: 'main_tool_source_context_collector_v1',
+    permission_authority: 'main_permission_decision_before_tool_dispatch_v1',
+    policy_authority: 'main_tool_session_policy_contract_v1',
+    conversation_authority: 'trusted_conversation_main_service_methods',
+    execution_authority: 'main_tool_filesystem_read_execution_service_v1',
+    renderer_authority: 'not_present',
+    provider_dispatch: false,
+    credential_readback: false,
+    raw_output_storage: 'not_durable',
+    conversation_event: 'tool_request_and_fixed_result_only',
+    git_authority: 'not_present',
+    revision_admission: 'not_created',
+  };
+}
+
+function sourceContextResult(context, overrides = {}) {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{
+      path: 'src/app.tsx',
+      content: 'export const label = "ready";\n',
+    }],
+  });
+  const files = sourceTree.files.map((file) => ({
+    path: file.path,
+    entry_kind: file.entry_kind,
+    content: file.content,
+    content_digest: file.content_digest,
+    content_bytes: Buffer.byteLength(file.content, 'utf8'),
+  }));
+  return {
+    result_version: 'builder-tool-source-context-result.v1',
+    operation: 'project_source_context_collected',
+    status: 'succeeded',
+    context,
+    private_source_context: {
+      context_version: 'builder-private-source-context.v1',
+      files,
+    },
+    reads: files.map((file, index) => ({
+      resource_id: `project:/${file.path}`,
+      status: 'succeeded',
+      tool_call_id: `builder-tool-call:11111111-1111-4111-8111-${(600 + index).toString(16).padStart(12, '0')}`,
+    })),
+    authority: sourceContextAuthority(),
+    ...overrides,
+  };
+}
+
+function planProposalRecord(context, overrides = {}) {
+  return createBuilderPlanProposalRecord({
+    source_context_result: overrides.source_context_result ?? sourceContextResult(context),
+    proposed_at_ms: overrides.proposed_at_ms ?? 500,
+    title: overrides.title ?? 'Review the change plan',
+    summary: overrides.summary ?? 'Prepare a bounded implementation before editing the project.',
+    steps: overrides.steps ?? [
+      {
+        plan_step_id: 'builder-plan-step:11111111-1111-4111-8111-000000000701',
+        title: 'Confirm the intended update',
+        purpose: 'Keep the proposed work small and reviewable.',
+        expected_change: 'The next step can be implemented and reviewed separately.',
+        status: 'proposed',
+      },
+      {
+        plan_step_id: 'builder-plan-step:11111111-1111-4111-8111-000000000702',
+        title: 'Prepare the edit pass',
+        purpose: 'Separate planning from source mutation.',
+        expected_change: 'No source files change during planning.',
+        status: 'proposed',
+      },
+    ],
+  });
 }
 
 function toolPermissionRequest(overrides = {}) {
@@ -390,6 +471,182 @@ test('records a question explanation without creating task, candidate, or revisi
     if (restartedDatabase !== null) restartedDatabase.close();
     try { item.database.close(); } catch { /* already closed during restart check */ }
     removeRoot(item.root);
+  }
+});
+
+test('records a proposed plan from a run-bound plan record after successful tool context', async () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    const call = await toolCallRecord(context);
+    const requested = item.service.record_tool_call_request({
+      context,
+      tool_call_record: call,
+    });
+    const resultRecord = toolResultRecord(call, {
+      result: {
+        status: 'succeeded',
+        summary_code: 'completed_without_raw_output',
+      },
+    });
+    const settled = item.service.record_tool_result({
+      context: requested,
+      runtime_invocation_admission: resultRecord.runtime_invocation_admission,
+      tool_result_record: resultRecord,
+    });
+    assert.equal(settled.start_head.sequence, 4);
+
+    const sourceContext = sourceContextResult(settled, {
+      reads: [{
+        resource_id: 'project:/src/app.tsx',
+        status: 'succeeded',
+        tool_call_id: call.tool_call_id,
+      }],
+    });
+    const plan = planProposalRecord(settled, { source_context_result: sourceContext });
+    const terminal = item.service.complete_plan({
+      context: settled,
+      source_context_result: sourceContext,
+      plan_proposal_record: plan,
+    });
+
+    assert.equal(terminal.head.sequence, 6);
+    assert.equal(terminal.snapshot.active_turn_id, null);
+    assert.equal(terminal.snapshot.turns[0].outcome, 'plan_proposed');
+    assert.equal(terminal.snapshot.turns[0].runs[0].result_kind, 'plan');
+    assert.equal(terminal.snapshot.turns[0].runs[0].result_digest, plan.record_digest);
+    assert.equal(terminal.snapshot.turns[0].runs[0].candidate_result, null);
+    assert.match(terminal.snapshot.turns[0].messages[1].text, /Review the change plan/u);
+    assert.match(terminal.snapshot.turns[0].messages[1].text, /1\. Confirm the intended update/u);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 6);
+    assert.equal(stream.conversation.items[2].item_kind, 'tool_call_requested');
+    assert.equal(stream.conversation.items[3].item_kind, 'tool_call_result_recorded');
+    assert.equal(stream.conversation.items[4].result_kind, 'plan');
+    assert.equal(stream.conversation.items[4].candidate, null);
+    assert.equal(stream.conversation.items[5].outcome, 'plan_proposed');
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /export const|src\/app|private_source_context|context_digest|head_digest|record_digest|provider|credential|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(900),
+      nowMs: () => 9_000,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), stream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    else item.database.close();
+    removeRoot(item.root);
+  }
+});
+
+test('rejects stale, pending, failed, or forged plan proposal completion without partial events', async () => {
+  const item = fixture();
+  try {
+    const context = begin(item.service);
+    const call = await toolCallRecord(context);
+    const requested = item.service.record_tool_call_request({
+      context,
+      tool_call_record: call,
+    });
+    const pendingSourceContext = sourceContextResult(requested, {
+      reads: [{
+        resource_id: 'project:/src/app.tsx',
+        status: 'succeeded',
+        tool_call_id: call.tool_call_id,
+      }],
+    });
+    const pendingPlan = planProposalRecord(requested, { source_context_result: pendingSourceContext });
+    assert.throws(() => item.service.complete_plan({
+      context: requested,
+      source_context_result: pendingSourceContext,
+      plan_proposal_record: pendingPlan,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 3);
+
+    const failedResult = toolResultRecord(call);
+    const failed = item.service.record_tool_result({
+      context: requested,
+      runtime_invocation_admission: failedResult.runtime_invocation_admission,
+      tool_result_record: failedResult,
+    });
+    const failedSourceContext = sourceContextResult(failed, {
+      reads: [{
+        resource_id: 'project:/src/app.tsx',
+        status: 'succeeded',
+        tool_call_id: call.tool_call_id,
+      }],
+    });
+    assert.throws(() => item.service.complete_plan({
+      context: failed,
+      source_context_result: failedSourceContext,
+      plan_proposal_record: planProposalRecord(failed, { source_context_result: failedSourceContext }),
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 4);
+  } finally {
+    item.close();
+  }
+
+  const drift = fixture();
+  try {
+    const context = begin(drift.service);
+    const call = await toolCallRecord(context);
+    const requested = drift.service.record_tool_call_request({
+      context,
+      tool_call_record: call,
+    });
+    const resultRecord = toolResultRecord(call, {
+      result: {
+        status: 'succeeded',
+        summary_code: 'completed_without_raw_output',
+      },
+    });
+    const settled = drift.service.record_tool_result({
+      context: requested,
+      runtime_invocation_admission: resultRecord.runtime_invocation_admission,
+      tool_result_record: resultRecord,
+    });
+    const sourceContext = sourceContextResult(settled, {
+      reads: [{
+        resource_id: 'project:/src/app.tsx',
+        status: 'succeeded',
+        tool_call_id: call.tool_call_id,
+      }],
+    });
+    const plan = planProposalRecord(settled, { source_context_result: sourceContext });
+    assert.throws(() => drift.service.complete_plan({
+      context,
+      source_context_result: sourceContext,
+      plan_proposal_record: plan,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => drift.service.complete_plan({
+      context: settled,
+      source_context_result: sourceContext,
+      plan_proposal_record: {
+        ...plan,
+        project_id: 'builder-project:22222222-2222-4222-8222-222222222222',
+      },
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => drift.service.complete_plan({
+      context: settled,
+      source_context_result: sourceContext,
+      plan_proposal_record: {
+        ...plan,
+        proposed_at_ms: 99_999,
+      },
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(drift.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 4);
+  } finally {
+    drift.close();
   }
 });
 

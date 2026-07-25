@@ -69,6 +69,18 @@ const REVISION_REFERENCE_KEYS = Object.freeze(['revision_receipt_digest', 'revis
 const CANDIDATE_RESULT_KEYS = Object.freeze([
   'draft_id', 'title', 'summary', 'git_candidate_receipt',
 ]);
+const PLAN_ADMISSION_INPUT_KEYS = Object.freeze([
+  'admission_version', 'admission_kind', 'admission_authority',
+  'project_id', 'conversation_id', 'turn_id', 'task_id', 'run_id', 'attempt_number',
+  'plan_record_digest', 'source_context_result_version', 'collector_authority',
+  'context_digest', 'context_status', 'file_count', 'total_content_bytes',
+  'head_sequence', 'head_digest', 'tool_reads',
+]);
+const PLAN_ADMISSION_KEYS = Object.freeze([...PLAN_ADMISSION_INPUT_KEYS, 'admission_digest']);
+const PLAN_TOOL_READ_KEYS = Object.freeze([
+  'resource_id', 'tool_call_id', 'tool_call_record_digest',
+  'tool_result_record_digest', 'result_summary_digest', 'result_status',
+]);
 const PAYLOAD_KEYS = Object.freeze({
   turn_submitted: Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision']),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
@@ -88,12 +100,20 @@ const PAYLOAD_KEYS = Object.freeze({
   tool_call_result_recorded: Object.freeze(['tool_result_record']),
   run_completed: Object.freeze([
     'turn_id', 'run_id', 'terminal_status', 'result_kind', 'result_digest',
-    'assistant_message', 'candidate_result',
+    'assistant_message', 'candidate_result', 'plan_admission',
   ]),
   turn_completed: Object.freeze(['turn_id', 'run_id', 'outcome']),
 });
 const EVENT_TYPES = Object.freeze(Object.keys(PAYLOAD_KEYS));
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
+const PLAN_ADMISSION_VERSION = 'builder-conversation-plan-admission.v1';
+const PLAN_ADMISSION_KIND = 'builder_conversation_plan_admission';
+const PLAN_ADMISSION_AUTHORITY = 'trusted_conversation_main_service_complete_plan_v1';
+const SOURCE_CONTEXT_RESULT_VERSION = 'builder-tool-source-context-result.v1';
+const SOURCE_CONTEXT_COLLECTOR_AUTHORITY = 'main_tool_source_context_collector_v1';
+const PLAN_RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
+const MAX_PLAN_CONTEXT_FILES = 8;
+const MAX_PLAN_CONTEXT_TOTAL_BYTES = MAX_PLAN_CONTEXT_FILES * 16 * 1024;
 
 class BuilderConversationRecordError extends Error {
   constructor() {
@@ -223,6 +243,16 @@ function safeTimestamp(value) {
   return value;
 }
 
+function safePlanFileCount(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PLAN_CONTEXT_FILES) fail();
+  return value;
+}
+
+function safePlanByteCount(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PLAN_CONTEXT_TOTAL_BYTES) fail();
+  return value;
+}
+
 function safeText(value, maximumCodePoints, maximumBytes, allowFormatting) {
   if (typeof value !== 'string'
     || value.length > maximumCodePoints * 2
@@ -286,6 +316,141 @@ function sanitizeCandidateResult(value, turnId, runId, resultDigest) {
     summary: safeText(valueAt(value, 'summary'), 2_000, 8_192, true),
     git_candidate_receipt: receipt,
   };
+}
+
+function sanitizePlanToolRead(value) {
+  assertExactObject(value, PLAN_TOOL_READ_KEYS);
+  const resultStatus = valueAt(value, 'result_status');
+  if (resultStatus !== 'succeeded') fail();
+  return {
+    resource_id: safePattern(valueAt(value, 'resource_id'), PLAN_RESOURCE_ID_PATTERN, 132),
+    tool_call_id: sanitizePlanToolCallId(valueAt(value, 'tool_call_id')),
+    tool_call_record_digest: safeDigest(valueAt(value, 'tool_call_record_digest')),
+    tool_result_record_digest: safeDigest(valueAt(value, 'tool_result_record_digest')),
+    result_summary_digest: safeDigest(valueAt(value, 'result_summary_digest')),
+    result_status: 'succeeded',
+  };
+}
+
+function sanitizePlanToolCallId(value) {
+  return safePattern(value, /^builder-tool-call:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u, 96);
+}
+
+function sanitizePlanToolReads(value, expectedFileCount) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length !== expectedFileCount) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) fail();
+  const seenResources = new Set();
+  const seenToolCalls = new Set();
+  const reads = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const read = sanitizePlanToolRead(descriptor.value);
+    const toolCallId = sanitizePlanToolCallId(read.tool_call_id);
+    if (seenResources.has(read.resource_id) || seenToolCalls.has(toolCallId)) fail();
+    seenResources.add(read.resource_id);
+    seenToolCalls.add(toolCallId);
+    reads.push({ ...read, tool_call_id: toolCallId });
+  }
+  return reads;
+}
+
+function planAdmissionDigestBody(value) {
+  return {
+    admission_authority: value.admission_authority,
+    admission_kind: value.admission_kind,
+    admission_version: value.admission_version,
+    attempt_number: value.attempt_number,
+    collector_authority: value.collector_authority,
+    context_digest: value.context_digest,
+    context_status: value.context_status,
+    conversation_id: value.conversation_id,
+    file_count: value.file_count,
+    head_digest: value.head_digest,
+    head_sequence: value.head_sequence,
+    plan_record_digest: value.plan_record_digest,
+    project_id: value.project_id,
+    run_id: value.run_id,
+    source_context_result_version: value.source_context_result_version,
+    task_id: value.task_id,
+    tool_reads: value.tool_reads,
+    total_content_bytes: value.total_content_bytes,
+    turn_id: value.turn_id,
+  };
+}
+
+function sanitizePlanAdmission(value) {
+  assertExactObject(value, PLAN_ADMISSION_KEYS);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
+  const conversationId = safeConversationId(valueAt(value, 'conversation_id'));
+  const fileCount = safePlanFileCount(valueAt(value, 'file_count'));
+  const admission = {
+    admission_version: valueAt(value, 'admission_version'),
+    admission_kind: valueAt(value, 'admission_kind'),
+    admission_authority: valueAt(value, 'admission_authority'),
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: safeTurnId(valueAt(value, 'turn_id')),
+    task_id: safeTaskId(valueAt(value, 'task_id')),
+    run_id: safeRunId(valueAt(value, 'run_id')),
+    attempt_number: safeAttemptNumber(valueAt(value, 'attempt_number')),
+    plan_record_digest: safeDigest(valueAt(value, 'plan_record_digest')),
+    source_context_result_version: valueAt(value, 'source_context_result_version'),
+    collector_authority: valueAt(value, 'collector_authority'),
+    context_digest: safeDigest(valueAt(value, 'context_digest')),
+    context_status: valueAt(value, 'context_status'),
+    file_count: fileCount,
+    total_content_bytes: safePlanByteCount(valueAt(value, 'total_content_bytes')),
+    head_sequence: safeSequence(valueAt(value, 'head_sequence')),
+    head_digest: safeDigest(valueAt(value, 'head_digest')),
+    tool_reads: sanitizePlanToolReads(valueAt(value, 'tool_reads'), fileCount),
+  };
+  if (
+    admission.conversation_id !== expectedConversationId(admission.project_id)
+    || admission.admission_version !== PLAN_ADMISSION_VERSION
+    || admission.admission_kind !== PLAN_ADMISSION_KIND
+    || admission.admission_authority !== PLAN_ADMISSION_AUTHORITY
+    || admission.source_context_result_version !== SOURCE_CONTEXT_RESULT_VERSION
+    || admission.collector_authority !== SOURCE_CONTEXT_COLLECTOR_AUTHORITY
+    || admission.context_status !== 'succeeded'
+  ) fail();
+  const digest = safeDigest(valueAt(value, 'admission_digest'));
+  if (digest !== sha256Canonical(planAdmissionDigestBody(admission))) fail();
+  return {
+    ...admission,
+    admission_digest: digest,
+  };
+}
+
+function createBuilderConversationPlanAdmission(rawInput) {
+  assertExactObject(rawInput, PLAN_ADMISSION_INPUT_KEYS);
+  const fileCount = safePlanFileCount(valueAt(rawInput, 'file_count'));
+  const admission = {
+    admission_version: valueAt(rawInput, 'admission_version'),
+    admission_kind: valueAt(rawInput, 'admission_kind'),
+    admission_authority: valueAt(rawInput, 'admission_authority'),
+    project_id: safeProjectId(valueAt(rawInput, 'project_id')),
+    conversation_id: safeConversationId(valueAt(rawInput, 'conversation_id')),
+    turn_id: safeTurnId(valueAt(rawInput, 'turn_id')),
+    task_id: safeTaskId(valueAt(rawInput, 'task_id')),
+    run_id: safeRunId(valueAt(rawInput, 'run_id')),
+    attempt_number: safeAttemptNumber(valueAt(rawInput, 'attempt_number')),
+    plan_record_digest: safeDigest(valueAt(rawInput, 'plan_record_digest')),
+    source_context_result_version: valueAt(rawInput, 'source_context_result_version'),
+    collector_authority: valueAt(rawInput, 'collector_authority'),
+    context_digest: safeDigest(valueAt(rawInput, 'context_digest')),
+    context_status: valueAt(rawInput, 'context_status'),
+    file_count: fileCount,
+    total_content_bytes: safePlanByteCount(valueAt(rawInput, 'total_content_bytes')),
+    head_sequence: safeSequence(valueAt(rawInput, 'head_sequence')),
+    head_digest: safeDigest(valueAt(rawInput, 'head_digest')),
+    tool_reads: sanitizePlanToolReads(valueAt(rawInput, 'tool_reads'), fileCount),
+  };
+  return sanitizePlanAdmission({
+    ...admission,
+    admission_digest: sha256Canonical(planAdmissionDigestBody(admission)),
+  });
 }
 
 function nullable(value, sanitizer) { return value === null ? null : sanitizer(value); }
@@ -399,7 +564,19 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
           runId,
           resultDigest,
         );
-      if ((resultKind === 'candidate') !== (candidateResult !== null)) fail();
+      const planAdmission = nullable(valueAt(value, 'plan_admission'), sanitizePlanAdmission);
+      if (
+        (resultKind === 'candidate') !== (candidateResult !== null)
+        || (resultKind === 'plan') !== (planAdmission !== null)
+        || (planAdmission !== null && (
+          terminalStatus !== 'succeeded'
+          || planAdmission.project_id !== projectId
+          || planAdmission.conversation_id !== conversationId
+          || planAdmission.turn_id !== turnId
+          || planAdmission.run_id !== runId
+          || planAdmission.plan_record_digest !== resultDigest
+        ))
+      ) fail();
       return {
         turn_id: turnId,
         run_id: runId,
@@ -408,6 +585,7 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         result_digest: resultDigest,
         assistant_message: assistantMessage,
         candidate_result: candidateResult,
+        plan_admission: planAdmission,
       };
     }
     case 'turn_completed': {
@@ -455,6 +633,14 @@ function expectedConversationId(projectId) {
   return `builder-conversation:${projectId.slice('builder-project:'.length)}`;
 }
 
+function conversationHeadDigest(head) {
+  return sha256Canonical({
+    event_digest: head.event_digest,
+    event_id: head.event_id,
+    sequence: head.sequence,
+  });
+}
+
 function deriveEventId(projectId, commandId) {
   const digest = nodeCrypto.createHash('sha256')
     .update(`builder-conversation-event\0${projectId}\0${commandId}`, 'utf8').digest('hex');
@@ -482,6 +668,7 @@ function sanitizeCore(value, keys) {
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   const conversationId = safeConversationId(valueAt(value, 'conversation_id'));
   if (conversationId !== expectedConversationId(projectId)) fail();
+  const previousEvent = sanitizePrevious(valueAt(value, 'previous_event'), sequence);
   const payload = sanitizePayload(eventType, valueAt(value, 'payload'), projectId, conversationId);
   if (
     eventType === 'run_completed'
@@ -489,6 +676,15 @@ function sanitizeCore(value, keys) {
     && (
       payload.candidate_result.git_candidate_receipt.project_id !== projectId
       || payload.candidate_result.git_candidate_receipt.conversation_id !== conversationId
+    )
+  ) fail();
+  if (
+    eventType === 'run_completed'
+    && payload.plan_admission !== null
+    && (
+      previousEvent === null
+      || payload.plan_admission.head_sequence !== previousEvent.sequence
+      || payload.plan_admission.head_digest !== conversationHeadDigest(previousEvent)
     )
   ) fail();
   return {
@@ -499,7 +695,7 @@ function sanitizeCore(value, keys) {
     sequence,
     command_id: safeCommandId(valueAt(value, 'command_id')),
     event_type: eventType,
-    previous_event: sanitizePrevious(valueAt(value, 'previous_event'), sequence),
+    previous_event: previousEvent,
     payload,
     authority: sanitizeAuthority(valueAt(value, 'authority')),
   };
@@ -552,6 +748,7 @@ module.exports = Object.freeze({
   MAX_EVENT_SEQUENCE,
   MAX_EVENT_RECORD_BYTES,
   BuilderConversationRecordError,
+  createBuilderConversationPlanAdmission: safeBoundary(createBuilderConversationPlanAdmission),
   createBuilderConversationEvent: safeBoundary(createBuilderConversationEvent),
   sanitizeBuilderConversationEvent: safeBoundary(sanitizeBuilderConversationEvent),
   serializeBuilderConversationEvent: safeBoundary(serializeBuilderConversationEvent),

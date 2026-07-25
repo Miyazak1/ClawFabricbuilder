@@ -327,6 +327,18 @@ Evidence requirements:
   but not approved; it does not append a Conversation event, expose
   IPC/preload, dispatch a provider or tool, mutate source, run generated code,
   create Git evidence, or create a Project Revision;
+- the current plan-terminal checkpoint admits a proposed plan into
+  Conversation only through an internal main-service method after the transient
+  source-context result, plan proposal record, and recorded filesystem-read
+  request/result facts bind to the same trusted active work Run, request
+  digest, head digest, file count, resource ids, tool-call ids, and successful
+  result-record digests, with no pending, failed, or unrelated tool calls and no
+  future proposed time; replay permits successful `plan` completion only when
+  that compact plan-admission evidence re-verifies against the event chain and
+  tool facts, and Task Stream receives only the plan terminal item plus bounded
+  assistant message, without private source context, plan body persistence,
+  admission or record digest projection, provider facts, renderer authority,
+  source mutation, Git evidence, Save, or Project Revision;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

@@ -5,6 +5,7 @@ const { types: utilTypes } = require('node:util');
 
 const {
   CONVERSATION_AUTHORITY,
+  createBuilderConversationPlanAdmission,
   createBuilderConversationEvent,
   sanitizeBuilderConversationEvent,
 } = require('./builder-conversation-records.cjs');
@@ -20,6 +21,10 @@ const {
 const {
   sanitizeBuilderToolResultRecord,
 } = require('./builder-tool-result-records.cjs');
+const {
+  sanitizeBuilderPlanProposalSourceContextResult,
+  sanitizeBuilderPlanProposalRecord,
+} = require('./builder-plan-proposal-records.cjs');
 const {
   createBuilderToolDispatchAdmission,
 } = require('./builder-tool-dispatch-admission.cjs');
@@ -234,6 +239,14 @@ function eventHead(record) {
     sequence: record.sequence,
     event_id: record.event_id,
     event_digest: record.event_digest,
+  });
+}
+
+function headDigest(head) {
+  return sha256Canonical({
+    event_digest: head.event_digest,
+    event_id: head.event_id,
+    sequence: head.sequence,
   });
 }
 
@@ -641,6 +654,7 @@ function createBuilderConversationMainService(rawOptions) {
         }),
         assistant_message: null,
         candidate_result: null,
+        plan_admission: null,
       },
     });
     events.push(completed);
@@ -819,6 +833,7 @@ function createBuilderConversationMainService(rawOptions) {
             : 'The draft could not be made.',
         },
         candidate_result: null,
+        plan_admission: null,
       },
     });
     events.push(completed);
@@ -969,6 +984,7 @@ function createBuilderConversationMainService(rawOptions) {
           summary,
           git_candidate_receipt: gitCandidateReceipt,
         },
+        plan_admission: null,
       },
     });
     const second = eventAt({
@@ -982,6 +998,195 @@ function createBuilderConversationMainService(rawOptions) {
         turn_id: context.ids.turn_id,
         run_id: context.ids.run_id,
         outcome: 'candidate_ready',
+      },
+    });
+    return append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [first, second],
+      recordedAtMs,
+    });
+  }
+
+  function publicPlanMessage(planRecord) {
+    const lines = [
+      planRecord.title,
+      '',
+      planRecord.summary,
+      '',
+      'Plan:',
+      ...planRecord.steps.map((step, index) => `${index + 1}. ${step.title}`),
+    ];
+    return safeText(lines.join('\n'), 4_000, 16_000);
+  }
+
+  function sameContextBinding(left, right) {
+    return left.source_context_result_version === right.source_context_result_version
+      && left.collector_authority === right.collector_authority
+      && left.context_digest === right.context_digest
+      && left.context_status === right.context_status
+      && left.file_count === right.file_count
+      && left.total_content_bytes === right.total_content_bytes
+      && left.head_sequence === right.head_sequence
+      && left.head_digest === right.head_digest;
+  }
+
+  function planToolReadEvidence(run, sourceContext) {
+    if (
+      run.tool_calls.length < 1
+      || sourceContext.reads.length !== run.tool_calls.length
+      || sourceContext.context_binding.file_count !== sourceContext.reads.length
+    ) fail();
+    const byToolCallId = new Map();
+    for (const toolCall of run.tool_calls) {
+      if (byToolCallId.has(toolCall.tool_call_id)) fail();
+      byToolCallId.set(toolCall.tool_call_id, toolCall);
+    }
+    const seenToolCalls = new Set();
+    return freezeDeep(sourceContext.reads.map((read) => {
+      const toolCall = byToolCallId.get(read.tool_call_id) ?? null;
+      const resultRecord = toolCall?.tool_result_record ?? null;
+      if (
+        toolCall === null
+        || resultRecord === null
+        || seenToolCalls.has(read.tool_call_id)
+        || read.status !== 'succeeded'
+        || toolCall.tool_name !== 'filesystem.read'
+        || toolCall.action !== 'filesystem.read'
+        || toolCall.resource.resource_kind !== 'filesystem'
+        || toolCall.resource.project_id !== sourceContext.project_id
+        || toolCall.resource.resource_id !== read.resource_id
+        || toolCall.tool_call_record.tool_call_id !== read.tool_call_id
+        || toolCall.tool_call_record.record_digest !== resultRecord.tool_call_record.record_digest
+        || resultRecord.tool_call_id !== read.tool_call_id
+        || resultRecord.action !== 'filesystem.read'
+        || resultRecord.resource_kind !== 'filesystem'
+        || resultRecord.result.status !== 'succeeded'
+      ) fail();
+      seenToolCalls.add(read.tool_call_id);
+      return {
+        resource_id: read.resource_id,
+        tool_call_id: read.tool_call_id,
+        tool_call_record_digest: toolCall.tool_call_record.record_digest,
+        tool_result_record_digest: resultRecord.record_digest,
+        result_summary_digest: resultRecord.result.summary_digest,
+        result_status: 'succeeded',
+      };
+    }));
+  }
+
+  function completePlan(rawRequest) {
+    exactObject(rawRequest, ['context', 'source_context_result', 'plan_proposal_record']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (
+      context.mode !== 'work'
+      || context.ids.task_id === null
+      || context.run_terminal_failure_code !== null
+      || context.cancel_requested
+    ) fail();
+    const run = activeRunFromContext(context);
+    if (
+      run.status !== 'running'
+      || run.cancel_request_id !== null
+      || run.interrupt_request_id !== null
+      || run.tool_calls.some((toolCall) => (
+        toolCall.tool_result_record === null
+        || toolCall.tool_result_record.result.status !== 'succeeded'
+      ))
+    ) fail();
+    let sourceContext;
+    let planRecord;
+    try {
+      sourceContext = sanitizeBuilderPlanProposalSourceContextResult(
+        valueAt(rawRequest, 'source_context_result'),
+      );
+      planRecord = sanitizeBuilderPlanProposalRecord(
+        valueAt(rawRequest, 'plan_proposal_record'),
+      );
+    } catch {
+      fail();
+    }
+    if (
+      planRecord.project_id !== context.project.project_id
+      || planRecord.conversation_id !== context.conversation.conversation_id
+      || planRecord.turn_id !== context.ids.turn_id
+      || planRecord.task_id !== context.ids.task_id
+      || planRecord.run_id !== context.ids.run_id
+      || planRecord.attempt_number !== context.attempt_number
+      || planRecord.plan_state !== 'proposed'
+      || planRecord.result_kind !== 'plan'
+      || planRecord.context_binding.head_sequence !== context.start_head.sequence
+      || planRecord.context_binding.head_digest !== headDigest(context.start_head)
+      || sourceContext.project_id !== context.project.project_id
+      || sourceContext.conversation_id !== context.conversation.conversation_id
+      || sourceContext.turn_id !== context.ids.turn_id
+      || sourceContext.task_id !== context.ids.task_id
+      || sourceContext.run_id !== context.ids.run_id
+      || sourceContext.attempt_number !== context.attempt_number
+      || sourceContext.request_digest !== context.request_digest
+      || !sameContextBinding(sourceContext.context_binding, planRecord.context_binding)
+      || planRecord.authority.conversation_event !== 'not_admitted_by_record_contract'
+      || planRecord.authority.provider_dispatch !== false
+      || planRecord.authority.renderer_authority !== 'not_present'
+      || planRecord.authority.git_authority !== 'not_present'
+      || planRecord.authority.revision_admission !== 'not_created'
+    ) fail();
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    if (planRecord.proposed_at_ms > recordedAtMs) fail();
+    const planAdmission = createBuilderConversationPlanAdmission({
+      admission_version: 'builder-conversation-plan-admission.v1',
+      admission_kind: 'builder_conversation_plan_admission',
+      admission_authority: 'trusted_conversation_main_service_complete_plan_v1',
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      task_id: context.ids.task_id,
+      run_id: context.ids.run_id,
+      attempt_number: context.attempt_number,
+      plan_record_digest: planRecord.record_digest,
+      source_context_result_version: planRecord.context_binding.source_context_result_version,
+      collector_authority: planRecord.context_binding.collector_authority,
+      context_digest: planRecord.context_binding.context_digest,
+      context_status: planRecord.context_binding.context_status,
+      file_count: planRecord.context_binding.file_count,
+      total_content_bytes: planRecord.context_binding.total_content_bytes,
+      head_sequence: planRecord.context_binding.head_sequence,
+      head_digest: planRecord.context_binding.head_digest,
+      tool_reads: planToolReadEvidence(run, sourceContext),
+    });
+    const first = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: context.ids.terminal_command_id,
+      eventType: 'run_completed',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        terminal_status: 'succeeded',
+        result_kind: 'plan',
+        result_digest: planRecord.record_digest,
+        assistant_message: {
+          message_id: context.ids.assistant_message_id,
+          text: publicPlanMessage(planRecord),
+        },
+        candidate_result: null,
+        plan_admission: planAdmission,
+      },
+    });
+    const second = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: first.sequence + 1,
+      commandId: context.ids.turn_terminal_command_id,
+      eventType: 'turn_completed',
+      previous: eventHead(first),
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        outcome: 'plan_proposed',
       },
     });
     return append({
@@ -1216,6 +1421,7 @@ function createBuilderConversationMainService(rawOptions) {
           text: assistantText,
         },
         candidate_result: null,
+        plan_admission: null,
       },
     });
     const second = eventAt({
@@ -1560,6 +1766,7 @@ function createBuilderConversationMainService(rawOptions) {
     retry_after_failure: retryAfterFailure,
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,
+    complete_plan: completePlan,
     complete_failure: completeFailure,
     record_tool_call_request: recordToolCallRequest,
     record_tool_result: recordToolResult,
@@ -1584,6 +1791,7 @@ function createBuilderConversationMainService(rawOptions) {
       tool_dispatch_admission: 'main_only_open_call_no_dispatch',
       tool_adapter_selection: 'main_only_static_adapter_no_dispatch',
       tool_runtime_invocation: 'main_only_runtime_envelope_no_execution',
+      plan_proposal_recording: 'main_only_digest_terminal_event',
     }),
   });
 }

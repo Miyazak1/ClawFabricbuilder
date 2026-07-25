@@ -1,5 +1,6 @@
 'use strict';
 
+const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
 const {
@@ -53,6 +54,14 @@ function samePrevious(record, previous) {
     && record.previous_event.sequence === previous.sequence
     && record.previous_event.event_id === previous.event_id
     && record.previous_event.event_digest === previous.event_digest;
+}
+
+function headDigest(head) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(JSON.stringify({
+    event_digest: head.event_digest,
+    event_id: head.event_id,
+    sequence: head.sequence,
+  }), 'utf8').digest('hex')}`;
 }
 
 function addMessage(state, message, role, kind) {
@@ -294,6 +303,55 @@ function applyRunInterruptRequested(state, payload) {
   run.interrupt_request_id = payload.request_id;
 }
 
+function verifyPlanAdmission(state, turn, run, payload) {
+  const admission = payload.plan_admission;
+  const priorHead = state.priorHead;
+  if (
+    admission === null
+    || priorHead === null
+    || turn.mode !== 'work'
+    || turn.task === null
+    || admission.project_id !== state.projectId
+    || admission.conversation_id !== state.conversationId
+    || admission.turn_id !== turn.turn_id
+    || admission.task_id !== turn.task.task_id
+    || admission.run_id !== run.run_id
+    || admission.attempt_number !== run.attempt_number
+    || admission.plan_record_digest !== payload.result_digest
+    || admission.head_sequence !== priorHead.sequence
+    || admission.head_digest !== headDigest(priorHead)
+    || admission.file_count !== admission.tool_reads.length
+    || run.tool_calls.length < 1
+    || run.tool_calls.length !== admission.tool_reads.length
+  ) fail();
+  const byToolCallId = new Map();
+  for (const toolCall of run.tool_calls) {
+    if (byToolCallId.has(toolCall.tool_call_id)) fail();
+    byToolCallId.set(toolCall.tool_call_id, toolCall);
+  }
+  const seenToolCalls = new Set();
+  for (const read of admission.tool_reads) {
+    const toolCall = byToolCallId.get(read.tool_call_id) ?? null;
+    const resultRecord = toolCall?.tool_result_record ?? null;
+    if (
+      toolCall === null
+      || resultRecord === null
+      || seenToolCalls.has(read.tool_call_id)
+      || toolCall.tool_name !== 'filesystem.read'
+      || toolCall.action !== 'filesystem.read'
+      || toolCall.resource.resource_kind !== 'filesystem'
+      || toolCall.resource.project_id !== state.projectId
+      || toolCall.resource.resource_id !== read.resource_id
+      || toolCall.tool_call_record.record_digest !== read.tool_call_record_digest
+      || resultRecord.record_digest !== read.tool_result_record_digest
+      || resultRecord.result.summary_digest !== read.result_summary_digest
+      || resultRecord.result.status !== 'succeeded'
+      || read.result_status !== 'succeeded'
+    ) fail();
+    seenToolCalls.add(read.tool_call_id);
+  }
+}
+
 function applyRunCompleted(state, payload) {
   const turn = requireActiveTurn(state, payload.turn_id);
   const run = turn.runs.at(-1) ?? null;
@@ -305,11 +363,15 @@ function applyRunCompleted(state, payload) {
     || (interrupted && payload.terminal_status !== 'interrupted')
     || (cancelled && payload.terminal_status !== 'cancelled')
     || (interrupted && cancelled)) fail();
-  if (run.tool_calls.length > 0 && payload.terminal_status === 'succeeded') fail();
   if (payload.terminal_status === 'succeeded') {
     if (turn.mode === 'question' && payload.result_kind !== 'explanation') fail();
     if (turn.mode === 'work'
       && !['explanation', 'plan', 'candidate'].includes(payload.result_kind)) fail();
+    if (payload.result_kind === 'plan') {
+      verifyPlanAdmission(state, turn, run, payload);
+    } else if (run.tool_calls.length > 0 || payload.plan_admission !== null) fail();
+  } else if (payload.plan_admission !== null) {
+    fail();
   }
   run.status = 'completed';
   run.terminal_status = payload.terminal_status;
@@ -422,6 +484,7 @@ function replayBuilderConversation(rawEvents) {
     turns: new Map(),
     turnOrder: [],
     activeTurnId: null,
+    priorHead: null,
   };
 
   let previous = null;
@@ -436,6 +499,11 @@ function replayBuilderConversation(rawEvents) {
     state.commandIds.set(event.command_id, event.command_digest);
     const transition = TRANSITIONS[event.event_type];
     if (typeof transition !== 'function') fail();
+    state.priorHead = previous === null ? null : {
+      sequence: previous.sequence,
+      event_id: previous.event_id,
+      event_digest: previous.event_digest,
+    };
     transition(state, event.payload);
     previous = event;
   }

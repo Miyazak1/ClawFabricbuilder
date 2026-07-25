@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const test = require('node:test');
 
 const {
@@ -9,6 +10,7 @@ const {
   CONVERSATION_AUTHORITY,
   MAX_EVENT_RECORD_BYTES,
   BuilderConversationRecordError,
+  createBuilderConversationPlanAdmission,
   createBuilderConversationEvent,
   sanitizeBuilderConversationEvent,
   serializeBuilderConversationEvent,
@@ -56,6 +58,9 @@ function uuid(index) { return `00000000-0000-4000-8000-${index.toString(16).padS
 function typedId(kind, index) { return `builder-${kind}:${uuid(index)}`; }
 
 function create(type, payload, previous = null, index = 1) {
+  const normalizedPayload = type === 'run_completed'
+    ? { ...payload, plan_admission: payload.plan_admission ?? null }
+    : payload;
   return createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -69,7 +74,7 @@ function create(type, payload, previous = null, index = 1) {
       event_id: previous.event_id,
       event_digest: previous.event_digest,
     },
-    payload,
+    payload: normalizedPayload,
     authority: { ...CONVERSATION_AUTHORITY },
   });
 }
@@ -155,6 +160,46 @@ function existingToolCall(record) {
     tool_call_record: record,
     tool_result_record: null,
   };
+}
+
+function eventHeadDigest(event) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(JSON.stringify({
+    event_digest: event.event_digest,
+    event_id: event.event_id,
+    sequence: event.sequence,
+  }), 'utf8').digest('hex')}`;
+}
+
+function planAdmission(previous, callRecord, resultRecord, resultDigest = DIGEST_A, overrides = {}) {
+  return createBuilderConversationPlanAdmission({
+    admission_version: 'builder-conversation-plan-admission.v1',
+    admission_kind: 'builder_conversation_plan_admission',
+    admission_authority: 'trusted_conversation_main_service_complete_plan_v1',
+    project_id: callRecord.project_id,
+    conversation_id: callRecord.conversation_id,
+    turn_id: callRecord.turn_id,
+    task_id: callRecord.task_id,
+    run_id: callRecord.run_id,
+    attempt_number: 1,
+    plan_record_digest: resultDigest,
+    source_context_result_version: 'builder-tool-source-context-result.v1',
+    collector_authority: 'main_tool_source_context_collector_v1',
+    context_digest: `sha256:${'c'.repeat(64)}`,
+    context_status: 'succeeded',
+    file_count: 1,
+    total_content_bytes: 32,
+    head_sequence: previous.sequence,
+    head_digest: eventHeadDigest(previous),
+    tool_reads: [{
+      resource_id: callRecord.resource.resource_id,
+      tool_call_id: callRecord.tool_call_id,
+      tool_call_record_digest: callRecord.record_digest,
+      tool_result_record_digest: resultRecord.record_digest,
+      result_summary_digest: resultRecord.result.summary_digest,
+      result_status: 'succeeded',
+    }],
+    ...overrides,
+  });
 }
 
 function toolRuntimeAdmission(record) {
@@ -348,6 +393,73 @@ test('supports fixed-code tool result payloads without raw output or revision au
       },
     },
   }, requested, 6), assertRecordError());
+});
+
+test('binds plan terminal events to prior-head admission and tool result evidence', async () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Inspect and plan the project.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Plan project update' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const callRecord = await toolCallRecord();
+  const requested = create('tool_call_requested', { tool_call_record: callRecord }, started, 3);
+  const resultRecord = toolResultRecord(callRecord, {
+    result: {
+      status: 'succeeded',
+      summary_code: 'completed_without_raw_output',
+    },
+  });
+  const recorded = create('tool_call_result_recorded', {
+    tool_result_record: resultRecord,
+  }, requested, 4);
+  const admission = planAdmission(recorded, callRecord, resultRecord);
+  const completed = create('run_completed', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    terminal_status: 'succeeded',
+    result_kind: 'plan',
+    result_digest: DIGEST_A,
+    assistant_message: { message_id: typedId('message', 2), text: 'Here is the proposed plan.' },
+    candidate_result: null,
+    plan_admission: admission,
+  }, recorded, 5);
+
+  assert.equal(completed.payload.plan_admission.plan_record_digest, DIGEST_A);
+  assert.equal(completed.payload.plan_admission.head_sequence, recorded.sequence);
+  assert.match(completed.payload.plan_admission.admission_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.doesNotMatch(
+    JSON.stringify(completed),
+    /export const|private_source_context|content_digest|source_tree_digest|provider_secret|credential_value|commit_oid|tree_oid/iu,
+  );
+  assert.throws(() => create('run_completed', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    terminal_status: 'succeeded',
+    result_kind: 'plan',
+    result_digest: DIGEST_A,
+    assistant_message: { message_id: typedId('message', 2), text: 'Here is the proposed plan.' },
+    candidate_result: null,
+    plan_admission: planAdmission(started, callRecord, resultRecord),
+  }, recorded, 6), assertRecordError());
+  assert.throws(() => create('run_completed', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    terminal_status: 'succeeded',
+    result_kind: 'plan',
+    result_digest: DIGEST_A,
+    assistant_message: { message_id: typedId('message', 2), text: 'Here is the proposed plan.' },
+    candidate_result: null,
+  }, recorded, 7), assertRecordError());
 });
 
 test('supports actor-bound candidate rejection payloads without source or Git evidence', () => {

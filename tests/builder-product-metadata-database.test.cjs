@@ -55,6 +55,9 @@ function prior(event) {
 }
 
 function conversationEvent(sequence, type, payload, previousEvent = null) {
+  const normalizedPayload = type === 'run_completed'
+    ? { ...payload, plan_admission: payload.plan_admission ?? null }
+    : payload;
   return createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
@@ -64,7 +67,7 @@ function conversationEvent(sequence, type, payload, previousEvent = null) {
     command_id: `builder-command:${uuid(100 + sequence)}`,
     event_type: type,
     previous_event: prior(previousEvent),
-    payload,
+    payload: normalizedPayload,
     authority: {
       context_authority: 'project_local_conversation',
       permission_admission: 'not_granted',

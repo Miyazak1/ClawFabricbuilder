@@ -90,6 +90,9 @@ function temporaryRoot(t) {
 
 function append(events, eventType, payload, commandIndex) {
   const previous = events.at(-1) ?? null;
+  const normalizedPayload = eventType === 'run_completed'
+    ? { ...payload, plan_admission: payload.plan_admission ?? null }
+    : payload;
   return [...events, createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -103,7 +106,7 @@ function append(events, eventType, payload, commandIndex) {
       event_id: previous.event_id,
       event_digest: previous.event_digest,
     },
-    payload,
+    payload: normalizedPayload,
     authority: { ...CONVERSATION_AUTHORITY },
   })];
 }
