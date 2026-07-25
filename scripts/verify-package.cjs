@@ -72,6 +72,7 @@ for (const expected of [
   '/electron/builder-project-main-authority.cjs',
   '/electron/builder-project-save-authority.cjs',
   '/electron/builder-permission-authority-contract.cjs',
+  '/electron/builder-permission-fact-store.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
   '/electron/builder-provider-config.cjs',
   '/electron/builder-provider-config-repository.cjs',
@@ -211,6 +212,7 @@ const packagedGitReceiptContract = packagedSource('electron/builder-git-receipt-
 const packagedGitRepository = packagedSource('electron/builder-git-project-repository.cjs');
 const packagedGitCurrentProjection = packagedSource('electron/builder-git-current-projection.cjs');
 const packagedPermissionAuthorityContract = packagedSource('electron/builder-permission-authority-contract.cjs');
+const packagedPermissionFactStore = packagedSource('electron/builder-permission-fact-store.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
@@ -530,6 +532,23 @@ assert.match(packagedPermissionAuthorityContract, /credential_readback:\s*false/
 assert.doesNotMatch(
   packagedPermissionAuthorityContract,
   /require\(['"]electron['"]\)|require\(['"]fs['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|node:fs|node:sqlite|better-sqlite|builder-provider|builder-git|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|eval\s*\(|new Function|shell:\s*true|localStorage|sessionStorage|indexedDB/iu,
+);
+assert.match(packagedPermissionFactStore, /main_owned_permission_fact_store/u);
+assert.match(packagedPermissionFactStore, /record_grant/u);
+assert.match(packagedPermissionFactStore, /record_revocation/u);
+assert.match(packagedPermissionFactStore, /read_permission_facts/u);
+assert.match(packagedPermissionFactStore, /createBuilderPermissionEvaluator/u);
+assert.match(packagedPermissionFactStore, /node:sqlite/u);
+assert.match(packagedPermissionFactStore, /node:util/u);
+assert.match(packagedPermissionFactStore, /utilTypes\.isProxy/u);
+assert.match(packagedPermissionFactStore, /PRAGMA trusted_schema = OFF/u);
+assert.match(packagedPermissionFactStore, /PRAGMA journal_mode = WAL/u);
+assert.match(packagedPermissionFactStore, /FOREIGN KEY \(project_id, permission_id\)/u);
+assert.match(packagedPermissionFactStore, /schema_fingerprint_digest/u);
+assert.match(packagedPermissionFactStore, /credential_storage:\s*'not_present'/u);
+assert.doesNotMatch(
+  packagedPermissionFactStore,
+  /require\(['"](?:electron|node:http|node:https|http|https)['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|eval\s*\(|new Function|shell:\s*true|localStorage|sessionStorage|indexedDB|better-sqlite/iu,
 );
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
