@@ -105,6 +105,7 @@ const LIFECYCLE = Object.freeze({
   raw_output_admission: 'not_included',
   revision_admission: 'not_created',
 });
+const MAX_TOOL_RAW_OUTPUT_BYTES = 64 * 1_024;
 const AUTHORITY = Object.freeze({
   runtime_authority: 'main_tool_runtime_invocation_contract_v1',
   selection_authority: 'main_tool_adapter_selection_contract_v1',
@@ -258,6 +259,11 @@ function safeTimestamp(value) {
   return value;
 }
 
+function safeRawOutputBytes(value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_TOOL_RAW_OUTPUT_BYTES) fail();
+  return value;
+}
+
 function safeZero(value) {
   if (value !== 0) fail();
   return value;
@@ -351,7 +357,6 @@ function assertCallRecordReady(record, selection, runtimeAdmittedAtMs) {
     || record.lifecycle.execution_admission !== 'not_performed'
     || record.lifecycle.result_admission !== 'not_recorded'
     || record.authority.tool_dispatch !== 'not_performed'
-    || policy.limits.max_raw_output_bytes !== 0
     || policy.limits.max_chargeable_dispatches !== 0
     || runtimeAdmittedAtMs < selection.selected_at_ms
     || runtimeAdmittedAtMs < record.requested_at_ms
@@ -445,7 +450,7 @@ function unsignedAdmission({
     resource_kind: record.resource.resource_kind,
     adapter_selected_at_ms: selection.selected_at_ms,
     runtime_admitted_at_ms: runtimeAdmittedAtMs,
-    max_raw_output_bytes: 0,
+    max_raw_output_bytes: record.session_policy.limits.max_raw_output_bytes,
     max_chargeable_dispatches: 0,
     lifecycle: { ...LIFECYCLE },
     authority: { ...AUTHORITY },
@@ -502,7 +507,7 @@ function sanitizeBuilderToolRuntimeInvocationAdmission(rawAdmission) {
       resource_kind: safeResourceKind(descriptors.resource_kind.value),
       adapter_selected_at_ms: safeTimestamp(descriptors.adapter_selected_at_ms.value),
       runtime_admitted_at_ms: safeTimestamp(descriptors.runtime_admitted_at_ms.value),
-      max_raw_output_bytes: safeZero(descriptors.max_raw_output_bytes.value),
+      max_raw_output_bytes: safeRawOutputBytes(descriptors.max_raw_output_bytes.value),
       max_chargeable_dispatches: safeZero(descriptors.max_chargeable_dispatches.value),
       lifecycle: sanitizeLifecycle(descriptors.lifecycle.value),
       authority: sanitizeAuthority(descriptors.authority.value),

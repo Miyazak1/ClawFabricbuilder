@@ -79,6 +79,7 @@ const DEFAULT_BUILDER_TOOL_SESSION_LIMITS = Object.freeze({
   max_raw_output_bytes: 0,
   max_chargeable_dispatches: 0,
 });
+const MAX_TOOL_RAW_OUTPUT_BYTES = 64 * 1_024;
 const HARD_LIMITS = Object.freeze({
   max_steps: 32,
   max_tool_calls: 32,
@@ -86,7 +87,7 @@ const HARD_LIMITS = Object.freeze({
   max_step_timeout_ms: 120_000,
   max_total_timeout_ms: 300_000,
   max_public_summary_bytes: 160,
-  max_raw_output_bytes: 0,
+  max_raw_output_bytes: MAX_TOOL_RAW_OUTPUT_BYTES,
   max_chargeable_dispatches: 0,
 });
 const LIFECYCLE = Object.freeze({
@@ -264,7 +265,10 @@ function sanitizeLimits(value) {
       descriptors.max_public_summary_bytes.value,
       HARD_LIMITS.max_public_summary_bytes,
     ),
-    max_raw_output_bytes: safeZeroBound(descriptors.max_raw_output_bytes.value),
+    max_raw_output_bytes: safeNonNegativeBoundedInteger(
+      descriptors.max_raw_output_bytes.value,
+      HARD_LIMITS.max_raw_output_bytes,
+    ),
     max_chargeable_dispatches: safeZeroBound(descriptors.max_chargeable_dispatches.value),
   });
   if (

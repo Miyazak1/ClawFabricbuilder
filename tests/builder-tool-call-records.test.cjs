@@ -158,6 +158,7 @@ test('outer record digest covers a valid alternate session policy receipt', asyn
     limits: {
       ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
       max_steps: 17,
+      max_raw_output_bytes: 1_024,
     },
   });
   const alternate = createBuilderToolCallRecord(recordInput(admission, {
@@ -165,6 +166,7 @@ test('outer record digest covers a valid alternate session policy receipt', asyn
   }));
 
   assert.match(alternate.session_policy.policy_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(alternate.session_policy.limits.max_raw_output_bytes, 1_024);
   assert.notEqual(alternate.session_policy.policy_digest, baseline.session_policy.policy_digest);
   assert.notEqual(alternate.record_digest, baseline.record_digest);
   assert.deepEqual(sanitizeBuilderToolCallRecord(structuredClone(alternate)), alternate);

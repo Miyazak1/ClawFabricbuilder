@@ -286,6 +286,14 @@ Evidence requirements:
   keeps only the fixed public terminal summary in the renderer-safe Task Stream
   and redacts dispatch, adapter, runtime, policy, digest, raw-output, provider,
   source, and revision evidence;
+- the current bounded filesystem-read output checkpoint keeps the default
+  raw-output budget at zero but permits a trusted main-side Run policy to grant
+  a bounded private budget; a main-only output record can verify caller-supplied
+  adapter content against the matching runtime-invocation receipt, tool-call
+  record, project-resource path, byte limit, and source-tree sanitizer, while
+  remaining outside IPC/preload, Conversation replay, renderer-safe Task
+  Stream, provider dispatch, source mutation, Save, and revision authority; it
+  still does not perform the filesystem read itself;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

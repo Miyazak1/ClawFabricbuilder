@@ -369,7 +369,6 @@ function sanitizeSessionPolicy(value, expected) {
     || policy.authority.tool_dispatch !== 'not_performed_by_policy_contract'
     || policy.authority.raw_output_storage !== 'not_present'
     || policy.authority.git_authority !== 'not_present'
-    || policy.limits.max_raw_output_bytes !== 0
     || policy.limits.max_chargeable_dispatches !== 0
   ) fail();
   return policy;

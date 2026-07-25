@@ -81,6 +81,7 @@ for (const expected of [
   '/electron/builder-tool-dispatch-admission.cjs',
   '/electron/builder-tool-adapter-selection-admission.cjs',
   '/electron/builder-tool-runtime-invocation-admission.cjs',
+  '/electron/builder-tool-filesystem-read-output-records.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
@@ -231,6 +232,7 @@ const packagedToolSessionStateGate = packagedSource('electron/builder-tool-sessi
 const packagedToolDispatchAdmission = packagedSource('electron/builder-tool-dispatch-admission.cjs');
 const packagedToolAdapterSelectionAdmission = packagedSource('electron/builder-tool-adapter-selection-admission.cjs');
 const packagedToolRuntimeInvocationAdmission = packagedSource('electron/builder-tool-runtime-invocation-admission.cjs');
+const packagedToolFilesystemReadOutputRecords = packagedSource('electron/builder-tool-filesystem-read-output-records.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
@@ -631,13 +633,14 @@ assert.match(packagedToolSessionPolicy, /max_total_timeout_ms:\s*300_000/u);
 assert.match(packagedToolSessionPolicy, /max_public_summary_bytes:\s*160/u);
 assert.match(packagedToolSessionPolicy, /max_raw_output_bytes:\s*0/u);
 assert.match(packagedToolSessionPolicy, /max_chargeable_dispatches:\s*0/u);
+assert.match(packagedToolSessionPolicy, /const MAX_TOOL_RAW_OUTPUT_BYTES = 64 \* 1_024/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{\s*max_steps:\s*32,/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_tool_calls:\s*32,/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_retries:\s*4,/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_step_timeout_ms:\s*120_000,/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_total_timeout_ms:\s*300_000,/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_public_summary_bytes:\s*160,/u);
-assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_raw_output_bytes:\s*0,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_raw_output_bytes:\s*MAX_TOOL_RAW_OUTPUT_BYTES,/u);
 assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_chargeable_dispatches:\s*0,/u);
 assert.match(packagedToolSessionPolicy, /dispatch_admission:\s*'not_performed_by_policy_contract'/u);
 assert.match(packagedToolSessionPolicy, /execution_admission:\s*'not_performed_by_policy_contract'/u);
@@ -713,15 +716,36 @@ assert.match(packagedToolRuntimeInvocationAdmission, /runtime_execution:\s*'not_
 assert.match(packagedToolRuntimeInvocationAdmission, /network_access:\s*'denied'/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /process_access:\s*'denied'/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /secret_access:\s*'denied'/u);
-assert.match(packagedToolRuntimeInvocationAdmission, /max_raw_output_bytes:\s*0/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /const MAX_TOOL_RAW_OUTPUT_BYTES = 64 \* 1_024/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /max_raw_output_bytes:\s*record\.session_policy\.limits\.max_raw_output_bytes/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /max_chargeable_dispatches:\s*0/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /runtimeAdmittedAtMs - record\.requested_at_ms > policy\.limits\.max_step_timeout_ms/u);
+assert.doesNotMatch(packagedToolRuntimeInvocationAdmission, /policy\.limits\.max_raw_output_bytes !== 0/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /policy\.limits\.max_chargeable_dispatches !== 0/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /selection\.record_digest !== record\.record_digest/u);
 assert.match(packagedToolRuntimeInvocationAdmission, /suffix\.includes\(':'\)/u);
 assert.doesNotMatch(
   packagedToolRuntimeInvocationAdmission,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https|node:fs\/promises|node:fs|fs|fs\/promises|node:path|path)['"]\)|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|open\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedToolFilesystemReadOutputRecords, /builder-tool-filesystem-read-output-record\.v1/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /builder_tool_filesystem_read_output_record/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /main_tool_filesystem_read_output_record_contract_v1/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /createBuilderProjectSourceTree/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /builder-project-source-tree\.cjs/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /sanitizeBuilderToolRuntimeInvocationAdmission/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /builder-tool-runtime-invocation-admission\.cjs/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /bounded_private_file_content_recorded/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /private_bounded_not_projected/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /conversation_event:\s*'not_admitted'/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /raw_output_storage:\s*'not_durable_by_record_contract'/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /provider_admission:\s*'not_dispatched'/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /revision_admission:\s*'not_created'/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /maxRawOutputBytes !== toolCallRecord\.session_policy\.limits\.max_raw_output_bytes/u);
+assert.match(packagedToolFilesystemReadOutputRecords, /Buffer\.byteLength\(content,\s*'utf8'\) > maxRawOutputBytes/u);
+assert.doesNotMatch(
+  packagedToolFilesystemReadOutputRecords,
+  /require\(['"]electron['"]\)|require\(['"](?:node:fs\/promises|node:fs|fs|fs\/promises|node:path|path)['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|open\s*\(|eval\s*\(|new Function|shell:\s*true|record_tool|append|persist_candidate_commit|write_current|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedToolCallRecords, /builder-tool-call-record\.v1/u);
 assert.match(packagedToolCallRecords, /builder_tool_call_record/u);
@@ -738,7 +762,7 @@ assert.match(packagedToolCallRecords, /revision_admission:\s*'not_created'/u);
 assert.match(packagedToolCallRecords, /session_policy_authority:\s*'main_tool_session_policy_contract_v1'/u);
 assert.match(packagedToolCallRecords, /policy\.authority\.issuance_authority !== 'trusted_main_run_context_required'/u);
 assert.match(packagedToolCallRecords, /policy\.authority\.digest_authority !== 'integrity_digest_not_issuer_proof_v1'/u);
-assert.match(packagedToolCallRecords, /policy\.limits\.max_raw_output_bytes !== 0/u);
+assert.doesNotMatch(packagedToolCallRecords, /policy\.limits\.max_raw_output_bytes !== 0/u);
 assert.match(packagedToolCallRecords, /policy\.limits\.max_chargeable_dispatches !== 0/u);
 assert.match(packagedToolCallRecords, /session_policy: value\.session_policy/u);
 assert.match(packagedToolCallRecords, /requestedAtMs - admission\.evaluated_at_ms > sessionPolicy\.limits\.max_step_timeout_ms/u);
@@ -765,6 +789,7 @@ assert.match(packagedToolResultRecords, /tool_call_admission:\s*'verified_pre_di
 assert.match(packagedToolResultRecords, /session_policy_admission !== 'verified_main_run_policy'/u);
 assert.match(packagedToolResultRecords, /max_public_summary_bytes/u);
 assert.match(packagedToolResultRecords, /observedAtMs < runtimeAdmission\.runtime_admitted_at_ms/u);
+assert.match(packagedToolResultRecords, /runtimeAdmission\.max_raw_output_bytes !== toolCallRecord\.session_policy\.limits\.max_raw_output_bytes/u);
 assert.match(packagedToolResultRecords, /observedAtMs - toolCallRecord\.requested_at_ms > toolCallRecord\.session_policy\.limits\.max_step_timeout_ms/u);
 assert.match(packagedToolResultRecords, /observedAtMs - toolCallRecord\.session_policy\.issued_at_ms > toolCallRecord\.session_policy\.limits\.max_total_timeout_ms/u);
 assert.match(packagedToolResultRecords, /dispatch_admission:\s*'verified_by_runtime_invocation'/u);

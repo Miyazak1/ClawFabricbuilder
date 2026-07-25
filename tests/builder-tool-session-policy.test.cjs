@@ -100,6 +100,21 @@ test('policy digest is deterministic and detects lifecycle, authority, or limit 
   }
 });
 
+test('accepts an explicit bounded private raw output limit while default remains zero', () => {
+  const defaultPolicy = createBuilderToolSessionPolicy(policyInput());
+  const outputPolicy = createBuilderToolSessionPolicy(policyInput({
+    limits: {
+      ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+      max_raw_output_bytes: 1_024,
+    },
+  }));
+
+  assert.equal(defaultPolicy.limits.max_raw_output_bytes, 0);
+  assert.equal(outputPolicy.limits.max_raw_output_bytes, 1_024);
+  assert.notEqual(outputPolicy.policy_digest, defaultPolicy.policy_digest);
+  assert.deepEqual(sanitizeBuilderToolSessionPolicy(structuredClone(outputPolicy)), outputPolicy);
+});
+
 test('rejects policy limits outside the bounded session envelope', () => {
   for (const limits of [
     { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_steps: 0 },
@@ -112,7 +127,9 @@ test('rejects policy limits outside the bounded session envelope', () => {
     { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_total_timeout_ms: 300_001 },
     { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_step_timeout_ms: 120_000, max_total_timeout_ms: 119_999 },
     { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_public_summary_bytes: 161 },
-    { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_raw_output_bytes: 1 },
+    { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_raw_output_bytes: -1 },
+    { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_raw_output_bytes: 1.5 },
+    { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_raw_output_bytes: 64 * 1_024 + 1 },
     { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_chargeable_dispatches: 1 },
     { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, max_steps: 1, max_retries: 1 },
   ]) {
@@ -192,7 +209,9 @@ test('source remains a pure bounded policy contract with no IPC, provider, Git, 
   assert.match(source, /max_retries:\s*2/u);
   assert.match(source, /max_step_timeout_ms:\s*120_000/u);
   assert.match(source, /max_total_timeout_ms:\s*300_000/u);
+  assert.match(source, /const MAX_TOOL_RAW_OUTPUT_BYTES = 64 \* 1_024/u);
   assert.match(source, /max_raw_output_bytes:\s*0/u);
+  assert.match(source, /max_raw_output_bytes:\s*MAX_TOOL_RAW_OUTPUT_BYTES/u);
   assert.match(source, /max_chargeable_dispatches:\s*0/u);
   assert.match(source, /raw_output_admission:\s*'not_included'/u);
   assert.match(source, /issuance_authority:\s*'trusted_main_run_context_required'/u);

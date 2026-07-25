@@ -213,6 +213,7 @@ const RUNTIME_AUTHORITY = Object.freeze({
   git_authority: 'not_present',
   cost_authority: 'no_chargeable_dispatch_without_runtime_meter_v1',
 });
+const MAX_TOOL_RAW_OUTPUT_BYTES = 64 * 1_024;
 const MAX_DISPLAY_SUMMARY_BYTES = 160;
 
 class BuilderToolResultRecordError extends Error {
@@ -303,6 +304,11 @@ function safePattern(value, pattern) {
 
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail();
+  return value;
+}
+
+function safeRawOutputBytes(value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_TOOL_RAW_OUTPUT_BYTES) fail();
   return value;
 }
 
@@ -462,7 +468,7 @@ function sanitizeRuntimeInvocationAdmission(value) {
     resource_kind: descriptors.resource_kind.value,
     adapter_selected_at_ms: safeTimestamp(descriptors.adapter_selected_at_ms.value),
     runtime_admitted_at_ms: safeTimestamp(descriptors.runtime_admitted_at_ms.value),
-    max_raw_output_bytes: descriptors.max_raw_output_bytes.value,
+    max_raw_output_bytes: safeRawOutputBytes(descriptors.max_raw_output_bytes.value),
     max_chargeable_dispatches: descriptors.max_chargeable_dispatches.value,
     lifecycle: sanitizeRuntimeLifecycle(descriptors.lifecycle.value),
     authority: sanitizeRuntimeAuthority(descriptors.authority.value),
@@ -476,7 +482,6 @@ function sanitizeRuntimeInvocationAdmission(value) {
     || runtime.action !== 'filesystem.read'
     || runtime.resource_kind !== 'filesystem'
     || runtime.runtime_admitted_at_ms < runtime.adapter_selected_at_ms
-    || runtime.max_raw_output_bytes !== 0
     || runtime.max_chargeable_dispatches !== 0
   ) fail();
   const digest = safeDigest(descriptors.admission_digest.value);
@@ -548,11 +553,11 @@ function assertRuntimeReady(runtimeAdmission, toolCallRecord, observedAtMs) {
     || runtimeAdmission.authority.filesystem_read !== 'not_performed'
     || runtimeAdmission.authority.raw_output_storage !== 'not_present'
     || runtimeAdmission.authority.git_authority !== 'not_present'
-    || runtimeAdmission.max_raw_output_bytes !== 0
     || runtimeAdmission.max_chargeable_dispatches !== 0
     || !sameRunBinding(runtimeAdmission, toolCallRecord)
     || runtimeAdmission.record_digest !== toolCallRecord.record_digest
     || runtimeAdmission.policy_digest !== toolCallRecord.session_policy.policy_digest
+    || runtimeAdmission.max_raw_output_bytes !== toolCallRecord.session_policy.limits.max_raw_output_bytes
     || observedAtMs < runtimeAdmission.runtime_admitted_at_ms
   ) fail();
 }

@@ -322,6 +322,27 @@ test('admits a bounded runtime envelope without reading files or executing the a
   );
 });
 
+test('propagates an explicit bounded raw output limit from the run policy', async () => {
+  const record = await toolCallRecord(10, {
+    session_policy: sessionPolicy({
+      limits: {
+        ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+        max_raw_output_bytes: 1_024,
+      },
+    }),
+  });
+  const dispatch = dispatchAdmission(record);
+  const selection = adapterSelection(dispatch, record);
+  const runtime = createBuilderToolRuntimeInvocationAdmission(runtimeInput(selection, record));
+
+  assert.equal(runtime.max_raw_output_bytes, 1_024);
+  assert.equal(runtime.max_chargeable_dispatches, 0);
+  assert.equal(runtime.lifecycle.filesystem_read, 'not_performed');
+  assert.equal(runtime.lifecycle.raw_output_admission, 'not_included');
+  assert.equal(runtime.authority.raw_output_storage, 'not_present');
+  assert.deepEqual(sanitizeBuilderToolRuntimeInvocationAdmission(runtime), runtime);
+});
+
 test('rejects unsupported runtime, selection drift, unsafe resources, stale timing, and non-read tools', async () => {
   const record = await toolCallRecord(2);
   const selection = adapterSelection(dispatchAdmission(record), record);
@@ -437,7 +458,10 @@ test('source remains a pure runtime-invocation contract with no IPC, filesystem 
   assert.match(source, /network_access:\s*'denied'/u);
   assert.match(source, /process_access:\s*'denied'/u);
   assert.match(source, /secret_access:\s*'denied'/u);
+  assert.match(source, /const MAX_TOOL_RAW_OUTPUT_BYTES = 64 \* 1_024/u);
+  assert.match(source, /max_raw_output_bytes:\s*record\.session_policy\.limits\.max_raw_output_bytes/u);
   assert.match(source, /runtimeAdmittedAtMs - record\.requested_at_ms > policy\.limits\.max_step_timeout_ms/u);
+  assert.doesNotMatch(source, /policy\.limits\.max_raw_output_bytes !== 0/u);
   assert.match(source, /policy\.limits\.max_chargeable_dispatches !== 0/u);
   assert.match(source, /selection\.record_digest !== record\.record_digest/u);
   assert.match(source, /suffix\.includes\(':'\)/u);

@@ -392,7 +392,6 @@ function unsignedAdmission({
     toolCallRecord.lifecycle.session_policy_admission !== 'verified_main_run_policy'
     || toolCallRecord.lifecycle.dispatch_admission !== 'not_started'
     || toolCallRecord.lifecycle.execution_admission !== 'not_performed'
-    || policy.limits.max_raw_output_bytes !== 0
     || policy.limits.max_chargeable_dispatches !== 0
     || admittedAtMs < toolCallRecord.requested_at_ms
     || admittedAtMs - toolCallRecord.requested_at_ms > policy.limits.max_step_timeout_ms

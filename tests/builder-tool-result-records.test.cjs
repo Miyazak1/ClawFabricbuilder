@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -193,6 +194,49 @@ function assertRecordError(error) {
   return true;
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => (
+    `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+  )).join(',')}}`;
+}
+
+function digestRuntime(value) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson({
+    action: value.action,
+    adapter_id: value.adapter_id,
+    adapter_selected_at_ms: value.adapter_selected_at_ms,
+    adapter_selection_digest: value.adapter_selection_digest,
+    adapter_selection_id: value.adapter_selection_id,
+    admission_kind: value.admission_kind,
+    admission_version: value.admission_version,
+    authority: value.authority,
+    conversation_id: value.conversation_id,
+    dispatch_admission_digest: value.dispatch_admission_digest,
+    dispatch_request_id: value.dispatch_request_id,
+    lifecycle: value.lifecycle,
+    max_chargeable_dispatches: value.max_chargeable_dispatches,
+    max_raw_output_bytes: value.max_raw_output_bytes,
+    policy_digest: value.policy_digest,
+    project_id: value.project_id,
+    record_digest: value.record_digest,
+    resource_kind: value.resource_kind,
+    run_id: value.run_id,
+    runtime_admitted_at_ms: value.runtime_admitted_at_ms,
+    runtime_id: value.runtime_id,
+    runtime_invocation_id: value.runtime_invocation_id,
+    step_id: value.step_id,
+    task_id: value.task_id,
+    tool_call_id: value.tool_call_id,
+    tool_name: value.tool_name,
+    turn_id: value.turn_id,
+  }), 'utf8').digest('hex')}`;
+}
+
 test('creates a fixed-code tool result record from a verified pre-dispatch tool call record', async () => {
   const callRecord = await toolCallRecord();
   const record = createBuilderToolResultRecord(resultInput(callRecord));
@@ -255,9 +299,38 @@ test('creates a fixed-code tool result record from a verified pre-dispatch tool 
   assert.deepEqual(sanitizeBuilderToolResultRecord(structuredClone(record)), record);
 });
 
+test('keeps fixed-code results raw-output-free when the runtime carries a bounded output limit', async () => {
+  const callRecord = await toolCallRecord({
+    record: {
+      session_policy: sessionPolicy({
+        limits: {
+          ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+          max_raw_output_bytes: 1_024,
+        },
+      }),
+    },
+  });
+  const runtime = runtimeAdmission(callRecord);
+  const record = createBuilderToolResultRecord(resultInput(callRecord, {
+    runtime_invocation_admission: runtime,
+  }));
+
+  assert.equal(runtime.max_raw_output_bytes, 1_024);
+  assert.equal(record.runtime_invocation_admission.max_raw_output_bytes, 1_024);
+  assert.equal(record.result.summary_code, 'completed_without_raw_output');
+  assert.equal(Object.hasOwn(record.result, 'raw_output'), false);
+  assert.equal(Object.hasOwn(record, 'file'), false);
+  assert.doesNotMatch(JSON.stringify(record), /file_content|source_tree|stdout|stderr/u);
+});
+
 test('fails closed on forged tool call records, stale timing, and result drift', async () => {
   const callRecord = await toolCallRecord();
   const runtime = runtimeAdmission(callRecord);
+  const rawOutputLimitMismatch = {
+    ...runtime,
+    max_raw_output_bytes: 1,
+  };
+  rawOutputLimitMismatch.admission_digest = digestRuntime(rawOutputLimitMismatch);
   const tightSummaryCallRecord = await toolCallRecord({
     record: {
       session_policy: sessionPolicy({
@@ -292,6 +365,7 @@ test('fails closed on forged tool call records, stale timing, and result drift',
         record_digest: `sha256:${'0'.repeat(64)}`,
       },
     }),
+    resultInput(callRecord, { runtime_invocation_admission: rawOutputLimitMismatch }),
     resultInput(callRecord, {
       runtime_invocation_admission: {
         ...runtime,

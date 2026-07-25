@@ -312,7 +312,6 @@ function assertCallRecordReady(record, dispatchAdmission, selectedAtMs) {
     || record.lifecycle.execution_admission !== 'not_performed'
     || record.lifecycle.result_admission !== 'not_recorded'
     || record.authority.tool_dispatch !== 'not_performed'
-    || policy.limits.max_raw_output_bytes !== 0
     || policy.limits.max_chargeable_dispatches !== 0
     || selectedAtMs < dispatchAdmission.admitted_at_ms
     || selectedAtMs - record.requested_at_ms > policy.limits.max_step_timeout_ms
