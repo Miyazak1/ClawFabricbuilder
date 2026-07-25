@@ -81,3 +81,53 @@ export interface BuilderProjectWorkspacePort {
 export interface BuilderTaskStreamPort {
   read(request: Readonly<{ project_id: string }>): Promise<unknown>;
 }
+
+export type BuilderPermissionAction =
+  | 'context.read'
+  | 'project.read'
+  | 'project.edit'
+  | 'secret.read'
+  | 'filesystem.read'
+  | 'filesystem.write'
+  | 'network.request'
+  | 'process.spawn'
+  | 'publication.create'
+  | 'permission.grant';
+
+export type BuilderPermissionResourceKind =
+  | 'artifact'
+  | 'conversation'
+  | 'filesystem'
+  | 'network'
+  | 'permission'
+  | 'process'
+  | 'project'
+  | 'publication'
+  | 'revision'
+  | 'run'
+  | 'secret'
+  | 'task';
+
+export type BuilderPermissionRequest = Readonly<{
+  project_id: string;
+  action: BuilderPermissionAction;
+  resource_kind: BuilderPermissionResourceKind;
+  resource_id: string;
+}>;
+
+export type BuilderPermissionDecision = Readonly<{
+  action: BuilderPermissionAction;
+  resource: Readonly<{
+    resource_kind: BuilderPermissionResourceKind;
+    project_id: string;
+    resource_id: string;
+  }>;
+  evaluated_at_ms: number;
+  decision: 'allowed' | 'denied';
+  reason: 'matching_active_grant' | 'no_matching_active_grant';
+  permission_id: string | null;
+}>;
+
+export interface BuilderPermissionPort {
+  evaluate(request: BuilderPermissionRequest): Promise<BuilderPermissionDecision>;
+}

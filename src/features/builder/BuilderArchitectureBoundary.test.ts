@@ -25,6 +25,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
+  'infrastructure/builderDesktopPermissionPort.ts',
   'infrastructure/builderDesktopProjectWorkspacePort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
   'infrastructure/builderDesktopTaskStreamPort.ts',
@@ -116,6 +117,10 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'infrastructure', 'builderDesktopTaskStreamPort.ts'),
       'utf8',
     );
+    const permissionPort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopPermissionPort.ts'),
+      'utf8',
+    );
     const conversationController = readFileSync(
       join(BUILDER_ROOT, 'application', 'builderConversationController.ts'),
       'utf8',
@@ -142,6 +147,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
+    expect(ports).toContain('evaluate(request: BuilderPermissionRequest)');
     const portsWithoutLoadRevision = ports.replace(
       / {2}loadRevision\(request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>\): Promise<unknown>;\r?\n/u,
       '',
@@ -164,6 +170,11 @@ describe('Builder v2 architecture boundary', () => {
     expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request/u);
     expect(taskStreamPort).toContain("const BRIDGE_KEYS = Object.freeze(['read'])");
     expect(taskStreamPort).not.toMatch(/saveDraft|generate|projectWorkspace|providerSettings/u);
+    expect(permissionPort).toContain("const BRIDGE_KEYS = Object.freeze(['evaluate'])");
+    expect(permissionPort).toContain('ACTOR_ID_PATTERN');
+    expect(permissionPort).not.toMatch(
+      /saveDraft|generate|projectWorkspace|providerSettings|record_grant|record_revocation|commit_oid|tree_oid|source_tree|credential/u,
+    );
     expect(conversationController).toContain("port.read({ project_id: projectId })");
     expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);
     expect(historyController).toContain("port.listHistory({");

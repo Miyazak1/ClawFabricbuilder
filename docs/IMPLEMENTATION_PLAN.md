@@ -205,7 +205,8 @@ Evidence requirements:
   are bound;
 - UI selection cannot substitute for a persisted grant;
 - the first implementation checkpoint owns durable grant/revocation facts in
-  main-only SQLite and exposes only an evaluate-only permission decision IPC;
+  main-only SQLite, exposes only an evaluate-only permission decision IPC, and
+  sanitizes that decision through a renderer-side port before any future UI/tool use;
 - secret access, filesystem, network, process, publication, and destructive
   actions are independently scoped;
 - revocation affects future actions and is visible in audit history;
