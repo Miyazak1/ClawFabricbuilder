@@ -83,6 +83,7 @@ for (const expected of [
   '/electron/builder-tool-runtime-invocation-admission.cjs',
   '/electron/builder-tool-project-workspace-admission.cjs',
   '/electron/builder-tool-filesystem-read-adapter.cjs',
+  '/electron/builder-tool-filesystem-read-execution-service.cjs',
   '/electron/builder-tool-filesystem-read-output-records.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
@@ -237,6 +238,7 @@ const packagedToolAdapterSelectionAdmission = packagedSource('electron/builder-t
 const packagedToolRuntimeInvocationAdmission = packagedSource('electron/builder-tool-runtime-invocation-admission.cjs');
 const packagedToolProjectWorkspaceAdmission = packagedSource('electron/builder-tool-project-workspace-admission.cjs');
 const packagedToolFilesystemReadAdapter = packagedSource('electron/builder-tool-filesystem-read-adapter.cjs');
+const packagedToolFilesystemReadExecutionService = packagedSource('electron/builder-tool-filesystem-read-execution-service.cjs');
 const packagedToolFilesystemReadOutputRecords = packagedSource('electron/builder-tool-filesystem-read-output-records.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
@@ -765,6 +767,20 @@ assert.match(packagedToolFilesystemReadAdapter, /handle\.read\(buffer, 0, maxRaw
 assert.doesNotMatch(
   packagedToolFilesystemReadAdapter,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedToolFilesystemReadExecutionService, /builder-tool-filesystem-read-execution-service\.v1/u);
+assert.match(packagedToolFilesystemReadExecutionService, /main_tool_filesystem_read_execution_service_v1/u);
+assert.match(packagedToolFilesystemReadExecutionService, /readBuilderToolFilesystemReadAdapter/u);
+assert.match(packagedToolFilesystemReadExecutionService, /createBuilderToolResultRecord/u);
+assert.match(packagedToolFilesystemReadExecutionService, /select_tool_adapter/u);
+assert.match(packagedToolFilesystemReadExecutionService, /admit_tool_runtime_invocation/u);
+assert.match(packagedToolFilesystemReadExecutionService, /record_tool_result/u);
+assert.match(packagedToolFilesystemReadExecutionService, /admit_project_workspace/u);
+assert.match(packagedToolFilesystemReadExecutionService, /fixed_result_summary_only/u);
+assert.match(packagedToolFilesystemReadExecutionService, /private_filesystem_read_output_record/u);
+assert.doesNotMatch(
+  packagedToolFilesystemReadExecutionService,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation-main-service|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|source_tree|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedToolFilesystemReadOutputRecords, /builder-tool-filesystem-read-output-record\.v1/u);
 assert.match(packagedToolFilesystemReadOutputRecords, /builder_tool_filesystem_read_output_record/u);

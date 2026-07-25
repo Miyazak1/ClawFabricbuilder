@@ -304,6 +304,13 @@ Evidence requirements:
   record; it still has no IPC/preload command, Conversation replay admission,
   renderer-safe Task Stream projection, provider dispatch, source mutation,
   Save, or revision authority;
+- the current filesystem-read execution-service checkpoint composes an already
+  requested tool call with the trusted Conversation main-service methods,
+  workspace admission, bounded read adapter, private read-output record, and
+  fixed result record; it returns the private file content only to the main
+  caller and records only a fixed public result summary in Conversation/Task
+  Stream, with no IPC/preload command, provider dispatch, source mutation,
+  raw-output durability, Save, or revision authority;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project
