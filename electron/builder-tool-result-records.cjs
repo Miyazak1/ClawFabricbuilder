@@ -202,9 +202,14 @@ function summaryDigestBody(value) {
   };
 }
 
-function resultRecord({ status, summaryCode }) {
+function resultRecord({ status, summaryCode, maxDisplaySummaryBytes }) {
   const displaySummary = DISPLAY_SUMMARIES[summaryCode];
-  if (Buffer.byteLength(displaySummary, 'utf8') > MAX_DISPLAY_SUMMARY_BYTES) fail();
+  if (
+    !Number.isSafeInteger(maxDisplaySummaryBytes)
+    || maxDisplaySummaryBytes < 1
+    || maxDisplaySummaryBytes > MAX_DISPLAY_SUMMARY_BYTES
+    || Buffer.byteLength(displaySummary, 'utf8') > maxDisplaySummaryBytes
+  ) fail();
   const unsigned = freezeDeep({
     status,
     summary_code: summaryCode,
@@ -216,21 +221,23 @@ function resultRecord({ status, summaryCode }) {
   });
 }
 
-function sanitizeResultInput(value) {
+function sanitizeResultInput(value, maxDisplaySummaryBytes) {
   const descriptors = exactObject(value, RESULT_INPUT_KEYS);
   const status = safeStatus(descriptors.status.value);
   return resultRecord({
     status,
     summaryCode: safeSummaryCode(descriptors.summary_code.value, status),
+    maxDisplaySummaryBytes,
   });
 }
 
-function sanitizeResultRecord(value) {
+function sanitizeResultRecord(value, maxDisplaySummaryBytes) {
   const descriptors = exactObject(value, RESULT_RECORD_KEYS);
   const status = safeStatus(descriptors.status.value);
   const result = resultRecord({
     status,
     summaryCode: safeSummaryCode(descriptors.summary_code.value, status),
+    maxDisplaySummaryBytes,
   });
   if (
     descriptors.display_summary.value !== result.display_summary
@@ -280,11 +287,14 @@ function unsignedRecord({ toolCallRecord, observedAtMs, result }) {
   if (
     toolCallRecord.record_version !== BUILDER_TOOL_CALL_RECORD_VERSION
     || toolCallRecord.lifecycle.permission_admission !== 'verified_allowed'
+    || toolCallRecord.lifecycle.session_policy_admission !== 'verified_main_run_policy'
     || toolCallRecord.lifecycle.dispatch_admission !== 'not_started'
     || toolCallRecord.lifecycle.execution_admission !== 'not_performed'
     || toolCallRecord.lifecycle.result_admission !== 'not_recorded'
     || toolCallRecord.lifecycle.revision_admission !== 'not_created'
     || observedAtMs < toolCallRecord.requested_at_ms
+    || observedAtMs - toolCallRecord.requested_at_ms > toolCallRecord.session_policy.limits.max_step_timeout_ms
+    || observedAtMs - toolCallRecord.session_policy.issued_at_ms > toolCallRecord.session_policy.limits.max_total_timeout_ms
   ) fail();
   return freezeDeep({
     record_version: BUILDER_TOOL_RESULT_RECORD_VERSION,
@@ -309,10 +319,14 @@ function unsignedRecord({ toolCallRecord, observedAtMs, result }) {
 function createBuilderToolResultRecord(rawInput) {
   try {
     const descriptors = exactObject(rawInput, INPUT_KEYS);
+    const toolCallRecord = sanitizeBuilderToolCallRecord(descriptors.tool_call_record.value);
     const record = unsignedRecord({
-      toolCallRecord: sanitizeBuilderToolCallRecord(descriptors.tool_call_record.value),
+      toolCallRecord,
       observedAtMs: safeTimestamp(descriptors.observed_at_ms.value),
-      result: sanitizeResultInput(descriptors.result.value),
+      result: sanitizeResultInput(
+        descriptors.result.value,
+        toolCallRecord.session_policy.limits.max_public_summary_bytes,
+      ),
     });
     return freezeDeep({
       ...record,
@@ -329,7 +343,10 @@ function sanitizeBuilderToolResultRecord(rawRecord) {
     const descriptors = exactObject(rawRecord, RECORD_KEYS);
     const toolCallRecord = sanitizeBuilderToolCallRecord(descriptors.tool_call_record.value);
     const observedAtMs = safeTimestamp(descriptors.observed_at_ms.value);
-    const result = sanitizeResultRecord(descriptors.result.value);
+    const result = sanitizeResultRecord(
+      descriptors.result.value,
+      toolCallRecord.session_policy.limits.max_public_summary_bytes,
+    );
     const record = unsignedRecord({ toolCallRecord, observedAtMs, result });
     if (
       descriptors.record_version.value !== BUILDER_TOOL_RESULT_RECORD_VERSION

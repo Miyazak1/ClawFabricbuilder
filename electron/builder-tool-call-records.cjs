@@ -6,6 +6,10 @@ const { types: utilTypes } = require('node:util');
 const {
   BUILDER_TOOL_PERMISSION_ADMISSION_VERSION,
 } = require('./builder-tool-permission-admission.cjs');
+const {
+  BUILDER_TOOL_SESSION_POLICY_VERSION,
+  sanitizeBuilderToolSessionPolicy,
+} = require('./builder-tool-session-policy.cjs');
 
 const BUILDER_TOOL_CALL_RECORD_VERSION = 'builder-tool-call-record.v1';
 const TOOL_CALL_RECORD_KIND = 'builder_tool_call_record';
@@ -16,6 +20,7 @@ const INPUT_KEYS = Object.freeze([
   'task_id',
   'run_id',
   'step_id',
+  'session_policy',
   'admission',
   'requested_at_ms',
 ]);
@@ -33,6 +38,7 @@ const RECORD_KEYS = Object.freeze([
   'action',
   'resource',
   'requested_at_ms',
+  'session_policy',
   'permission_admission_receipt',
   'lifecycle',
   'authority',
@@ -58,6 +64,7 @@ const ADMISSION_KEYS = Object.freeze([
 const RESOURCE_KEYS = Object.freeze(['resource_kind', 'project_id', 'resource_id']);
 const LIFECYCLE_KEYS = Object.freeze([
   'permission_admission',
+  'session_policy_admission',
   'dispatch_admission',
   'execution_admission',
   'result_admission',
@@ -66,6 +73,7 @@ const LIFECYCLE_KEYS = Object.freeze([
 const AUTHORITY_KEYS = Object.freeze([
   'record_authority',
   'admission_authority',
+  'session_policy_authority',
   'conversation_binding',
   'renderer_authority',
   'provider_dispatch',
@@ -99,6 +107,7 @@ const ACTION_RESOURCE_KINDS = Object.freeze({
 });
 const LIFECYCLE = Object.freeze({
   permission_admission: 'verified_allowed',
+  session_policy_admission: 'verified_main_run_policy',
   dispatch_admission: 'not_started',
   execution_admission: 'not_performed',
   result_admission: 'not_recorded',
@@ -107,6 +116,7 @@ const LIFECYCLE = Object.freeze({
 const AUTHORITY = Object.freeze({
   record_authority: 'main_tool_call_record_contract_v1',
   admission_authority: 'main_permission_decision_before_tool_dispatch_v1',
+  session_policy_authority: 'main_tool_session_policy_contract_v1',
   conversation_binding: 'ids_only_host_replay_required',
   renderer_authority: 'not_present',
   provider_dispatch: false,
@@ -332,6 +342,39 @@ function sanitizePermissionAdmission(value) {
   return admission;
 }
 
+function sameRunBinding(left, right) {
+  return left.project_id === right.project_id
+    && left.conversation_id === right.conversation_id
+    && left.turn_id === right.turn_id
+    && left.task_id === right.task_id
+    && left.run_id === right.run_id;
+}
+
+function sanitizeSessionPolicy(value, expected) {
+  const policy = sanitizeBuilderToolSessionPolicy(value);
+  if (
+    policy.policy_version !== BUILDER_TOOL_SESSION_POLICY_VERSION
+    || !sameRunBinding(policy, expected)
+    || policy.lifecycle.tool_call_admission !== 'bounded_pre_dispatch_only'
+    || policy.lifecycle.dispatch_admission !== 'not_performed_by_policy_contract'
+    || policy.lifecycle.execution_admission !== 'not_performed_by_policy_contract'
+    || policy.lifecycle.raw_output_admission !== 'not_included'
+    || policy.lifecycle.revision_admission !== 'not_created'
+    || policy.authority.policy_authority !== AUTHORITY.session_policy_authority
+    || policy.authority.issuance_authority !== 'trusted_main_run_context_required'
+    || policy.authority.digest_authority !== 'integrity_digest_not_issuer_proof_v1'
+    || policy.authority.renderer_authority !== 'not_present'
+    || policy.authority.provider_dispatch !== false
+    || policy.authority.credential_readback !== false
+    || policy.authority.tool_dispatch !== 'not_performed_by_policy_contract'
+    || policy.authority.raw_output_storage !== 'not_present'
+    || policy.authority.git_authority !== 'not_present'
+    || policy.limits.max_raw_output_bytes !== 0
+    || policy.limits.max_chargeable_dispatches !== 0
+  ) fail();
+  return policy;
+}
+
 function sanitizeLifecycle(value) {
   const descriptors = exactObject(value, LIFECYCLE_KEYS);
   for (const key of LIFECYCLE_KEYS) {
@@ -361,6 +404,7 @@ function recordDigestBody(value) {
     requested_at_ms: value.requested_at_ms,
     resource: value.resource,
     run_id: value.run_id,
+    session_policy: value.session_policy,
     step_id: value.step_id,
     task_id: value.task_id,
     tool_call_id: value.tool_call_id,
@@ -376,10 +420,17 @@ function unsignedRecord({
   taskId,
   runId,
   stepId,
+  sessionPolicy,
   admission,
   requestedAtMs,
 }) {
-  if (admission.project_id !== projectId || requestedAtMs < admission.evaluated_at_ms) fail();
+  if (
+    admission.project_id !== projectId
+    || admission.evaluated_at_ms < sessionPolicy.issued_at_ms
+    || requestedAtMs < admission.evaluated_at_ms
+    || requestedAtMs - admission.evaluated_at_ms > sessionPolicy.limits.max_step_timeout_ms
+    || requestedAtMs - sessionPolicy.issued_at_ms > sessionPolicy.limits.max_total_timeout_ms
+  ) fail();
   return freezeDeep({
     record_version: BUILDER_TOOL_CALL_RECORD_VERSION,
     record_kind: TOOL_CALL_RECORD_KIND,
@@ -394,6 +445,7 @@ function unsignedRecord({
     action: admission.action,
     resource: { ...admission.resource },
     requested_at_ms: requestedAtMs,
+    session_policy: sessionPolicy,
     permission_admission_receipt: admission,
     lifecycle: { ...LIFECYCLE },
     authority: { ...AUTHORITY },
@@ -404,13 +456,24 @@ function createBuilderToolCallRecord(rawInput) {
   try {
     const descriptors = exactObject(rawInput, INPUT_KEYS);
     const projectId = safeProjectId(descriptors.project_id.value);
+    const conversationId = safeConversationId(descriptors.conversation_id.value, projectId);
+    const turnId = safeTurnId(descriptors.turn_id.value);
+    const taskId = safeTaskId(descriptors.task_id.value);
+    const runId = safeRunId(descriptors.run_id.value);
     const record = unsignedRecord({
       projectId,
-      conversationId: safeConversationId(descriptors.conversation_id.value, projectId),
-      turnId: safeTurnId(descriptors.turn_id.value),
-      taskId: safeTaskId(descriptors.task_id.value),
-      runId: safeRunId(descriptors.run_id.value),
+      conversationId,
+      turnId,
+      taskId,
+      runId,
       stepId: safeStepId(descriptors.step_id.value),
+      sessionPolicy: sanitizeSessionPolicy(descriptors.session_policy.value, {
+        project_id: projectId,
+        conversation_id: conversationId,
+        turn_id: turnId,
+        task_id: taskId,
+        run_id: runId,
+      }),
       admission: sanitizePermissionAdmission(descriptors.admission.value),
       requestedAtMs: safeTimestamp(descriptors.requested_at_ms.value),
     });
@@ -430,13 +493,24 @@ function sanitizeBuilderToolCallRecord(rawRecord) {
     const projectId = safeProjectId(descriptors.project_id.value);
     const admission = sanitizePermissionAdmission(descriptors.permission_admission_receipt.value);
     const requestedAtMs = safeTimestamp(descriptors.requested_at_ms.value);
+    const conversationId = safeConversationId(descriptors.conversation_id.value, projectId);
+    const turnId = safeTurnId(descriptors.turn_id.value);
+    const taskId = safeTaskId(descriptors.task_id.value);
+    const runId = safeRunId(descriptors.run_id.value);
     const record = unsignedRecord({
       projectId,
-      conversationId: safeConversationId(descriptors.conversation_id.value, projectId),
-      turnId: safeTurnId(descriptors.turn_id.value),
-      taskId: safeTaskId(descriptors.task_id.value),
-      runId: safeRunId(descriptors.run_id.value),
+      conversationId,
+      turnId,
+      taskId,
+      runId,
       stepId: safeStepId(descriptors.step_id.value),
+      sessionPolicy: sanitizeSessionPolicy(descriptors.session_policy.value, {
+        project_id: projectId,
+        conversation_id: conversationId,
+        turn_id: turnId,
+        task_id: taskId,
+        run_id: runId,
+      }),
       admission,
       requestedAtMs,
     });

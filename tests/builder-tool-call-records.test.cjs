@@ -9,6 +9,10 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
+  DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+  createBuilderToolSessionPolicy,
+} = require('../electron/builder-tool-session-policy.cjs');
+const {
   BUILDER_TOOL_CALL_RECORD_VERSION,
   TOOL_CALL_RECORD_KIND,
   BuilderToolCallRecordError,
@@ -69,6 +73,19 @@ async function allowedAdmission(overrides = {}) {
   return guard.admit(request);
 }
 
+function sessionPolicy(overrides = {}) {
+  return createBuilderToolSessionPolicy({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    issued_at_ms: 49,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+    ...overrides,
+  });
+}
+
 function recordInput(admission, overrides = {}) {
   return {
     project_id: PROJECT_ID,
@@ -77,6 +94,7 @@ function recordInput(admission, overrides = {}) {
     task_id: TASK_ID,
     run_id: RUN_ID,
     step_id: STEP_ID,
+    session_policy: sessionPolicy(),
     admission,
     requested_at_ms: 51,
     ...overrides,
@@ -107,6 +125,7 @@ test('creates a run-bound tool call record from an allowed permission admission 
   assert.equal(record.tool_name, 'filesystem.read');
   assert.deepEqual(record.lifecycle, {
     permission_admission: 'verified_allowed',
+    session_policy_admission: 'verified_main_run_policy',
     dispatch_admission: 'not_started',
     execution_admission: 'not_performed',
     result_admission: 'not_recorded',
@@ -115,6 +134,7 @@ test('creates a run-bound tool call record from an allowed permission admission 
   assert.deepEqual(record.authority, {
     record_authority: 'main_tool_call_record_contract_v1',
     admission_authority: 'main_permission_decision_before_tool_dispatch_v1',
+    session_policy_authority: 'main_tool_session_policy_contract_v1',
     conversation_binding: 'ids_only_host_replay_required',
     renderer_authority: 'not_present',
     provider_dispatch: false,
@@ -122,11 +142,32 @@ test('creates a run-bound tool call record from an allowed permission admission 
     tool_dispatch: 'not_performed',
   });
   assert.equal(record.permission_admission_receipt.evidence_digest, admission.evidence_digest);
+  assert.equal(record.session_policy.policy_digest, sessionPolicy().policy_digest);
   assert.match(record.record_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.equal(Object.isFrozen(record), true);
+  assert.equal(Object.isFrozen(record.session_policy), true);
   assert.equal(Object.isFrozen(record.permission_admission_receipt), true);
   assert.equal(Object.isFrozen(record.resource), true);
   assert.deepEqual(sanitizeBuilderToolCallRecord(structuredClone(record)), record);
+});
+
+test('outer record digest covers a valid alternate session policy receipt', async () => {
+  const admission = await allowedAdmission();
+  const baseline = createBuilderToolCallRecord(recordInput(admission));
+  const alternatePolicy = sessionPolicy({
+    limits: {
+      ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+      max_steps: 17,
+    },
+  });
+  const alternate = createBuilderToolCallRecord(recordInput(admission, {
+    session_policy: alternatePolicy,
+  }));
+
+  assert.match(alternate.session_policy.policy_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.notEqual(alternate.session_policy.policy_digest, baseline.session_policy.policy_digest);
+  assert.notEqual(alternate.record_digest, baseline.record_digest);
+  assert.deepEqual(sanitizeBuilderToolCallRecord(structuredClone(alternate)), alternate);
 });
 
 test('fails closed on forged permission admission, cross-project binding, or lifecycle drift', async () => {
@@ -139,8 +180,13 @@ test('fails closed on forged permission admission, cross-project binding, or lif
     recordInput({ ...admission, evidence_digest: `sha256:${'0'.repeat(64)}` }),
     recordInput({ ...admission, execution_admission: 'executed' }),
     recordInput({ ...admission, project_id: otherProjectId }),
+    recordInput(admission, { session_policy: { ...sessionPolicy(), policy_digest: `sha256:${'0'.repeat(64)}` } }),
+    recordInput(admission, { session_policy: sessionPolicy({ run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174099' }) }),
+    recordInput(admission, { session_policy: sessionPolicy({ issued_at_ms: 51 }) }),
     recordInput(admission, { conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174099' }),
     recordInput(admission, { requested_at_ms: 49 }),
+    recordInput(admission, { requested_at_ms: 120_052 }),
+    recordInput(admission, { requested_at_ms: 300_050 }),
     recordInput(admission, { task_id: null }),
   ]) {
     assert.throws(() => createBuilderToolCallRecord(invalidInput), assertRecordError);
@@ -150,7 +196,10 @@ test('fails closed on forged permission admission, cross-project binding, or lif
     { ...record, tool_name: 'filesystem.write' },
     { ...record, action: 'filesystem.write' },
     { ...record, resource: { ...record.resource, resource_id: 'project:/src/other.tsx' } },
+    { ...record, session_policy: { ...record.session_policy, policy_digest: `sha256:${'f'.repeat(64)}` } },
+    { ...record, lifecycle: { ...record.lifecycle, session_policy_admission: 'not_checked' } },
     { ...record, lifecycle: { ...record.lifecycle, execution_admission: 'performed' } },
+    { ...record, authority: { ...record.authority, session_policy_authority: 'renderer_policy' } },
     { ...record, authority: { ...record.authority, renderer_authority: 'renderer_selected' } },
     { ...record, record_digest: `sha256:${'f'.repeat(64)}` },
   ]) {
@@ -168,6 +217,7 @@ test('rejects hostile input without invoking getters or leaking rejected materia
     task_id: TASK_ID,
     run_id: RUN_ID,
     step_id: STEP_ID,
+    session_policy: sessionPolicy(),
     requested_at_ms: 51,
   };
   Object.defineProperty(accessorInput, 'admission', {
@@ -177,6 +227,23 @@ test('rejects hostile input without invoking getters or leaking rejected materia
       return admission;
     },
   });
+  const sessionPolicyAccessorInput = {
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    step_id: STEP_ID,
+    admission,
+    requested_at_ms: 51,
+  };
+  Object.defineProperty(sessionPolicyAccessorInput, 'session_policy', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return sessionPolicy();
+    },
+  });
 
   for (const invalid of [
     null,
@@ -184,6 +251,7 @@ test('rejects hostile input without invoking getters or leaking rejected materia
     { ...recordInput(admission), extra: true },
     new Proxy(recordInput(admission), {}),
     accessorInput,
+    sessionPolicyAccessorInput,
   ]) {
     assert.throws(() => createBuilderToolCallRecord(invalid), (error) => {
       assertRecordError(error);
@@ -204,6 +272,9 @@ test('record carries no execution result, provider, credential, Git, or renderer
   assert.equal(Object.hasOwn(record, 'result'), false);
   assert.equal(Object.hasOwn(record, 'provider'), false);
   assert.equal(Object.hasOwn(record, 'git_candidate_receipt'), false);
+  assert.equal(record.session_policy.authority.provider_dispatch, false);
+  assert.equal(record.session_policy.authority.tool_dispatch, 'not_performed_by_policy_contract');
+  assert.equal(record.session_policy.limits.max_raw_output_bytes, 0);
   assert.equal(record.authority.provider_dispatch, false);
   assert.equal(record.authority.credential_readback, false);
 });
@@ -215,9 +286,13 @@ test('source remains a pure pre-dispatch record contract with no IPC, provider, 
   );
   assert.match(source, /builder-tool-call-record\.v1/u);
   assert.match(source, /main_tool_call_record_contract_v1/u);
+  assert.match(source, /builder-tool-session-policy\.cjs/u);
   assert.match(source, /permission_admission:\s*'verified_allowed'/u);
+  assert.match(source, /session_policy_admission:\s*'verified_main_run_policy'/u);
   assert.match(source, /dispatch_admission:\s*'not_started'/u);
   assert.match(source, /execution_admission:\s*'not_performed'/u);
+  assert.match(source, /requestedAtMs - admission\.evaluated_at_ms > sessionPolicy\.limits\.max_step_timeout_ms/u);
+  assert.match(source, /requestedAtMs - sessionPolicy\.issued_at_ms > sessionPolicy\.limits\.max_total_timeout_ms/u);
   assert.match(source, /tool_dispatch:\s*'not_performed'/u);
   assert.doesNotMatch(
     source,

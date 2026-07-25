@@ -21,6 +21,10 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
+  DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+  createBuilderToolSessionPolicy,
+} = require('../electron/builder-tool-session-policy.cjs');
+const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
@@ -66,6 +70,15 @@ async function toolCallRecord({
   toolCallId = typedId('tool-call', 1),
   stepId = typedId('run-step', 1),
 } = {}) {
+  const sessionPolicy = createBuilderToolSessionPolicy({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    issued_at_ms: 49,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+  });
   const guard = createBuilderToolPermissionAdmission({
     actor_id: typedId('user', 1),
     now_ms: () => 50,
@@ -101,6 +114,7 @@ async function toolCallRecord({
     task_id: taskId,
     run_id: runId,
     step_id: stepId,
+    session_policy: sessionPolicy,
     admission,
     requested_at_ms: 51,
   });

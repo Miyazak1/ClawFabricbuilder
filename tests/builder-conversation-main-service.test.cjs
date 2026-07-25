@@ -23,6 +23,10 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
+  DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+  createBuilderToolSessionPolicy,
+} = require('../electron/builder-tool-session-policy.cjs');
+const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
@@ -177,16 +181,33 @@ async function allowedToolAdmission(overrides = {}) {
 }
 
 async function toolCallRecord(context, overrides = {}) {
+  const recordOverrides = overrides.record ?? {};
+  const projectId = recordOverrides.project_id ?? PROJECT_ID;
+  const conversationId = recordOverrides.conversation_id ?? context.conversation.conversation_id;
+  const turnId = recordOverrides.turn_id ?? context.ids.turn_id;
+  const taskId = recordOverrides.task_id ?? context.ids.task_id;
+  const runId = recordOverrides.run_id ?? context.ids.run_id;
+  const sessionPolicy = createBuilderToolSessionPolicy({
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    issued_at_ms: 49,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+    ...(overrides.session_policy ?? {}),
+  });
   return createBuilderToolCallRecord({
-    project_id: PROJECT_ID,
-    conversation_id: context.conversation.conversation_id,
-    turn_id: context.ids.turn_id,
-    task_id: context.ids.task_id,
-    run_id: context.ids.run_id,
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
     step_id: TOOL_STEP_ID,
+    session_policy: sessionPolicy,
     admission: await allowedToolAdmission(overrides.admission ?? {}),
     requested_at_ms: 60,
-    ...(overrides.record ?? {}),
+    ...recordOverrides,
   });
 }
 
@@ -415,7 +436,7 @@ test('records main-only tool request and fixed-code result facts without dispatc
     });
     assert.doesNotMatch(
       JSON.stringify(pendingStream),
-      /tool_result_record|tool_call_record|permission_id|permission_admission_receipt|record_digest|summary_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|git_candidate_receipt|commit_oid|tree_oid|provider|credential|source_tree|save_admission/iu,
+      /tool_result_record|tool_call_record|session_policy|permission_id|permission_admission_receipt|record_digest|summary_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|git_candidate_receipt|commit_oid|tree_oid|provider|credential|source_tree|save_admission/iu,
     );
 
     const completed = item.service.complete_failure({

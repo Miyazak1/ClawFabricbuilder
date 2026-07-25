@@ -19,6 +19,10 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
+  DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+  createBuilderToolSessionPolicy,
+} = require('../electron/builder-tool-session-policy.cjs');
+const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
@@ -100,6 +104,15 @@ async function toolCallRecord({
   stepId = id('run-step', 4),
   toolCallId = id('tool-call', 5),
 } = {}) {
+  const sessionPolicy = createBuilderToolSessionPolicy({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    issued_at_ms: 49,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+  });
   const guard = createBuilderToolPermissionAdmission({
     actor_id: id('user', 6),
     now_ms: () => 50,
@@ -135,6 +148,7 @@ async function toolCallRecord({
     task_id: taskId,
     run_id: runId,
     step_id: stepId,
+    session_policy: sessionPolicy,
     admission,
     requested_at_ms: 51,
   });
@@ -456,7 +470,7 @@ test('projects pre-dispatch tool calls without exposing permission or resource e
   });
   assert.doesNotMatch(
     JSON.stringify(stream),
-    /permission_id|permission_admission_receipt|record_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+    /session_policy|permission_id|permission_admission_receipt|record_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
   );
 });
 
@@ -489,7 +503,7 @@ test('projects fixed-code tool results without exposing records or raw output', 
   });
   assert.doesNotMatch(
     JSON.stringify(stream),
-    /tool_result_record|tool_call_record|tool_name|permission_id|permission_admission_receipt|record_digest|summary_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+    /tool_result_record|tool_call_record|session_policy|tool_name|permission_id|permission_admission_receipt|record_digest|summary_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
   );
 });
 

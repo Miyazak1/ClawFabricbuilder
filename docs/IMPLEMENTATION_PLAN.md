@@ -226,8 +226,9 @@ Evidence requirements:
 - explicit Goal and Task identity;
 - context and tools authorized by Gate F6 Permission facts;
 - the first F9 checkpoint records a run-bound tool call fact only from an
-  allowed main-side permission admission receipt, with dispatch, execution,
-  result, and revision explicitly not performed;
+  allowed main-side permission admission receipt plus a matching main-only
+  tool session policy receipt, with dispatch, execution, result, and revision
+  explicitly not performed;
 - the next checkpoint admits that pre-dispatch tool call fact into the
   Conversation event replay and renderer-safe Task Stream projection without
   exposing permission receipts, resource details, provider facts, or execution
@@ -243,14 +244,18 @@ Evidence requirements:
   bound to a trusted active work Run context and replayed through SQLite; these
   methods are not IPC/preload commands and still do not perform dispatch,
   execution, provider calls, source mutation, or Save;
-- the current bounded policy checkpoint defines a main-only tool session policy
-  receipt for Run-bound work with fixed step, tool-call, retry, timeout,
-  summary-output, raw-output, and chargeable-dispatch limits; it is still a
-  contract only, not yet bound to the existing tool-call record append path,
-  with no IPC/preload command, tool dispatch, provider call, source mutation,
-  raw-output storage, or revision creation; the digest is integrity evidence,
-  not issuer proof, and future enforcement must bind issuance to a trusted
-  main-side Run context before dispatch;
+- the current bounded policy checkpoint binds the main-only tool session
+  policy receipt into the tool-call record contract and therefore into the
+  internal Conversation append path through existing record sanitizers; the
+  receipt fixes Run-bound step, tool-call, retry, timeout, summary-output,
+  raw-output, and chargeable-dispatch limits, while still providing no
+  IPC/preload command, tool dispatch, provider call, source mutation,
+  raw-output storage, or revision creation; the tool-call record enforces the
+  policy request-time window, and the result record enforces the policy
+  result-time and public-summary window, while multi-step counts and retry
+  exhaustion still require the future runtime/session state gate; the digest is
+  integrity evidence, not issuer proof, and any future executor must still bind
+  issuance to a trusted main-side Run context before dispatch;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

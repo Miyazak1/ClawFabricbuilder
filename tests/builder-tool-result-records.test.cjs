@@ -13,6 +13,10 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
+  DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+  createBuilderToolSessionPolicy,
+} = require('../electron/builder-tool-session-policy.cjs');
+const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
@@ -72,6 +76,19 @@ async function allowedAdmission(overrides = {}) {
   return guard.admit(request);
 }
 
+function sessionPolicy(overrides = {}) {
+  return createBuilderToolSessionPolicy({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    issued_at_ms: 49,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+    ...overrides,
+  });
+}
+
 function callRecordInput(admission, overrides = {}) {
   return {
     project_id: PROJECT_ID,
@@ -80,6 +97,7 @@ function callRecordInput(admission, overrides = {}) {
     task_id: TASK_ID,
     run_id: RUN_ID,
     step_id: STEP_ID,
+    session_policy: sessionPolicy(),
     admission,
     requested_at_ms: 51,
     ...overrides,
@@ -170,12 +188,25 @@ test('creates a fixed-code tool result record from a verified pre-dispatch tool 
 
 test('fails closed on forged tool call records, stale timing, and result drift', async () => {
   const callRecord = await toolCallRecord();
+  const tightSummaryCallRecord = await toolCallRecord({
+    record: {
+      session_policy: sessionPolicy({
+        limits: {
+          ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+          max_public_summary_bytes: 1,
+        },
+      }),
+    },
+  });
   const record = createBuilderToolResultRecord(resultInput(callRecord));
 
   for (const invalidInput of [
     resultInput({ ...callRecord, record_digest: `sha256:${'0'.repeat(64)}` }),
     resultInput({ ...callRecord, lifecycle: { ...callRecord.lifecycle, result_admission: 'recorded' } }),
     resultInput(callRecord, { observed_at_ms: 50 }),
+    resultInput(callRecord, { observed_at_ms: 120_052 }),
+    resultInput(callRecord, { observed_at_ms: 300_050 }),
+    resultInput(tightSummaryCallRecord),
     resultInput(callRecord, { result: result({ status: 'running' }) }),
     resultInput(callRecord, { result: result({ status: 'succeeded', summary_code: 'failed_without_raw_output' }) }),
     resultInput(callRecord, { result: result({ status: 'failed', summary_code: 'completed_without_raw_output' }) }),
@@ -291,6 +322,9 @@ test('source remains a pure result-admission contract with no IPC, provider, Git
   assert.match(source, /main_tool_result_record_contract_v1/u);
   assert.match(source, /sanitizeBuilderToolCallRecord/u);
   assert.match(source, /tool_call_admission:\s*'verified_pre_dispatch_record'/u);
+  assert.match(source, /max_public_summary_bytes/u);
+  assert.match(source, /observedAtMs - toolCallRecord\.requested_at_ms > toolCallRecord\.session_policy\.limits\.max_step_timeout_ms/u);
+  assert.match(source, /observedAtMs - toolCallRecord\.session_policy\.issued_at_ms > toolCallRecord\.session_policy\.limits\.max_total_timeout_ms/u);
   assert.match(source, /result_admission:\s*'fixed_summary_code_recorded'/u);
   assert.match(source, /raw_output_admission:\s*'not_included'/u);
   assert.match(source, /revision_admission:\s*'not_created'/u);

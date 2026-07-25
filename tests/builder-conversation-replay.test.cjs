@@ -17,6 +17,10 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
+  DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+  createBuilderToolSessionPolicy,
+} = require('../electron/builder-tool-session-policy.cjs');
+const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
@@ -85,6 +89,15 @@ async function toolCallRecord({
   stepId = id('run-step', 1),
   toolCallId = id('tool-call', 1),
 } = {}) {
+  const sessionPolicy = createBuilderToolSessionPolicy({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    issued_at_ms: 49,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+  });
   const guard = createBuilderToolPermissionAdmission({
     actor_id: id('user', 1),
     now_ms: () => 50,
@@ -120,6 +133,7 @@ async function toolCallRecord({
     task_id: taskId,
     run_id: runId,
     step_id: stepId,
+    session_policy: sessionPolicy,
     admission,
     requested_at_ms: 51,
   });
@@ -299,6 +313,7 @@ test('replays tool call requests and fixed-code results only inside an active wo
   assert.equal(replay.turns[0].runs[0].tool_calls.length, 1);
   assert.deepEqual(replay.turns[0].runs[0].tool_calls[0].lifecycle, {
     permission_admission: 'verified_allowed',
+    session_policy_admission: 'verified_main_run_policy',
     dispatch_admission: 'not_started',
     execution_admission: 'not_performed',
     result_admission: 'not_recorded',
