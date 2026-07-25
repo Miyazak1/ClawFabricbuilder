@@ -70,6 +70,16 @@ function cloneToolCallRecord(record) {
   };
 }
 
+function cloneToolResultRecord(record) {
+  return {
+    ...record,
+    tool_call_record: cloneToolCallRecord(record.tool_call_record),
+    result: { ...record.result },
+    lifecycle: { ...record.lifecycle },
+    authority: { ...record.authority },
+  };
+}
+
 function requireActiveTurn(state, turnId) {
   if (state.activeTurnId !== turnId) fail();
   const turn = state.turns.get(turnId);
@@ -165,7 +175,30 @@ function applyToolCallRequested(state, payload) {
     resource: { ...record.resource },
     lifecycle: { ...record.lifecycle },
     tool_call_record: cloneToolCallRecord(record),
+    tool_result_record: null,
   });
+}
+
+function applyToolCallResultRecorded(state, payload) {
+  const record = payload.tool_result_record;
+  const turn = requireActiveTurn(state, record.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  const toolCall = run?.tool_calls.find((item) => item.tool_call_id === record.tool_call_id) ?? null;
+  if (
+    turn.mode !== 'work'
+    || run === null
+    || run.run_id !== record.run_id
+    || run.status !== 'running'
+    || run.interrupt_request_id !== null
+    || run.cancel_request_id !== null
+    || toolCall === null
+    || toolCall.step_id !== record.step_id
+    || toolCall.tool_result_record !== null
+    || state.toolResultRecordDigests.has(record.record_digest)
+    || toolCall.tool_call_record.record_digest !== record.tool_call_record.record_digest
+  ) fail();
+  state.toolResultRecordDigests.add(record.record_digest);
+  toolCall.tool_result_record = cloneToolResultRecord(record);
 }
 
 function applyCandidateReviewed(state, payload) {
@@ -274,6 +307,7 @@ const TRANSITIONS = Object.freeze({
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
   tool_call_requested: applyToolCallRequested,
+  tool_call_result_recorded: applyToolCallResultRecorded,
   run_completed: applyRunCompleted,
   turn_completed: applyTurnCompleted,
 });
@@ -292,6 +326,9 @@ function publicTurn(turn) {
         resource: { ...toolCall.resource },
         lifecycle: { ...toolCall.lifecycle },
         tool_call_record: cloneToolCallRecord(toolCall.tool_call_record),
+        tool_result_record: toolCall.tool_result_record === null
+          ? null
+          : cloneToolResultRecord(toolCall.tool_result_record),
       })),
       candidate_result: run.candidate_result === null ? null : {
         ...run.candidate_result,
@@ -331,6 +368,7 @@ function replayBuilderConversation(rawEvents) {
     runIds: new Set(),
     stepIds: new Set(),
     toolCallIds: new Set(),
+    toolResultRecordDigests: new Set(),
     interruptRequestIds: new Set(),
     cancelRequestIds: new Set(),
     reviewIds: new Set(),

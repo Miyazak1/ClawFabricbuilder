@@ -176,6 +176,11 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
   if (item.item_kind === 'tool_call_requested') return <Play className="size-3.5" />;
+  if (item.item_kind === 'tool_call_result_recorded') {
+    if (item.result.status === 'succeeded') return <CheckCircle2 className="size-3.5" />;
+    if (item.result.status === 'cancelled') return <StopCircle className="size-3.5" />;
+    return <AlertCircle className="size-3.5" />;
+  }
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted'
       ? <CheckCircle2 className="size-3.5" />
@@ -197,6 +202,11 @@ function activityTitle(item: BuilderConversationItem): string {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
   if (item.item_kind === 'tool_call_requested') return 'Project access ready';
+  if (item.item_kind === 'tool_call_result_recorded') {
+    if (item.result.status === 'succeeded') return 'Project step completed';
+    if (item.result.status === 'cancelled') return 'Project step stopped';
+    return 'Project step could not finish';
+  }
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted' ? 'Version saved' : 'Draft rejected';
   }
@@ -215,6 +225,7 @@ function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'tool_call_requested') {
     return 'The assistant has approved project access for this step. It has not run yet.';
   }
+  if (item.item_kind === 'tool_call_result_recorded') return item.result.display_summary;
   if (item.item_kind === 'candidate_reviewed') {
     if (item.decision === 'accepted') {
       const revisionNumber = item.saved_revision?.revision_number;

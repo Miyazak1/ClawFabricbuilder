@@ -44,11 +44,20 @@ type MutableConversationItem = {
   tool_call_id?: string;
   tool_label?: string;
   resource?: { resource_kind: string; resource_id?: string };
+  result?: {
+    status: string;
+    summary_code: string;
+    display_summary: string;
+    summary_digest?: string;
+    stdout?: string;
+  };
   lifecycle?: {
-    permission_admission: string;
-    dispatch_admission: string;
-    execution_admission: string;
+    permission_admission?: string;
+    dispatch_admission?: string;
+    execution_admission?: string;
     result_admission: string;
+    raw_output_admission?: string;
+    revision_admission?: string;
   };
   terminal_status?: string;
   result_kind?: string;
@@ -239,6 +248,37 @@ function toolCallWire(): MutableWire {
   return wire;
 }
 
+function toolResultWire(): MutableWire {
+  const wire = toolCallWire();
+  wire.conversation.head_sequence = 4;
+  wire.conversation.window.last_sequence = 4;
+  wire.conversation.items.push({
+    item_kind: 'tool_call_result_recorded',
+    sequence: 4,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    step_id: id('run-step', 4),
+    tool_call_id: id('tool-call', 5),
+    tool_label: 'Read project file',
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+    },
+    result: {
+      status: 'failed',
+      summary_code: 'output_rejected',
+      display_summary: 'The tool output was not accepted.',
+    },
+    lifecycle: {
+      result_admission: 'fixed_summary_code_recorded',
+      raw_output_admission: 'not_included',
+      revision_admission: 'not_created',
+    },
+    recorded_state: 'recorded',
+  });
+  return wire;
+}
+
 function completedTurnItems(
   turnIndex: number,
   firstSequence: number,
@@ -421,6 +461,41 @@ describe('Builder conversation snapshot', () => {
     );
   });
 
+  it('accepts fixed-code tool result facts without exposing records, raw output, or revisions', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(toolResultWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.recorded_active_turn_id).toBe(id('turn', 1));
+    expect(snapshot.conversation.items[3]).toEqual({
+      item_kind: 'tool_call_result_recorded',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      step_id: id('run-step', 4),
+      tool_call_id: id('tool-call', 5),
+      tool_label: 'Read project file',
+      action: 'filesystem.read',
+      resource: {
+        resource_kind: 'filesystem',
+      },
+      result: {
+        status: 'failed',
+        summary_code: 'output_rejected',
+        display_summary: 'The tool output was not accepted.',
+      },
+      lifecycle: {
+        result_admission: 'fixed_summary_code_recorded',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+      recorded_state: 'recorded',
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /tool_result_record|tool_call_record|summary_digest|output_digest|stdout|stderr|permission_id|permission_admission_receipt|record_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|git_|receipt|provider|credential|source_tree/iu,
+    );
+  });
+
   it('rejects tool call facts that imply execution, leaked resources, or unobserved success', () => {
     const executed = toolCallWire();
     executed.conversation.items[2]!.lifecycle!.execution_admission = 'performed';
@@ -454,6 +529,78 @@ describe('Builder conversation snapshot', () => {
       leakedResource,
       leakedToolName,
       successAfterToolCall,
+    ]) {
+      expectUnavailable(value);
+    }
+  });
+
+  it('rejects forged tool result facts and results that appear outside the requested step', () => {
+    const driftedDisplay = toolResultWire();
+    driftedDisplay.conversation.items[3]!.result!.display_summary = 'Ran filesystem.read.';
+
+    const leakedDigest = toolResultWire();
+    leakedDigest.conversation.items[3]!.result!.summary_digest = `sha256:${'a'.repeat(64)}`;
+
+    const leakedStdout = toolResultWire();
+    leakedStdout.conversation.items[3]!.result!.stdout = 'raw project bytes';
+
+    const actionDrift = toolResultWire();
+    actionDrift.conversation.items[3]!.action = 'context.read';
+    actionDrift.conversation.items[3]!.tool_label = 'Read project context';
+
+    const resourceDrift = toolResultWire();
+    resourceDrift.conversation.items[3]!.action = 'project.edit';
+    resourceDrift.conversation.items[3]!.tool_label = 'Prepare project edit';
+    resourceDrift.conversation.items[3]!.resource = {
+      resource_kind: 'project',
+    };
+
+    const resultBeforeRequest = toolResultWire();
+    resultBeforeRequest.conversation.items = [
+      resultBeforeRequest.conversation.items[0]!,
+      resultBeforeRequest.conversation.items[1]!,
+      {
+        ...resultBeforeRequest.conversation.items[3]!,
+        sequence: 3,
+      },
+      {
+        ...resultBeforeRequest.conversation.items[2]!,
+        sequence: 4,
+      },
+    ];
+
+    const duplicateResult = toolResultWire();
+    duplicateResult.conversation.head_sequence = 5;
+    duplicateResult.conversation.window.last_sequence = 5;
+    duplicateResult.conversation.items.push({
+      ...duplicateResult.conversation.items[3]!,
+      sequence: 5,
+    });
+
+    const successAfterToolResult = toolResultWire();
+    successAfterToolResult.conversation.head_sequence = 6;
+    successAfterToolResult.conversation.recorded_active_turn_id = null;
+    successAfterToolResult.conversation.window.last_sequence = 6;
+    successAfterToolResult.conversation.items.push(
+      {
+        ...candidateWire().conversation.items[2]!,
+        sequence: 5,
+      },
+      {
+        ...candidateWire().conversation.items[3]!,
+        sequence: 6,
+      },
+    );
+
+    for (const value of [
+      driftedDisplay,
+      leakedDigest,
+      leakedStdout,
+      actionDrift,
+      resourceDrift,
+      resultBeforeRequest,
+      duplicateResult,
+      successAfterToolResult,
     ]) {
       expectUnavailable(value);
     }
@@ -751,6 +898,99 @@ describe('Builder conversation snapshot', () => {
       item_kind: 'run_started',
       run_id: retryRunId,
       task_id: retryTaskId,
+    });
+  });
+
+  it('accepts a truncated prefix tool result whose request is in omitted history', () => {
+    const wire = truncatedWire();
+    const prefixTurnId = id('turn', 730);
+    const prefixRunId = id('run', 731);
+    const prefixStepId = id('run-step', 732);
+    const prefixToolCallId = id('tool-call', 733);
+    const tailTurnId = id('turn', 24001);
+    const tailTaskId = id('task', 24002);
+    wire.conversation.items = [
+      {
+        item_kind: 'tool_call_result_recorded',
+        sequence: 5,
+        turn_id: prefixTurnId,
+        run_id: prefixRunId,
+        step_id: prefixStepId,
+        tool_call_id: prefixToolCallId,
+        tool_label: 'Read project file',
+        action: 'filesystem.read',
+        resource: {
+          resource_kind: 'filesystem',
+        },
+        result: {
+          status: 'failed',
+          summary_code: 'adapter_unavailable',
+          display_summary: 'The tool was unavailable.',
+        },
+        lifecycle: {
+          result_admission: 'fixed_summary_code_recorded',
+          raw_output_admission: 'not_included',
+          revision_admission: 'not_created',
+        },
+        recorded_state: 'recorded',
+      },
+      {
+        item_kind: 'run_completed',
+        sequence: 6,
+        turn_id: prefixTurnId,
+        run_id: prefixRunId,
+        terminal_status: 'failed',
+        result_kind: 'failure',
+        assistant_message: {
+          message_id: id('message', 734),
+          text: 'The project step was unavailable.',
+        },
+        candidate: null,
+      },
+      {
+        item_kind: 'turn_completed',
+        sequence: 7,
+        turn_id: prefixTurnId,
+        run_id: prefixRunId,
+        outcome: 'failed',
+      },
+      ...Array.from(
+        { length: 31 },
+        (_, index) => completedTurnItems(index + 1300, 8 + index * 4),
+      ).flat(),
+      {
+        item_kind: 'user_message',
+        sequence: 132,
+        turn_id: tailTurnId,
+        message: {
+          message_id: id('message', 24003),
+          text: 'Continue this project.',
+        },
+        message_kind: 'submitted',
+        mode: 'work',
+        task: {
+          task_id: tailTaskId,
+          title: 'Continue project',
+        },
+      },
+    ];
+    wire.conversation.head_sequence = 132;
+    wire.conversation.window = {
+      first_sequence: 5,
+      last_sequence: 132,
+      has_earlier: true,
+    };
+    wire.conversation.recorded_active_turn_id = tailTurnId;
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[0]).toMatchObject({
+      item_kind: 'tool_call_result_recorded',
+      result: {
+        summary_code: 'adapter_unavailable',
+        display_summary: 'The tool was unavailable.',
+      },
     });
   });
 

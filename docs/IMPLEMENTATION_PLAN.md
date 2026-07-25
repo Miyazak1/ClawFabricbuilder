@@ -233,9 +233,11 @@ Evidence requirements:
   exposing permission receipts, resource details, provider facts, or execution
   results;
 - the current result-admission checkpoint defines a main-only fixed-code tool
-  result record contract from a verified pre-dispatch call record, but still
-  does not dispatch tools, accept free-form output text, store raw output,
-  expose renderer state, or create a revision;
+  result record contract from a verified pre-dispatch call record and admits
+  that fixed-code result into Conversation replay plus the renderer-safe Task
+  Stream without exposing record digests, raw output, provider facts, renderer
+  state, or revision authority; it still does not dispatch tools, accept
+  free-form output text, store raw output, or create a revision;
 - bounded step, cost, time, retry, and output policy;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;

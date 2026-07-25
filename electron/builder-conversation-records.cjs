@@ -9,6 +9,9 @@ const {
 const {
   sanitizeBuilderToolCallRecord,
 } = require('./builder-tool-call-records.cjs');
+const {
+  sanitizeBuilderToolResultRecord,
+} = require('./builder-tool-result-records.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -82,6 +85,7 @@ const PAYLOAD_KEYS = Object.freeze({
   run_interrupt_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   run_cancel_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   tool_call_requested: Object.freeze(['tool_call_record']),
+  tool_call_result_recorded: Object.freeze(['tool_result_record']),
   run_completed: Object.freeze([
     'turn_id', 'run_id', 'terminal_status', 'result_kind', 'result_digest',
     'assistant_message', 'candidate_result',
@@ -362,6 +366,16 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
       ) fail();
       return {
         tool_call_record: toolCallRecord,
+      };
+    }
+    case 'tool_call_result_recorded': {
+      const toolResultRecord = sanitizeBuilderToolResultRecord(valueAt(value, 'tool_result_record'));
+      if (
+        toolResultRecord.project_id !== projectId
+        || toolResultRecord.conversation_id !== conversationId
+      ) fail();
+      return {
+        tool_result_record: toolResultRecord,
       };
     }
     case 'run_completed': {

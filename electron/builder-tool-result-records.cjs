@@ -64,12 +64,12 @@ const RESULT_SUMMARY_CODES = Object.freeze({
   cancelled: Object.freeze(['cancelled_without_raw_output']),
 });
 const DISPLAY_SUMMARIES = Object.freeze({
-  completed_without_raw_output: 'Completed. Output is not stored.',
-  failed_without_raw_output: 'Failed. Output is not stored.',
-  output_rejected: 'Output was rejected before storage.',
-  adapter_unavailable: 'Tool adapter was unavailable.',
-  timed_out_without_raw_output: 'Timed out. Output is not stored.',
-  cancelled_without_raw_output: 'Cancelled. Output is not stored.',
+  completed_without_raw_output: 'This step completed. Details were not kept.',
+  failed_without_raw_output: 'This step could not finish. Details were not kept.',
+  output_rejected: 'The tool output was not accepted.',
+  adapter_unavailable: 'The tool was unavailable.',
+  timed_out_without_raw_output: 'This step timed out. Details were not kept.',
+  cancelled_without_raw_output: 'This step was stopped. Details were not kept.',
 });
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const LIFECYCLE = Object.freeze({

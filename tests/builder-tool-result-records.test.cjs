@@ -137,7 +137,7 @@ test('creates a fixed-code tool result record from a verified pre-dispatch tool 
   assert.deepEqual(record.result, {
     status: 'succeeded',
     summary_code: 'completed_without_raw_output',
-    display_summary: 'Completed. Output is not stored.',
+    display_summary: 'This step completed. Details were not kept.',
     summary_digest: record.result.summary_digest,
   });
   assert.match(record.result.summary_digest, /^sha256:[0-9a-f]{64}$/u);

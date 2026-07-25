@@ -727,12 +727,19 @@ assert.doesNotMatch(
 assert.match(packagedConversationRecords, /tool_call_requested/u);
 assert.match(packagedConversationRecords, /sanitizeBuilderToolCallRecord/u);
 assert.match(packagedConversationRecords, /builder-tool-call-records\.cjs/u);
+assert.match(packagedConversationRecords, /tool_call_result_recorded/u);
+assert.match(packagedConversationRecords, /sanitizeBuilderToolResultRecord/u);
+assert.match(packagedConversationRecords, /builder-tool-result-records\.cjs/u);
 assert.doesNotMatch(
   packagedConversationRecords,
   /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|local-provider-executor/iu,
 );
 assert.match(packagedConversationReplay, /tool_call_requested/u);
 assert.match(packagedConversationReplay, /applyToolCallRequested/u);
+assert.match(packagedConversationReplay, /tool_call_result_recorded/u);
+assert.match(packagedConversationReplay, /applyToolCallResultRecorded/u);
+assert.match(packagedConversationReplay, /tool_result_record:\s*null/u);
+assert.match(packagedConversationReplay, /toolResultRecordDigests/u);
 assert.match(packagedConversationReplay, /tool_calls:\s*\[\]/u);
 assert.match(packagedConversationReplay, /run\.tool_calls\.length > 0 && payload\.terminal_status === 'succeeded'/u);
 assert.doesNotMatch(
@@ -762,6 +769,12 @@ assert.match(packagedTaskStreamProjection, /dispatch_admission:\s*'not_started'/
 assert.match(packagedTaskStreamProjection, /execution_admission:\s*'not_performed'/u);
 assert.match(packagedTaskStreamProjection, /result_admission:\s*'not_recorded'/u);
 assert.match(packagedTaskStreamProjection, /tool_label:\s*publicToolLabel\(record\.action\)/u);
+assert.match(packagedTaskStreamProjection, /tool_call_result_recorded/u);
+assert.match(packagedTaskStreamProjection, /summary_code:\s*record\.result\.summary_code/u);
+assert.match(packagedTaskStreamProjection, /display_summary:\s*record\.result\.display_summary/u);
+assert.match(packagedTaskStreamProjection, /result_admission:\s*'fixed_summary_code_recorded'/u);
+assert.match(packagedTaskStreamProjection, /raw_output_admission:\s*'not_included'/u);
+assert.match(packagedTaskStreamProjection, /revision_admission:\s*'not_created'/u);
 assert.doesNotMatch(packagedTaskStreamProjection, /tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|resource_id/u);
 assert.match(packagedTaskStreamProjection, /candidate_state:\s*'proposed'/u);
 assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/u);

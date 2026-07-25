@@ -22,6 +22,9 @@ const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
+  createBuilderToolResultRecord,
+} = require('../electron/builder-tool-result-records.cjs');
+const {
   BUILDER_TASK_STREAM_VERSION,
   MAX_PUBLIC_BYTES,
   MAX_PUBLIC_ITEMS,
@@ -137,6 +140,18 @@ async function toolCallRecord({
   });
 }
 
+function toolResultRecord(record, overrides = {}) {
+  return createBuilderToolResultRecord({
+    tool_call_record: record,
+    observed_at_ms: 60,
+    result: {
+      status: 'failed',
+      summary_code: 'output_rejected',
+    },
+    ...overrides,
+  });
+}
+
 function candidateEvents() {
   const events = [];
   const turnId = id('turn', 1);
@@ -211,6 +226,14 @@ async function toolCallEvents() {
       toolCallId: id('tool-call', 37),
     }),
   }, 36);
+  return events;
+}
+
+async function toolResultEvents() {
+  const events = await toolCallEvents();
+  append(events, 'tool_call_result_recorded', {
+    tool_result_record: toolResultRecord(events.at(-1).payload.tool_call_record),
+  }, 37);
   return events;
 }
 
@@ -435,6 +458,45 @@ test('projects pre-dispatch tool calls without exposing permission or resource e
     JSON.stringify(stream),
     /permission_id|permission_admission_receipt|record_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
   );
+});
+
+test('projects fixed-code tool results without exposing records or raw output', async () => {
+  const stream = projectBuilderTaskStream(input(await toolResultEvents()));
+  assert.equal(stream.conversation.recorded_active_turn_id, id('turn', 30));
+  assert.deepEqual(stream.conversation.items.at(-1), {
+    item_kind: 'tool_call_result_recorded',
+    sequence: 4,
+    turn_id: id('turn', 30),
+    run_id: id('run', 32),
+    step_id: id('run-step', 36),
+    tool_call_id: id('tool-call', 37),
+    tool_label: 'Read project file',
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+    },
+    result: {
+      status: 'failed',
+      summary_code: 'output_rejected',
+      display_summary: 'The tool output was not accepted.',
+    },
+    lifecycle: {
+      result_admission: 'fixed_summary_code_recorded',
+      raw_output_admission: 'not_included',
+      revision_admission: 'not_created',
+    },
+    recorded_state: 'recorded',
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /tool_result_record|tool_call_record|tool_name|permission_id|permission_admission_receipt|record_digest|summary_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+  );
+});
+
+test('rejects forged tool result projections before exposing public items', async () => {
+  const events = structuredClone(await toolResultEvents());
+  events.at(-1).payload.tool_result_record.result.display_summary = 'Raw output follows.';
+  assert.throws(() => projectBuilderTaskStream(input(events)), assertProjectionError);
 });
 
 test('replays the complete chain before exposing only the latest 128 items', () => {

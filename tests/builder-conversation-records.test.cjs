@@ -23,6 +23,9 @@ const {
 const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
+const {
+  createBuilderToolResultRecord,
+} = require('../electron/builder-tool-result-records.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
@@ -100,6 +103,18 @@ async function toolCallRecord({
     step_id: stepId,
     admission,
     requested_at_ms: 51,
+  });
+}
+
+function toolResultRecord(record, overrides = {}) {
+  return createBuilderToolResultRecord({
+    tool_call_record: record,
+    observed_at_ms: 60,
+    result: {
+      status: 'failed',
+      summary_code: 'output_rejected',
+    },
+    ...overrides,
   });
 }
 
@@ -206,6 +221,63 @@ test('supports pre-dispatch tool call request payloads without execution result 
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174099',
     },
   }, started, 4), assertRecordError());
+});
+
+test('supports fixed-code tool result payloads without raw output or revision authority', async () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Read the project files.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Inspect project files' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const callRecord = await toolCallRecord();
+  const requested = create('tool_call_requested', {
+    tool_call_record: callRecord,
+  }, started, 3);
+  const resultRecord = toolResultRecord(callRecord);
+  const result = create('tool_call_result_recorded', {
+    tool_result_record: resultRecord,
+  }, requested, 4);
+
+  assert.equal(result.payload.tool_result_record.record_digest, resultRecord.record_digest);
+  assert.deepEqual(result.payload.tool_result_record.result, {
+    status: 'failed',
+    summary_code: 'output_rejected',
+    display_summary: 'The tool output was not accepted.',
+    summary_digest: resultRecord.result.summary_digest,
+  });
+  assert.equal(result.payload.tool_result_record.lifecycle.result_admission, 'fixed_summary_code_recorded');
+  assert.equal(result.payload.tool_result_record.lifecycle.raw_output_admission, 'not_included');
+  assert.equal(result.payload.tool_result_record.lifecycle.revision_admission, 'not_created');
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /stdout|stderr|output_digest|exit_code|result_bytes|source_tree|git_candidate_receipt|commit_oid|tree_oid|provider_secret|credential_value|Authorization|Bearer/iu,
+  );
+
+  assert.throws(() => create('tool_call_result_recorded', {
+    tool_result_record: {
+      ...resultRecord,
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174099',
+    },
+  }, requested, 5), assertRecordError());
+  assert.throws(() => create('tool_call_result_recorded', {
+    tool_result_record: {
+      ...resultRecord,
+      result: {
+        ...resultRecord.result,
+        display_summary: 'Raw output follows.',
+      },
+    },
+  }, requested, 6), assertRecordError());
 });
 
 test('supports actor-bound candidate rejection payloads without source or Git evidence', () => {

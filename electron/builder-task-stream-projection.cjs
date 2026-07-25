@@ -220,6 +220,33 @@ function itemFromEvent(event) {
         recorded_state: 'requested',
       };
     }
+    case 'tool_call_result_recorded': {
+      const record = payload.tool_result_record;
+      return {
+        item_kind: 'tool_call_result_recorded',
+        sequence: event.sequence,
+        turn_id: record.turn_id,
+        run_id: record.run_id,
+        step_id: record.step_id,
+        tool_call_id: record.tool_call_id,
+        tool_label: publicToolLabel(record.action),
+        action: record.action,
+        resource: {
+          resource_kind: record.resource_kind,
+        },
+        result: {
+          status: record.result.status,
+          summary_code: record.result.summary_code,
+          display_summary: record.result.display_summary,
+        },
+        lifecycle: {
+          result_admission: 'fixed_summary_code_recorded',
+          raw_output_admission: 'not_included',
+          revision_admission: 'not_created',
+        },
+        recorded_state: 'recorded',
+      };
+    }
     case 'run_completed':
       return {
         item_kind: 'run_completed',

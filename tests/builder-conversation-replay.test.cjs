@@ -20,6 +20,9 @@ const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
+  createBuilderToolResultRecord,
+} = require('../electron/builder-tool-result-records.cjs');
+const {
   CONVERSATION_REPLAY_VERSION,
   BuilderConversationReplayError,
   replayBuilderConversation,
@@ -119,6 +122,18 @@ async function toolCallRecord({
     step_id: stepId,
     admission,
     requested_at_ms: 51,
+  });
+}
+
+function toolResultRecord(record, overrides = {}) {
+  return createBuilderToolResultRecord({
+    tool_call_record: record,
+    observed_at_ms: 60,
+    result: {
+      status: 'failed',
+      summary_code: 'output_rejected',
+    },
+    ...overrides,
   });
 }
 
@@ -247,7 +262,7 @@ test('keeps an active turn reconstructible before terminal events arrive', () =>
   assert.equal(replay.turns[0].messages.at(-1).kind, 'steering');
 });
 
-test('replays pre-dispatch tool calls only inside an active work run', async () => {
+test('replays tool call requests and fixed-code results only inside an active work run', async () => {
   let events = [];
   events = append(events, 'turn_submitted', {
     message: { message_id: id('message', 200), text: 'Inspect the source files.' },
@@ -274,6 +289,10 @@ test('replays pre-dispatch tool calls only inside an active work run', async () 
   events = append(events, 'tool_call_requested', {
     tool_call_record: record,
   }, 202);
+  const resultRecord = toolResultRecord(record);
+  events = append(events, 'tool_call_result_recorded', {
+    tool_result_record: resultRecord,
+  }, 203);
 
   const replay = replayBuilderConversation(events);
   assert.equal(replay.active_turn_id, id('turn', 200));
@@ -286,11 +305,25 @@ test('replays pre-dispatch tool calls only inside an active work run', async () 
     revision_admission: 'not_created',
   });
   assert.equal(replay.turns[0].runs[0].tool_calls[0].tool_call_record.record_digest, record.record_digest);
+  assert.deepEqual(replay.turns[0].runs[0].tool_calls[0].tool_result_record.result, {
+    status: 'failed',
+    summary_code: 'output_rejected',
+    display_summary: 'The tool output was not accepted.',
+    summary_digest: resultRecord.result.summary_digest,
+  });
+  assert.equal(
+    replay.turns[0].runs[0].tool_calls[0].tool_result_record.lifecycle.result_admission,
+    'fixed_summary_code_recorded',
+  );
   assert.equal(Object.isFrozen(replay.turns[0].runs[0].tool_calls[0].tool_call_record), true);
+  assert.equal(Object.isFrozen(replay.turns[0].runs[0].tool_calls[0].tool_result_record), true);
 
   assert.throws(() => replayBuilderConversation(append([...events], 'tool_call_requested', {
     tool_call_record: record,
-  }, 203)), assertReplayError);
+  }, 204)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append([...events], 'tool_call_result_recorded', {
+    tool_result_record: resultRecord,
+  }, 205)), assertReplayError);
   assert.throws(() => replayBuilderConversation(append([...events], 'run_completed', {
     turn_id: id('turn', 200),
     run_id: id('run', 200),
@@ -298,7 +331,28 @@ test('replays pre-dispatch tool calls only inside an active work run', async () 
     result_kind: 'explanation',
     result_digest: RESULT_B,
     assistant_message: { message_id: id('message', 201), text: 'I inspected the files.' },
-  }, 204)), assertReplayError);
+  }, 206)), assertReplayError);
+
+  const beforeRequest = events.slice(0, 2);
+  assert.throws(() => replayBuilderConversation(append(beforeRequest, 'tool_call_result_recorded', {
+    tool_result_record: resultRecord,
+  }, 207)), assertReplayError);
+
+  const controlled = append([...events], 'run_cancel_requested', {
+    turn_id: id('turn', 200),
+    run_id: id('run', 200),
+    request_id: id('cancel-request', 200),
+  }, 208);
+  const lateRecord = await toolCallRecord({
+    turnId: id('turn', 200),
+    taskId: id('task', 200),
+    runId: id('run', 200),
+    stepId: id('run-step', 201),
+    toolCallId: id('tool-call', 201),
+  });
+  assert.throws(() => replayBuilderConversation(append(controlled, 'tool_call_requested', {
+    tool_call_record: lateRecord,
+  }, 209)), assertReplayError);
 });
 
 test('keeps cancellation distinct from interruption and permits a deliberate retry', () => {
@@ -621,7 +675,7 @@ test('contains all transition rules in replay and none in the SQLite persistence
   );
   for (const eventType of [
     'turn_submitted', 'turn_steered', 'run_started', 'run_interrupt_requested',
-    'run_cancel_requested', 'tool_call_requested', 'candidate_rejected',
+    'run_cancel_requested', 'tool_call_requested', 'tool_call_result_recorded', 'candidate_rejected',
     'run_completed', 'turn_completed',
   ]) {
     assert.match(replaySource, new RegExp(eventType, 'u'));

@@ -63,6 +63,31 @@ export type BuilderConversationToolCallLifecycle = Readonly<{
   result_admission: 'not_recorded';
 }>;
 
+export type BuilderConversationToolResultStatus =
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export type BuilderConversationToolResultSummaryCode =
+  | 'completed_without_raw_output'
+  | 'failed_without_raw_output'
+  | 'output_rejected'
+  | 'adapter_unavailable'
+  | 'timed_out_without_raw_output'
+  | 'cancelled_without_raw_output';
+
+export type BuilderConversationToolResult = Readonly<{
+  status: BuilderConversationToolResultStatus;
+  summary_code: BuilderConversationToolResultSummaryCode;
+  display_summary: string;
+}>;
+
+export type BuilderConversationToolResultLifecycle = Readonly<{
+  result_admission: 'fixed_summary_code_recorded';
+  raw_output_admission: 'not_included';
+  revision_admission: 'not_created';
+}>;
+
 export type BuilderConversationItem =
   | Readonly<{
     item_kind: 'user_message';
@@ -104,6 +129,22 @@ export type BuilderConversationItem =
     }>;
     lifecycle: BuilderConversationToolCallLifecycle;
     recorded_state: 'requested';
+  }>
+  | Readonly<{
+    item_kind: 'tool_call_result_recorded';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    step_id: string;
+    tool_call_id: string;
+    tool_label: string;
+    action: BuilderConversationToolAction;
+    resource: Readonly<{
+      resource_kind: BuilderConversationToolResourceKind;
+    }>;
+    result: BuilderConversationToolResult;
+    lifecycle: BuilderConversationToolResultLifecycle;
+    recorded_state: 'recorded';
   }>
   | Readonly<{
     item_kind: 'run_completed';
@@ -259,12 +300,36 @@ const TOOL_CALL_REQUESTED_KEYS = Object.freeze([
   'lifecycle',
   'recorded_state',
 ]);
+const TOOL_CALL_RESULT_RECORDED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'step_id',
+  'tool_call_id',
+  'tool_label',
+  'action',
+  'resource',
+  'result',
+  'lifecycle',
+  'recorded_state',
+]);
 const TOOL_RESOURCE_KEYS = Object.freeze(['resource_kind']);
 const TOOL_LIFECYCLE_KEYS = Object.freeze([
   'permission_admission',
   'dispatch_admission',
   'execution_admission',
   'result_admission',
+]);
+const TOOL_RESULT_KEYS = Object.freeze([
+  'status',
+  'summary_code',
+  'display_summary',
+]);
+const TOOL_RESULT_LIFECYCLE_KEYS = Object.freeze([
+  'result_admission',
+  'raw_output_admission',
+  'revision_admission',
 ]);
 const TOOL_LABEL_BY_ACTION: Readonly<Record<BuilderConversationToolAction, string>> = Object.freeze({
   'context.read': 'Read project context',
@@ -277,6 +342,31 @@ const TOOL_LABEL_BY_ACTION: Readonly<Record<BuilderConversationToolAction, strin
   'process.spawn': 'Run local command',
   'publication.create': 'Prepare publish',
   'permission.grant': 'Change access',
+});
+const TOOL_RESULT_SUMMARY_BY_CODE: Readonly<Record<BuilderConversationToolResultSummaryCode, string>> = Object.freeze({
+  completed_without_raw_output: 'This step completed. Details were not kept.',
+  failed_without_raw_output: 'This step could not finish. Details were not kept.',
+  output_rejected: 'The tool output was not accepted.',
+  adapter_unavailable: 'The tool was unavailable.',
+  timed_out_without_raw_output: 'This step timed out. Details were not kept.',
+  cancelled_without_raw_output: 'This step was stopped. Details were not kept.',
+});
+const TOOL_RESULT_CODES_BY_STATUS: Readonly<Record<
+  BuilderConversationToolResultStatus,
+  readonly BuilderConversationToolResultSummaryCode[]
+>> = Object.freeze({
+  succeeded: Object.freeze([
+    'completed_without_raw_output',
+  ] as BuilderConversationToolResultSummaryCode[]),
+  failed: Object.freeze([
+    'failed_without_raw_output',
+    'output_rejected',
+    'adapter_unavailable',
+    'timed_out_without_raw_output',
+  ] as BuilderConversationToolResultSummaryCode[]),
+  cancelled: Object.freeze([
+    'cancelled_without_raw_output',
+  ] as BuilderConversationToolResultSummaryCode[]),
 });
 const RUN_COMPLETED_KEYS = Object.freeze([
   'item_kind',
@@ -660,6 +750,55 @@ function sanitizeToolLifecycle(value: unknown): BuilderConversationToolCallLifec
   };
 }
 
+function sanitizeToolResultStatus(value: unknown): BuilderConversationToolResultStatus {
+  if (
+    value !== 'succeeded'
+    && value !== 'failed'
+    && value !== 'cancelled'
+  ) throw unavailable();
+  return value;
+}
+
+function sanitizeToolResultSummaryCode(
+  value: unknown,
+  status: BuilderConversationToolResultStatus,
+): BuilderConversationToolResultSummaryCode {
+  if (
+    typeof value !== 'string'
+    || !TOOL_RESULT_CODES_BY_STATUS[status].includes(
+      value as BuilderConversationToolResultSummaryCode,
+    )
+  ) throw unavailable();
+  return value as BuilderConversationToolResultSummaryCode;
+}
+
+function sanitizeToolResult(value: unknown): BuilderConversationToolResult {
+  const source = exactRecord(value, TOOL_RESULT_KEYS);
+  const status = sanitizeToolResultStatus(source.status);
+  const summaryCode = sanitizeToolResultSummaryCode(source.summary_code, status);
+  const displaySummary = TOOL_RESULT_SUMMARY_BY_CODE[summaryCode];
+  if (source.display_summary !== displaySummary) throw unavailable();
+  return {
+    status,
+    summary_code: summaryCode,
+    display_summary: displaySummary,
+  };
+}
+
+function sanitizeToolResultLifecycle(value: unknown): BuilderConversationToolResultLifecycle {
+  const source = exactRecord(value, TOOL_RESULT_LIFECYCLE_KEYS);
+  if (
+    source.result_admission !== 'fixed_summary_code_recorded'
+    || source.raw_output_admission !== 'not_included'
+    || source.revision_admission !== 'not_created'
+  ) throw unavailable();
+  return {
+    result_admission: 'fixed_summary_code_recorded',
+    raw_output_admission: 'not_included',
+    revision_admission: 'not_created',
+  };
+}
+
 function sanitizeToolCallRequested(
   source: Record<string, unknown>,
   sequence: number,
@@ -680,6 +819,30 @@ function sanitizeToolCallRequested(
     resource: sanitizeToolResource(source.resource, action),
     lifecycle: sanitizeToolLifecycle(source.lifecycle),
     recorded_state: 'requested',
+  };
+}
+
+function sanitizeToolCallResultRecorded(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'tool_call_result_recorded' }> {
+  const action = sanitizeToolAction(source.action);
+  const toolLabel = TOOL_LABEL_BY_ACTION[action];
+  if (source.recorded_state !== 'recorded') throw unavailable();
+  if (source.tool_label !== toolLabel) throw unavailable();
+  return {
+    item_kind: 'tool_call_result_recorded' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    step_id: safePattern(source.step_id, STEP_ID_PATTERN),
+    tool_call_id: safePattern(source.tool_call_id, TOOL_CALL_ID_PATTERN),
+    tool_label: toolLabel,
+    action,
+    resource: sanitizeToolResource(source.resource, action),
+    result: sanitizeToolResult(source.result),
+    lifecycle: sanitizeToolResultLifecycle(source.lifecycle),
+    recorded_state: 'recorded' as const,
   };
 }
 
@@ -805,6 +968,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_STARTED_KEYS);
   } else if (itemKind === 'run_control_requested') {
     source = exactRecord(value, RUN_CONTROL_KEYS);
+  } else if (itemKind === 'tool_call_result_recorded') {
+    source = exactRecord(value, TOOL_CALL_RESULT_RECORDED_KEYS);
   } else if (itemKind === 'tool_call_requested') {
     source = exactRecord(value, TOOL_CALL_REQUESTED_KEYS);
   } else if (itemKind === 'run_completed') {
@@ -820,6 +985,9 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'user_message') return sanitizeUserMessage(source, sequence);
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
+  if (itemKind === 'tool_call_result_recorded') {
+    return sanitizeToolCallResultRecorded(source, sequence);
+  }
   if (itemKind === 'tool_call_requested') return sanitizeToolCallRequested(source, sequence);
   if (itemKind === 'run_completed') return sanitizeRunCompleted(source, sequence);
   if (itemKind === 'candidate_reviewed') return sanitizeCandidateReviewed(source, sequence);
@@ -874,6 +1042,16 @@ function validateCompleteWindow(
   const draftIds = new Set<string>();
   const stepIds = new Set<string>();
   const toolCallIds = new Set<string>();
+  const toolCallRequests = new Map<
+    string,
+    {
+      run_id: string;
+      step_id: string;
+      action: BuilderConversationToolAction;
+      resource_kind: BuilderConversationToolResourceKind;
+      result_recorded: boolean;
+    }
+  >();
   let activeTurn: ReplayTurn | null = null;
 
   for (const item of items) {
@@ -969,7 +1147,34 @@ function validateCompleteWindow(
       ) throw unavailable();
       stepIds.add(item.step_id);
       toolCallIds.add(item.tool_call_id);
+      toolCallRequests.set(item.tool_call_id, {
+        run_id: item.run_id,
+        step_id: item.step_id,
+        action: item.action,
+        resource_kind: item.resource.resource_kind,
+        result_recorded: false,
+      });
       currentRun.pending_tool_calls += 1;
+      continue;
+    }
+    if (item.item_kind === 'tool_call_result_recorded') {
+      const requested = toolCallRequests.get(item.tool_call_id) ?? null;
+      if (
+        activeTurn.mode !== 'work'
+        || activeTurn.task === null
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || requested === null
+        || requested.run_id !== item.run_id
+        || requested.step_id !== item.step_id
+        || requested.action !== item.action
+        || requested.resource_kind !== item.resource.resource_kind
+        || requested.result_recorded
+      ) throw unavailable();
+      toolCallRequests.set(item.tool_call_id, {
+        ...requested,
+        result_recorded: true,
+      });
       continue;
     }
     if (item.item_kind === 'run_control_requested') {
@@ -1065,6 +1270,16 @@ function validateTruncatedWindow(
   const draftIds = new Set<string>();
   const stepIds = new Set<string>();
   const toolCallIds = new Set<string>();
+  const toolCallRequests = new Map<
+    string,
+    {
+      run_id: string;
+      step_id: string;
+      action: BuilderConversationToolAction;
+      resource_kind: BuilderConversationToolResourceKind;
+      result_recorded: boolean;
+    }
+  >();
   const completedCandidateRuns = new Map<
     string,
     Readonly<{ turn_id: string; draft_id: string; review: 'accepted' | 'rejected' | null }>
@@ -1256,7 +1471,69 @@ function validateTruncatedWindow(
       ) throw unavailable();
       stepIds.add(item.step_id);
       toolCallIds.add(item.tool_call_id);
+      toolCallRequests.set(item.tool_call_id, {
+        run_id: item.run_id,
+        step_id: item.step_id,
+        action: item.action,
+        resource_kind: item.resource.resource_kind,
+        result_recorded: false,
+      });
       currentRun.pending_tool_calls += 1;
+      continue;
+    }
+
+    if (item.item_kind === 'tool_call_result_recorded') {
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix') throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'running',
+          terminal_status: null,
+          result_kind: null,
+          candidate_draft_id: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+        };
+      }
+      if (activeTurn.mode === 'unknown') activeTurn.mode = 'work';
+      const currentRun = activeTurn.current_run;
+      const requested = toolCallRequests.get(item.tool_call_id) ?? null;
+      const canDependOnOmittedRequest = requested === null && mayUsePrefixState;
+      if (
+        activeTurn.mode !== 'work'
+        || currentRun.run_id !== item.run_id
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || (stepIds.has(item.step_id) && requested === null)
+        || (toolCallIds.has(item.tool_call_id) && requested === null)
+        || (
+          requested !== null
+          && (
+            requested.run_id !== item.run_id
+            || requested.step_id !== item.step_id
+            || requested.action !== item.action
+            || requested.resource_kind !== item.resource.resource_kind
+            || requested.result_recorded
+          )
+        )
+        || (requested === null && !canDependOnOmittedRequest)
+      ) throw unavailable();
+      if (requested === null) {
+        stepIds.add(item.step_id);
+        toolCallIds.add(item.tool_call_id);
+        currentRun.pending_tool_calls += 1;
+      }
+      toolCallRequests.set(item.tool_call_id, {
+        run_id: item.run_id,
+        step_id: item.step_id,
+        action: item.action,
+        resource_kind: item.resource.resource_kind,
+        result_recorded: true,
+      });
       continue;
     }
 
