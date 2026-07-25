@@ -268,6 +268,12 @@ Evidence requirements:
   id while selecting no adapter, performing no tool dispatch, starting no
   execution, reading no provider or credential, storing no raw output, mutating
   no source, and creating no revision;
+- the current adapter-selection checkpoint binds that dispatch admission and
+  verified tool-call record to one static main-side filesystem-read adapter
+  identity, with a distinct adapter selection id and time window; it still does
+  not register IPC/preload, perform tool dispatch, start runtime execution, read
+  file content, store raw output, mutate source, call a provider, or create a
+  revision;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

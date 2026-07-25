@@ -32,6 +32,9 @@ const {
 const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
+const {
+  FILESYSTEM_READ_TOOL_ADAPTER_ID,
+} = require('../electron/builder-tool-adapter-selection-admission.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -399,6 +402,30 @@ test('records main-only tool request and fixed-code result facts without dispatc
       3,
     );
 
+    const selectionAdmission = item.service.select_tool_adapter({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    });
+    assert.equal(selectionAdmission.admission_version, 'builder-tool-adapter-selection-admission.v1');
+    assert.equal(selectionAdmission.admission_kind, 'builder_tool_adapter_selection_admission');
+    assert.equal(selectionAdmission.tool_call_id, TOOL_CALL_ID);
+    assert.equal(selectionAdmission.record_digest, callRecord.record_digest);
+    assert.equal(selectionAdmission.adapter_id, FILESYSTEM_READ_TOOL_ADAPTER_ID);
+    assert.equal(selectionAdmission.action, 'filesystem.read');
+    assert.equal(selectionAdmission.resource_kind, 'filesystem');
+    assert.equal(selectionAdmission.authority.tool_dispatch, 'not_performed');
+    assert.equal(selectionAdmission.authority.runtime_execution, 'not_started');
+    assert.equal(selectionAdmission.lifecycle.execution_admission, 'not_started');
+    assert.doesNotMatch(
+      JSON.stringify(selectionAdmission),
+      /resource_id|permission_id|permission_admission_receipt|source_tree|file_content|stdout|stderr|output_digest/iu,
+    );
+    assert.equal(
+      item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence,
+      3,
+    );
+
     const resultRecord = toolResultRecord(callRecord);
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
@@ -554,6 +581,11 @@ test('rejects invalid main-only tool fact recording without committing partial e
         context,
         tool_call_id: TOOL_CALL_ID,
       }),
+      () => item.service.select_tool_adapter({
+        context,
+        tool_call_id: TOOL_CALL_ID,
+        adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+      }),
     ]) {
       assert.throws(action, { code: 'builder_conversation_main_service_unavailable' });
     }
@@ -563,6 +595,11 @@ test('rejects invalid main-only tool fact recording without committing partial e
       context,
       tool_call_record: callRecord,
     });
+    assert.throws(() => item.service.select_tool_adapter({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_id: 'builder-tool-adapter.project-edit.v1',
+    }), { code: 'builder_conversation_main_service_unavailable' });
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
       tool_result_record: resultRecord,
@@ -574,6 +611,11 @@ test('rejects invalid main-only tool fact recording without committing partial e
     assert.throws(() => item.service.admit_tool_dispatch({
       context: resultContext,
       tool_call_id: TOOL_CALL_ID,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.select_tool_adapter({
+      context: resultContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
     }), { code: 'builder_conversation_main_service_unavailable' });
     assert.throws(() => item.service.complete_candidate({
       context: resultContext,

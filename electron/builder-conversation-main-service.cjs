@@ -24,6 +24,10 @@ const {
   createBuilderToolDispatchAdmission,
 } = require('./builder-tool-dispatch-admission.cjs');
 const {
+  FILESYSTEM_READ_TOOL_ADAPTER_ID,
+  createBuilderToolAdapterSelectionAdmission,
+} = require('./builder-tool-adapter-selection-admission.cjs');
+const {
   admitBuilderToolCallSessionState,
   admitBuilderToolResultSessionState,
 } = require('./builder-tool-session-state-gate.cjs');
@@ -1081,6 +1085,43 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function selectToolAdapter(rawRequest) {
+    exactObject(rawRequest, ['context', 'tool_call_id', 'adapter_id']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    const toolCallId = safePattern(valueAt(rawRequest, 'tool_call_id'), TOOL_CALL_ID_PATTERN);
+    const adapterId = valueAt(rawRequest, 'adapter_id');
+    if (adapterId !== FILESYSTEM_READ_TOOL_ADAPTER_ID) fail();
+    const run = activeRunFromContext(context);
+    const toolCall = run.tool_calls.find((item) => item.tool_call_id === toolCallId) ?? null;
+    if (toolCall === null || toolCall.tool_result_record !== null) fail();
+    let dispatchAdmission;
+    try {
+      dispatchAdmission = createBuilderToolDispatchAdmission({
+        project_id: context.project.project_id,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        run_status: run.status,
+        interrupt_requested: run.interrupt_request_id !== null,
+        cancel_requested: run.cancel_request_id !== null,
+        existing_tool_calls: compactToolSessionCalls(run.tool_calls),
+        tool_call_record: toolCall.tool_call_record,
+        dispatch_request_id: newId(options.createUuid, 'builder-tool-dispatch-request'),
+        admitted_at_ms: safeTimestamp(Reflect.apply(options.nowMs, undefined, [])),
+      });
+      return createBuilderToolAdapterSelectionAdmission({
+        dispatch_admission: dispatchAdmission,
+        tool_call_record: toolCall.tool_call_record,
+        adapter_id: adapterId,
+        adapter_selection_id: newId(options.createUuid, 'builder-tool-adapter-selection'),
+        selected_at_ms: safeTimestamp(Reflect.apply(options.nowMs, undefined, [])),
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function completeExplanation(rawRequest) {
     exactObject(rawRequest, ['context', 'assistant_text']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
@@ -1459,6 +1500,7 @@ function createBuilderConversationMainService(rawOptions) {
     record_tool_call_request: recordToolCallRequest,
     record_tool_result: recordToolResult,
     admit_tool_dispatch: admitToolDispatch,
+    select_tool_adapter: selectToolAdapter,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
@@ -1475,6 +1517,7 @@ function createBuilderConversationMainService(rawOptions) {
       tool_call_recording: 'main_only_pre_dispatch_event',
       tool_result_recording: 'main_only_fixed_code_event',
       tool_dispatch_admission: 'main_only_open_call_no_dispatch',
+      tool_adapter_selection: 'main_only_static_adapter_no_dispatch',
     }),
   });
 }
