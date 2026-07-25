@@ -10,16 +10,33 @@ const {
   createBuilderConversationMainService,
 } = require('../electron/builder-conversation-main-service.cjs');
 const {
+  BUILDER_PERMISSION_DECISION_VERSION,
+  BUILDER_PERMISSION_POLICY_VERSION,
+} = require('../electron/builder-permission-authority-contract.cjs');
+const {
   createBuilderProductMetadataDatabase,
 } = require('../electron/builder-product-metadata-database.cjs');
 const {
   replayBuilderConversation,
 } = require('../electron/builder-conversation-replay.cjs');
+const {
+  createBuilderToolPermissionAdmission,
+} = require('../electron/builder-tool-permission-admission.cjs');
+const {
+  createBuilderToolCallRecord,
+} = require('../electron/builder-tool-call-records.cjs');
+const {
+  createBuilderToolResultRecord,
+} = require('../electron/builder-tool-result-records.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
 const QUESTION_DIGEST = `sha256:${'0'.repeat(64)}`;
 const CANDIDATE_DIGEST = `sha256:${'2'.repeat(64)}`;
+const TOOL_ACTOR_ID = 'builder-user:11111111-1111-4111-8111-111111111112';
+const TOOL_CALL_ID = 'builder-tool-call:11111111-1111-4111-8111-111111111113';
+const TOOL_STEP_ID = 'builder-run-step:11111111-1111-4111-8111-111111111114';
+const TOOL_PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: `sha256:${'3'.repeat(64)}`,
   commit_oid: '4'.repeat(40),
@@ -52,13 +69,13 @@ function removeRoot(root) {
   throw new Error('Temporary test directory could not be removed.');
 }
 
-function fixture() {
+function fixture(uuidStart = 1) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-cms-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
   let now = 1_000;
   const service = createBuilderConversationMainService({
     metadataAuthority: database,
-    createUuid: uuidFactory(),
+    createUuid: uuidFactory(uuidStart),
     nowMs: () => now++,
   });
   return {
@@ -119,6 +136,70 @@ function candidateResult(context) {
       replay: false,
     },
   };
+}
+
+function toolPermissionRequest(overrides = {}) {
+  return {
+    tool_call_id: TOOL_CALL_ID,
+    tool_name: 'filesystem.read',
+    project_id: PROJECT_ID,
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+      project_id: PROJECT_ID,
+      resource_id: 'project:/src/app.tsx',
+    },
+    ...overrides,
+  };
+}
+
+async function allowedToolAdmission(overrides = {}) {
+  const request = toolPermissionRequest(overrides.request ?? {});
+  const guard = createBuilderToolPermissionAdmission({
+    actor_id: TOOL_ACTOR_ID,
+    now_ms: () => 50,
+    evaluate_permission: async (body) => ({
+      decision_version: BUILDER_PERMISSION_DECISION_VERSION,
+      policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+      actor_id: TOOL_ACTOR_ID,
+      action: body.action,
+      resource: body.resource,
+      evaluated_at_ms: body.now_ms,
+      decision: 'allowed',
+      reason: 'matching_active_grant',
+      permission_id: TOOL_PERMISSION_ID,
+      permission_authority: 'builder_permission_facts_deny_by_default_v1',
+      ui_selection_authority: 'not_permission',
+      ...(overrides.decision ?? {}),
+    }),
+  });
+  return guard.admit(request);
+}
+
+async function toolCallRecord(context, overrides = {}) {
+  return createBuilderToolCallRecord({
+    project_id: PROJECT_ID,
+    conversation_id: context.conversation.conversation_id,
+    turn_id: context.ids.turn_id,
+    task_id: context.ids.task_id,
+    run_id: context.ids.run_id,
+    step_id: TOOL_STEP_ID,
+    admission: await allowedToolAdmission(overrides.admission ?? {}),
+    requested_at_ms: 60,
+    ...(overrides.record ?? {}),
+  });
+}
+
+function toolResultRecord(record, overrides = {}) {
+  return createBuilderToolResultRecord({
+    tool_call_record: record,
+    observed_at_ms: 70,
+    result: {
+      status: 'failed',
+      summary_code: 'output_rejected',
+    },
+    ...overrides,
+  });
 }
 
 test('records start and terminal events before allowing a later turn to continue', () => {
@@ -262,6 +343,198 @@ test('restores the same renderer-safe task stream after a real database restart'
     if (restartedDatabase !== null) restartedDatabase.close();
     try { item.database.close(); } catch { /* already closed during restart check */ }
     removeRoot(item.root);
+  }
+});
+
+test('records main-only tool request and fixed-code result facts without dispatching tools', async () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = begin(item.service);
+    const callRecord = await toolCallRecord(context);
+    const requestedContext = item.service.record_tool_call_request({
+      context,
+      tool_call_record: callRecord,
+    });
+    assert.equal(requestedContext.start_head.sequence, 3);
+    assert.equal(requestedContext.events.at(-1).event_type, 'tool_call_requested');
+
+    const resultRecord = toolResultRecord(callRecord);
+    const resultContext = item.service.record_tool_result({
+      context: requestedContext,
+      tool_result_record: resultRecord,
+    });
+    assert.equal(resultContext.start_head.sequence, 4);
+    assert.equal(resultContext.events.at(-1).event_type, 'tool_call_result_recorded');
+
+    const pendingStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(pendingStream.conversation.head_sequence, 4);
+    assert.deepEqual(pendingStream.conversation.items[2], {
+      item_kind: 'tool_call_requested',
+      sequence: 3,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      step_id: TOOL_STEP_ID,
+      tool_call_id: TOOL_CALL_ID,
+      tool_label: 'Read project file',
+      action: 'filesystem.read',
+      resource: {
+        resource_kind: 'filesystem',
+      },
+      lifecycle: {
+        permission_admission: 'verified_allowed',
+        dispatch_admission: 'not_started',
+        execution_admission: 'not_performed',
+        result_admission: 'not_recorded',
+      },
+      recorded_state: 'requested',
+    });
+    assert.deepEqual(pendingStream.conversation.items[3], {
+      item_kind: 'tool_call_result_recorded',
+      sequence: 4,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      step_id: TOOL_STEP_ID,
+      tool_call_id: TOOL_CALL_ID,
+      tool_label: 'Read project file',
+      action: 'filesystem.read',
+      resource: {
+        resource_kind: 'filesystem',
+      },
+      result: {
+        status: 'failed',
+        summary_code: 'output_rejected',
+        display_summary: 'The tool output was not accepted.',
+      },
+      lifecycle: {
+        result_admission: 'fixed_summary_code_recorded',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+      recorded_state: 'recorded',
+    });
+    assert.doesNotMatch(
+      JSON.stringify(pendingStream),
+      /tool_result_record|tool_call_record|permission_id|permission_admission_receipt|record_digest|summary_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|git_candidate_receipt|commit_oid|tree_oid|provider|credential|source_tree|save_admission/iu,
+    );
+
+    const completed = item.service.complete_failure({
+      context: resultContext,
+      failure_code: 'builder_tool_step_failed',
+    });
+    assert.equal(completed.head.sequence, 6);
+    assert.equal(completed.snapshot.turns[0].outcome, 'failed');
+    assert.equal(completed.snapshot.turns[0].runs[0].terminal_status, 'failed');
+
+    const completedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(completedStream.conversation.head_sequence, 6);
+    assert.equal(completedStream.conversation.recorded_active_turn_id, null);
+    assert.equal(completedStream.conversation.items[4].terminal_status, 'failed');
+    assert.equal(completedStream.conversation.items[5].outcome, 'failed');
+    assert.doesNotMatch(
+      JSON.stringify(completedStream),
+      /running|live_run|save_admission|revision_receipt|provider|credential/iu,
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(500),
+      nowMs: () => 5_000,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), completedStream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
+test('rejects invalid main-only tool fact recording without committing partial events', async () => {
+  const item = fixture();
+  const questionItem = fixture(700);
+  try {
+    const context = begin(item.service);
+    const question = beginQuestion(questionItem.service);
+    const callRecord = await toolCallRecord(context);
+    const resultRecord = toolResultRecord(callRecord);
+    const staleContext = Object.freeze({
+      ...context,
+      start_head: { ...context.start_head },
+      events: context.events,
+    });
+    const otherRecord = await toolCallRecord(context, {
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111115',
+        },
+      },
+      record: {
+        run_id: 'builder-run:11111111-1111-4111-8111-111111111119',
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111116',
+      },
+    });
+    const futureRecord = await toolCallRecord(context, {
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111117',
+        },
+      },
+      record: {
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111118',
+        requested_at_ms: 99_999,
+      },
+    });
+
+    for (const action of [
+      () => item.service.record_tool_call_request({
+        context: staleContext,
+        tool_call_record: callRecord,
+      }),
+      () => item.service.record_tool_call_request({
+        context: question,
+        tool_call_record: callRecord,
+      }),
+      () => item.service.record_tool_call_request({
+        context,
+        tool_call_record: otherRecord,
+      }),
+      () => item.service.record_tool_call_request({
+        context,
+        tool_call_record: futureRecord,
+      }),
+      () => item.service.record_tool_result({
+        context,
+        tool_result_record: resultRecord,
+      }),
+    ]) {
+      assert.throws(action, { code: 'builder_conversation_main_service_unavailable' });
+    }
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+
+    const requestedContext = item.service.record_tool_call_request({
+      context,
+      tool_call_record: callRecord,
+    });
+    const resultContext = item.service.record_tool_result({
+      context: requestedContext,
+      tool_result_record: resultRecord,
+    });
+    assert.throws(() => item.service.record_tool_result({
+      context: resultContext,
+      tool_result_record: resultRecord,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.complete_candidate({
+      context: resultContext,
+      candidate_result: candidateResult(context),
+      assistant_text: 'A timer draft is ready.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+  } finally {
+    questionItem.close();
+    item.close();
   }
 });
 

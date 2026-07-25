@@ -238,6 +238,11 @@ Evidence requirements:
   Stream without exposing record digests, raw output, provider facts, renderer
   state, or revision authority; it still does not dispatch tools, accept
   free-form output text, store raw output, or create a revision;
+- the current main-service checkpoint adds internal-only Conversation append
+  methods for verified tool call request records and fixed-code result records,
+  bound to a trusted active work Run context and replayed through SQLite; these
+  methods are not IPC/preload commands and still do not perform dispatch,
+  execution, provider calls, source mutation, or Save;
 - bounded step, cost, time, retry, and output policy;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;

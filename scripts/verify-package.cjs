@@ -750,6 +750,12 @@ assert.match(packagedConversationMainService, /sqlite_conversation_event_chain/u
 assert.match(packagedConversationMainService, /begin_work:\s*beginWork/u);
 assert.match(packagedConversationMainService, /verify_candidate:\s*verifyCandidate/u);
 assert.match(packagedConversationMainService, /read_stream:\s*readStream/u);
+assert.match(packagedConversationMainService, /sanitizeBuilderToolCallRecord/u);
+assert.match(packagedConversationMainService, /sanitizeBuilderToolResultRecord/u);
+assert.match(packagedConversationMainService, /record_tool_call_request:\s*recordToolCallRequest/u);
+assert.match(packagedConversationMainService, /record_tool_result:\s*recordToolResult/u);
+assert.match(packagedConversationMainService, /tool_call_recording:\s*'main_only_pre_dispatch_event'/u);
+assert.match(packagedConversationMainService, /tool_result_recording:\s*'main_only_fixed_code_event'/u);
 assert.match(packagedConversationMainService, /interrupted_without_provider_redispatch/u);
 assert.match(packagedConversationMainService, /builder-git-receipt-contract\.cjs/u);
 assert.doesNotMatch(

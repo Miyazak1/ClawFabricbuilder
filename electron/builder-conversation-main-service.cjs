@@ -15,6 +15,12 @@ const {
   sanitizeBuilderGitCandidateReceipt,
 } = require('./builder-git-receipt-contract.cjs');
 const {
+  sanitizeBuilderToolCallRecord,
+} = require('./builder-tool-call-records.cjs');
+const {
+  sanitizeBuilderToolResultRecord,
+} = require('./builder-tool-result-records.cjs');
+const {
   BuilderTaskStreamProjectionError,
   projectBuilderTaskStream,
 } = require('./builder-task-stream-projection.cjs');
@@ -375,6 +381,20 @@ function sanitizeAcceptCandidateRequest(value) {
 function trustedContext(value) {
   if (!value || typeof value !== 'object' || !TRUSTED_CONTEXTS.has(value)) fail();
   return value;
+}
+
+function assertToolRecordContext(context, record) {
+  if (
+    context.mode !== 'work'
+    || context.ids.task_id === null
+    || context.run_terminal_failure_code !== null
+    || context.cancel_requested
+    || record.project_id !== context.project.project_id
+    || record.conversation_id !== context.conversation.conversation_id
+    || record.turn_id !== context.ids.turn_id
+    || record.task_id !== context.ids.task_id
+    || record.run_id !== context.ids.run_id
+  ) fail();
 }
 
 function createBuilderConversationMainService(rawOptions) {
@@ -885,6 +905,74 @@ function createBuilderConversationMainService(rawOptions) {
     });
   }
 
+  function recordToolCallRequest(rawRequest) {
+    exactObject(rawRequest, ['context', 'tool_call_record']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    const record = sanitizeBuilderToolCallRecord(valueAt(rawRequest, 'tool_call_record'));
+    assertToolRecordContext(context, record);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    if (record.requested_at_ms > recordedAtMs) fail();
+    const requested = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'tool_call_requested',
+      previous: context.start_head,
+      payload: {
+        tool_call_record: record,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [requested],
+      recordedAtMs,
+    });
+    const updatedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(updatedContext);
+    return updatedContext;
+  }
+
+  function recordToolResult(rawRequest) {
+    exactObject(rawRequest, ['context', 'tool_result_record']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    const record = sanitizeBuilderToolResultRecord(valueAt(rawRequest, 'tool_result_record'));
+    assertToolRecordContext(context, record);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    if (record.observed_at_ms > recordedAtMs) fail();
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'tool_call_result_recorded',
+      previous: context.start_head,
+      payload: {
+        tool_result_record: record,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
+      recordedAtMs,
+    });
+    const updatedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(updatedContext);
+    return updatedContext;
+  }
+
   function completeExplanation(rawRequest) {
     exactObject(rawRequest, ['context', 'assistant_text']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
@@ -1260,6 +1348,8 @@ function createBuilderConversationMainService(rawOptions) {
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,
     complete_failure: completeFailure,
+    record_tool_call_request: recordToolCallRequest,
+    record_tool_result: recordToolResult,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
@@ -1273,6 +1363,8 @@ function createBuilderConversationMainService(rawOptions) {
       restart_running_recovery: 'interrupted_without_provider_redispatch',
       candidate_draft_restore: 'sqlite_index_replay_verified',
       question_explanation: 'sqlite_event_chain_without_git_revision',
+      tool_call_recording: 'main_only_pre_dispatch_event',
+      tool_result_recording: 'main_only_fixed_code_event',
     }),
   });
 }
