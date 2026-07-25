@@ -1818,11 +1818,11 @@ function assertReadEvidence(value) {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v3'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v4'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v3',
+    bridge_version: 'builder-preload.v4',
     legacy_namespaces_absent: true,
   });
   const status = sanitizeStatus(evidenceDescriptors.status.value);

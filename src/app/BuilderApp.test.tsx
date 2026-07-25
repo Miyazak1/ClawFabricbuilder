@@ -255,6 +255,7 @@ async function setup(options: Readonly<{
       listHistory,
     },
     providerSettings: {},
+    permissions: {},
     taskStream: {
       read: readTaskStream,
     },

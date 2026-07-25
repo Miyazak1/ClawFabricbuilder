@@ -73,6 +73,8 @@ for (const expected of [
   '/electron/builder-project-save-authority.cjs',
   '/electron/builder-permission-authority-contract.cjs',
   '/electron/builder-permission-fact-store.cjs',
+  '/electron/builder-permission-ipc-adapter.cjs',
+  '/electron/builder-permission-ipc-runtime.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
   '/electron/builder-provider-config.cjs',
   '/electron/builder-provider-config-repository.cjs',
@@ -213,6 +215,8 @@ const packagedGitRepository = packagedSource('electron/builder-git-project-repos
 const packagedGitCurrentProjection = packagedSource('electron/builder-git-current-projection.cjs');
 const packagedPermissionAuthorityContract = packagedSource('electron/builder-permission-authority-contract.cjs');
 const packagedPermissionFactStore = packagedSource('electron/builder-permission-fact-store.cjs');
+const packagedPermissionIpcAdapter = packagedSource('electron/builder-permission-ipc-adapter.cjs');
+const packagedPermissionIpcRuntime = packagedSource('electron/builder-permission-ipc-runtime.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
@@ -251,6 +255,9 @@ const providerSettingsChannels = [
 const taskStreamChannels = [
   'clawfabric-builder:task-stream:read',
 ];
+const permissionChannels = [
+  'clawfabric-builder:permissions:evaluate',
+];
 const windowControlsChannels = [
   'clawfabric-builder:window-controls:minimize',
   'clawfabric-builder:window-controls:toggle-maximize',
@@ -262,6 +269,7 @@ const preloadChannels = [
   ...generationChannels,
   ...providerSettingsChannels,
   ...taskStreamChannels,
+  ...permissionChannels,
   ...windowControlsChannels,
 ];
 
@@ -335,6 +343,7 @@ exactObjectKeys(preloadRoot, [
   'codeGenerator',
   'providerSettings',
   'taskStream',
+  'permissions',
   'windowControls',
 ]);
 const bridgeVersionProperty = preloadRoot.properties.find((property) => property.name.text === 'bridgeVersion');
@@ -342,26 +351,31 @@ const workspaceProperty = preloadRoot.properties.find((property) => property.nam
 const generationProperty = preloadRoot.properties.find((property) => property.name.text === 'codeGenerator');
 const providerSettingsProperty = preloadRoot.properties.find((property) => property.name.text === 'providerSettings');
 const taskStreamProperty = preloadRoot.properties.find((property) => property.name.text === 'taskStream');
+const permissionsProperty = preloadRoot.properties.find((property) => property.name.text === 'permissions');
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
 assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
 assert.equal(ts.isPropertyAssignment(generationProperty), true);
 assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
 assert.equal(ts.isPropertyAssignment(taskStreamProperty), true);
+assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v3');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v4');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
 const taskStreamBridge = frozenObjectLiteral(taskStreamProperty.initializer);
+const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
 exactObjectKeys(generationBridge, ['generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
 exactObjectKeys(taskStreamBridge, ['read']);
+exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -425,6 +439,7 @@ assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSet
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
 assert.equal(preloadConstants.get('READ_TASK_STREAM_CHANNEL'), taskStreamChannels[0]);
+assert.equal(preloadConstants.get('EVALUATE_PERMISSION_CHANNEL'), permissionChannels[0]);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
@@ -446,15 +461,18 @@ exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
 exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['request']);
+exactInvokeMethod(permissionsBridge, 'evaluate', 'EVALUATE_PERMISSION_CHANNEL', ['request']);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'readState', 'READ_WINDOW_STATE_CHANNEL', []);
 
 assert.match(packagedMain, /require\(['"]\.\/builder-provider-settings-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /require\(['"]\.\/builder-permission-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-window-controls-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
+assert.match(packagedMain, /createBuilderPermissionIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
 assert.match(packagedMain, /createBuilderWindowControlsIpcRuntime/u);
 assert.match(packagedMain, /frame:\s*false/u);
@@ -550,6 +568,29 @@ assert.doesNotMatch(
   packagedPermissionFactStore,
   /require\(['"](?:electron|node:http|node:https|http|https)['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|eval\s*\(|new Function|shell:\s*true|localStorage|sessionStorage|indexedDB|better-sqlite/iu,
 );
+assert.match(packagedPermissionIpcAdapter, /builder_permission\.controlled_ipc_adapter\.v1/u);
+assert.match(packagedPermissionIpcAdapter, /EVALUATE_PERMISSION_CHANNEL/u);
+assert.match(packagedPermissionIpcAdapter, /renderer_authority:\s*'project_action_resource_only'/u);
+assert.match(packagedPermissionIpcAdapter, /actor_authority:\s*'main_bound_local_user'/u);
+assert.match(packagedPermissionIpcAdapter, /read_only:\s*true/u);
+assert.match(packagedPermissionIpcAdapter, /grant_command:\s*false/u);
+assert.match(packagedPermissionIpcAdapter, /revoke_command:\s*false/u);
+assert.match(packagedPermissionIpcAdapter, /grants_exposed:\s*false/u);
+assert.match(packagedPermissionIpcAdapter, /revocations_exposed:\s*false/u);
+assert.doesNotMatch(
+  packagedPermissionIpcAdapter,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-|builder-permission-fact-store|node:sqlite|better-sqlite|fetch\s*\(|https?:|saveDraft|generate|record_grant|record_revocation|persist_candidate_commit|write_current|local-provider-executor/iu,
+);
+assert.match(packagedPermissionIpcRuntime, /builder-permission-ipc-runtime\.v1/u);
+assert.match(packagedPermissionIpcRuntime, /createBuilderPermissionIpcAdapter/u);
+assert.match(packagedPermissionIpcRuntime, /createBuilderPermissionFactStore/u);
+assert.match(packagedPermissionIpcRuntime, /LOCAL_BUILDER_USER_ACTOR_ID/u);
+assert.match(packagedPermissionIpcRuntime, /PERMISSION_DIRECTORY = 'builder-permissions-v1'/u);
+assert.match(packagedPermissionIpcRuntime, /PERMISSION_DATABASE = 'permissions\.sqlite'/u);
+assert.doesNotMatch(
+  packagedPermissionIpcRuntime,
+  /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_grant|record_revocation|grant_command|revoke_command/iu,
+);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RESTORE_DRAFT_CHANNEL/u);
@@ -570,8 +611,9 @@ assert.match(packagedPreload, /restoreDraft/u);
 assert.match(packagedPreload, /rejectDraft/u);
 assert.match(packagedPreload, /providerSettings/u);
 assert.match(packagedPreload, /taskStream/u);
+assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 21);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 22);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -684,6 +726,15 @@ for (const channel of generationChannels) {
 for (const channel of taskStreamChannels) {
   assert.equal(
     packagedTaskStreamIpcAdapter.includes(channel) || packagedGenerationIpcRuntime.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of permissionChannels) {
+  assert.equal(
+    packagedPermissionIpcAdapter.includes(channel)
+      || packagedPermissionIpcRuntime.includes(channel)
+      || packagedPreload.includes(channel),
     true,
     channel,
   );

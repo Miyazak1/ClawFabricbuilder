@@ -204,6 +204,8 @@ Evidence requirements:
 - actor, scope, action, resource, issuer, expiry/revocation, and policy version
   are bound;
 - UI selection cannot substitute for a persisted grant;
+- the first implementation checkpoint owns durable grant/revocation facts in
+  main-only SQLite and exposes only an evaluate-only permission decision IPC;
 - secret access, filesystem, network, process, publication, and destructive
   actions are independently scoped;
 - revocation affects future actions and is visible in audit history;

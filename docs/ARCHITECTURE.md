@@ -13,12 +13,14 @@ The first product loop is: describe an idea, generate a code draft, review the
 working tree diff, save a Git-backed revision receipt, reopen it, revise it,
 and inspect a static preview.
 
-The desktop application owns four narrow authorities:
+The desktop application owns five narrow authorities:
 
 1. Builder provider settings and encrypted credentials.
 2. Bounded code-generation transport.
 3. Git-backed project worktrees and SQLite product metadata.
-4. A controlled renderer bridge exposing only Builder operations.
+4. Main-owned, deny-by-default Permission facts with an evaluate-only IPC
+   surface.
+5. A controlled renderer bridge exposing only Builder operations.
 
 Generated JavaScript is stored and displayed but is not executed in the first release. Workflow promotion, arbitrary code execution, collaboration, and publishing require later independent gates.
 
@@ -28,8 +30,8 @@ Builder Project Revision is a SQLite product receipt that binds a Project,
 Run, Review decision, and Artifact evidence to Git object IDs. It must not copy
 source files into a second JSON revision chain.
 
-Future Goal, Task, Run, Artifact, Review, Permission, Contribution, Agent
-Definition/Version, Delegation, Workflow Version, Space/Membership,
+Future Goal, Task, Run, Artifact, Review, Permission grant UI/tool enforcement,
+Contribution, Agent Definition/Version, Delegation, Workflow Version, Space/Membership,
 Identity/Contact/Conversation, and Publication authorities must be added
 independently and must not be inferred from chat, community, model identity,
 renderer state, or Git metadata alone.
