@@ -31,6 +31,7 @@ const {
 const {
   FILESYSTEM_READ_TOOL_RUNTIME_ID,
   createBuilderToolRuntimeInvocationAdmission,
+  sanitizeBuilderToolRuntimeInvocationAdmission,
 } = require('./builder-tool-runtime-invocation-admission.cjs');
 const {
   admitBuilderToolCallSessionState,
@@ -1028,10 +1029,31 @@ function createBuilderConversationMainService(rawOptions) {
   }
 
   function recordToolResult(rawRequest) {
-    exactObject(rawRequest, ['context', 'tool_result_record']);
+    exactObject(rawRequest, ['context', 'runtime_invocation_admission', 'tool_result_record']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
-    const record = sanitizeBuilderToolResultRecord(valueAt(rawRequest, 'tool_result_record'));
-    assertToolRecordContext(context, record);
+    let runtimeAdmission;
+    let record;
+    try {
+      runtimeAdmission = sanitizeBuilderToolRuntimeInvocationAdmission(
+        valueAt(rawRequest, 'runtime_invocation_admission'),
+      );
+      record = sanitizeBuilderToolResultRecord(valueAt(rawRequest, 'tool_result_record'));
+      assertToolRecordContext(context, record);
+      if (
+        record.runtime_invocation_digest !== runtimeAdmission.admission_digest
+        || JSON.stringify(record.runtime_invocation_admission) !== JSON.stringify(runtimeAdmission)
+        || runtimeAdmission.project_id !== context.project.project_id
+        || runtimeAdmission.conversation_id !== context.conversation.conversation_id
+        || runtimeAdmission.turn_id !== context.ids.turn_id
+        || runtimeAdmission.task_id !== context.ids.task_id
+        || runtimeAdmission.run_id !== context.ids.run_id
+        || runtimeAdmission.tool_call_id !== record.tool_call_id
+        || runtimeAdmission.record_digest !== record.tool_call_record.record_digest
+        || runtimeAdmission.policy_digest !== record.tool_call_record.session_policy.policy_digest
+      ) fail();
+    } catch {
+      fail();
+    }
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
     if (record.observed_at_ms > recordedAtMs) fail();
     admitToolResultState(context, record, record.observed_at_ms);

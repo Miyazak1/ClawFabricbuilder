@@ -233,7 +233,7 @@ Evidence requirements:
   Conversation event replay and renderer-safe Task Stream projection without
   exposing permission receipts, resource details, provider facts, or execution
   results;
-- the current result-admission checkpoint defines a main-only fixed-code tool
+- the earlier result-admission checkpoint defined a main-only fixed-code tool
   result record contract from a verified pre-dispatch call record and admits
   that fixed-code result into Conversation replay plus the renderer-safe Task
   Stream without exposing record digests, raw output, provider facts, renderer
@@ -280,6 +280,12 @@ Evidence requirements:
   and chargeable-dispatch authority; it still does not register IPC/preload,
   read file content, run code, store output, mutate source, call a provider, or
   create a revision;
+- the current runtime-bound result checkpoint upgrades the fixed-code result
+  record so it must consume and verify an explicit runtime-invocation receipt
+  plus the matching pre-dispatch call record before Conversation append; it
+  keeps only the fixed public terminal summary in the renderer-safe Task Stream
+  and redacts dispatch, adapter, runtime, policy, digest, raw-output, provider,
+  source, and revision evidence;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

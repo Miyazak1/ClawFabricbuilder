@@ -20,6 +20,17 @@ const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
+  createBuilderToolDispatchAdmission,
+} = require('../electron/builder-tool-dispatch-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_ADAPTER_ID,
+  createBuilderToolAdapterSelectionAdmission,
+} = require('../electron/builder-tool-adapter-selection-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_RUNTIME_ID,
+  createBuilderToolRuntimeInvocationAdmission,
+} = require('../electron/builder-tool-runtime-invocation-admission.cjs');
+const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
 const {
@@ -109,12 +120,44 @@ function toolResultRecord(callRecord, overrides = {}) {
   const summaryCode = overrides.summary_code
     ?? (status === 'succeeded' ? 'completed_without_raw_output' : 'failed_without_raw_output');
   return createBuilderToolResultRecord({
+    runtime_invocation_admission: overrides.runtime_invocation_admission ?? toolRuntimeAdmission(callRecord),
     tool_call_record: callRecord,
     observed_at_ms: overrides.observed_at_ms ?? (callRecord.requested_at_ms + 1),
     result: {
       status,
       summary_code: summaryCode,
     },
+  });
+}
+
+function toolRuntimeAdmission(callRecord) {
+  const dispatch = createBuilderToolDispatchAdmission({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    existing_tool_calls: [existing(callRecord)],
+    tool_call_record: callRecord,
+    dispatch_request_id: id('tool-dispatch-request', 40 + Number.parseInt(callRecord.step_id.slice(-12), 16)),
+    admitted_at_ms: callRecord.requested_at_ms,
+  });
+  const selection = createBuilderToolAdapterSelectionAdmission({
+    dispatch_admission: dispatch,
+    tool_call_record: callRecord,
+    adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    adapter_selection_id: id('tool-adapter-selection', 50 + Number.parseInt(callRecord.step_id.slice(-12), 16)),
+    selected_at_ms: dispatch.admitted_at_ms,
+  });
+  return createBuilderToolRuntimeInvocationAdmission({
+    adapter_selection_admission: selection,
+    tool_call_record: callRecord,
+    runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    runtime_invocation_id: id('tool-runtime-invocation', 60 + Number.parseInt(callRecord.step_id.slice(-12), 16)),
+    runtime_admitted_at_ms: selection.selected_at_ms,
   });
 }
 

@@ -755,12 +755,20 @@ assert.match(packagedToolResultRecords, /builder-tool-result-record\.v1/u);
 assert.match(packagedToolResultRecords, /builder_tool_result_record/u);
 assert.match(packagedToolResultRecords, /main_tool_result_record_contract_v1/u);
 assert.match(packagedToolResultRecords, /sanitizeBuilderToolCallRecord/u);
+assert.match(packagedToolResultRecords, /sanitizeRuntimeInvocationAdmission/u);
+assert.match(packagedToolResultRecords, /RUNTIME_ADMISSION_KEYS/u);
+assert.match(packagedToolResultRecords, /runtimeDigestBody/u);
+assert.match(packagedToolResultRecords, /runtime_invocation_admission/u);
+assert.match(packagedToolResultRecords, /runtime_invocation_digest/u);
+assert.match(packagedToolResultRecords, /runtime_invocation_authority:\s*'main_tool_runtime_invocation_contract_v1'/u);
 assert.match(packagedToolResultRecords, /tool_call_admission:\s*'verified_pre_dispatch_record'/u);
 assert.match(packagedToolResultRecords, /session_policy_admission !== 'verified_main_run_policy'/u);
 assert.match(packagedToolResultRecords, /max_public_summary_bytes/u);
+assert.match(packagedToolResultRecords, /observedAtMs < runtimeAdmission\.runtime_admitted_at_ms/u);
 assert.match(packagedToolResultRecords, /observedAtMs - toolCallRecord\.requested_at_ms > toolCallRecord\.session_policy\.limits\.max_step_timeout_ms/u);
 assert.match(packagedToolResultRecords, /observedAtMs - toolCallRecord\.session_policy\.issued_at_ms > toolCallRecord\.session_policy\.limits\.max_total_timeout_ms/u);
-assert.match(packagedToolResultRecords, /dispatch_admission:\s*'not_performed_by_record_contract'/u);
+assert.match(packagedToolResultRecords, /dispatch_admission:\s*'verified_by_runtime_invocation'/u);
+assert.match(packagedToolResultRecords, /runtime_admission:\s*'verified_runtime_invocation'/u);
 assert.match(packagedToolResultRecords, /execution_admission:\s*'not_performed_by_record_contract'/u);
 assert.match(packagedToolResultRecords, /result_admission:\s*'fixed_summary_code_recorded'/u);
 assert.match(packagedToolResultRecords, /raw_output_admission:\s*'not_included'/u);
@@ -773,8 +781,9 @@ assert.match(packagedToolResultRecords, /provider_dispatch:\s*false/u);
 assert.match(packagedToolResultRecords, /credential_readback:\s*false/u);
 assert.doesNotMatch(
   packagedToolResultRecords,
-  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https|node:fs|fs|fs\/promises|node:path|path)['"]\)|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|open\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
+assert.doesNotMatch(packagedToolResultRecords, /builder-tool-runtime-invocation-admission\.cjs/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RESTORE_DRAFT_CHANNEL/u);
@@ -884,6 +893,7 @@ assert.match(packagedConversationMainService, /verify_candidate:\s*verifyCandida
 assert.match(packagedConversationMainService, /read_stream:\s*readStream/u);
 assert.match(packagedConversationMainService, /sanitizeBuilderToolCallRecord/u);
 assert.match(packagedConversationMainService, /sanitizeBuilderToolResultRecord/u);
+assert.match(packagedConversationMainService, /sanitizeBuilderToolRuntimeInvocationAdmission/u);
 assert.match(packagedConversationMainService, /createBuilderToolDispatchAdmission/u);
 assert.match(packagedConversationMainService, /createBuilderToolAdapterSelectionAdmission/u);
 assert.match(packagedConversationMainService, /sanitizeBuilderToolAdapterSelectionAdmission/u);
@@ -901,7 +911,10 @@ assert.match(packagedConversationMainService, /record_tool_result:\s*recordToolR
 assert.match(packagedConversationMainService, /admit_tool_dispatch:\s*admitToolDispatch/u);
 assert.match(packagedConversationMainService, /select_tool_adapter:\s*selectToolAdapter/u);
 assert.match(packagedConversationMainService, /admit_tool_runtime_invocation:\s*admitToolRuntimeInvocation/u);
+assert.match(packagedConversationMainService, /exactObject\(rawRequest,\s*\['context', 'runtime_invocation_admission', 'tool_result_record'\]\)/u);
 assert.match(packagedConversationMainService, /exactObject\(rawRequest,\s*\['context', 'tool_call_id', 'adapter_selection_admission', 'runtime_id'\]\)/u);
+assert.match(packagedConversationMainService, /record\.runtime_invocation_digest !== runtimeAdmission\.admission_digest/u);
+assert.match(packagedConversationMainService, /JSON\.stringify\(record\.runtime_invocation_admission\) !== JSON\.stringify\(runtimeAdmission\)/u);
 assert.match(packagedConversationMainService, /tool_call_recording:\s*'main_only_pre_dispatch_event'/u);
 assert.match(packagedConversationMainService, /tool_result_recording:\s*'main_only_fixed_code_event'/u);
 assert.match(packagedConversationMainService, /tool_dispatch_admission:\s*'main_only_open_call_no_dispatch'/u);
@@ -932,7 +945,7 @@ assert.match(packagedTaskStreamProjection, /display_summary:\s*record\.result\.d
 assert.match(packagedTaskStreamProjection, /result_admission:\s*'fixed_summary_code_recorded'/u);
 assert.match(packagedTaskStreamProjection, /raw_output_admission:\s*'not_included'/u);
 assert.match(packagedTaskStreamProjection, /revision_admission:\s*'not_created'/u);
-assert.doesNotMatch(packagedTaskStreamProjection, /session_policy|tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|resource_id/u);
+assert.doesNotMatch(packagedTaskStreamProjection, /session_policy|tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|resource_id/u);
 assert.match(packagedTaskStreamProjection, /candidate_state:\s*'proposed'/u);
 assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/u);
 assert.doesNotMatch(

@@ -26,6 +26,17 @@ const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
+  createBuilderToolDispatchAdmission,
+} = require('../electron/builder-tool-dispatch-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_ADAPTER_ID,
+  createBuilderToolAdapterSelectionAdmission,
+} = require('../electron/builder-tool-adapter-selection-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_RUNTIME_ID,
+  createBuilderToolRuntimeInvocationAdmission,
+} = require('../electron/builder-tool-runtime-invocation-admission.cjs');
+const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
 const {
@@ -155,14 +166,64 @@ async function toolCallRecord({
 }
 
 function toolResultRecord(record, overrides = {}) {
+  const {
+    runtime_invocation_admission: runtime = toolRuntimeAdmission(record),
+    ...rest
+  } = overrides;
   return createBuilderToolResultRecord({
+    runtime_invocation_admission: runtime,
     tool_call_record: record,
     observed_at_ms: 60,
     result: {
       status: 'failed',
       summary_code: 'output_rejected',
     },
-    ...overrides,
+    ...rest,
+  });
+}
+
+function existingToolCall(record) {
+  return {
+    step_id: record.step_id,
+    tool_call_id: record.tool_call_id,
+    tool_call_record: record,
+    tool_result_record: null,
+  };
+}
+
+function idIndex(value) {
+  return Number.parseInt(value.slice(-12), 10);
+}
+
+function toolRuntimeAdmission(record) {
+  const index = idIndex(record.step_id);
+  const dispatch = createBuilderToolDispatchAdmission({
+    project_id: record.project_id,
+    conversation_id: record.conversation_id,
+    turn_id: record.turn_id,
+    task_id: record.task_id,
+    run_id: record.run_id,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    existing_tool_calls: [existingToolCall(record)],
+    tool_call_record: record,
+    dispatch_request_id: id('tool-dispatch-request', index + 20),
+    admitted_at_ms: record.requested_at_ms,
+  });
+  const selection = createBuilderToolAdapterSelectionAdmission({
+    dispatch_admission: dispatch,
+    tool_call_record: record,
+    adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    adapter_selection_id: id('tool-adapter-selection', index + 21),
+    selected_at_ms: dispatch.admitted_at_ms,
+  });
+  return createBuilderToolRuntimeInvocationAdmission({
+    adapter_selection_admission: selection,
+    tool_call_record: record,
+    runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    runtime_invocation_id: id('tool-runtime-invocation', index + 22),
+    runtime_admitted_at_ms: selection.selected_at_ms,
   });
 }
 
@@ -503,7 +564,7 @@ test('projects fixed-code tool results without exposing records or raw output', 
   });
   assert.doesNotMatch(
     JSON.stringify(stream),
-    /tool_result_record|tool_call_record|session_policy|tool_name|permission_id|permission_admission_receipt|record_digest|summary_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+    /tool_result_record|tool_call_record|session_policy|tool_name|permission_id|permission_admission_receipt|record_digest|summary_digest|evidence_digest|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
   );
 });
 
@@ -536,7 +597,7 @@ test('does not expose Git receipts, digests, commands, or provider material', ()
   const serialized = JSON.stringify(projectBuilderTaskStream(input(candidateEvents())));
   assert.doesNotMatch(
     serialized,
-    /git_candidate_receipt|candidate_digest|result_digest|input_digest|event_digest|event_id|command_id|commit_oid|tree_oid|base_revision|provider|credential|secret|save_admission/iu,
+    /git_candidate_receipt|candidate_digest|result_digest|input_digest|event_digest|event_id|command_id|commit_oid|tree_oid|base_revision|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|provider|credential|secret|save_admission/iu,
   );
 });
 

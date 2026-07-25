@@ -30,13 +30,18 @@ const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
+  createBuilderToolDispatchAdmission,
+} = require('../electron/builder-tool-dispatch-admission.cjs');
+const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
 const {
   FILESYSTEM_READ_TOOL_ADAPTER_ID,
+  createBuilderToolAdapterSelectionAdmission,
 } = require('../electron/builder-tool-adapter-selection-admission.cjs');
 const {
   FILESYSTEM_READ_TOOL_RUNTIME_ID,
+  createBuilderToolRuntimeInvocationAdmission,
 } = require('../electron/builder-tool-runtime-invocation-admission.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
@@ -221,14 +226,64 @@ async function toolCallRecord(context, overrides = {}) {
 }
 
 function toolResultRecord(record, overrides = {}) {
+  const {
+    runtime_invocation_admission: runtime = toolRuntimeAdmission(record),
+    ...rest
+  } = overrides;
   return createBuilderToolResultRecord({
+    runtime_invocation_admission: runtime,
     tool_call_record: record,
-    observed_at_ms: 70,
+    observed_at_ms: Math.max(70, runtime.runtime_admitted_at_ms),
     result: {
       status: 'failed',
       summary_code: 'output_rejected',
     },
-    ...overrides,
+    ...rest,
+  });
+}
+
+function existingToolCall(record) {
+  return {
+    step_id: record.step_id,
+    tool_call_id: record.tool_call_id,
+    tool_call_record: record,
+    tool_result_record: null,
+  };
+}
+
+function toolChainId(kind, record, offset) {
+  const index = Number.parseInt(record.step_id.slice(-12), 16) + offset;
+  return `builder-${kind}:11111111-1111-4111-8111-${index.toString(16).padStart(12, '0')}`;
+}
+
+function toolRuntimeAdmission(record) {
+  const dispatch = createBuilderToolDispatchAdmission({
+    project_id: record.project_id,
+    conversation_id: record.conversation_id,
+    turn_id: record.turn_id,
+    task_id: record.task_id,
+    run_id: record.run_id,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    existing_tool_calls: [existingToolCall(record)],
+    tool_call_record: record,
+    dispatch_request_id: toolChainId('tool-dispatch-request', record, 1),
+    admitted_at_ms: record.requested_at_ms,
+  });
+  const selection = createBuilderToolAdapterSelectionAdmission({
+    dispatch_admission: dispatch,
+    tool_call_record: record,
+    adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    adapter_selection_id: toolChainId('tool-adapter-selection', record, 2),
+    selected_at_ms: dispatch.admitted_at_ms,
+  });
+  return createBuilderToolRuntimeInvocationAdmission({
+    adapter_selection_admission: selection,
+    tool_call_record: record,
+    runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    runtime_invocation_id: toolChainId('tool-runtime-invocation', record, 3),
+    runtime_admitted_at_ms: selection.selected_at_ms,
   });
 }
 
@@ -463,9 +518,12 @@ test('records main-only tool request and fixed-code result facts without dispatc
       3,
     );
 
-    const resultRecord = toolResultRecord(callRecord);
+    const resultRecord = toolResultRecord(callRecord, {
+      runtime_invocation_admission: runtimeAdmission,
+    });
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
+      runtime_invocation_admission: runtimeAdmission,
       tool_result_record: resultRecord,
     });
     assert.equal(resultContext.start_head.sequence, 4);
@@ -519,7 +577,7 @@ test('records main-only tool request and fixed-code result facts without dispatc
     });
     assert.doesNotMatch(
       JSON.stringify(pendingStream),
-      /tool_result_record|tool_call_record|session_policy|permission_id|permission_admission_receipt|record_digest|summary_digest|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|git_candidate_receipt|commit_oid|tree_oid|provider|credential|source_tree|save_admission/iu,
+      /tool_result_record|tool_call_record|session_policy|permission_id|permission_admission_receipt|record_digest|summary_digest|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|resource_id|project:\/src\/app\.tsx|stdout|stderr|output_digest|git_candidate_receipt|commit_oid|tree_oid|provider|credential|source_tree|save_admission/iu,
     );
 
     const completed = item.service.complete_failure({
@@ -612,6 +670,7 @@ test('rejects invalid main-only tool fact recording without committing partial e
       }),
       () => item.service.record_tool_result({
         context,
+        runtime_invocation_admission: resultRecord.runtime_invocation_admission,
         tool_result_record: resultRecord,
       }),
       () => item.service.admit_tool_dispatch({
@@ -663,13 +722,44 @@ test('rejects invalid main-only tool fact recording without committing partial e
       },
       runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
     }), { code: 'builder_conversation_main_service_unavailable' });
+    const runtimeAdmission = item.service.admit_tool_runtime_invocation({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_selection_admission: selectionAdmission,
+      runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    });
+    const runtimeBoundResult = toolResultRecord(callRecord, {
+      runtime_invocation_admission: runtimeAdmission,
+    });
+    const alternateRuntimeAdmission = item.service.admit_tool_runtime_invocation({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_selection_admission: selectionAdmission,
+      runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    });
+    assert.notEqual(alternateRuntimeAdmission.admission_digest, runtimeAdmission.admission_digest);
+    assert.throws(() => item.service.record_tool_result({
+      context: requestedContext,
+      runtime_invocation_admission: alternateRuntimeAdmission,
+      tool_result_record: runtimeBoundResult,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.record_tool_result({
+      context: requestedContext,
+      runtime_invocation_admission: {
+        ...runtimeAdmission,
+        runtime_invocation_id: 'builder-tool-runtime-invocation:00000000-0000-4000-8000-000000000999',
+      },
+      tool_result_record: runtimeBoundResult,
+    }), { code: 'builder_conversation_main_service_unavailable' });
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
-      tool_result_record: resultRecord,
+      runtime_invocation_admission: runtimeAdmission,
+      tool_result_record: runtimeBoundResult,
     });
     assert.throws(() => item.service.record_tool_result({
       context: resultContext,
-      tool_result_record: resultRecord,
+      runtime_invocation_admission: runtimeAdmission,
+      tool_result_record: runtimeBoundResult,
     }), { code: 'builder_conversation_main_service_unavailable' });
     assert.throws(() => item.service.admit_tool_dispatch({
       context: resultContext,
@@ -728,7 +818,9 @@ test('enforces main-only tool session state before appending tool facts', async 
 
     const settledContext = item.service.record_tool_result({
       context: requestedContext,
+      runtime_invocation_admission: toolRuntimeAdmission(first),
       tool_result_record: toolResultRecord(first, {
+        runtime_invocation_admission: toolRuntimeAdmission(first),
         observed_at_ms: 90,
         result: {
           status: 'succeeded',
@@ -783,7 +875,11 @@ test('enforces main-only tool session state before appending tool facts', async 
     });
     const retryFirstResult = retryItem.service.record_tool_result({
       context: retryFirstRequested,
-      tool_result_record: toolResultRecord(retryFirst, { observed_at_ms: 70 }),
+      runtime_invocation_admission: toolRuntimeAdmission(retryFirst),
+      tool_result_record: toolResultRecord(retryFirst, {
+        runtime_invocation_admission: toolRuntimeAdmission(retryFirst),
+        observed_at_ms: 70,
+      }),
     });
     const retrySecond = await toolCallRecord(retryContext, {
       session_policy: retryPolicy,
@@ -803,7 +899,11 @@ test('enforces main-only tool session state before appending tool facts', async 
     });
     const retrySecondResult = retryItem.service.record_tool_result({
       context: retrySecondRequested,
-      tool_result_record: toolResultRecord(retrySecond, { observed_at_ms: 90 }),
+      runtime_invocation_admission: toolRuntimeAdmission(retrySecond),
+      tool_result_record: toolResultRecord(retrySecond, {
+        runtime_invocation_admission: toolRuntimeAdmission(retrySecond),
+        observed_at_ms: 90,
+      }),
     });
     const exhausted = await toolCallRecord(retryContext, {
       session_policy: retryPolicy,
@@ -848,6 +948,7 @@ test('uses durable tool record timestamps for replay-equivalent session admissio
     item.setNow(400_001);
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
+      runtime_invocation_admission: resultRecord.runtime_invocation_admission,
       tool_result_record: resultRecord,
     });
     assert.equal(resultContext.start_head.sequence, 4);

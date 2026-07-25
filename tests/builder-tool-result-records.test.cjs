@@ -20,6 +20,17 @@ const {
   createBuilderToolCallRecord,
 } = require('../electron/builder-tool-call-records.cjs');
 const {
+  createBuilderToolDispatchAdmission,
+} = require('../electron/builder-tool-dispatch-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_ADAPTER_ID,
+  createBuilderToolAdapterSelectionAdmission,
+} = require('../electron/builder-tool-adapter-selection-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_RUNTIME_ID,
+  createBuilderToolRuntimeInvocationAdmission,
+} = require('../electron/builder-tool-runtime-invocation-admission.cjs');
+const {
   BUILDER_TOOL_RESULT_RECORD_VERSION,
   TOOL_RESULT_RECORD_KIND,
   BuilderToolResultRecordError,
@@ -111,6 +122,47 @@ async function toolCallRecord(overrides = {}) {
   ));
 }
 
+function existing(record) {
+  return {
+    step_id: record.step_id,
+    tool_call_id: record.tool_call_id,
+    tool_call_record: record,
+    tool_result_record: null,
+  };
+}
+
+function runtimeAdmission(record, overrides = {}) {
+  const dispatch = createBuilderToolDispatchAdmission({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    existing_tool_calls: [existing(record)],
+    tool_call_record: record,
+    dispatch_request_id: 'builder-tool-dispatch-request:123e4567-e89b-42d3-a456-426614174007',
+    admitted_at_ms: record.requested_at_ms,
+  });
+  const selection = createBuilderToolAdapterSelectionAdmission({
+    dispatch_admission: dispatch,
+    tool_call_record: record,
+    adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    adapter_selection_id: 'builder-tool-adapter-selection:123e4567-e89b-42d3-a456-426614174008',
+    selected_at_ms: dispatch.admitted_at_ms,
+  });
+  return createBuilderToolRuntimeInvocationAdmission({
+    adapter_selection_admission: selection,
+    tool_call_record: record,
+    runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    runtime_invocation_id: 'builder-tool-runtime-invocation:123e4567-e89b-42d3-a456-426614174009',
+    runtime_admitted_at_ms: selection.selected_at_ms,
+    ...overrides,
+  });
+}
+
 function result(overrides = {}) {
   return {
     status: 'succeeded',
@@ -120,11 +172,16 @@ function result(overrides = {}) {
 }
 
 function resultInput(record, overrides = {}) {
+  const {
+    runtime_invocation_admission: runtime = runtimeAdmission(record),
+    ...rest
+  } = overrides;
   return {
+    runtime_invocation_admission: runtime,
     tool_call_record: record,
     observed_at_ms: 60,
     result: result(),
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -152,6 +209,13 @@ test('creates a fixed-code tool result record from a verified pre-dispatch tool 
   assert.equal(record.action, 'filesystem.read');
   assert.equal(record.resource_kind, 'filesystem');
   assert.equal(record.observed_at_ms, 60);
+  assert.equal(record.dispatch_request_id, 'builder-tool-dispatch-request:123e4567-e89b-42d3-a456-426614174007');
+  assert.equal(record.adapter_selection_id, 'builder-tool-adapter-selection:123e4567-e89b-42d3-a456-426614174008');
+  assert.equal(record.runtime_invocation_id, 'builder-tool-runtime-invocation:123e4567-e89b-42d3-a456-426614174009');
+  assert.equal(record.adapter_id, FILESYSTEM_READ_TOOL_ADAPTER_ID);
+  assert.equal(record.runtime_id, FILESYSTEM_READ_TOOL_RUNTIME_ID);
+  assert.equal(record.runtime_invocation_digest, record.runtime_invocation_admission.admission_digest);
+  assert.equal(record.policy_digest, callRecord.session_policy.policy_digest);
   assert.deepEqual(record.result, {
     status: 'succeeded',
     summary_code: 'completed_without_raw_output',
@@ -162,7 +226,9 @@ test('creates a fixed-code tool result record from a verified pre-dispatch tool 
   assert.deepEqual(record.lifecycle, {
     permission_admission: 'verified_allowed',
     tool_call_admission: 'verified_pre_dispatch_record',
-    dispatch_admission: 'not_performed_by_record_contract',
+    dispatch_admission: 'verified_by_runtime_invocation',
+    adapter_selection: 'verified_static_adapter',
+    runtime_admission: 'verified_runtime_invocation',
     execution_admission: 'not_performed_by_record_contract',
     result_admission: 'fixed_summary_code_recorded',
     raw_output_admission: 'not_included',
@@ -171,23 +237,27 @@ test('creates a fixed-code tool result record from a verified pre-dispatch tool 
   assert.deepEqual(record.authority, {
     record_authority: 'main_tool_result_record_contract_v1',
     tool_call_authority: 'main_tool_call_record_contract_v1',
-    conversation_binding: 'verified_tool_call_record',
+    runtime_invocation_authority: 'main_tool_runtime_invocation_contract_v1',
+    conversation_binding: 'verified_tool_call_record_and_runtime_invocation',
     renderer_authority: 'not_present',
     provider_dispatch: false,
     credential_readback: false,
-    tool_dispatch: 'not_performed_by_record_contract',
+    tool_dispatch: 'bounded_without_raw_output',
+    runtime_execution: 'not_performed_by_record_contract',
     raw_output_storage: 'not_present',
     git_authority: 'not_present',
   });
   assert.match(record.record_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.equal(Object.isFrozen(record), true);
   assert.equal(Object.isFrozen(record.tool_call_record), true);
+  assert.equal(Object.isFrozen(record.runtime_invocation_admission), true);
   assert.equal(Object.isFrozen(record.result), true);
   assert.deepEqual(sanitizeBuilderToolResultRecord(structuredClone(record)), record);
 });
 
 test('fails closed on forged tool call records, stale timing, and result drift', async () => {
   const callRecord = await toolCallRecord();
+  const runtime = runtimeAdmission(callRecord);
   const tightSummaryCallRecord = await toolCallRecord({
     record: {
       session_policy: sessionPolicy({
@@ -201,8 +271,33 @@ test('fails closed on forged tool call records, stale timing, and result drift',
   const record = createBuilderToolResultRecord(resultInput(callRecord));
 
   for (const invalidInput of [
-    resultInput({ ...callRecord, record_digest: `sha256:${'0'.repeat(64)}` }),
-    resultInput({ ...callRecord, lifecycle: { ...callRecord.lifecycle, result_admission: 'recorded' } }),
+    { tool_call_record: callRecord, observed_at_ms: 60, result: result() },
+    resultInput(
+      { ...callRecord, record_digest: `sha256:${'0'.repeat(64)}` },
+      { runtime_invocation_admission: runtime },
+    ),
+    resultInput(
+      { ...callRecord, lifecycle: { ...callRecord.lifecycle, result_admission: 'recorded' } },
+      { runtime_invocation_admission: runtime },
+    ),
+    resultInput(callRecord, {
+      runtime_invocation_admission: {
+        ...runtime,
+        runtime_invocation_id: 'builder-tool-runtime-invocation:123e4567-e89b-42d3-a456-426614174099',
+      },
+    }),
+    resultInput(callRecord, {
+      runtime_invocation_admission: {
+        ...runtime,
+        record_digest: `sha256:${'0'.repeat(64)}`,
+      },
+    }),
+    resultInput(callRecord, {
+      runtime_invocation_admission: {
+        ...runtime,
+        runtime_admitted_at_ms: 61,
+      },
+    }),
     resultInput(callRecord, { observed_at_ms: 50 }),
     resultInput(callRecord, { observed_at_ms: 120_052 }),
     resultInput(callRecord, { observed_at_ms: 300_050 }),
@@ -221,6 +316,15 @@ test('fails closed on forged tool call records, stale timing, and result drift',
   for (const drift of [
     { ...record, action: 'filesystem.write' },
     { ...record, resource_kind: 'project' },
+    { ...record, runtime_id: 'builder-tool-runtime.project-edit.v1' },
+    { ...record, runtime_invocation_digest: `sha256:${'f'.repeat(64)}` },
+    {
+      ...record,
+      runtime_invocation_admission: {
+        ...record.runtime_invocation_admission,
+        runtime_id: 'builder-tool-runtime.project-edit.v1',
+      },
+    },
     { ...record, result: { ...record.result, display_summary: 'Completed with output.' } },
     { ...record, result: { ...record.result, summary_digest: `sha256:${'f'.repeat(64)}` } },
     { ...record, lifecycle: { ...record.lifecycle, raw_output_admission: 'included' } },
@@ -310,6 +414,7 @@ test('record carries no raw result, provider, credential, Git, renderer, or save
   assert.equal(Object.hasOwn(record, 'git_candidate_receipt'), false);
   assert.equal(record.authority.provider_dispatch, false);
   assert.equal(record.authority.credential_readback, false);
+  assert.equal(record.authority.runtime_execution, 'not_performed_by_record_contract');
   assert.equal(record.lifecycle.revision_admission, 'not_created');
 });
 
@@ -321,8 +426,11 @@ test('source remains a pure result-admission contract with no IPC, provider, Git
   assert.match(source, /builder-tool-result-record\.v1/u);
   assert.match(source, /main_tool_result_record_contract_v1/u);
   assert.match(source, /sanitizeBuilderToolCallRecord/u);
+  assert.match(source, /sanitizeRuntimeInvocationAdmission/u);
   assert.match(source, /tool_call_admission:\s*'verified_pre_dispatch_record'/u);
+  assert.match(source, /runtime_admission:\s*'verified_runtime_invocation'/u);
   assert.match(source, /max_public_summary_bytes/u);
+  assert.match(source, /observedAtMs < runtimeAdmission\.runtime_admitted_at_ms/u);
   assert.match(source, /observedAtMs - toolCallRecord\.requested_at_ms > toolCallRecord\.session_policy\.limits\.max_step_timeout_ms/u);
   assert.match(source, /observedAtMs - toolCallRecord\.session_policy\.issued_at_ms > toolCallRecord\.session_policy\.limits\.max_total_timeout_ms/u);
   assert.match(source, /result_admission:\s*'fixed_summary_code_recorded'/u);
@@ -330,6 +438,6 @@ test('source remains a pure result-admission contract with no IPC, provider, Git
   assert.match(source, /revision_admission:\s*'not_created'/u);
   assert.doesNotMatch(
     source,
-    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https|node:fs|fs|fs\/promises|node:path|path)['"]\)|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|open\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
   );
 });
