@@ -311,6 +311,15 @@ Evidence requirements:
   caller and records only a fixed public result summary in Conversation/Task
   Stream, with no IPC/preload command, provider dispatch, source mutation,
   raw-output durability, Save, or revision authority;
+- the current source-context collector checkpoint gives a future main-side
+  agent loop a bounded internal way to gather project file context: it validates
+  project resource ids, issues a zero-retry bounded tool session policy,
+  preflights all main permission admissions before any tool fact is appended,
+  records each tool-call request, executes the filesystem-read service, returns
+  private source content only to the main caller, and records only fixed public
+  request/result facts in the Task Stream, with no IPC/preload command,
+  provider dispatch, Git mutation, Save, raw-output durability, or revision
+  authority;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

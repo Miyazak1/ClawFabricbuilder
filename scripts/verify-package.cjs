@@ -84,6 +84,7 @@ for (const expected of [
   '/electron/builder-tool-project-workspace-admission.cjs',
   '/electron/builder-tool-filesystem-read-adapter.cjs',
   '/electron/builder-tool-filesystem-read-execution-service.cjs',
+  '/electron/builder-tool-source-context-collector.cjs',
   '/electron/builder-tool-filesystem-read-output-records.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
@@ -239,6 +240,7 @@ const packagedToolRuntimeInvocationAdmission = packagedSource('electron/builder-
 const packagedToolProjectWorkspaceAdmission = packagedSource('electron/builder-tool-project-workspace-admission.cjs');
 const packagedToolFilesystemReadAdapter = packagedSource('electron/builder-tool-filesystem-read-adapter.cjs');
 const packagedToolFilesystemReadExecutionService = packagedSource('electron/builder-tool-filesystem-read-execution-service.cjs');
+const packagedToolSourceContextCollector = packagedSource('electron/builder-tool-source-context-collector.cjs');
 const packagedToolFilesystemReadOutputRecords = packagedSource('electron/builder-tool-filesystem-read-output-records.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
@@ -781,6 +783,22 @@ assert.match(packagedToolFilesystemReadExecutionService, /private_filesystem_rea
 assert.doesNotMatch(
   packagedToolFilesystemReadExecutionService,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation-main-service|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|source_tree|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedToolSourceContextCollector, /builder-tool-source-context-collector\.v1/u);
+assert.match(packagedToolSourceContextCollector, /main_tool_source_context_collector_v1/u);
+assert.match(packagedToolSourceContextCollector, /createBuilderToolSessionPolicy/u);
+assert.match(packagedToolSourceContextCollector, /createBuilderToolCallRecord/u);
+assert.match(packagedToolSourceContextCollector, /createBuilderToolFilesystemReadExecutionService/u);
+assert.match(packagedToolSourceContextCollector, /record_tool_call_request/u);
+assert.match(packagedToolSourceContextCollector, /tool_request_and_fixed_result_only/u);
+assert.match(packagedToolSourceContextCollector, /builder-private-source-context\.v1/u);
+assert.match(packagedToolSourceContextCollector, /MAX_CONTEXT_FILES = 8/u);
+assert.match(packagedToolSourceContextCollector, /MAX_CONTEXT_FILE_BYTES = 16 \* 1024/u);
+assert.match(packagedToolSourceContextCollector, /max_retries: 0/u);
+assert.match(packagedToolSourceContextCollector, /segment === '\.\.'/u);
+assert.doesNotMatch(
+  packagedToolSourceContextCollector,
+  /require\(['"](?:electron|node:fs|node:fs\/promises|fs|fs\/promises|node:path|path|node:process|process)['"]\)|\bprocess\.|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation-main-service|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedToolFilesystemReadOutputRecords, /builder-tool-filesystem-read-output-record\.v1/u);
 assert.match(packagedToolFilesystemReadOutputRecords, /builder_tool_filesystem_read_output_record/u);
