@@ -19,7 +19,8 @@ The desktop application owns five narrow authorities:
 2. Bounded code-generation transport.
 3. Git-backed project worktrees and SQLite product metadata.
 4. Main-owned, deny-by-default Permission facts with an evaluate-only IPC
-   surface and renderer-side decision sanitizer.
+   surface, renderer-side decision sanitizer, and main-side tool admission
+   receipt before future tool dispatch.
 5. A controlled renderer bridge exposing only Builder operations.
 
 Generated JavaScript is stored and displayed but is not executed in the first release. Workflow promotion, arbitrary code execution, collaboration, and publishing require later independent gates.

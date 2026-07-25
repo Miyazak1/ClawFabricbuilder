@@ -207,6 +207,8 @@ Evidence requirements:
 - the first implementation checkpoint owns durable grant/revocation facts in
   main-only SQLite, exposes only an evaluate-only permission decision IPC, and
   sanitizes that decision through a renderer-side port before any future UI/tool use;
+- the second checkpoint emits a main-side tool admission receipt only after a
+  current permission decision allows the action, without executing the tool;
 - secret access, filesystem, network, process, publication, and destructive
   actions are independently scoped;
 - revocation affects future actions and is visible in audit history;

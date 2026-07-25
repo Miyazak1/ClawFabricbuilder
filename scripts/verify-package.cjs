@@ -75,6 +75,7 @@ for (const expected of [
   '/electron/builder-permission-fact-store.cjs',
   '/electron/builder-permission-ipc-adapter.cjs',
   '/electron/builder-permission-ipc-runtime.cjs',
+  '/electron/builder-tool-permission-admission.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
   '/electron/builder-provider-config.cjs',
   '/electron/builder-provider-config-repository.cjs',
@@ -217,6 +218,7 @@ const packagedPermissionAuthorityContract = packagedSource('electron/builder-per
 const packagedPermissionFactStore = packagedSource('electron/builder-permission-fact-store.cjs');
 const packagedPermissionIpcAdapter = packagedSource('electron/builder-permission-ipc-adapter.cjs');
 const packagedPermissionIpcRuntime = packagedSource('electron/builder-permission-ipc-runtime.cjs');
+const packagedToolPermissionAdmission = packagedSource('electron/builder-tool-permission-admission.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
 const packagedProviderConfigRepository = packagedSource('electron/builder-provider-config-repository.cjs');
 const packagedProviderSecretStore = packagedSource('electron/builder-provider-secret-store.cjs');
@@ -590,6 +592,17 @@ assert.match(packagedPermissionIpcRuntime, /PERMISSION_DATABASE = 'permissions\.
 assert.doesNotMatch(
   packagedPermissionIpcRuntime,
   /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_grant|record_revocation|grant_command|revoke_command/iu,
+);
+assert.match(packagedToolPermissionAdmission, /builder-tool-permission-admission\.v1/u);
+assert.match(packagedToolPermissionAdmission, /main_permission_decision_before_tool_dispatch_v1/u);
+assert.match(packagedToolPermissionAdmission, /tool_dispatch:\s*'not_performed'/u);
+assert.match(packagedToolPermissionAdmission, /execution_admission:\s*'permission_allowed_dispatch_not_performed'/u);
+assert.match(packagedToolPermissionAdmission, /renderer_authority:\s*'not_present'/u);
+assert.match(packagedToolPermissionAdmission, /grant_command:\s*false/u);
+assert.match(packagedToolPermissionAdmission, /revoke_command:\s*false/u);
+assert.doesNotMatch(
+  packagedToolPermissionAdmission,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|record_grant|record_revocation|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
