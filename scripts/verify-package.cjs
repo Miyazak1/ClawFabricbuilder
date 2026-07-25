@@ -76,6 +76,7 @@ for (const expected of [
   '/electron/builder-permission-ipc-adapter.cjs',
   '/electron/builder-permission-ipc-runtime.cjs',
   '/electron/builder-tool-permission-admission.cjs',
+  '/electron/builder-tool-session-policy.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
@@ -221,6 +222,7 @@ const packagedPermissionFactStore = packagedSource('electron/builder-permission-
 const packagedPermissionIpcAdapter = packagedSource('electron/builder-permission-ipc-adapter.cjs');
 const packagedPermissionIpcRuntime = packagedSource('electron/builder-permission-ipc-runtime.cjs');
 const packagedToolPermissionAdmission = packagedSource('electron/builder-tool-permission-admission.cjs');
+const packagedToolSessionPolicy = packagedSource('electron/builder-tool-session-policy.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
@@ -609,6 +611,41 @@ assert.match(packagedToolPermissionAdmission, /revoke_command:\s*false/u);
 assert.doesNotMatch(
   packagedToolPermissionAdmission,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|record_grant|record_revocation|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedToolSessionPolicy, /builder-tool-session-policy\.v1/u);
+assert.match(packagedToolSessionPolicy, /builder_tool_session_policy/u);
+assert.match(packagedToolSessionPolicy, /main_tool_session_policy_contract_v1/u);
+assert.match(packagedToolSessionPolicy, /max_steps:\s*16/u);
+assert.match(packagedToolSessionPolicy, /max_tool_calls:\s*16/u);
+assert.match(packagedToolSessionPolicy, /max_retries:\s*2/u);
+assert.match(packagedToolSessionPolicy, /max_step_timeout_ms:\s*120_000/u);
+assert.match(packagedToolSessionPolicy, /max_total_timeout_ms:\s*300_000/u);
+assert.match(packagedToolSessionPolicy, /max_public_summary_bytes:\s*160/u);
+assert.match(packagedToolSessionPolicy, /max_raw_output_bytes:\s*0/u);
+assert.match(packagedToolSessionPolicy, /max_chargeable_dispatches:\s*0/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{\s*max_steps:\s*32,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_tool_calls:\s*32,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_retries:\s*4,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_step_timeout_ms:\s*120_000,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_total_timeout_ms:\s*300_000,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_public_summary_bytes:\s*160,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_raw_output_bytes:\s*0,/u);
+assert.match(packagedToolSessionPolicy, /const HARD_LIMITS = Object\.freeze\(\{[\s\S]*max_chargeable_dispatches:\s*0,/u);
+assert.match(packagedToolSessionPolicy, /dispatch_admission:\s*'not_performed_by_policy_contract'/u);
+assert.match(packagedToolSessionPolicy, /execution_admission:\s*'not_performed_by_policy_contract'/u);
+assert.match(packagedToolSessionPolicy, /retry_admission:\s*'bounded_not_started'/u);
+assert.match(packagedToolSessionPolicy, /raw_output_admission:\s*'not_included'/u);
+assert.match(packagedToolSessionPolicy, /revision_admission:\s*'not_created'/u);
+assert.match(packagedToolSessionPolicy, /issuance_authority:\s*'trusted_main_run_context_required'/u);
+assert.match(packagedToolSessionPolicy, /digest_authority:\s*'integrity_digest_not_issuer_proof_v1'/u);
+assert.match(packagedToolSessionPolicy, /provider_dispatch:\s*false/u);
+assert.match(packagedToolSessionPolicy, /renderer_authority:\s*'not_present'/u);
+assert.match(packagedToolSessionPolicy, /raw_output_storage:\s*'not_present'/u);
+assert.match(packagedToolSessionPolicy, /git_authority:\s*'not_present'/u);
+assert.match(packagedToolSessionPolicy, /policy_digest/u);
+assert.doesNotMatch(
+  packagedToolSessionPolicy,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedToolCallRecords, /builder-tool-call-record\.v1/u);
 assert.match(packagedToolCallRecords, /builder_tool_call_record/u);

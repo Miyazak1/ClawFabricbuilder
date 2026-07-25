@@ -243,7 +243,14 @@ Evidence requirements:
   bound to a trusted active work Run context and replayed through SQLite; these
   methods are not IPC/preload commands and still do not perform dispatch,
   execution, provider calls, source mutation, or Save;
-- bounded step, cost, time, retry, and output policy;
+- the current bounded policy checkpoint defines a main-only tool session policy
+  receipt for Run-bound work with fixed step, tool-call, retry, timeout,
+  summary-output, raw-output, and chargeable-dispatch limits; it is still a
+  contract only, not yet bound to the existing tool-call record append path,
+  with no IPC/preload command, tool dispatch, provider call, source mutation,
+  raw-output storage, or revision creation; the digest is integrity evidence,
+  not issuer proof, and future enforcement must bind issuance to a trusted
+  main-side Run context before dispatch;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project
