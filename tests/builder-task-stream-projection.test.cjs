@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -9,6 +10,7 @@ const {
   CONVERSATION_AUTHORITY,
   CONVERSATION_EVENT_KIND,
   CONVERSATION_EVENT_VERSION,
+  createBuilderConversationPlanAdmission,
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
@@ -65,6 +67,14 @@ function head(event) {
   };
 }
 
+function eventHeadDigest(event) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(JSON.stringify({
+    event_digest: event.event_digest,
+    event_id: event.event_id,
+    sequence: event.sequence,
+  }), 'utf8').digest('hex')}`;
+}
+
 function append(events, type, payload, index) {
   const previous = events.at(-1) ?? null;
   const normalizedPayload = type === 'run_completed'
@@ -83,6 +93,37 @@ function append(events, type, payload, index) {
     authority: { ...CONVERSATION_AUTHORITY },
   }));
   return events;
+}
+
+function planAdmission(previous, callRecord, resultRecord) {
+  return createBuilderConversationPlanAdmission({
+    admission_version: 'builder-conversation-plan-admission.v1',
+    admission_kind: 'builder_conversation_plan_admission',
+    admission_authority: 'trusted_conversation_main_service_complete_plan_v1',
+    project_id: callRecord.project_id,
+    conversation_id: callRecord.conversation_id,
+    turn_id: callRecord.turn_id,
+    task_id: callRecord.task_id,
+    run_id: callRecord.run_id,
+    attempt_number: 1,
+    plan_record_digest: DIGEST,
+    source_context_result_version: 'builder-tool-source-context-result.v1',
+    collector_authority: 'main_tool_source_context_collector_v1',
+    context_digest: `sha256:${'d'.repeat(64)}`,
+    context_status: 'succeeded',
+    file_count: 1,
+    total_content_bytes: 32,
+    head_sequence: previous.sequence,
+    head_digest: eventHeadDigest(previous),
+    tool_reads: [{
+      resource_id: callRecord.resource.resource_id,
+      tool_call_id: callRecord.tool_call_id,
+      tool_call_record_digest: callRecord.record_digest,
+      tool_result_record_digest: resultRecord.record_digest,
+      result_summary_digest: resultRecord.result.summary_digest,
+      result_status: 'succeeded',
+    }],
+  });
 }
 
 function candidateReceipt(turnId, taskId, runId) {
@@ -347,6 +388,75 @@ function acceptedCandidateEvents() {
   return events;
 }
 
+async function planReviewEvents(decision = 'approved') {
+  const events = [];
+  const turnId = id('turn', 40);
+  const taskId = id('task', 41);
+  const runId = id('run', 42);
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 43), text: 'Inspect and plan the project.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Plan project update' },
+    base_revision: null,
+  }, 44);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 45);
+  const callRecord = await toolCallRecord({
+    turnId,
+    taskId,
+    runId,
+    stepId: id('run-step', 46),
+    toolCallId: id('tool-call', 47),
+  });
+  append(events, 'tool_call_requested', {
+    tool_call_record: callRecord,
+  }, 46);
+  const resultRecord = toolResultRecord(callRecord, {
+    result: {
+      status: 'succeeded',
+      summary_code: 'completed_without_raw_output',
+    },
+  });
+  append(events, 'tool_call_result_recorded', {
+    tool_result_record: resultRecord,
+  }, 47);
+  append(events, 'run_completed', {
+    turn_id: turnId,
+    run_id: runId,
+    terminal_status: 'succeeded',
+    result_kind: 'plan',
+    result_digest: DIGEST,
+    assistant_message: {
+      message_id: id('message', 48),
+      text: 'Review the proposed plan before project files change.',
+    },
+    candidate_result: null,
+    plan_admission: planAdmission(events.at(-1), callRecord, resultRecord),
+  }, 48);
+  append(events, 'turn_completed', {
+    turn_id: turnId,
+    run_id: runId,
+    outcome: 'plan_proposed',
+  }, 49);
+  append(events, 'plan_reviewed', {
+    turn_id: turnId,
+    run_id: runId,
+    plan_result_digest: DIGEST,
+    review_id: id('review', 50),
+    reviewer_id: id('user', 51),
+    reviewed_at_ms: 4_000,
+    decision,
+  }, 50);
+  return events;
+}
+
 function explanationHistory(turnCount) {
   const events = [];
   for (let turn = 1; turn <= turnCount; turn += 1) {
@@ -499,6 +609,24 @@ test('projects accepted candidates as saved versions without exposing revision e
   assert.doesNotMatch(
     JSON.stringify(stream),
     /review_id|reviewer_id|reviewed_at_ms|revision_receipt|candidate_digest|commit_oid|tree_oid|credential|provider|source_tree/iu,
+  );
+});
+
+test('projects plan reviews as public decisions without exposing review evidence', async () => {
+  const stream = projectBuilderTaskStream(input(await planReviewEvents('approved')));
+  assert.deepEqual(stream.conversation.items.at(-1), {
+    item_kind: 'plan_reviewed',
+    sequence: 7,
+    turn_id: id('turn', 40),
+    run_id: id('run', 42),
+    decision: 'approved',
+    plan_state: 'approved',
+  });
+  assert.equal(stream.conversation.items[4].result_kind, 'plan');
+  assert.equal(stream.conversation.items[4].candidate, null);
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|plan_body|record_digest|context_digest|head_digest|credential|provider|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
   );
 });
 

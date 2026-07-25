@@ -167,6 +167,14 @@ export type BuilderConversationItem =
     saved_revision: BuilderConversationSavedRevision | null;
   }>
   | Readonly<{
+    item_kind: 'plan_reviewed';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    decision: 'approved' | 'rejected';
+    plan_state: 'approved' | 'rejected';
+  }>
+  | Readonly<{
     item_kind: 'turn_completed';
     sequence: number;
     turn_id: string;
@@ -387,6 +395,14 @@ const CANDIDATE_REVIEWED_KEYS = Object.freeze([
   'decision',
   'candidate_state',
   'saved_revision',
+]);
+const PLAN_REVIEWED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'decision',
+  'plan_state',
 ]);
 const TURN_COMPLETED_KEYS = Object.freeze([
   'item_kind',
@@ -922,6 +938,23 @@ function sanitizeCandidateReviewed(
   };
 }
 
+function sanitizePlanReviewed(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'plan_reviewed' }> {
+  const decision = source.decision;
+  if (decision !== 'approved' && decision !== 'rejected') throw unavailable();
+  if (source.plan_state !== decision) throw unavailable();
+  return {
+    item_kind: 'plan_reviewed' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    decision,
+    plan_state: decision,
+  };
+}
+
 function sanitizeTurnCompleted(
   source: Record<string, unknown>,
   sequence: number,
@@ -976,6 +1009,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_COMPLETED_KEYS);
   } else if (itemKind === 'candidate_reviewed') {
     source = exactRecord(value, CANDIDATE_REVIEWED_KEYS);
+  } else if (itemKind === 'plan_reviewed') {
+    source = exactRecord(value, PLAN_REVIEWED_KEYS);
   } else if (itemKind === 'turn_completed') {
     source = exactRecord(value, TURN_COMPLETED_KEYS);
   } else {
@@ -991,6 +1026,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'tool_call_requested') return sanitizeToolCallRequested(source, sequence);
   if (itemKind === 'run_completed') return sanitizeRunCompleted(source, sequence);
   if (itemKind === 'candidate_reviewed') return sanitizeCandidateReviewed(source, sequence);
+  if (itemKind === 'plan_reviewed') return sanitizePlanReviewed(source, sequence);
   return sanitizeTurnCompleted(source, sequence);
 }
 
@@ -1005,6 +1041,7 @@ type ReplayTurn = {
     terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled' | null;
     result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
     candidate_draft_id: string | null;
+    plan_review: 'approved' | 'rejected' | null;
     candidate_review: 'accepted' | 'rejected' | null;
     pending_tool_calls: number;
     control: 'cancel' | 'interrupt' | null;
@@ -1100,6 +1137,22 @@ function validateCompleteWindow(
       continue;
     }
 
+    if (item.item_kind === 'plan_reviewed') {
+      if (activeTurn !== null) throw unavailable();
+      const reviewedTurn = turns.get(item.turn_id);
+      const reviewedRun = reviewedTurn?.runs.find((run) => run.run_id === item.run_id) ?? null;
+      if (
+        reviewedTurn === undefined
+        || reviewedRun === null
+        || reviewedRun.status !== 'completed'
+        || reviewedRun.terminal_status !== 'succeeded'
+        || reviewedRun.result_kind !== 'plan'
+        || reviewedRun.plan_review !== null
+      ) throw unavailable();
+      reviewedRun.plan_review = item.decision;
+      continue;
+    }
+
     if (activeTurn === null || activeTurn.turn_id !== item.turn_id) throw unavailable();
     const currentRun = activeTurn.runs.at(-1) ?? null;
     if (item.item_kind === 'run_started') {
@@ -1129,6 +1182,7 @@ function validateCompleteWindow(
         terminal_status: null,
         result_kind: null,
         candidate_draft_id: null,
+        plan_review: null,
         candidate_review: null,
         pending_tool_calls: 0,
         control: null,
@@ -1228,6 +1282,7 @@ type SuffixRun = {
   terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled' | null;
   result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
   candidate_draft_id: string | null;
+  plan_review: 'approved' | 'rejected' | null;
   candidate_review: 'accepted' | 'rejected' | null;
   pending_tool_calls: number;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
@@ -1283,6 +1338,10 @@ function validateTruncatedWindow(
   const completedCandidateRuns = new Map<
     string,
     Readonly<{ turn_id: string; draft_id: string; review: 'accepted' | 'rejected' | null }>
+  >();
+  const completedPlanRuns = new Map<
+    string,
+    Readonly<{ turn_id: string; review: 'approved' | 'rejected' | null }>
   >();
   let activeTurn: SuffixTurn | null = null;
 
@@ -1353,6 +1412,26 @@ function validateTruncatedWindow(
       ) throw unavailable();
       completedCandidateRuns.set(item.run_id, {
         ...completedCandidateRun,
+        review: item.decision,
+      });
+      continue;
+    }
+
+    if (item.item_kind === 'plan_reviewed') {
+      if (activeTurn !== null) throw unavailable();
+      const completedPlanRun = completedPlanRuns.get(item.run_id) ?? null;
+      if (completedPlanRun === null) {
+        if (turnIds.has(item.turn_id) || runIds.has(item.run_id)) throw unavailable();
+        turnIds.add(item.turn_id);
+        runIds.add(item.run_id);
+        continue;
+      }
+      if (
+        completedPlanRun.turn_id !== item.turn_id
+        || completedPlanRun.review !== null
+      ) throw unavailable();
+      completedPlanRuns.set(item.run_id, {
+        ...completedPlanRun,
         review: item.decision,
       });
       continue;
@@ -1435,6 +1514,7 @@ function validateTruncatedWindow(
         terminal_status: null,
         result_kind: null,
         candidate_draft_id: null,
+        plan_review: null,
         candidate_review: null,
         pending_tool_calls: 0,
         control: null,
@@ -1454,6 +1534,7 @@ function validateTruncatedWindow(
           terminal_status: null,
           result_kind: null,
           candidate_draft_id: null,
+          plan_review: null,
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
@@ -1494,6 +1575,7 @@ function validateTruncatedWindow(
           terminal_status: null,
           result_kind: null,
           candidate_draft_id: null,
+          plan_review: null,
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
@@ -1549,6 +1631,7 @@ function validateTruncatedWindow(
           terminal_status: null,
           result_kind: null,
           candidate_draft_id: null,
+          plan_review: null,
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
@@ -1576,6 +1659,7 @@ function validateTruncatedWindow(
           terminal_status: null,
           result_kind: null,
           candidate_draft_id: null,
+          plan_review: null,
           candidate_review: null,
           pending_tool_calls: 0,
           control: mayUsePrefixState ? 'unknown' : null,
@@ -1629,6 +1713,15 @@ function validateTruncatedWindow(
         turn_id: activeTurn.turn_id,
         draft_id: currentRun.candidate_draft_id,
         review: currentRun.candidate_review,
+      });
+    }
+    if (
+      currentRun.terminal_status === 'succeeded'
+      && currentRun.result_kind === 'plan'
+    ) {
+      completedPlanRuns.set(currentRun.run_id, {
+        turn_id: activeTurn.turn_id,
+        review: currentRun.plan_review,
       });
     }
     activeTurn = null;

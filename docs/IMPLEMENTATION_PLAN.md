@@ -339,6 +339,14 @@ Evidence requirements:
   assistant message, without private source context, plan body persistence,
   admission or record digest projection, provider facts, renderer authority,
   source mutation, Git evidence, Save, or Project Revision;
+- the current plan-review checkpoint records an approved or rejected Review
+  fact only after a completed work turn has produced a successful
+  `plan_proposed` Run bound to the matching plan digest; it is main-only,
+  read-only, and records no edit authority, tool/provider dispatch, source
+  mutation, Git evidence, Save, or Project Revision, while the renderer-safe
+  Task Stream exposes only the `plan_reviewed` decision/plan state and never
+  the plan digest, reviewer identity, timestamps, or private plan/source
+  evidence;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

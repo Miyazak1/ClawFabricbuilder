@@ -1739,6 +1739,76 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function reviewPlan(rawRequest) {
+    try {
+      exactObject(rawRequest, ['project_id', 'conversation_id', 'turn_id', 'run_id', 'decision']);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      const conversationId = safePattern(valueAt(rawRequest, 'conversation_id'), CONVERSATION_ID_PATTERN);
+      if (conversationId !== `builder-conversation:${projectUuid(projectId)}`) fail();
+      const turnId = safePattern(valueAt(rawRequest, 'turn_id'), TURN_ID_PATTERN);
+      const runId = safePattern(valueAt(rawRequest, 'run_id'), RUN_ID_PATTERN);
+      const decision = valueAt(rawRequest, 'decision');
+      if (decision !== 'approved' && decision !== 'rejected') fail();
+      const state = load(projectId, conversationId);
+      if (state === null || state.snapshot.active_turn_id !== null) fail();
+      const turn = state.snapshot.turns.find((item) => item.turn_id === turnId) ?? null;
+      const run = turn?.runs.find((item) => item.run_id === runId) ?? null;
+      if (
+        turn === null
+        || turn.status !== 'completed'
+        || turn.outcome !== 'plan_proposed'
+        || turn.mode !== 'work'
+        || turn.task === null
+        || run === null
+        || run.status !== 'completed'
+        || run.terminal_status !== 'succeeded'
+        || run.result_kind !== 'plan'
+        || run.result_digest === null
+        || run.plan_review !== null
+      ) fail();
+      const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+      const project = freezeDeep({
+        project_id: projectId,
+        created_at_ms: projectCreatedAt(projectId, turn.base_revision, recordedAtMs, state),
+      });
+      const reviewed = eventAt({
+        projectId,
+        conversationId,
+        sequence: state.head.sequence + 1,
+        commandId: newId(options.createUuid, 'builder-command'),
+        eventType: 'plan_reviewed',
+        previous: state.head,
+        payload: {
+          turn_id: turnId,
+          run_id: runId,
+          plan_result_digest: run.result_digest,
+          review_id: newId(options.createUuid, 'builder-review'),
+          reviewer_id: newId(options.createUuid, 'builder-user'),
+          reviewed_at_ms: recordedAtMs,
+          decision,
+        },
+      });
+      append({
+        project,
+        conversation: state.conversation,
+        expectedHead: state.head,
+        events: [reviewed],
+        recordedAtMs,
+      });
+      return freezeDeep({
+        result_version: 'builder-conversation-plan-review-result.v1',
+        project_id: projectId,
+        conversation_id: conversationId,
+        turn_id: turnId,
+        run_id: runId,
+        decision,
+        review_admission: 'sqlite_recorded_no_execution',
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function readStream(rawRequest) {
     try {
       exactObject(rawRequest, ['project_id']);
@@ -1778,6 +1848,7 @@ function createBuilderConversationMainService(rawOptions) {
     read_candidate_draft: readCandidateDraft,
     accept_candidate: acceptCandidate,
     reject_candidate: rejectCandidate,
+    review_plan: reviewPlan,
     read_stream: readStream,
     authority: Object.freeze({
       storage: 'sqlite_conversation_event_chain',
@@ -1792,6 +1863,7 @@ function createBuilderConversationMainService(rawOptions) {
       tool_adapter_selection: 'main_only_static_adapter_no_dispatch',
       tool_runtime_invocation: 'main_only_runtime_envelope_no_execution',
       plan_proposal_recording: 'main_only_digest_terminal_event',
+      plan_review_recording: 'main_only_review_fact_no_execution',
     }),
   });
 }

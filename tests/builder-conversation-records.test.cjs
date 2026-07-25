@@ -462,6 +462,46 @@ test('binds plan terminal events to prior-head admission and tool result evidenc
   }, recorded, 7), assertRecordError());
 });
 
+test('supports actor-bound plan review payloads without source or execution evidence', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Plan a local timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Plan timer' },
+    base_revision: null,
+  }, null, 1);
+  const reviewed = create('plan_reviewed', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    plan_result_digest: DIGEST_A,
+    review_id: typedId('review', 1),
+    reviewer_id: typedId('user', 1),
+    reviewed_at_ms: 1234,
+    decision: 'approved',
+  }, submitted, 2);
+
+  assert.equal(reviewed.payload.decision, 'approved');
+  assert.equal(reviewed.payload.plan_result_digest, DIGEST_A);
+  assert.equal(reviewed.payload.review_id, typedId('review', 1));
+  assert.equal(reviewed.payload.reviewer_id, typedId('user', 1));
+  assert.equal(Object.isFrozen(reviewed.payload), true);
+  assert.doesNotMatch(
+    JSON.stringify(reviewed),
+    /source_tree|plan_body|git_candidate_receipt|commit_oid|tree_oid|credential|provider|ipcMain|ipcRenderer/iu,
+  );
+
+  for (const drift of [
+    { ...reviewed, payload: { ...reviewed.payload, decision: 'accepted' } },
+    { ...reviewed, payload: { ...reviewed.payload, plan_result_digest: 'not-a-digest' } },
+    { ...reviewed, payload: { ...reviewed.payload, review_id: typedId('run', 1) } },
+    { ...reviewed, payload: { ...reviewed.payload, reviewer_id: typedId('message', 1) } },
+    { ...reviewed, payload: { ...reviewed.payload, reviewed_at_ms: -1 } },
+    { ...reviewed, payload: { ...reviewed.payload, source_tree_digest: DIGEST_A } },
+  ]) {
+    assert.throws(() => sanitizeBuilderConversationEvent(drift), assertRecordError());
+  }
+});
+
 test('supports actor-bound candidate rejection payloads without source or Git evidence', () => {
   const submitted = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Build a local timer.' },

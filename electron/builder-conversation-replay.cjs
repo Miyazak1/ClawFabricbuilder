@@ -171,6 +171,7 @@ function applyRunStarted(state, payload) {
     terminal_status: null,
     result_kind: null,
     result_digest: null,
+    plan_review: null,
     candidate_result: null,
     candidate_review: null,
     tool_calls: [],
@@ -279,6 +280,29 @@ function applyCandidateReviewed(state, payload) {
     reviewed_at_ms: payload.reviewed_at_ms,
     decision: payload.decision,
     revision: payload.decision === 'accepted' ? { ...payload.revision } : null,
+  };
+}
+
+function applyPlanReviewed(state, payload) {
+  if (state.activeTurnId !== null || state.reviewIds.has(payload.review_id)) fail();
+  const turn = state.turns.get(payload.turn_id);
+  if (!turn || turn.status !== 'completed' || turn.outcome !== 'plan_proposed') fail();
+  const run = turn.runs.find((item) => item.run_id === payload.run_id);
+  if (
+    !run
+    || run.status !== 'completed'
+    || run.terminal_status !== 'succeeded'
+    || run.result_kind !== 'plan'
+    || run.result_digest !== payload.plan_result_digest
+    || run.plan_review !== null
+  ) fail();
+  state.reviewIds.add(payload.review_id);
+  run.plan_review = {
+    plan_result_digest: payload.plan_result_digest,
+    review_id: payload.review_id,
+    reviewer_id: payload.reviewer_id,
+    reviewed_at_ms: payload.reviewed_at_ms,
+    decision: payload.decision,
   };
 }
 
@@ -412,6 +436,7 @@ const TRANSITIONS = Object.freeze({
   turn_steered: applyTurnSteered,
   candidate_rejected: applyCandidateReviewed,
   candidate_accepted: applyCandidateReviewed,
+  plan_reviewed: applyPlanReviewed,
   run_started: applyRunStarted,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
@@ -439,6 +464,7 @@ function publicTurn(turn) {
           ? null
           : cloneToolResultRecord(toolCall.tool_result_record),
       })),
+      plan_review: run.plan_review === null ? null : { ...run.plan_review },
       candidate_result: run.candidate_result === null ? null : {
         ...run.candidate_result,
         git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },

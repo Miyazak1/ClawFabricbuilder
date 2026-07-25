@@ -558,6 +558,47 @@ export function createAcceptedTaskStreamWire(revisionNumber = 1) {
   };
 }
 
+export function createPlanReviewTaskStreamWire(decision: 'approved' | 'rejected' = 'approved') {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 5,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 5,
+      },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        {
+          ...wire.conversation.items[2],
+          terminal_status: 'succeeded',
+          result_kind: 'plan',
+          assistant_message: {
+            message_id: ASSISTANT_MESSAGE_ID,
+            text: 'Review the proposed plan before files change.',
+          },
+          candidate: null,
+        },
+        {
+          ...wire.conversation.items[3],
+          outcome: 'plan_proposed',
+        },
+        {
+          item_kind: 'plan_reviewed',
+          sequence: 5,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          decision,
+          plan_state: decision,
+        },
+      ],
+    },
+  };
+}
+
 export function createAnswerTaskStreamWire() {
   const wire = createTaskStreamWire();
   return {

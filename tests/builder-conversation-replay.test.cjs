@@ -548,7 +548,52 @@ test('permits only successful plan terminal after closed tool calls', async () =
   }, 75);
   const replay = replayBuilderConversation(planTurnCompleted);
   assert.equal(replay.turns[0].runs[0].result_kind, 'plan');
+  assert.equal(replay.turns[0].runs[0].plan_review, null);
   assert.equal(replay.turns[0].outcome, 'plan_proposed');
+
+  const approvedPlan = append(planTurnCompleted, 'plan_reviewed', {
+    turn_id: id('turn', 70),
+    run_id: id('run', 70),
+    plan_result_digest: RESULT_B,
+    review_id: id('review', 70),
+    reviewer_id: id('user', 70),
+    reviewed_at_ms: 77,
+    decision: 'approved',
+  }, 76);
+  assert.deepEqual(replayBuilderConversation(approvedPlan).turns[0].runs[0].plan_review, {
+    plan_result_digest: RESULT_B,
+    review_id: id('review', 70),
+    reviewer_id: id('user', 70),
+    reviewed_at_ms: 77,
+    decision: 'approved',
+  });
+  assert.throws(() => replayBuilderConversation(append(approvedPlan, 'plan_reviewed', {
+    turn_id: id('turn', 70),
+    run_id: id('run', 70),
+    plan_result_digest: RESULT_B,
+    review_id: id('review', 71),
+    reviewer_id: id('user', 71),
+    reviewed_at_ms: 78,
+    decision: 'rejected',
+  }, 77)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(planTurnCompleted, 'plan_reviewed', {
+    turn_id: id('turn', 70),
+    run_id: id('run', 70),
+    plan_result_digest: RESULT_A,
+    review_id: id('review', 72),
+    reviewer_id: id('user', 72),
+    reviewed_at_ms: 79,
+    decision: 'approved',
+  }, 78)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(planCompleted, 'plan_reviewed', {
+    turn_id: id('turn', 70),
+    run_id: id('run', 70),
+    plan_result_digest: RESULT_B,
+    review_id: id('review', 73),
+    reviewer_id: id('user', 73),
+    reviewed_at_ms: 80,
+    decision: 'approved',
+  }, 79)), assertReplayError);
 
   const failed = toolResultRecord(record);
   const withFailedResult = append(events, 'tool_call_result_recorded', {

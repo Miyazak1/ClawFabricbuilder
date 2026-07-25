@@ -67,6 +67,11 @@ type MutableConversationItem = {
   decision?: string;
   candidate_state?: string;
   saved_revision?: { revision_number: number } | null;
+  plan_state?: string;
+  plan_result_digest?: string;
+  review_id?: string;
+  reviewer_id?: string;
+  reviewed_at_ms?: number;
   outcome?: string;
 };
 
@@ -215,6 +220,40 @@ function acceptedCandidateWire(): MutableWire {
     decision: 'accepted',
     candidate_state: 'saved',
     saved_revision: { revision_number: 1 },
+  });
+  return wire;
+}
+
+function planWire(): MutableWire {
+  const wire = candidateWire();
+  wire.conversation.items[2] = {
+    ...wire.conversation.items[2]!,
+    terminal_status: 'succeeded',
+    result_kind: 'plan',
+    assistant_message: {
+      message_id: id('message', 5),
+      text: 'Review the proposed plan before files change.',
+    },
+    candidate: null,
+  };
+  wire.conversation.items[3] = {
+    ...wire.conversation.items[3]!,
+    outcome: 'plan_proposed',
+  };
+  return wire;
+}
+
+function reviewedPlanWire(decision: 'approved' | 'rejected' = 'approved'): MutableWire {
+  const wire = planWire();
+  wire.conversation.head_sequence = 5;
+  wire.conversation.window.last_sequence = 5;
+  wire.conversation.items.push({
+    item_kind: 'plan_reviewed',
+    sequence: 5,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    decision,
+    plan_state: decision,
   });
   return wire;
 }
@@ -646,6 +685,87 @@ describe('Builder conversation snapshot', () => {
     expect(JSON.stringify(snapshot)).not.toMatch(
       /review_id|reviewer_id|reviewed_at_ms|revision_receipt|git_|receipt|digest|provider|credential|source_tree/iu,
     );
+  });
+
+  it('accepts plan review facts without exposing review identity or plan evidence', () => {
+    const wire = reviewedPlanWire('approved');
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[2]).toMatchObject({
+      item_kind: 'run_completed',
+      terminal_status: 'succeeded',
+      result_kind: 'plan',
+      candidate: null,
+    });
+    expect(snapshot.conversation.items[4]).toEqual({
+      item_kind: 'plan_reviewed',
+      sequence: 5,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      decision: 'approved',
+      plan_state: 'approved',
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|plan_body|git_|receipt|digest|provider|credential|source_tree/iu,
+    );
+  });
+
+  it('requires plan review facts to stay minimal and follow a completed proposed plan', () => {
+    const missingState = reviewedPlanWire();
+    delete missingState.conversation.items[4]!.plan_state;
+
+    const mismatchedState = reviewedPlanWire();
+    mismatchedState.conversation.items[4]!.plan_state = 'rejected';
+
+    const leakedDigest = reviewedPlanWire();
+    leakedDigest.conversation.items[4]!.plan_result_digest = `sha256:${'f'.repeat(64)}`;
+
+    const candidateRunReviewed = candidateWire();
+    candidateRunReviewed.conversation.head_sequence = 5;
+    candidateRunReviewed.conversation.window.last_sequence = 5;
+    candidateRunReviewed.conversation.items.push({
+      item_kind: 'plan_reviewed',
+      sequence: 5,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      decision: 'approved',
+      plan_state: 'approved',
+    });
+
+    const reviewWhileTurnOpen = planWire();
+    reviewWhileTurnOpen.conversation.recorded_active_turn_id = id('turn', 1);
+    reviewWhileTurnOpen.conversation.head_sequence = 4;
+    reviewWhileTurnOpen.conversation.window.last_sequence = 4;
+    reviewWhileTurnOpen.conversation.items = reviewWhileTurnOpen.conversation.items.slice(0, 3);
+    reviewWhileTurnOpen.conversation.items.push({
+      item_kind: 'plan_reviewed',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      decision: 'approved',
+      plan_state: 'approved',
+    });
+
+    const duplicateReview = reviewedPlanWire();
+    duplicateReview.conversation.head_sequence = 6;
+    duplicateReview.conversation.window.last_sequence = 6;
+    duplicateReview.conversation.items.push({
+      item_kind: 'plan_reviewed',
+      sequence: 6,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      decision: 'rejected',
+      plan_state: 'rejected',
+    });
+
+    expectUnavailable(missingState);
+    expectUnavailable(mismatchedState);
+    expectUnavailable(leakedDigest);
+    expectUnavailable(candidateRunReviewed);
+    expectUnavailable(reviewWhileTurnOpen);
+    expectUnavailable(duplicateReview);
   });
 
   it('requires accepted review facts to stay minimal and internally consistent', () => {

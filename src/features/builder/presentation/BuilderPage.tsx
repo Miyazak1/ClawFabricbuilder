@@ -186,6 +186,11 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
       ? <CheckCircle2 className="size-3.5" />
       : <AlertCircle className="size-3.5" />;
   }
+  if (item.item_kind === 'plan_reviewed') {
+    return item.decision === 'approved'
+      ? <CheckCircle2 className="size-3.5" />
+      : <AlertCircle className="size-3.5" />;
+  }
   if (item.item_kind === 'run_completed' && item.terminal_status !== 'succeeded') {
     return <AlertCircle className="size-3.5" />;
   }
@@ -209,6 +214,9 @@ function activityTitle(item: BuilderConversationItem): string {
   }
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted' ? 'Version saved' : 'Draft rejected';
+  }
+  if (item.item_kind === 'plan_reviewed') {
+    return item.decision === 'approved' ? 'Plan approved' : 'Plan rejected';
   }
   if (item.item_kind === 'run_completed') return completionLabel(item);
   return outcomeLabel(item.outcome);
@@ -234,6 +242,11 @@ function activityBody(item: BuilderConversationItem): string {
         : `This draft was saved as Version ${revisionNumber}.`;
     }
     return 'The draft was discarded and is no longer available for review.';
+  }
+  if (item.item_kind === 'plan_reviewed') {
+    return item.decision === 'approved'
+      ? 'The plan was approved. The project has not changed yet.'
+      : 'The plan was rejected. The project has not changed.';
   }
   if (item.item_kind === 'run_completed') {
     return item.assistant_message?.text

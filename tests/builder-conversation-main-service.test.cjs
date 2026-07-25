@@ -532,6 +532,57 @@ test('records a proposed plan from a run-bound plan record after successful tool
       /export const|src\/app|private_source_context|context_digest|head_digest|record_digest|provider|credential|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
     );
 
+    const reviewed = item.service.review_plan({
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      decision: 'approved',
+    });
+    assert.deepEqual(reviewed, {
+      result_version: 'builder-conversation-plan-review-result.v1',
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      decision: 'approved',
+      review_admission: 'sqlite_recorded_no_execution',
+    });
+    const reviewedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(reviewedStream.conversation.head_sequence, 7);
+    assert.deepEqual(reviewedStream.conversation.items.at(-1), {
+      item_kind: 'plan_reviewed',
+      sequence: 7,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      decision: 'approved',
+      plan_state: 'approved',
+    });
+    assert.doesNotMatch(
+      JSON.stringify(reviewedStream),
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|export const|src\/app|private_source_context|context_digest|head_digest|record_digest|provider|credential|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
+    );
+    assert.throws(
+      () => item.service.review_plan({
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        decision: 'rejected',
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => item.service.review_plan({
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        decision: 'accepted',
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+
     item.database.close();
     restartedDatabase = createBuilderProductMetadataDatabase(
       path.join(item.root, 'builder.sqlite'),
@@ -541,7 +592,7 @@ test('records a proposed plan from a run-bound plan record after successful tool
       createUuid: uuidFactory(900),
       nowMs: () => 9_000,
     });
-    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), stream);
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), reviewedStream);
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
     else item.database.close();

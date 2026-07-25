@@ -15,6 +15,7 @@ import {
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
+  createPlanReviewTaskStreamWire,
   createReadWire,
   createRejectedTaskStreamWire,
   createSaveResult,
@@ -119,6 +120,13 @@ async function candidateActivity(rejected = false) {
 async function acceptedCandidateActivity() {
   const controller = createBuilderConversationController({
     read: async () => createAcceptedTaskStreamWire(1),
+  });
+  return controller.load(PROJECT_ID);
+}
+
+async function planReviewActivity(decision: 'approved' | 'rejected' = 'approved') {
+  const controller = createBuilderConversationController({
+    read: async () => createPlanReviewTaskStreamWire(decision),
   });
   return controller.load(PROJECT_ID);
 }
@@ -719,6 +727,27 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|revision_receipt|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('shows plan review activity without implying files changed', async () => {
+    const { saved } = await snapshots();
+    const activity = await planReviewActivity('approved');
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
+      .toContain('The plan was approved. The project has not changed yet.');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|builder-generation-draft:|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
   });
 

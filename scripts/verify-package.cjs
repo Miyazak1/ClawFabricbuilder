@@ -985,6 +985,9 @@ assert.match(packagedConversationRecords, /builder-conversation-plan-admission\.
 assert.match(packagedConversationRecords, /createBuilderConversationPlanAdmission/u);
 assert.match(packagedConversationRecords, /planAdmissionDigestBody/u);
 assert.match(packagedConversationRecords, /payload\.plan_admission !== null/u);
+assert.match(packagedConversationRecords, /plan_reviewed/u);
+assert.match(packagedConversationRecords, /PLAN_REVIEW_KEYS/u);
+assert.match(packagedConversationRecords, /decision !== 'approved' && decision !== 'rejected'/u);
 assert.doesNotMatch(
   packagedConversationRecords,
   /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|local-provider-executor/iu,
@@ -1005,6 +1008,11 @@ assert.match(packagedConversationReplay, /read\.result_status !== 'succeeded'/u)
 assert.match(packagedConversationReplay, /builder-tool-session-state-gate\.cjs/u);
 assert.match(packagedConversationReplay, /admitBuilderToolCallSessionState/u);
 assert.match(packagedConversationReplay, /admitBuilderToolResultSessionState/u);
+assert.match(packagedConversationReplay, /function applyPlanReviewed/u);
+assert.match(packagedConversationReplay, /turn\.outcome !== 'plan_proposed'/u);
+assert.match(packagedConversationReplay, /run\.result_kind !== 'plan'/u);
+assert.match(packagedConversationReplay, /run\.result_digest !== payload\.plan_result_digest/u);
+assert.match(packagedConversationReplay, /run\.plan_review !== null/u);
 assert.doesNotMatch(
   packagedConversationReplay,
   /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|local-provider-executor/iu,
@@ -1034,6 +1042,7 @@ assert.match(packagedConversationMainService, /compactToolSessionCalls/u);
 assert.match(packagedConversationMainService, /record_tool_call_request:\s*recordToolCallRequest/u);
 assert.match(packagedConversationMainService, /record_tool_result:\s*recordToolResult/u);
 assert.match(packagedConversationMainService, /complete_plan:\s*completePlan/u);
+assert.match(packagedConversationMainService, /review_plan:\s*reviewPlan/u);
 assert.match(packagedConversationMainService, /admit_tool_dispatch:\s*admitToolDispatch/u);
 assert.match(packagedConversationMainService, /select_tool_adapter:\s*selectToolAdapter/u);
 assert.match(packagedConversationMainService, /admit_tool_runtime_invocation:\s*admitToolRuntimeInvocation/u);
@@ -1053,6 +1062,9 @@ assert.match(packagedConversationMainService, /tool_dispatch_admission:\s*'main_
 assert.match(packagedConversationMainService, /tool_adapter_selection:\s*'main_only_static_adapter_no_dispatch'/u);
 assert.match(packagedConversationMainService, /tool_runtime_invocation:\s*'main_only_runtime_envelope_no_execution'/u);
 assert.match(packagedConversationMainService, /plan_proposal_recording:\s*'main_only_digest_terminal_event'/u);
+assert.match(packagedConversationMainService, /plan_review_recording:\s*'main_only_review_fact_no_execution'/u);
+assert.match(packagedConversationMainService, /review_admission:\s*'sqlite_recorded_no_execution'/u);
+assert.match(packagedConversationMainService, /run\.plan_review !== null/u);
 assert.match(packagedConversationMainService, /interrupted_without_provider_redispatch/u);
 assert.match(packagedConversationMainService, /builder-git-receipt-contract\.cjs/u);
 assert.doesNotMatch(
@@ -1081,6 +1093,9 @@ assert.match(packagedTaskStreamProjection, /revision_admission:\s*'not_created'/
 assert.doesNotMatch(packagedTaskStreamProjection, /session_policy|tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|resource_id/u);
 assert.match(packagedTaskStreamProjection, /candidate_state:\s*'proposed'/u);
 assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/u);
+assert.match(packagedTaskStreamProjection, /plan_reviewed/u);
+assert.match(packagedTaskStreamProjection, /plan_state:\s*payload\.decision/u);
+assert.doesNotMatch(packagedTaskStreamProjection, /plan_result_digest|review_id|reviewer_id|reviewed_at_ms/u);
 assert.doesNotMatch(
   packagedTaskStreamProjection,
   /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,

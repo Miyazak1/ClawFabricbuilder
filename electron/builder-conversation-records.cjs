@@ -81,6 +81,10 @@ const PLAN_TOOL_READ_KEYS = Object.freeze([
   'resource_id', 'tool_call_id', 'tool_call_record_digest',
   'tool_result_record_digest', 'result_summary_digest', 'result_status',
 ]);
+const PLAN_REVIEW_KEYS = Object.freeze([
+  'turn_id', 'run_id', 'plan_result_digest', 'review_id',
+  'reviewer_id', 'reviewed_at_ms', 'decision',
+]);
 const PAYLOAD_KEYS = Object.freeze({
   turn_submitted: Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision']),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
@@ -91,6 +95,7 @@ const PAYLOAD_KEYS = Object.freeze({
     'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms',
     'decision', 'revision',
   ]),
+  plan_reviewed: PLAN_REVIEW_KEYS,
   run_started: Object.freeze([
     'turn_id', 'run_id', 'task_id', 'attempt_number', 'retry_of_run_id', 'input_digest',
   ]),
@@ -502,6 +507,19 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         decision: 'accepted',
         revision: sanitizeRevisionReference(valueAt(value, 'revision')),
       };
+    case 'plan_reviewed': {
+      const decision = valueAt(value, 'decision');
+      if (decision !== 'approved' && decision !== 'rejected') fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        plan_result_digest: safeDigest(valueAt(value, 'plan_result_digest')),
+        review_id: safeReviewId(valueAt(value, 'review_id')),
+        reviewer_id: safeActorId(valueAt(value, 'reviewer_id')),
+        reviewed_at_ms: safeTimestamp(valueAt(value, 'reviewed_at_ms')),
+        decision,
+      };
+    }
     case 'run_started':
       return {
         turn_id: safeTurnId(valueAt(value, 'turn_id')),

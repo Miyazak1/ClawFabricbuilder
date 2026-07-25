@@ -290,6 +290,15 @@ function itemFromEvent(event) {
           revision_number: payload.revision.revision_number,
         },
       };
+    case 'plan_reviewed':
+      return {
+        item_kind: 'plan_reviewed',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        decision: payload.decision,
+        plan_state: payload.decision,
+      };
     case 'turn_completed':
       return {
         item_kind: 'turn_completed',
