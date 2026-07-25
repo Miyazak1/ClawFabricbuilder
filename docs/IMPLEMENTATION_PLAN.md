@@ -252,10 +252,15 @@ Evidence requirements:
   IPC/preload command, tool dispatch, provider call, source mutation,
   raw-output storage, or revision creation; the tool-call record enforces the
   policy request-time window, and the result record enforces the policy
-  result-time and public-summary window, while multi-step counts and retry
-  exhaustion still require the future runtime/session state gate; the digest is
-  integrity evidence, not issuer proof, and any future executor must still bind
-  issuance to a trusted main-side Run context before dispatch;
+  result-time and public-summary window;
+- the current session-state checkpoint adds a pure main-only state gate before
+  Conversation append and during Conversation replay; it enforces serial
+  pending tool calls, one policy digest per Run, step/tool-call limits, retry
+  exhaustion, run cancellation/interruption state, and record timestamp ordering
+  without IPC/preload command, tool dispatch, provider call, raw-output
+  storage, source mutation, or revision creation; the digest is integrity
+  evidence, not issuer proof, and any future executor must still bind issuance
+  to a trusted main-side Run context before dispatch;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

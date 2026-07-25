@@ -21,6 +21,10 @@ const {
   sanitizeBuilderToolResultRecord,
 } = require('./builder-tool-result-records.cjs');
 const {
+  admitBuilderToolCallSessionState,
+  admitBuilderToolResultSessionState,
+} = require('./builder-tool-session-state-gate.cjs');
+const {
   BuilderTaskStreamProjectionError,
   projectBuilderTaskStream,
 } = require('./builder-task-stream-projection.cjs');
@@ -397,6 +401,15 @@ function assertToolRecordContext(context, record) {
   ) fail();
 }
 
+function compactToolSessionCalls(toolCalls) {
+  return toolCalls.map((toolCall) => ({
+    step_id: toolCall.step_id,
+    tool_call_id: toolCall.tool_call_id,
+    tool_call_record: toolCall.tool_call_record,
+    tool_result_record: toolCall.tool_result_record,
+  }));
+}
+
 function createBuilderConversationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
 
@@ -454,6 +467,67 @@ function createBuilderConversationMainService(rawOptions) {
         recorded_at_ms: recordedAtMs,
       }]);
       return sanitizeAuthorityResult(result, project.project_id, conversation.conversation_id);
+    } catch {
+      fail();
+    }
+  }
+
+  function activeRunFromContext(context) {
+    let snapshot;
+    try {
+      snapshot = replayBuilderConversation(context.events);
+    } catch {
+      fail();
+    }
+    const turn = snapshot.turns.find((item) => item.turn_id === context.ids.turn_id) ?? null;
+    const run = turn?.runs.at(-1) ?? null;
+    if (
+      turn === null
+      || run === null
+      || turn.task === null
+      || turn.task.task_id !== context.ids.task_id
+      || run.run_id !== context.ids.run_id
+    ) fail();
+    return run;
+  }
+
+  function admitToolCallState(context, record, admittedAtMs) {
+    const run = activeRunFromContext(context);
+    try {
+      Reflect.apply(admitBuilderToolCallSessionState, undefined, [{
+        project_id: context.project.project_id,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        run_status: run.status,
+        interrupt_requested: run.interrupt_request_id !== null,
+        cancel_requested: run.cancel_request_id !== null,
+        existing_tool_calls: compactToolSessionCalls(run.tool_calls),
+        tool_call_record: record,
+        admitted_at_ms: admittedAtMs,
+      }]);
+    } catch {
+      fail();
+    }
+  }
+
+  function admitToolResultState(context, record, admittedAtMs) {
+    const run = activeRunFromContext(context);
+    try {
+      Reflect.apply(admitBuilderToolResultSessionState, undefined, [{
+        project_id: context.project.project_id,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        run_status: run.status,
+        interrupt_requested: run.interrupt_request_id !== null,
+        cancel_requested: run.cancel_request_id !== null,
+        existing_tool_calls: compactToolSessionCalls(run.tool_calls),
+        tool_result_record: record,
+        admitted_at_ms: admittedAtMs,
+      }]);
     } catch {
       fail();
     }
@@ -912,6 +986,7 @@ function createBuilderConversationMainService(rawOptions) {
     assertToolRecordContext(context, record);
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
     if (record.requested_at_ms > recordedAtMs) fail();
+    admitToolCallState(context, record, record.requested_at_ms);
     const requested = eventAt({
       projectId: context.project.project_id,
       conversationId: context.conversation.conversation_id,
@@ -946,6 +1021,7 @@ function createBuilderConversationMainService(rawOptions) {
     assertToolRecordContext(context, record);
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
     if (record.observed_at_ms > recordedAtMs) fail();
+    admitToolResultState(context, record, record.observed_at_ms);
     const recorded = eventAt({
       projectId: context.project.project_id,
       conversationId: context.conversation.conversation_id,

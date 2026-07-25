@@ -88,6 +88,9 @@ async function toolCallRecord({
   runId = id('run', 1),
   stepId = id('run-step', 1),
   toolCallId = id('tool-call', 1),
+  issuedAtMs = 49,
+  requestedAtMs = 51,
+  limits = {},
 } = {}) {
   const sessionPolicy = createBuilderToolSessionPolicy({
     project_id: PROJECT_ID,
@@ -95,8 +98,8 @@ async function toolCallRecord({
     turn_id: turnId,
     task_id: taskId,
     run_id: runId,
-    issued_at_ms: 49,
-    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS },
+    issued_at_ms: issuedAtMs,
+    limits: { ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS, ...limits },
   });
   const guard = createBuilderToolPermissionAdmission({
     actor_id: id('user', 1),
@@ -135,7 +138,7 @@ async function toolCallRecord({
     step_id: stepId,
     session_policy: sessionPolicy,
     admission,
-    requested_at_ms: 51,
+    requested_at_ms: requestedAtMs,
   });
 }
 
@@ -348,16 +351,42 @@ test('replays tool call requests and fixed-code results only inside an active wo
     assistant_message: { message_id: id('message', 201), text: 'I inspected the files.' },
   }, 206)), assertReplayError);
 
+  const pendingOnly = events.slice(0, 3);
+  const parallelRecord = await toolCallRecord({
+    turnId: id('turn', 200),
+    taskId: id('task', 200),
+    runId: id('run', 200),
+    stepId: id('run-step', 202),
+    toolCallId: id('tool-call', 202),
+    requestedAtMs: 80,
+  });
+  assert.throws(() => replayBuilderConversation(append(pendingOnly, 'tool_call_requested', {
+    tool_call_record: parallelRecord,
+  }, 211)), assertReplayError);
+
+  const driftedPolicyRecord = await toolCallRecord({
+    turnId: id('turn', 200),
+    taskId: id('task', 200),
+    runId: id('run', 200),
+    stepId: id('run-step', 203),
+    toolCallId: id('tool-call', 203),
+    issuedAtMs: 50,
+    requestedAtMs: 90,
+  });
+  assert.throws(() => replayBuilderConversation(append([...events], 'tool_call_requested', {
+    tool_call_record: driftedPolicyRecord,
+  }, 207)), assertReplayError);
+
   const beforeRequest = events.slice(0, 2);
   assert.throws(() => replayBuilderConversation(append(beforeRequest, 'tool_call_result_recorded', {
     tool_result_record: resultRecord,
-  }, 207)), assertReplayError);
+  }, 208)), assertReplayError);
 
   const controlled = append([...events], 'run_cancel_requested', {
     turn_id: id('turn', 200),
     run_id: id('run', 200),
     request_id: id('cancel-request', 200),
-  }, 208);
+  }, 209);
   const lateRecord = await toolCallRecord({
     turnId: id('turn', 200),
     taskId: id('task', 200),
@@ -367,7 +396,7 @@ test('replays tool call requests and fixed-code results only inside an active wo
   });
   assert.throws(() => replayBuilderConversation(append(controlled, 'tool_call_requested', {
     tool_call_record: lateRecord,
-  }, 209)), assertReplayError);
+  }, 210)), assertReplayError);
 });
 
 test('keeps cancellation distinct from interruption and permits a deliberate retry', () => {
@@ -696,5 +725,8 @@ test('contains all transition rules in replay and none in the SQLite persistence
     assert.match(replaySource, new RegExp(eventType, 'u'));
     assert.doesNotMatch(databaseSource, new RegExp(eventType, 'u'));
   }
+  assert.match(replaySource, /builder-tool-session-state-gate\.cjs/u);
+  assert.match(replaySource, /admitBuilderToolCallSessionState/u);
+  assert.match(replaySource, /admitBuilderToolResultSessionState/u);
   assert.match(databaseSource, /replayBuilderConversation/u);
 });

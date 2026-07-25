@@ -8,6 +8,10 @@ const {
   BuilderConversationRecordError,
   sanitizeBuilderConversationEvent,
 } = require('./builder-conversation-records.cjs');
+const {
+  admitBuilderToolCallSessionState,
+  admitBuilderToolResultSessionState,
+} = require('./builder-tool-session-state-gate.cjs');
 
 const CONVERSATION_REPLAY_VERSION = 'builder-conversation-replay.v2';
 
@@ -78,6 +82,23 @@ function cloneToolResultRecord(record) {
     lifecycle: { ...record.lifecycle },
     authority: { ...record.authority },
   };
+}
+
+function compactToolSessionCalls(toolCalls) {
+  return toolCalls.map((toolCall) => ({
+    step_id: toolCall.step_id,
+    tool_call_id: toolCall.tool_call_id,
+    tool_call_record: toolCall.tool_call_record,
+    tool_result_record: toolCall.tool_result_record,
+  }));
+}
+
+function admitToolSessionState(fn, input) {
+  try {
+    Reflect.apply(fn, undefined, [input]);
+  } catch {
+    fail();
+  }
 }
 
 function requireActiveTurn(state, turnId) {
@@ -165,6 +186,19 @@ function applyToolCallRequested(state, payload) {
     || state.stepIds.has(record.step_id)
     || state.toolCallIds.has(record.tool_call_id)
   ) fail();
+  admitToolSessionState(admitBuilderToolCallSessionState, {
+    project_id: state.projectId,
+    conversation_id: state.conversationId,
+    turn_id: record.turn_id,
+    task_id: record.task_id,
+    run_id: record.run_id,
+    run_status: run.status,
+    interrupt_requested: run.interrupt_request_id !== null,
+    cancel_requested: run.cancel_request_id !== null,
+    existing_tool_calls: compactToolSessionCalls(run.tool_calls),
+    tool_call_record: record,
+    admitted_at_ms: record.requested_at_ms,
+  });
   state.stepIds.add(record.step_id);
   state.toolCallIds.add(record.tool_call_id);
   run.tool_calls.push({
@@ -197,6 +231,19 @@ function applyToolCallResultRecorded(state, payload) {
     || state.toolResultRecordDigests.has(record.record_digest)
     || toolCall.tool_call_record.record_digest !== record.tool_call_record.record_digest
   ) fail();
+  admitToolSessionState(admitBuilderToolResultSessionState, {
+    project_id: state.projectId,
+    conversation_id: state.conversationId,
+    turn_id: record.turn_id,
+    task_id: record.task_id,
+    run_id: record.run_id,
+    run_status: run.status,
+    interrupt_requested: run.interrupt_request_id !== null,
+    cancel_requested: run.cancel_request_id !== null,
+    existing_tool_calls: compactToolSessionCalls(run.tool_calls),
+    tool_result_record: record,
+    admitted_at_ms: record.observed_at_ms,
+  });
   state.toolResultRecordDigests.add(record.record_digest);
   toolCall.tool_result_record = cloneToolResultRecord(record);
 }

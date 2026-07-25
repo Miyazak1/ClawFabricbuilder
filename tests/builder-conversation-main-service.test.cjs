@@ -73,10 +73,10 @@ function removeRoot(root) {
   throw new Error('Temporary test directory could not be removed.');
 }
 
-function fixture(uuidStart = 1) {
+function fixture(uuidStart = 1, nowStart = 1_000) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-cms-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
-  let now = 1_000;
+  let now = nowStart;
   const service = createBuilderConversationMainService({
     metadataAuthority: database,
     createUuid: uuidFactory(uuidStart),
@@ -86,6 +86,9 @@ function fixture(uuidStart = 1) {
     root,
     database,
     service,
+    setNow(next) {
+      now = next;
+    },
     close() {
       database.close();
       removeRoot(root);
@@ -161,7 +164,7 @@ async function allowedToolAdmission(overrides = {}) {
   const request = toolPermissionRequest(overrides.request ?? {});
   const guard = createBuilderToolPermissionAdmission({
     actor_id: TOOL_ACTOR_ID,
-    now_ms: () => 50,
+    now_ms: () => overrides.now_ms ?? 50,
     evaluate_permission: async (body) => ({
       decision_version: BUILDER_PERMISSION_DECISION_VERSION,
       policy_version: BUILDER_PERMISSION_POLICY_VERSION,
@@ -555,6 +558,170 @@ test('rejects invalid main-only tool fact recording without committing partial e
     }), { code: 'builder_conversation_main_service_unavailable' });
   } finally {
     questionItem.close();
+    item.close();
+  }
+});
+
+test('enforces main-only tool session state before appending tool facts', async () => {
+  const item = fixture(900);
+  const retryItem = fixture(1_000);
+  try {
+    const context = begin(item.service);
+    const first = await toolCallRecord(context);
+    const requestedContext = item.service.record_tool_call_request({
+      context,
+      tool_call_record: first,
+    });
+    assert.equal(requestedContext.start_head.sequence, 3);
+
+    const pendingSecond = await toolCallRecord(context, {
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111120',
+        },
+      },
+      record: {
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111121',
+        requested_at_ms: 80,
+      },
+    });
+    assert.throws(() => item.service.record_tool_call_request({
+      context: requestedContext,
+      tool_call_record: pendingSecond,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 3);
+
+    const settledContext = item.service.record_tool_result({
+      context: requestedContext,
+      tool_result_record: toolResultRecord(first, {
+        observed_at_ms: 90,
+        result: {
+          status: 'succeeded',
+          summary_code: 'completed_without_raw_output',
+        },
+      }),
+    });
+    assert.equal(settledContext.start_head.sequence, 4);
+
+    const driftedPolicy = await toolCallRecord(context, {
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111122',
+        },
+      },
+      session_policy: { issued_at_ms: 50 },
+      record: {
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111123',
+        requested_at_ms: 100,
+      },
+    });
+    assert.throws(() => item.service.record_tool_call_request({
+      context: settledContext,
+      tool_call_record: driftedPolicy,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 4);
+
+    const retryContext = begin(retryItem.service);
+    const retryPolicy = {
+      limits: {
+        ...DEFAULT_BUILDER_TOOL_SESSION_LIMITS,
+        max_steps: 4,
+        max_tool_calls: 4,
+        max_retries: 1,
+      },
+    };
+    const retryFirst = await toolCallRecord(retryContext, {
+      session_policy: retryPolicy,
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111124',
+        },
+      },
+      record: {
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111125',
+        requested_at_ms: 60,
+      },
+    });
+    const retryFirstRequested = retryItem.service.record_tool_call_request({
+      context: retryContext,
+      tool_call_record: retryFirst,
+    });
+    const retryFirstResult = retryItem.service.record_tool_result({
+      context: retryFirstRequested,
+      tool_result_record: toolResultRecord(retryFirst, { observed_at_ms: 70 }),
+    });
+    const retrySecond = await toolCallRecord(retryContext, {
+      session_policy: retryPolicy,
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111126',
+        },
+      },
+      record: {
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111127',
+        requested_at_ms: 80,
+      },
+    });
+    const retrySecondRequested = retryItem.service.record_tool_call_request({
+      context: retryFirstResult,
+      tool_call_record: retrySecond,
+    });
+    const retrySecondResult = retryItem.service.record_tool_result({
+      context: retrySecondRequested,
+      tool_result_record: toolResultRecord(retrySecond, { observed_at_ms: 90 }),
+    });
+    const exhausted = await toolCallRecord(retryContext, {
+      session_policy: retryPolicy,
+      admission: {
+        request: {
+          tool_call_id: 'builder-tool-call:11111111-1111-4111-8111-111111111128',
+        },
+      },
+      record: {
+        step_id: 'builder-run-step:11111111-1111-4111-8111-111111111129',
+        requested_at_ms: 100,
+      },
+    });
+    assert.throws(() => retryItem.service.record_tool_call_request({
+      context: retrySecondResult,
+      tool_call_record: exhausted,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(retryItem.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 6);
+  } finally {
+    retryItem.close();
+    item.close();
+  }
+});
+
+test('uses durable tool record timestamps for replay-equivalent session admission', async () => {
+  const item = fixture(1_100);
+  try {
+    const context = begin(item.service);
+    const callRecord = await toolCallRecord(context, {
+      admission: { now_ms: 1_002 },
+      session_policy: { issued_at_ms: 1_001 },
+      record: { requested_at_ms: 1_003 },
+    });
+    item.setNow(400_000);
+    const requestedContext = item.service.record_tool_call_request({
+      context,
+      tool_call_record: callRecord,
+    });
+    assert.equal(requestedContext.start_head.sequence, 3);
+
+    const resultRecord = toolResultRecord(callRecord, { observed_at_ms: 1_004 });
+    item.setNow(400_001);
+    const resultContext = item.service.record_tool_result({
+      context: requestedContext,
+      tool_result_record: resultRecord,
+    });
+    assert.equal(resultContext.start_head.sequence, 4);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 4);
+    assert.equal(stream.conversation.items[2].recorded_state, 'requested');
+    assert.equal(stream.conversation.items[3].recorded_state, 'recorded');
+  } finally {
     item.close();
   }
 });
