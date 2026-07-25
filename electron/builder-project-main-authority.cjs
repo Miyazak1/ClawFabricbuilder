@@ -16,6 +16,9 @@ const {
 const {
   createBuilderProjectReadAuthority,
 } = require('./builder-project-read-authority.cjs');
+const {
+  createBuilderToolProjectWorkspaceAuthority,
+} = require('./builder-tool-project-workspace-admission.cjs');
 
 const BUILDER_PROJECT_MAIN_AUTHORITY_VERSION = 'builder-project-main-authority.v1';
 const PROJECT_REPOSITORY_DIRECTORY = 'builder-projects-v2';
@@ -112,6 +115,9 @@ function createBuilderProjectMainAuthority(rawOptions) {
       metadata_database: metadataDatabase,
       git_repository: gitRepository,
     });
+    const projectWorkspaceAuthority = createBuilderToolProjectWorkspaceAuthority({
+      projects_root: projectsRoot,
+    });
     const gitCurrentProjection = createDefaultBuilderGitCurrentProjection({
       projects_root: projectsRoot,
       runtime_root: runtimeRoot,
@@ -138,6 +144,9 @@ function createBuilderProjectMainAuthority(rawOptions) {
       'list_current',
       'list_history',
     ]);
+    const workspaceAuthority = methodFacade(projectWorkspaceAuthority, [
+      'admit_project_workspace',
+    ]);
     let closed = false;
     return Object.freeze({
       authority_version: BUILDER_PROJECT_MAIN_AUTHORITY_VERSION,
@@ -145,6 +154,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
       git_current_projection: gitCurrentProjectionAuthority,
       metadata_authority: metadataAuthority,
       project_read_authority: readAuthority,
+      project_workspace_authority: workspaceAuthority,
       close() {
         if (closed) return false;
         try {

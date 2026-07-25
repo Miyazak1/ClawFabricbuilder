@@ -317,6 +317,9 @@ function runtimeWithService(service, probes = {}) {
                   };
                 },
               },
+              project_workspace_authority: {
+                admit_project_workspace() {},
+              },
               close() { this.closed = true; return true; },
             };
             return context.__projectMainAuthority;

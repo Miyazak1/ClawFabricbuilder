@@ -294,6 +294,16 @@ Evidence requirements:
   remaining outside IPC/preload, Conversation replay, renderer-safe Task
   Stream, provider dispatch, source mutation, Save, and revision authority; it
   still does not perform the filesystem read itself;
+- the current filesystem-read adapter checkpoint performs the first actual
+  tool read, but only inside a main-only adapter that consumes a branded
+  Project-main workspace admission plus the prior runtime-invocation receipt
+  and tool-call record, verifies the explicit private raw-output budget, rejects
+  unsafe project paths and symlinks, rechecks the opened handle identity and
+  bounds before/after reading, reads at most the bounded UTF-8 bytes from the
+  admitted project root, and returns only the private filesystem-read output
+  record; it still has no IPC/preload command, Conversation replay admission,
+  renderer-safe Task Stream projection, provider dispatch, source mutation,
+  Save, or revision authority;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

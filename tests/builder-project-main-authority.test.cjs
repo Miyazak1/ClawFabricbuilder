@@ -54,6 +54,9 @@ test('owns Builder project Git, SQLite metadata, and read authority facades', (t
     'load_current',
     'load_revision',
   ]);
+  assert.deepEqual(Object.keys(authority.project_workspace_authority).sort(), [
+    'admit_project_workspace',
+  ]);
   assert.equal(authority.close(), true);
   assert.equal(authority.close(), false);
 });

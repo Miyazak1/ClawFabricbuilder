@@ -81,6 +81,8 @@ for (const expected of [
   '/electron/builder-tool-dispatch-admission.cjs',
   '/electron/builder-tool-adapter-selection-admission.cjs',
   '/electron/builder-tool-runtime-invocation-admission.cjs',
+  '/electron/builder-tool-project-workspace-admission.cjs',
+  '/electron/builder-tool-filesystem-read-adapter.cjs',
   '/electron/builder-tool-filesystem-read-output-records.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
@@ -218,6 +220,7 @@ assert.doesNotMatch(packagedHtml, /__BUILDER_CONNECT_SRC__/u);
 
 const packagedMain = packagedSource('electron/main.cjs');
 const packagedPreload = packagedSource('electron/preload.cjs');
+const packagedProjectMainAuthority = packagedSource('electron/builder-project-main-authority.cjs');
 const packagedGitRunner = packagedSource('electron/builder-git-command-runner.cjs');
 const packagedGitReceiptContract = packagedSource('electron/builder-git-receipt-contract.cjs');
 const packagedGitRepository = packagedSource('electron/builder-git-project-repository.cjs');
@@ -232,6 +235,8 @@ const packagedToolSessionStateGate = packagedSource('electron/builder-tool-sessi
 const packagedToolDispatchAdmission = packagedSource('electron/builder-tool-dispatch-admission.cjs');
 const packagedToolAdapterSelectionAdmission = packagedSource('electron/builder-tool-adapter-selection-admission.cjs');
 const packagedToolRuntimeInvocationAdmission = packagedSource('electron/builder-tool-runtime-invocation-admission.cjs');
+const packagedToolProjectWorkspaceAdmission = packagedSource('electron/builder-tool-project-workspace-admission.cjs');
+const packagedToolFilesystemReadAdapter = packagedSource('electron/builder-tool-filesystem-read-adapter.cjs');
 const packagedToolFilesystemReadOutputRecords = packagedSource('electron/builder-tool-filesystem-read-output-records.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
@@ -611,6 +616,9 @@ assert.doesNotMatch(
   packagedPermissionIpcRuntime,
   /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_grant|record_revocation|grant_command|revoke_command/iu,
 );
+assert.match(packagedProjectMainAuthority, /createBuilderToolProjectWorkspaceAuthority/u);
+assert.match(packagedProjectMainAuthority, /project_workspace_authority/u);
+assert.match(packagedProjectMainAuthority, /admit_project_workspace/u);
 assert.match(packagedToolPermissionAdmission, /builder-tool-permission-admission\.v1/u);
 assert.match(packagedToolPermissionAdmission, /main_permission_decision_before_tool_dispatch_v1/u);
 assert.match(packagedToolPermissionAdmission, /tool_dispatch:\s*'not_performed'/u);
@@ -727,6 +735,36 @@ assert.match(packagedToolRuntimeInvocationAdmission, /suffix\.includes\(':'\)/u)
 assert.doesNotMatch(
   packagedToolRuntimeInvocationAdmission,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https|node:fs\/promises|node:fs|fs|fs\/promises|node:path|path)['"]\)|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|open\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedToolProjectWorkspaceAdmission, /builder-tool-project-workspace-admission\.v1/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /builder-tool-project-workspace-authority\.v1/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /main_project_workspace_root_contract_v1/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /projects_root_plus_project_id_uuid/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /TRUSTED_WORKSPACE_ADMISSIONS = new WeakSet/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /fs\.realpathSync\.native/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /isSymbolicLink\(\)/u);
+assert.match(packagedToolProjectWorkspaceAdmission, /filesystem_read:\s*'not_performed'/u);
+assert.doesNotMatch(
+  packagedToolProjectWorkspaceAdmission,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|openSync|open\s*\(|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|source_tree|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedToolFilesystemReadAdapter, /builder-tool-filesystem-read-adapter\.v1/u);
+assert.match(packagedToolFilesystemReadAdapter, /node:fs\/promises/u);
+assert.match(packagedToolFilesystemReadAdapter, /node:path/u);
+assert.match(packagedToolFilesystemReadAdapter, /TextDecoder\('utf-8', \{ fatal: true \}\)/u);
+assert.match(packagedToolFilesystemReadAdapter, /createBuilderToolFilesystemReadOutputRecord/u);
+assert.match(packagedToolFilesystemReadAdapter, /builder-tool-filesystem-read-output-records\.cjs/u);
+assert.match(packagedToolFilesystemReadAdapter, /sanitizeBuilderToolProjectWorkspaceAdmission/u);
+assert.match(packagedToolFilesystemReadAdapter, /project_workspace_admission/u);
+assert.match(packagedToolFilesystemReadAdapter, /isSymbolicLink\(\)/u);
+assert.match(packagedToolFilesystemReadAdapter, /handle\.stat\(\)/u);
+assert.match(packagedToolFilesystemReadAdapter, /afterStats\.dev !== beforeStats\.dev/u);
+assert.match(packagedToolFilesystemReadAdapter, /finalStats\.mtimeMs !== beforeStats\.mtimeMs/u);
+assert.match(packagedToolFilesystemReadAdapter, /Buffer\.alloc\(maxRawOutputBytes \+ 1\)/u);
+assert.match(packagedToolFilesystemReadAdapter, /handle\.read\(buffer, 0, maxRawOutputBytes \+ 1, 0\)/u);
+assert.doesNotMatch(
+  packagedToolFilesystemReadAdapter,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedToolFilesystemReadOutputRecords, /builder-tool-filesystem-read-output-record\.v1/u);
 assert.match(packagedToolFilesystemReadOutputRecords, /builder_tool_filesystem_read_output_record/u);
