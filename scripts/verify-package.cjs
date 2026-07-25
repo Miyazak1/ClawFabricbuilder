@@ -78,6 +78,7 @@ for (const expected of [
   '/electron/builder-tool-permission-admission.cjs',
   '/electron/builder-tool-session-policy.cjs',
   '/electron/builder-tool-session-state-gate.cjs',
+  '/electron/builder-tool-dispatch-admission.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
@@ -225,6 +226,7 @@ const packagedPermissionIpcRuntime = packagedSource('electron/builder-permission
 const packagedToolPermissionAdmission = packagedSource('electron/builder-tool-permission-admission.cjs');
 const packagedToolSessionPolicy = packagedSource('electron/builder-tool-session-policy.cjs');
 const packagedToolSessionStateGate = packagedSource('electron/builder-tool-session-state-gate.cjs');
+const packagedToolDispatchAdmission = packagedSource('electron/builder-tool-dispatch-admission.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
@@ -663,6 +665,21 @@ assert.doesNotMatch(
   packagedToolSessionStateGate,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
+assert.match(packagedToolDispatchAdmission, /builder-tool-dispatch-admission\.v1/u);
+assert.match(packagedToolDispatchAdmission, /main_tool_dispatch_admission_contract_v1/u);
+assert.match(packagedToolDispatchAdmission, /trusted_open_tool_call_required/u);
+assert.match(packagedToolDispatchAdmission, /adapter_selection:\s*'not_selected'/u);
+assert.match(packagedToolDispatchAdmission, /tool_dispatch:\s*'not_performed'/u);
+assert.match(packagedToolDispatchAdmission, /provider_dispatch:\s*false/u);
+assert.match(packagedToolDispatchAdmission, /max_chargeable_dispatches !== 0/u);
+assert.match(packagedToolDispatchAdmission, /admittedAtMs - toolCallRecord\.requested_at_ms > policy\.limits\.max_step_timeout_ms/u);
+assert.match(packagedToolDispatchAdmission, /admission\.retry_count >= admission\.tool_call_count/u);
+assert.match(packagedToolDispatchAdmission, /openToolCall\.record_digest !== expectedRecordDigest/u);
+assert.match(packagedToolDispatchAdmission, /admission_digest/u);
+assert.doesNotMatch(
+  packagedToolDispatchAdmission,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|child_process|execFile|spawn\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
 assert.match(packagedToolCallRecords, /builder-tool-call-record\.v1/u);
 assert.match(packagedToolCallRecords, /builder_tool_call_record/u);
 assert.match(packagedToolCallRecords, /main_tool_call_record_contract_v1/u);
@@ -824,6 +841,7 @@ assert.match(packagedConversationMainService, /verify_candidate:\s*verifyCandida
 assert.match(packagedConversationMainService, /read_stream:\s*readStream/u);
 assert.match(packagedConversationMainService, /sanitizeBuilderToolCallRecord/u);
 assert.match(packagedConversationMainService, /sanitizeBuilderToolResultRecord/u);
+assert.match(packagedConversationMainService, /createBuilderToolDispatchAdmission/u);
 assert.match(packagedConversationMainService, /admitBuilderToolCallSessionState/u);
 assert.match(packagedConversationMainService, /admitBuilderToolResultSessionState/u);
 assert.match(packagedConversationMainService, /admitToolCallState\(context,\s*record,\s*record\.requested_at_ms\)/u);
@@ -832,8 +850,10 @@ assert.match(packagedConversationMainService, /activeRunFromContext/u);
 assert.match(packagedConversationMainService, /compactToolSessionCalls/u);
 assert.match(packagedConversationMainService, /record_tool_call_request:\s*recordToolCallRequest/u);
 assert.match(packagedConversationMainService, /record_tool_result:\s*recordToolResult/u);
+assert.match(packagedConversationMainService, /admit_tool_dispatch:\s*admitToolDispatch/u);
 assert.match(packagedConversationMainService, /tool_call_recording:\s*'main_only_pre_dispatch_event'/u);
 assert.match(packagedConversationMainService, /tool_result_recording:\s*'main_only_fixed_code_event'/u);
+assert.match(packagedConversationMainService, /tool_dispatch_admission:\s*'main_only_open_call_no_dispatch'/u);
 assert.match(packagedConversationMainService, /interrupted_without_provider_redispatch/u);
 assert.match(packagedConversationMainService, /builder-git-receipt-contract\.cjs/u);
 assert.doesNotMatch(

@@ -383,6 +383,22 @@ test('records main-only tool request and fixed-code result facts without dispatc
     assert.equal(requestedContext.start_head.sequence, 3);
     assert.equal(requestedContext.events.at(-1).event_type, 'tool_call_requested');
 
+    const dispatchAdmission = item.service.admit_tool_dispatch({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+    });
+    assert.equal(dispatchAdmission.admission_version, 'builder-tool-dispatch-admission.v1');
+    assert.equal(dispatchAdmission.admission_kind, 'builder_tool_dispatch_admission');
+    assert.equal(dispatchAdmission.tool_call_id, TOOL_CALL_ID);
+    assert.equal(dispatchAdmission.record_digest, callRecord.record_digest);
+    assert.equal(dispatchAdmission.authority.tool_dispatch, 'not_performed');
+    assert.equal(dispatchAdmission.authority.adapter_selection, 'not_selected');
+    assert.equal(dispatchAdmission.lifecycle.execution_admission, 'not_started');
+    assert.equal(
+      item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence,
+      3,
+    );
+
     const resultRecord = toolResultRecord(callRecord);
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
@@ -534,6 +550,10 @@ test('rejects invalid main-only tool fact recording without committing partial e
         context,
         tool_result_record: resultRecord,
       }),
+      () => item.service.admit_tool_dispatch({
+        context,
+        tool_call_id: TOOL_CALL_ID,
+      }),
     ]) {
       assert.throws(action, { code: 'builder_conversation_main_service_unavailable' });
     }
@@ -550,6 +570,10 @@ test('rejects invalid main-only tool fact recording without committing partial e
     assert.throws(() => item.service.record_tool_result({
       context: resultContext,
       tool_result_record: resultRecord,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.admit_tool_dispatch({
+      context: resultContext,
+      tool_call_id: TOOL_CALL_ID,
     }), { code: 'builder_conversation_main_service_unavailable' });
     assert.throws(() => item.service.complete_candidate({
       context: resultContext,

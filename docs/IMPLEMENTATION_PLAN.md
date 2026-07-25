@@ -261,6 +261,13 @@ Evidence requirements:
   storage, source mutation, or revision creation; the digest is integrity
   evidence, not issuer proof, and any future executor must still bind issuance
   to a trusted main-side Run context before dispatch;
+- the current dispatch-admission checkpoint adds a pure main-only admission
+  receipt for the currently open tool call from the Conversation main service's
+  trusted active Run state; it binds the pending call record, policy digest,
+  retry/count envelope, step and total timeout windows, and a dispatch request
+  id while selecting no adapter, performing no tool dispatch, starting no
+  execution, reading no provider or credential, storing no raw output, mutating
+  no source, and creating no revision;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project
