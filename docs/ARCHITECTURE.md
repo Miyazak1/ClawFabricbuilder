@@ -23,7 +23,7 @@ The desktop application owns five narrow authorities:
    receipt before future tool dispatch.
 5. A controlled renderer bridge exposing only Builder operations.
 
-Generated JavaScript is stored and displayed but is not executed in the first release. Workflow promotion, arbitrary code execution, collaboration, and publishing require later independent gates.
+Generated JavaScript is stored and displayed but is not executed in the first release. Tool-enabled work now has a pre-dispatch record contract: a Run may bind a tool call only to a current allowed permission admission receipt, while dispatch, execution, result observation, and revision changes remain explicitly unperformed until later gates. Workflow promotion, arbitrary code execution, collaboration, and publishing require later independent gates.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

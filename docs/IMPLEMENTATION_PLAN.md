@@ -225,6 +225,9 @@ Evidence requirements:
 
 - explicit Goal and Task identity;
 - context and tools authorized by Gate F6 Permission facts;
+- the first F9 checkpoint records a run-bound tool call fact only from an
+  allowed main-side permission admission receipt, with dispatch, execution,
+  result, and revision explicitly not performed;
 - bounded step, cost, time, retry, and output policy;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
