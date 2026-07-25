@@ -26,7 +26,12 @@ const {
 const {
   FILESYSTEM_READ_TOOL_ADAPTER_ID,
   createBuilderToolAdapterSelectionAdmission,
+  sanitizeBuilderToolAdapterSelectionAdmission,
 } = require('./builder-tool-adapter-selection-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_RUNTIME_ID,
+  createBuilderToolRuntimeInvocationAdmission,
+} = require('./builder-tool-runtime-invocation-admission.cjs');
 const {
   admitBuilderToolCallSessionState,
   admitBuilderToolResultSessionState,
@@ -1122,6 +1127,43 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function admitToolRuntimeInvocation(rawRequest) {
+    exactObject(rawRequest, ['context', 'tool_call_id', 'adapter_selection_admission', 'runtime_id']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    const toolCallId = safePattern(valueAt(rawRequest, 'tool_call_id'), TOOL_CALL_ID_PATTERN);
+    const runtimeId = valueAt(rawRequest, 'runtime_id');
+    if (runtimeId !== FILESYSTEM_READ_TOOL_RUNTIME_ID) fail();
+    const run = activeRunFromContext(context);
+    const toolCall = run.tool_calls.find((item) => item.tool_call_id === toolCallId) ?? null;
+    if (toolCall === null || toolCall.tool_result_record !== null) fail();
+    try {
+      const selectionAdmission = sanitizeBuilderToolAdapterSelectionAdmission(
+        valueAt(rawRequest, 'adapter_selection_admission'),
+      );
+      if (
+        selectionAdmission.project_id !== context.project.project_id
+        || selectionAdmission.conversation_id !== context.conversation.conversation_id
+        || selectionAdmission.turn_id !== context.ids.turn_id
+        || selectionAdmission.task_id !== context.ids.task_id
+        || selectionAdmission.run_id !== context.ids.run_id
+        || selectionAdmission.tool_call_id !== toolCallId
+        || selectionAdmission.step_id !== toolCall.tool_call_record.step_id
+        || selectionAdmission.record_digest !== toolCall.tool_call_record.record_digest
+        || selectionAdmission.policy_digest !== toolCall.tool_call_record.session_policy.policy_digest
+        || selectionAdmission.adapter_id !== FILESYSTEM_READ_TOOL_ADAPTER_ID
+      ) fail();
+      return createBuilderToolRuntimeInvocationAdmission({
+        adapter_selection_admission: selectionAdmission,
+        tool_call_record: toolCall.tool_call_record,
+        runtime_id: runtimeId,
+        runtime_invocation_id: newId(options.createUuid, 'builder-tool-runtime-invocation'),
+        runtime_admitted_at_ms: safeTimestamp(Reflect.apply(options.nowMs, undefined, [])),
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function completeExplanation(rawRequest) {
     exactObject(rawRequest, ['context', 'assistant_text']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
@@ -1501,6 +1543,7 @@ function createBuilderConversationMainService(rawOptions) {
     record_tool_result: recordToolResult,
     admit_tool_dispatch: admitToolDispatch,
     select_tool_adapter: selectToolAdapter,
+    admit_tool_runtime_invocation: admitToolRuntimeInvocation,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
@@ -1518,6 +1561,7 @@ function createBuilderConversationMainService(rawOptions) {
       tool_result_recording: 'main_only_fixed_code_event',
       tool_dispatch_admission: 'main_only_open_call_no_dispatch',
       tool_adapter_selection: 'main_only_static_adapter_no_dispatch',
+      tool_runtime_invocation: 'main_only_runtime_envelope_no_execution',
     }),
   });
 }

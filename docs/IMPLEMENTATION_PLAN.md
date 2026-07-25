@@ -274,6 +274,12 @@ Evidence requirements:
   not register IPC/preload, perform tool dispatch, start runtime execution, read
   file content, store raw output, mutate source, call a provider, or create a
   revision;
+- the current runtime-invocation checkpoint binds the explicit
+  adapter-selection receipt to a static no-execution filesystem-read runtime
+  envelope, with denied network, process, secret, filesystem-read, raw-output,
+  and chargeable-dispatch authority; it still does not register IPC/preload,
+  read file content, run code, store output, mutate source, call a provider, or
+  create a revision;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

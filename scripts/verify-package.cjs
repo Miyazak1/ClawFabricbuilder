@@ -80,6 +80,7 @@ for (const expected of [
   '/electron/builder-tool-session-state-gate.cjs',
   '/electron/builder-tool-dispatch-admission.cjs',
   '/electron/builder-tool-adapter-selection-admission.cjs',
+  '/electron/builder-tool-runtime-invocation-admission.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
   '/electron/builder-project-workspace-ipc-adapter.cjs',
@@ -229,6 +230,7 @@ const packagedToolSessionPolicy = packagedSource('electron/builder-tool-session-
 const packagedToolSessionStateGate = packagedSource('electron/builder-tool-session-state-gate.cjs');
 const packagedToolDispatchAdmission = packagedSource('electron/builder-tool-dispatch-admission.cjs');
 const packagedToolAdapterSelectionAdmission = packagedSource('electron/builder-tool-adapter-selection-admission.cjs');
+const packagedToolRuntimeInvocationAdmission = packagedSource('electron/builder-tool-runtime-invocation-admission.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
 const packagedWorkspaceAdapter = packagedSource('electron/builder-project-workspace-ipc-adapter.cjs');
@@ -700,6 +702,27 @@ assert.doesNotMatch(
   packagedToolAdapterSelectionAdmission,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https|node:fs|fs|fs\/promises|node:path|path)['"]\)|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
+assert.match(packagedToolRuntimeInvocationAdmission, /builder-tool-runtime-invocation-admission\.v1/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /builder-tool-runtime\.filesystem-read-envelope\.v1/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /main_tool_runtime_invocation_contract_v1/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /static_main_tool_runtime_registry_v1/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /bounded_envelope_admitted/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /admitted_without_execution/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /filesystem_read:\s*'not_performed'/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /runtime_execution:\s*'not_started'/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /network_access:\s*'denied'/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /process_access:\s*'denied'/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /secret_access:\s*'denied'/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /max_raw_output_bytes:\s*0/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /max_chargeable_dispatches:\s*0/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /runtimeAdmittedAtMs - record\.requested_at_ms > policy\.limits\.max_step_timeout_ms/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /policy\.limits\.max_chargeable_dispatches !== 0/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /selection\.record_digest !== record\.record_digest/u);
+assert.match(packagedToolRuntimeInvocationAdmission, /suffix\.includes\(':'\)/u);
+assert.doesNotMatch(
+  packagedToolRuntimeInvocationAdmission,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|require\(['"][^'"]*preload[^'"]*['"]\)|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|require\(['"](?:node:http|node:https|http|https|node:fs\/promises|node:fs|fs|fs\/promises|node:path|path)['"]\)|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|open\s*\(|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|stdout|stderr|output_digest|exit_code|result_bytes|file_content|source_tree|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
 assert.match(packagedToolCallRecords, /builder-tool-call-record\.v1/u);
 assert.match(packagedToolCallRecords, /builder_tool_call_record/u);
 assert.match(packagedToolCallRecords, /main_tool_call_record_contract_v1/u);
@@ -863,7 +886,10 @@ assert.match(packagedConversationMainService, /sanitizeBuilderToolCallRecord/u);
 assert.match(packagedConversationMainService, /sanitizeBuilderToolResultRecord/u);
 assert.match(packagedConversationMainService, /createBuilderToolDispatchAdmission/u);
 assert.match(packagedConversationMainService, /createBuilderToolAdapterSelectionAdmission/u);
+assert.match(packagedConversationMainService, /sanitizeBuilderToolAdapterSelectionAdmission/u);
+assert.match(packagedConversationMainService, /createBuilderToolRuntimeInvocationAdmission/u);
 assert.match(packagedConversationMainService, /FILESYSTEM_READ_TOOL_ADAPTER_ID/u);
+assert.match(packagedConversationMainService, /FILESYSTEM_READ_TOOL_RUNTIME_ID/u);
 assert.match(packagedConversationMainService, /admitBuilderToolCallSessionState/u);
 assert.match(packagedConversationMainService, /admitBuilderToolResultSessionState/u);
 assert.match(packagedConversationMainService, /admitToolCallState\(context,\s*record,\s*record\.requested_at_ms\)/u);
@@ -874,10 +900,13 @@ assert.match(packagedConversationMainService, /record_tool_call_request:\s*recor
 assert.match(packagedConversationMainService, /record_tool_result:\s*recordToolResult/u);
 assert.match(packagedConversationMainService, /admit_tool_dispatch:\s*admitToolDispatch/u);
 assert.match(packagedConversationMainService, /select_tool_adapter:\s*selectToolAdapter/u);
+assert.match(packagedConversationMainService, /admit_tool_runtime_invocation:\s*admitToolRuntimeInvocation/u);
+assert.match(packagedConversationMainService, /exactObject\(rawRequest,\s*\['context', 'tool_call_id', 'adapter_selection_admission', 'runtime_id'\]\)/u);
 assert.match(packagedConversationMainService, /tool_call_recording:\s*'main_only_pre_dispatch_event'/u);
 assert.match(packagedConversationMainService, /tool_result_recording:\s*'main_only_fixed_code_event'/u);
 assert.match(packagedConversationMainService, /tool_dispatch_admission:\s*'main_only_open_call_no_dispatch'/u);
 assert.match(packagedConversationMainService, /tool_adapter_selection:\s*'main_only_static_adapter_no_dispatch'/u);
+assert.match(packagedConversationMainService, /tool_runtime_invocation:\s*'main_only_runtime_envelope_no_execution'/u);
 assert.match(packagedConversationMainService, /interrupted_without_provider_redispatch/u);
 assert.match(packagedConversationMainService, /builder-git-receipt-contract\.cjs/u);
 assert.doesNotMatch(

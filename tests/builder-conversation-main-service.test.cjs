@@ -35,6 +35,9 @@ const {
 const {
   FILESYSTEM_READ_TOOL_ADAPTER_ID,
 } = require('../electron/builder-tool-adapter-selection-admission.cjs');
+const {
+  FILESYSTEM_READ_TOOL_RUNTIME_ID,
+} = require('../electron/builder-tool-runtime-invocation-admission.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -426,6 +429,40 @@ test('records main-only tool request and fixed-code result facts without dispatc
       3,
     );
 
+    const runtimeAdmission = item.service.admit_tool_runtime_invocation({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_selection_admission: selectionAdmission,
+      runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+    });
+    assert.equal(runtimeAdmission.admission_version, 'builder-tool-runtime-invocation-admission.v1');
+    assert.equal(runtimeAdmission.admission_kind, 'builder_tool_runtime_invocation_admission');
+    assert.equal(runtimeAdmission.tool_call_id, TOOL_CALL_ID);
+    assert.equal(runtimeAdmission.record_digest, callRecord.record_digest);
+    assert.equal(runtimeAdmission.dispatch_request_id, selectionAdmission.dispatch_request_id);
+    assert.equal(runtimeAdmission.dispatch_admission_digest, selectionAdmission.dispatch_admission_digest);
+    assert.equal(runtimeAdmission.adapter_selection_id, selectionAdmission.adapter_selection_id);
+    assert.equal(runtimeAdmission.adapter_selection_digest, selectionAdmission.admission_digest);
+    assert.equal(runtimeAdmission.adapter_id, FILESYSTEM_READ_TOOL_ADAPTER_ID);
+    assert.equal(runtimeAdmission.runtime_id, FILESYSTEM_READ_TOOL_RUNTIME_ID);
+    assert.equal(runtimeAdmission.action, 'filesystem.read');
+    assert.equal(runtimeAdmission.resource_kind, 'filesystem');
+    assert.equal(runtimeAdmission.max_raw_output_bytes, 0);
+    assert.equal(runtimeAdmission.max_chargeable_dispatches, 0);
+    assert.equal(runtimeAdmission.authority.tool_dispatch, 'not_performed');
+    assert.equal(runtimeAdmission.authority.runtime_execution, 'not_started');
+    assert.equal(runtimeAdmission.authority.filesystem_read, 'not_performed');
+    assert.equal(runtimeAdmission.lifecycle.runtime_admission, 'bounded_envelope_admitted');
+    assert.equal(runtimeAdmission.lifecycle.execution_admission, 'not_started');
+    assert.doesNotMatch(
+      JSON.stringify(runtimeAdmission),
+      /resource_id|permission_id|permission_admission_receipt|source_tree|file_content|stdout|stderr|output_digest/iu,
+    );
+    assert.equal(
+      item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence,
+      3,
+    );
+
     const resultRecord = toolResultRecord(callRecord);
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
@@ -586,6 +623,12 @@ test('rejects invalid main-only tool fact recording without committing partial e
         tool_call_id: TOOL_CALL_ID,
         adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
       }),
+      () => item.service.admit_tool_runtime_invocation({
+        context,
+        tool_call_id: TOOL_CALL_ID,
+        adapter_selection_admission: {},
+        runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
+      }),
     ]) {
       assert.throws(action, { code: 'builder_conversation_main_service_unavailable' });
     }
@@ -599,6 +642,26 @@ test('rejects invalid main-only tool fact recording without committing partial e
       context: requestedContext,
       tool_call_id: TOOL_CALL_ID,
       adapter_id: 'builder-tool-adapter.project-edit.v1',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    const selectionAdmission = item.service.select_tool_adapter({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    });
+    assert.throws(() => item.service.admit_tool_runtime_invocation({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_selection_admission: selectionAdmission,
+      runtime_id: 'builder-tool-runtime.project-edit.v1',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.admit_tool_runtime_invocation({
+      context: requestedContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_selection_admission: {
+        ...selectionAdmission,
+        adapter_selection_id: 'builder-tool-adapter-selection:00000000-0000-4000-8000-000000000999',
+      },
+      runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
     }), { code: 'builder_conversation_main_service_unavailable' });
     const resultContext = item.service.record_tool_result({
       context: requestedContext,
@@ -616,6 +679,12 @@ test('rejects invalid main-only tool fact recording without committing partial e
       context: resultContext,
       tool_call_id: TOOL_CALL_ID,
       adapter_id: FILESYSTEM_READ_TOOL_ADAPTER_ID,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.admit_tool_runtime_invocation({
+      context: resultContext,
+      tool_call_id: TOOL_CALL_ID,
+      adapter_selection_admission: selectionAdmission,
+      runtime_id: FILESYSTEM_READ_TOOL_RUNTIME_ID,
     }), { code: 'builder_conversation_main_service_unavailable' });
     assert.throws(() => item.service.complete_candidate({
       context: resultContext,
