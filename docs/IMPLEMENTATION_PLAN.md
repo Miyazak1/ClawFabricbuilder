@@ -232,6 +232,10 @@ Evidence requirements:
   Conversation event replay and renderer-safe Task Stream projection without
   exposing permission receipts, resource details, provider facts, or execution
   results;
+- the current result-admission checkpoint defines a main-only fixed-code tool
+  result record contract from a verified pre-dispatch call record, but still
+  does not dispatch tools, accept free-form output text, store raw output,
+  expose renderer state, or create a revision;
 - bounded step, cost, time, retry, and output policy;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
