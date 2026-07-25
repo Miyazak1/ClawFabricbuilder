@@ -6,6 +6,9 @@ const { types: utilTypes } = require('node:util');
 const {
   sanitizeBuilderGitCandidateReceipt,
 } = require('./builder-git-receipt-contract.cjs');
+const {
+  sanitizeBuilderToolCallRecord,
+} = require('./builder-tool-call-records.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -78,6 +81,7 @@ const PAYLOAD_KEYS = Object.freeze({
   ]),
   run_interrupt_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   run_cancel_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
+  tool_call_requested: Object.freeze(['tool_call_record']),
   run_completed: Object.freeze([
     'turn_id', 'run_id', 'terminal_status', 'result_kind', 'result_digest',
     'assistant_message', 'candidate_result',
@@ -282,7 +286,7 @@ function sanitizeCandidateResult(value, turnId, runId, resultDigest) {
 
 function nullable(value, sanitizer) { return value === null ? null : sanitizer(value); }
 
-function sanitizePayload(eventType, value) {
+function sanitizePayload(eventType, value, projectId, conversationId) {
   const expected = PAYLOAD_KEYS[eventType];
   if (!expected) fail();
   assertExactObject(value, expected);
@@ -350,6 +354,16 @@ function sanitizePayload(eventType, value) {
         run_id: safeRunId(valueAt(value, 'run_id')),
         request_id: safeCancelRequestId(valueAt(value, 'request_id')),
       };
+    case 'tool_call_requested': {
+      const toolCallRecord = sanitizeBuilderToolCallRecord(valueAt(value, 'tool_call_record'));
+      if (
+        toolCallRecord.project_id !== projectId
+        || toolCallRecord.conversation_id !== conversationId
+      ) fail();
+      return {
+        tool_call_record: toolCallRecord,
+      };
+    }
     case 'run_completed': {
       const terminalStatus = valueAt(value, 'terminal_status');
       const resultKind = valueAt(value, 'result_kind');
@@ -454,7 +468,7 @@ function sanitizeCore(value, keys) {
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   const conversationId = safeConversationId(valueAt(value, 'conversation_id'));
   if (conversationId !== expectedConversationId(projectId)) fail();
-  const payload = sanitizePayload(eventType, valueAt(value, 'payload'));
+  const payload = sanitizePayload(eventType, valueAt(value, 'payload'), projectId, conversationId);
   if (
     eventType === 'run_completed'
     && payload.candidate_result !== null

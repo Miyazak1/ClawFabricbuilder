@@ -13,11 +13,22 @@ const {
   sanitizeBuilderConversationEvent,
   serializeBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
+const {
+  BUILDER_PERMISSION_DECISION_VERSION,
+  BUILDER_PERMISSION_POLICY_VERSION,
+} = require('../electron/builder-permission-authority-contract.cjs');
+const {
+  createBuilderToolPermissionAdmission,
+} = require('../electron/builder-tool-permission-admission.cjs');
+const {
+  createBuilderToolCallRecord,
+} = require('../electron/builder-tool-call-records.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
 const DIGEST_A = `sha256:${'a'.repeat(64)}`;
 const COMMIT_OID = 'b'.repeat(40);
+const PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: DIGEST_A,
   commit_oid: COMMIT_OID,
@@ -42,6 +53,53 @@ function create(type, payload, previous = null, index = 1) {
     },
     payload,
     authority: { ...CONVERSATION_AUTHORITY },
+  });
+}
+
+async function toolCallRecord({
+  turnId = typedId('turn', 1),
+  taskId = typedId('task', 1),
+  runId = typedId('run', 1),
+  toolCallId = typedId('tool-call', 1),
+  stepId = typedId('run-step', 1),
+} = {}) {
+  const guard = createBuilderToolPermissionAdmission({
+    actor_id: typedId('user', 1),
+    now_ms: () => 50,
+    evaluate_permission: async (body) => ({
+      decision_version: BUILDER_PERMISSION_DECISION_VERSION,
+      policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+      actor_id: typedId('user', 1),
+      action: body.action,
+      resource: body.resource,
+      evaluated_at_ms: body.now_ms,
+      decision: 'allowed',
+      reason: 'matching_active_grant',
+      permission_id: PERMISSION_ID,
+      permission_authority: 'builder_permission_facts_deny_by_default_v1',
+      ui_selection_authority: 'not_permission',
+    }),
+  });
+  const admission = await guard.admit({
+    tool_call_id: toolCallId,
+    tool_name: 'filesystem.read',
+    project_id: PROJECT_ID,
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+      project_id: PROJECT_ID,
+      resource_id: 'project:/src/app.tsx',
+    },
+  });
+  return createBuilderToolCallRecord({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    step_id: stepId,
+    admission,
+    requested_at_ms: 51,
   });
 }
 
@@ -110,6 +168,44 @@ test('supports command payloads with exact run attempt and terminal result evide
   assert.equal(completed.payload.result_digest, DIGEST_A);
   assert.equal(completed.payload.result_kind, 'explanation');
   assert.deepEqual(Object.keys(terminal.payload).sort(), ['outcome', 'run_id', 'turn_id']);
+});
+
+test('supports pre-dispatch tool call request payloads without execution result authority', async () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Read the project files.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Inspect project files' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const record = await toolCallRecord();
+  const requested = create('tool_call_requested', {
+    tool_call_record: record,
+  }, started, 3);
+
+  assert.equal(requested.payload.tool_call_record.record_digest, record.record_digest);
+  assert.equal(requested.payload.tool_call_record.lifecycle.dispatch_admission, 'not_started');
+  assert.equal(requested.payload.tool_call_record.lifecycle.execution_admission, 'not_performed');
+  assert.equal(Object.isFrozen(requested.payload.tool_call_record), true);
+  assert.doesNotMatch(
+    JSON.stringify(requested),
+    /stdout|stderr|exit_code|result_bytes|source_tree|git_candidate_receipt|commit_oid|tree_oid|provider_secret|credential_value|Authorization|Bearer/iu,
+  );
+
+  assert.throws(() => create('tool_call_requested', {
+    tool_call_record: {
+      ...record,
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174099',
+    },
+  }, started, 4), assertRecordError());
 });
 
 test('supports actor-bound candidate rejection payloads without source or Git evidence', () => {

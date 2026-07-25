@@ -30,6 +30,39 @@ export type BuilderConversationSavedRevision = Readonly<{
   revision_number: number;
 }>;
 
+export type BuilderConversationToolAction =
+  | 'context.read'
+  | 'project.read'
+  | 'project.edit'
+  | 'secret.read'
+  | 'filesystem.read'
+  | 'filesystem.write'
+  | 'network.request'
+  | 'process.spawn'
+  | 'publication.create'
+  | 'permission.grant';
+
+export type BuilderConversationToolResourceKind =
+  | 'project'
+  | 'conversation'
+  | 'task'
+  | 'run'
+  | 'revision'
+  | 'artifact'
+  | 'secret'
+  | 'filesystem'
+  | 'network'
+  | 'process'
+  | 'publication'
+  | 'permission';
+
+export type BuilderConversationToolCallLifecycle = Readonly<{
+  permission_admission: 'verified_allowed';
+  dispatch_admission: 'not_started';
+  execution_admission: 'not_performed';
+  result_admission: 'not_recorded';
+}>;
+
 export type BuilderConversationItem =
   | Readonly<{
     item_kind: 'user_message';
@@ -56,6 +89,21 @@ export type BuilderConversationItem =
     turn_id: string;
     run_id: string;
     action: 'cancel' | 'interrupt';
+  }>
+  | Readonly<{
+    item_kind: 'tool_call_requested';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    step_id: string;
+    tool_call_id: string;
+    tool_label: string;
+    action: BuilderConversationToolAction;
+    resource: Readonly<{
+      resource_kind: BuilderConversationToolResourceKind;
+    }>;
+    lifecycle: BuilderConversationToolCallLifecycle;
+    recorded_state: 'requested';
   }>
   | Readonly<{
     item_kind: 'run_completed';
@@ -138,6 +186,8 @@ const MESSAGE_ID_PATTERN = new RegExp(`^builder-message:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const STEP_ID_PATTERN = new RegExp(`^builder-run-step:${UUID_SOURCE}$`, 'u');
+const TOOL_CALL_ID_PATTERN = new RegExp(`^builder-tool-call:${UUID_SOURCE}$`, 'u');
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const UNSAFE_UNICODE_FORMAT_PATTERN = /[\p{Cf}\p{Bidi_Control}]/u;
 const LOCAL_PATH_PATTERN =
@@ -196,6 +246,38 @@ const RUN_CONTROL_KEYS = Object.freeze([
   'run_id',
   'action',
 ]);
+const TOOL_CALL_REQUESTED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'step_id',
+  'tool_call_id',
+  'tool_label',
+  'action',
+  'resource',
+  'lifecycle',
+  'recorded_state',
+]);
+const TOOL_RESOURCE_KEYS = Object.freeze(['resource_kind']);
+const TOOL_LIFECYCLE_KEYS = Object.freeze([
+  'permission_admission',
+  'dispatch_admission',
+  'execution_admission',
+  'result_admission',
+]);
+const TOOL_LABEL_BY_ACTION: Readonly<Record<BuilderConversationToolAction, string>> = Object.freeze({
+  'context.read': 'Read project context',
+  'project.read': 'Read project context',
+  'project.edit': 'Prepare project edit',
+  'secret.read': 'Use saved secret',
+  'filesystem.read': 'Read project file',
+  'filesystem.write': 'Prepare file change',
+  'network.request': 'Use network',
+  'process.spawn': 'Run local command',
+  'publication.create': 'Prepare publish',
+  'permission.grant': 'Change access',
+});
 const RUN_COMPLETED_KEYS = Object.freeze([
   'item_kind',
   'sequence',
@@ -233,6 +315,20 @@ const CANDIDATE_KEYS = Object.freeze([
   'source_availability',
 ]);
 const SAVED_REVISION_KEYS = Object.freeze(['revision_number']);
+const TOOL_ACTION_RESOURCE_KINDS = {
+  'context.read': ['project', 'conversation', 'task', 'run', 'revision', 'artifact'],
+  'project.read': ['project', 'revision'],
+  'project.edit': ['project'],
+  'secret.read': ['secret'],
+  'filesystem.read': ['filesystem'],
+  'filesystem.write': ['filesystem'],
+  'network.request': ['network'],
+  'process.spawn': ['process'],
+  'publication.create': ['publication'],
+  'permission.grant': ['permission'],
+} as const satisfies Readonly<
+  Record<BuilderConversationToolAction, readonly BuilderConversationToolResourceKind[]>
+>;
 
 export class BuilderConversationSnapshotError extends Error {
   readonly code = 'builder_conversation_snapshot_unavailable';
@@ -524,6 +620,69 @@ function sanitizeRunControl(
   };
 }
 
+function sanitizeToolAction(value: unknown): BuilderConversationToolAction {
+  if (
+    typeof value !== 'string'
+    || !Object.hasOwn(TOOL_ACTION_RESOURCE_KINDS, value)
+  ) throw unavailable();
+  return value as BuilderConversationToolAction;
+}
+
+function sanitizeToolResource(
+  value: unknown,
+  action: BuilderConversationToolAction,
+): Readonly<{ resource_kind: BuilderConversationToolResourceKind }> {
+  const source = exactRecord(value, TOOL_RESOURCE_KEYS);
+  const resourceKind = source.resource_kind;
+  const allowedKinds = TOOL_ACTION_RESOURCE_KINDS[action] as readonly BuilderConversationToolResourceKind[];
+  if (
+    typeof resourceKind !== 'string'
+    || !allowedKinds.includes(resourceKind as BuilderConversationToolResourceKind)
+  ) throw unavailable();
+  return {
+    resource_kind: resourceKind as BuilderConversationToolResourceKind,
+  };
+}
+
+function sanitizeToolLifecycle(value: unknown): BuilderConversationToolCallLifecycle {
+  const source = exactRecord(value, TOOL_LIFECYCLE_KEYS);
+  if (
+    source.permission_admission !== 'verified_allowed'
+    || source.dispatch_admission !== 'not_started'
+    || source.execution_admission !== 'not_performed'
+    || source.result_admission !== 'not_recorded'
+  ) throw unavailable();
+  return {
+    permission_admission: 'verified_allowed',
+    dispatch_admission: 'not_started',
+    execution_admission: 'not_performed',
+    result_admission: 'not_recorded',
+  };
+}
+
+function sanitizeToolCallRequested(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'tool_call_requested' }> {
+  const action = sanitizeToolAction(source.action);
+  const toolLabel = TOOL_LABEL_BY_ACTION[action];
+  if (source.recorded_state !== 'requested') throw unavailable();
+  if (source.tool_label !== toolLabel) throw unavailable();
+  return {
+    item_kind: 'tool_call_requested' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    step_id: safePattern(source.step_id, STEP_ID_PATTERN),
+    tool_call_id: safePattern(source.tool_call_id, TOOL_CALL_ID_PATTERN),
+    tool_label: toolLabel,
+    action,
+    resource: sanitizeToolResource(source.resource, action),
+    lifecycle: sanitizeToolLifecycle(source.lifecycle),
+    recorded_state: 'requested',
+  };
+}
+
 function sanitizeRunCompleted(
   source: Record<string, unknown>,
   sequence: number,
@@ -646,6 +805,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_STARTED_KEYS);
   } else if (itemKind === 'run_control_requested') {
     source = exactRecord(value, RUN_CONTROL_KEYS);
+  } else if (itemKind === 'tool_call_requested') {
+    source = exactRecord(value, TOOL_CALL_REQUESTED_KEYS);
   } else if (itemKind === 'run_completed') {
     source = exactRecord(value, RUN_COMPLETED_KEYS);
   } else if (itemKind === 'candidate_reviewed') {
@@ -659,6 +820,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'user_message') return sanitizeUserMessage(source, sequence);
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
+  if (itemKind === 'tool_call_requested') return sanitizeToolCallRequested(source, sequence);
   if (itemKind === 'run_completed') return sanitizeRunCompleted(source, sequence);
   if (itemKind === 'candidate_reviewed') return sanitizeCandidateReviewed(source, sequence);
   return sanitizeTurnCompleted(source, sequence);
@@ -676,6 +838,7 @@ type ReplayTurn = {
     result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
     candidate_draft_id: string | null;
     candidate_review: 'accepted' | 'rejected' | null;
+    pending_tool_calls: number;
     control: 'cancel' | 'interrupt' | null;
   }>;
 };
@@ -709,6 +872,8 @@ function validateCompleteWindow(
   const taskIds = new Set<string>();
   const runIds = new Set<string>();
   const draftIds = new Set<string>();
+  const stepIds = new Set<string>();
+  const toolCallIds = new Set<string>();
   let activeTurn: ReplayTurn | null = null;
 
   for (const item of items) {
@@ -787,11 +952,26 @@ function validateCompleteWindow(
         result_kind: null,
         candidate_draft_id: null,
         candidate_review: null,
+        pending_tool_calls: 0,
         control: null,
       });
       continue;
     }
     if (currentRun === null || currentRun.run_id !== item.run_id) throw unavailable();
+    if (item.item_kind === 'tool_call_requested') {
+      if (
+        activeTurn.mode !== 'work'
+        || activeTurn.task === null
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || stepIds.has(item.step_id)
+        || toolCallIds.has(item.tool_call_id)
+      ) throw unavailable();
+      stepIds.add(item.step_id);
+      toolCallIds.add(item.tool_call_id);
+      currentRun.pending_tool_calls += 1;
+      continue;
+    }
     if (item.item_kind === 'run_control_requested') {
       if (currentRun.status !== 'running' || currentRun.control !== null) throw unavailable();
       currentRun.control = item.action;
@@ -807,6 +987,7 @@ function validateCompleteWindow(
         || (currentRun.control === 'interrupt' && item.terminal_status !== 'interrupted')
         || (currentRun.control === null
           && (item.terminal_status === 'cancelled' || item.terminal_status === 'interrupted'))
+        || (currentRun.pending_tool_calls > 0 && item.terminal_status === 'succeeded')
       ) throw unavailable();
       if (item.assistant_message !== null) {
         if (messageIds.has(item.assistant_message.message_id)) throw unavailable();
@@ -843,6 +1024,7 @@ type SuffixRun = {
   result_kind: 'explanation' | 'plan' | 'candidate' | 'failure' | null;
   candidate_draft_id: string | null;
   candidate_review: 'accepted' | 'rejected' | null;
+  pending_tool_calls: number;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
 };
 
@@ -881,6 +1063,8 @@ function validateTruncatedWindow(
   const taskIds = new Set<string>();
   const runIds = new Set<string>();
   const draftIds = new Set<string>();
+  const stepIds = new Set<string>();
+  const toolCallIds = new Set<string>();
   const completedCandidateRuns = new Map<
     string,
     Readonly<{ turn_id: string; draft_id: string; review: 'accepted' | 'rejected' | null }>
@@ -992,6 +1176,14 @@ function validateTruncatedWindow(
           activeTurn.mode = 'work';
           activeTurn.task_id = item.task_id;
         }
+      } else if (
+        activeTurn.mode === 'work'
+        && activeTurn.task_id === null
+        && item.task_id !== null
+      ) {
+        if (taskIds.has(item.task_id)) throw unavailable();
+        taskIds.add(item.task_id);
+        activeTurn.task_id = item.task_id;
       }
       if (
         (activeTurn.mode === 'work' && item.task_id !== activeTurn.task_id)
@@ -1029,8 +1221,42 @@ function validateTruncatedWindow(
         result_kind: null,
         candidate_draft_id: null,
         candidate_review: null,
+        pending_tool_calls: 0,
         control: null,
       };
+      continue;
+    }
+
+    if (item.item_kind === 'tool_call_requested') {
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix') throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'running',
+          terminal_status: null,
+          result_kind: null,
+          candidate_draft_id: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+        };
+      }
+      if (activeTurn.mode === 'unknown') activeTurn.mode = 'work';
+      const currentRun = activeTurn.current_run;
+      if (
+        activeTurn.mode !== 'work'
+        || currentRun.run_id !== item.run_id
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || stepIds.has(item.step_id)
+        || toolCallIds.has(item.tool_call_id)
+      ) throw unavailable();
+      stepIds.add(item.step_id);
+      toolCallIds.add(item.tool_call_id);
+      currentRun.pending_tool_calls += 1;
       continue;
     }
 
@@ -1047,6 +1273,7 @@ function validateTruncatedWindow(
           result_kind: null,
           candidate_draft_id: null,
           candidate_review: null,
+          pending_tool_calls: 0,
           control: null,
         };
       }
@@ -1073,6 +1300,7 @@ function validateTruncatedWindow(
           result_kind: null,
           candidate_draft_id: null,
           candidate_review: null,
+          pending_tool_calls: 0,
           control: mayUsePrefixState ? 'unknown' : null,
         };
       }
@@ -1090,6 +1318,7 @@ function validateTruncatedWindow(
           currentRun.control === null
           && ['cancelled', 'interrupted'].includes(item.terminal_status)
         )
+        || (currentRun.pending_tool_calls > 0 && item.terminal_status === 'succeeded')
       ) throw unavailable();
       if (item.assistant_message !== null) {
         if (messageIds.has(item.assistant_message.message_id)) throw unavailable();

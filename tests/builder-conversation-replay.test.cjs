@@ -10,6 +10,16 @@ const {
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
+  BUILDER_PERMISSION_DECISION_VERSION,
+  BUILDER_PERMISSION_POLICY_VERSION,
+} = require('../electron/builder-permission-authority-contract.cjs');
+const {
+  createBuilderToolPermissionAdmission,
+} = require('../electron/builder-tool-permission-admission.cjs');
+const {
+  createBuilderToolCallRecord,
+} = require('../electron/builder-tool-call-records.cjs');
+const {
   CONVERSATION_REPLAY_VERSION,
   BuilderConversationReplayError,
   replayBuilderConversation,
@@ -20,6 +30,7 @@ const CONVERSATION_ID = 'builder-conversation:22222222-2222-4222-8222-2222222222
 const RESULT_A = `sha256:${'a'.repeat(64)}`;
 const RESULT_B = `sha256:${'b'.repeat(64)}`;
 const COMMIT_OID = 'c'.repeat(40);
+const PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: RESULT_A,
   commit_oid: COMMIT_OID,
@@ -62,6 +73,53 @@ function candidateResult(turnId, runId, candidateDigest) {
       replay: false,
     },
   };
+}
+
+async function toolCallRecord({
+  turnId = id('turn', 1),
+  taskId = id('task', 1),
+  runId = id('run', 1),
+  stepId = id('run-step', 1),
+  toolCallId = id('tool-call', 1),
+} = {}) {
+  const guard = createBuilderToolPermissionAdmission({
+    actor_id: id('user', 1),
+    now_ms: () => 50,
+    evaluate_permission: async (body) => ({
+      decision_version: BUILDER_PERMISSION_DECISION_VERSION,
+      policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+      actor_id: id('user', 1),
+      action: body.action,
+      resource: body.resource,
+      evaluated_at_ms: body.now_ms,
+      decision: 'allowed',
+      reason: 'matching_active_grant',
+      permission_id: PERMISSION_ID,
+      permission_authority: 'builder_permission_facts_deny_by_default_v1',
+      ui_selection_authority: 'not_permission',
+    }),
+  });
+  const admission = await guard.admit({
+    tool_call_id: toolCallId,
+    tool_name: 'filesystem.read',
+    project_id: PROJECT_ID,
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+      project_id: PROJECT_ID,
+      resource_id: 'project:/src/app.tsx',
+    },
+  });
+  return createBuilderToolCallRecord({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    step_id: stepId,
+    admission,
+    requested_at_ms: 51,
+  });
 }
 
 function append(events, eventType, payload, commandIndex = events.length + 1) {
@@ -187,6 +245,60 @@ test('keeps an active turn reconstructible before terminal events arrive', () =>
   assert.equal(replay.turns[0].status, 'active');
   assert.equal(replay.turns[0].runs.at(-1).status, 'running');
   assert.equal(replay.turns[0].messages.at(-1).kind, 'steering');
+});
+
+test('replays pre-dispatch tool calls only inside an active work run', async () => {
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 200), text: 'Inspect the source files.' },
+    turn_id: id('turn', 200),
+    mode: 'work',
+    task: { task_id: id('task', 200), title: 'Inspect source files' },
+    base_revision: BASE_REVISION,
+  }, 200);
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 200),
+    run_id: id('run', 200),
+    task_id: id('task', 200),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_A,
+  }, 201);
+  const record = await toolCallRecord({
+    turnId: id('turn', 200),
+    taskId: id('task', 200),
+    runId: id('run', 200),
+    stepId: id('run-step', 200),
+    toolCallId: id('tool-call', 200),
+  });
+  events = append(events, 'tool_call_requested', {
+    tool_call_record: record,
+  }, 202);
+
+  const replay = replayBuilderConversation(events);
+  assert.equal(replay.active_turn_id, id('turn', 200));
+  assert.equal(replay.turns[0].runs[0].tool_calls.length, 1);
+  assert.deepEqual(replay.turns[0].runs[0].tool_calls[0].lifecycle, {
+    permission_admission: 'verified_allowed',
+    dispatch_admission: 'not_started',
+    execution_admission: 'not_performed',
+    result_admission: 'not_recorded',
+    revision_admission: 'not_created',
+  });
+  assert.equal(replay.turns[0].runs[0].tool_calls[0].tool_call_record.record_digest, record.record_digest);
+  assert.equal(Object.isFrozen(replay.turns[0].runs[0].tool_calls[0].tool_call_record), true);
+
+  assert.throws(() => replayBuilderConversation(append([...events], 'tool_call_requested', {
+    tool_call_record: record,
+  }, 203)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append([...events], 'run_completed', {
+    turn_id: id('turn', 200),
+    run_id: id('run', 200),
+    terminal_status: 'succeeded',
+    result_kind: 'explanation',
+    result_digest: RESULT_B,
+    assistant_message: { message_id: id('message', 201), text: 'I inspected the files.' },
+  }, 204)), assertReplayError);
 });
 
 test('keeps cancellation distinct from interruption and permits a deliberate retry', () => {
@@ -509,7 +621,7 @@ test('contains all transition rules in replay and none in the SQLite persistence
   );
   for (const eventType of [
     'turn_submitted', 'turn_steered', 'run_started', 'run_interrupt_requested',
-    'run_cancel_requested', 'candidate_rejected',
+    'run_cancel_requested', 'tool_call_requested', 'candidate_rejected',
     'run_completed', 'turn_completed',
   ]) {
     assert.match(replaySource, new RegExp(eventType, 'u'));

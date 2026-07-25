@@ -228,6 +228,10 @@ Evidence requirements:
 - the first F9 checkpoint records a run-bound tool call fact only from an
   allowed main-side permission admission receipt, with dispatch, execution,
   result, and revision explicitly not performed;
+- the next checkpoint admits that pre-dispatch tool call fact into the
+  Conversation event replay and renderer-safe Task Stream projection without
+  exposing permission receipts, resource details, provider facts, or execution
+  results;
 - bounded step, cost, time, retry, and output policy;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;

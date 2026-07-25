@@ -125,6 +125,32 @@ function messageProjection(message) {
   };
 }
 
+function publicToolLabel(action) {
+  switch (action) {
+    case 'context.read':
+    case 'project.read':
+      return 'Read project context';
+    case 'project.edit':
+      return 'Prepare project edit';
+    case 'secret.read':
+      return 'Use saved secret';
+    case 'filesystem.read':
+      return 'Read project file';
+    case 'filesystem.write':
+      return 'Prepare file change';
+    case 'network.request':
+      return 'Use network';
+    case 'process.spawn':
+      return 'Run local command';
+    case 'publication.create':
+      return 'Prepare publish';
+    case 'permission.grant':
+      return 'Change access';
+    default:
+      fail();
+  }
+}
+
 function itemFromEvent(event) {
   const payload = event.payload;
   switch (event.event_type) {
@@ -171,6 +197,29 @@ function itemFromEvent(event) {
         run_id: payload.run_id,
         action: event.event_type === 'run_cancel_requested' ? 'cancel' : 'interrupt',
       };
+    case 'tool_call_requested': {
+      const record = payload.tool_call_record;
+      return {
+        item_kind: 'tool_call_requested',
+        sequence: event.sequence,
+        turn_id: record.turn_id,
+        run_id: record.run_id,
+        step_id: record.step_id,
+        tool_call_id: record.tool_call_id,
+        tool_label: publicToolLabel(record.action),
+        action: record.action,
+        resource: {
+          resource_kind: record.resource.resource_kind,
+        },
+        lifecycle: {
+          permission_admission: 'verified_allowed',
+          dispatch_admission: 'not_started',
+          execution_admission: 'not_performed',
+          result_admission: 'not_recorded',
+        },
+        recorded_state: 'requested',
+      };
+    }
     case 'run_completed':
       return {
         item_kind: 'run_completed',

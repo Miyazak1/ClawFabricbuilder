@@ -166,6 +166,7 @@ turn.submitted
 plan.proposed | plan.revised | plan.approved
 task.created | task.updated
 run.started | run.steered | run.interrupted | run.completed
+tool.call.requested
 candidate.created | candidate.accepted | candidate.rejected
 verification.started | verification.completed
 revision.saved | revision.conflicted

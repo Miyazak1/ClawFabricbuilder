@@ -40,6 +40,16 @@ type MutableConversationItem = {
   retry_of_run_id?: string | null;
   recorded_state?: string;
   action?: string;
+  step_id?: string;
+  tool_call_id?: string;
+  tool_label?: string;
+  resource?: { resource_kind: string; resource_id?: string };
+  lifecycle?: {
+    permission_admission: string;
+    dispatch_admission: string;
+    execution_admission: string;
+    result_admission: string;
+  };
   terminal_status?: string;
   result_kind?: string;
   assistant_message?: MutableMessage | null;
@@ -74,7 +84,10 @@ type MutableWire = {
   };
 };
 
-function id(kind: 'message' | 'turn' | 'task' | 'run', index: number): string {
+function id(
+  kind: 'message' | 'turn' | 'task' | 'run' | 'run-step' | 'tool-call',
+  index: number,
+): string {
   const suffix = index.toString(16).padStart(12, '0');
   return `builder-${kind}:123e4567-e89b-42d3-a456-${suffix}`;
 }
@@ -193,6 +206,35 @@ function acceptedCandidateWire(): MutableWire {
     decision: 'accepted',
     candidate_state: 'saved',
     saved_revision: { revision_number: 1 },
+  });
+  return wire;
+}
+
+function toolCallWire(): MutableWire {
+  const wire = candidateWire();
+  wire.conversation.head_sequence = 3;
+  wire.conversation.recorded_active_turn_id = id('turn', 1);
+  wire.conversation.window.last_sequence = 3;
+  wire.conversation.items = wire.conversation.items.slice(0, 2);
+  wire.conversation.items.push({
+    item_kind: 'tool_call_requested',
+    sequence: 3,
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    step_id: id('run-step', 4),
+    tool_call_id: id('tool-call', 5),
+    tool_label: 'Read project file',
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+    },
+    lifecycle: {
+      permission_admission: 'verified_allowed',
+      dispatch_admission: 'not_started',
+      execution_admission: 'not_performed',
+      result_admission: 'not_recorded',
+    },
+    recorded_state: 'requested',
   });
   return wire;
 }
@@ -348,6 +390,75 @@ describe('Builder conversation snapshot', () => {
     );
   });
 
+  it('accepts pre-dispatch tool call facts without exposing permission or resource evidence', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(toolCallWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.recorded_active_turn_id).toBe(id('turn', 1));
+    expect(snapshot.conversation.items[2]).toEqual({
+      item_kind: 'tool_call_requested',
+      sequence: 3,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      step_id: id('run-step', 4),
+      tool_call_id: id('tool-call', 5),
+      tool_label: 'Read project file',
+      action: 'filesystem.read',
+      resource: {
+        resource_kind: 'filesystem',
+      },
+      lifecycle: {
+        permission_admission: 'verified_allowed',
+        dispatch_admission: 'not_started',
+        execution_admission: 'not_performed',
+        result_admission: 'not_recorded',
+      },
+      recorded_state: 'requested',
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /permission_id|permission_admission_receipt|record_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|git_|receipt|digest|provider|credential|source_tree/iu,
+    );
+  });
+
+  it('rejects tool call facts that imply execution, leaked resources, or unobserved success', () => {
+    const executed = toolCallWire();
+    executed.conversation.items[2]!.lifecycle!.execution_admission = 'performed';
+
+    const leakedResource = toolCallWire();
+    leakedResource.conversation.items[2]!.resource = {
+      resource_kind: 'filesystem',
+      resource_id: 'project:/src/app.tsx',
+    };
+
+    const leakedToolName = toolCallWire();
+    leakedToolName.conversation.items[2]!.tool_label = 'credential.dump';
+
+    const successAfterToolCall = toolCallWire();
+    successAfterToolCall.conversation.head_sequence = 5;
+    successAfterToolCall.conversation.recorded_active_turn_id = null;
+    successAfterToolCall.conversation.window.last_sequence = 5;
+    successAfterToolCall.conversation.items.push(
+      {
+        ...candidateWire().conversation.items[2]!,
+        sequence: 4,
+      },
+      {
+        ...candidateWire().conversation.items[3]!,
+        sequence: 5,
+      },
+    );
+
+    for (const value of [
+      executed,
+      leakedResource,
+      leakedToolName,
+      successAfterToolCall,
+    ]) {
+      expectUnavailable(value);
+    }
+  });
+
   it('accepts rejected candidate review facts without exposing review identity', () => {
     const wire = rejectedCandidateWire();
     const snapshot = sanitizeBuilderConversationSnapshot(wire);
@@ -499,6 +610,148 @@ describe('Builder conversation snapshot', () => {
     expect(snapshot.state).toBe('ready');
     if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
     expect(snapshot.conversation.recorded_active_turn_id).toBe(lastTurnId);
+  });
+
+  it('accepts a truncated prefix tool call followed by a failed run retry', () => {
+    const wire = truncatedWire();
+    const prefixTurnId = id('turn', 700);
+    const prefixRunId = id('run', 701);
+    const retryRunId = id('run', 702);
+    const retryTaskId = id('task', 703);
+    const tailTurnId = id('turn', 12001);
+    const tailTaskId = id('task', 12002);
+    const tailRunId = id('run', 12003);
+    wire.conversation.items = [
+      {
+        item_kind: 'tool_call_requested',
+        sequence: 5,
+        turn_id: prefixTurnId,
+        run_id: prefixRunId,
+        step_id: id('run-step', 704),
+        tool_call_id: id('tool-call', 705),
+        tool_label: 'Read project file',
+        action: 'filesystem.read',
+        resource: {
+          resource_kind: 'filesystem',
+        },
+        lifecycle: {
+          permission_admission: 'verified_allowed',
+          dispatch_admission: 'not_started',
+          execution_admission: 'not_performed',
+          result_admission: 'not_recorded',
+        },
+        recorded_state: 'requested',
+      },
+      {
+        item_kind: 'run_completed',
+        sequence: 6,
+        turn_id: prefixTurnId,
+        run_id: prefixRunId,
+        terminal_status: 'failed',
+        result_kind: 'failure',
+        assistant_message: {
+          message_id: id('message', 706),
+          text: 'The file read could not finish.',
+        },
+        candidate: null,
+      },
+      {
+        item_kind: 'run_started',
+        sequence: 7,
+        turn_id: prefixTurnId,
+        run_id: retryRunId,
+        task_id: retryTaskId,
+        attempt_number: 2,
+        retry_of_run_id: prefixRunId,
+        recorded_state: 'started',
+      },
+      {
+        item_kind: 'run_completed',
+        sequence: 8,
+        turn_id: prefixTurnId,
+        run_id: retryRunId,
+        terminal_status: 'failed',
+        result_kind: 'failure',
+        assistant_message: {
+          message_id: id('message', 707),
+          text: 'The retry also failed.',
+        },
+        candidate: null,
+      },
+      {
+        item_kind: 'turn_completed',
+        sequence: 9,
+        turn_id: prefixTurnId,
+        run_id: retryRunId,
+        outcome: 'failed',
+      },
+      ...completedTurnItems(800, 10),
+      ...Array.from(
+        { length: 29 },
+        (_, index) => completedTurnItems(index + 900, 14 + index * 4),
+      ).flat(),
+      {
+        item_kind: 'user_message',
+        sequence: 130,
+        turn_id: tailTurnId,
+        message: {
+          message_id: id('message', 12004),
+          text: 'Build another timer.',
+        },
+        message_kind: 'submitted',
+        mode: 'work',
+        task: {
+          task_id: tailTaskId,
+          title: 'Create another timer',
+        },
+      },
+      {
+        item_kind: 'run_started',
+        sequence: 131,
+        turn_id: tailTurnId,
+        run_id: tailRunId,
+        task_id: tailTaskId,
+        attempt_number: 1,
+        retry_of_run_id: null,
+        recorded_state: 'started',
+      },
+      {
+        item_kind: 'tool_call_requested',
+        sequence: 132,
+        turn_id: tailTurnId,
+        run_id: tailRunId,
+        step_id: id('run-step', 12005),
+        tool_call_id: id('tool-call', 12006),
+        tool_label: 'Read project file',
+        action: 'filesystem.read',
+        resource: {
+          resource_kind: 'filesystem',
+        },
+        lifecycle: {
+          permission_admission: 'verified_allowed',
+          dispatch_admission: 'not_started',
+          execution_admission: 'not_performed',
+          result_admission: 'not_recorded',
+        },
+        recorded_state: 'requested',
+      },
+    ].slice(0, 128);
+    wire.conversation.head_sequence = 132;
+    wire.conversation.window = {
+      first_sequence: 5,
+      last_sequence: 132,
+      has_earlier: true,
+    };
+    wire.conversation.recorded_active_turn_id = tailTurnId;
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[2]).toMatchObject({
+      item_kind: 'run_started',
+      run_id: retryRunId,
+      task_id: retryTaskId,
+    });
   });
 
   it('accepts a truncated candidate rejection whose reviewed run is in omitted history', () => {

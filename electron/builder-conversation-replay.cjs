@@ -57,6 +57,19 @@ function addMessage(state, message, role, kind) {
   return { message_id: message.message_id, role, kind, text: message.text };
 }
 
+function cloneToolCallRecord(record) {
+  return {
+    ...record,
+    resource: { ...record.resource },
+    permission_admission_receipt: {
+      ...record.permission_admission_receipt,
+      resource: { ...record.permission_admission_receipt.resource },
+    },
+    lifecycle: { ...record.lifecycle },
+    authority: { ...record.authority },
+  };
+}
+
 function requireActiveTurn(state, turnId) {
   if (state.activeTurnId !== turnId) fail();
   const turn = state.turns.get(turnId);
@@ -120,8 +133,38 @@ function applyRunStarted(state, payload) {
     result_digest: null,
     candidate_result: null,
     candidate_review: null,
+    tool_calls: [],
     interrupt_request_id: null,
     cancel_request_id: null,
+  });
+}
+
+function applyToolCallRequested(state, payload) {
+  const record = payload.tool_call_record;
+  const turn = requireActiveTurn(state, record.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  if (
+    turn.mode !== 'work'
+    || turn.task === null
+    || turn.task.task_id !== record.task_id
+    || run === null
+    || run.run_id !== record.run_id
+    || run.status !== 'running'
+    || run.interrupt_request_id !== null
+    || run.cancel_request_id !== null
+    || state.stepIds.has(record.step_id)
+    || state.toolCallIds.has(record.tool_call_id)
+  ) fail();
+  state.stepIds.add(record.step_id);
+  state.toolCallIds.add(record.tool_call_id);
+  run.tool_calls.push({
+    step_id: record.step_id,
+    tool_call_id: record.tool_call_id,
+    tool_name: record.tool_name,
+    action: record.action,
+    resource: { ...record.resource },
+    lifecycle: { ...record.lifecycle },
+    tool_call_record: cloneToolCallRecord(record),
   });
 }
 
@@ -182,6 +225,7 @@ function applyRunCompleted(state, payload) {
     || (interrupted && payload.terminal_status !== 'interrupted')
     || (cancelled && payload.terminal_status !== 'cancelled')
     || (interrupted && cancelled)) fail();
+  if (run.tool_calls.length > 0 && payload.terminal_status === 'succeeded') fail();
   if (payload.terminal_status === 'succeeded') {
     if (turn.mode === 'question' && payload.result_kind !== 'explanation') fail();
     if (turn.mode === 'work'
@@ -229,6 +273,7 @@ const TRANSITIONS = Object.freeze({
   run_started: applyRunStarted,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
+  tool_call_requested: applyToolCallRequested,
   run_completed: applyRunCompleted,
   turn_completed: applyTurnCompleted,
 });
@@ -242,6 +287,12 @@ function publicTurn(turn) {
     base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
     runs: turn.runs.map((run) => ({
       ...run,
+      tool_calls: run.tool_calls.map((toolCall) => ({
+        ...toolCall,
+        resource: { ...toolCall.resource },
+        lifecycle: { ...toolCall.lifecycle },
+        tool_call_record: cloneToolCallRecord(toolCall.tool_call_record),
+      })),
       candidate_result: run.candidate_result === null ? null : {
         ...run.candidate_result,
         git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
@@ -278,6 +329,8 @@ function replayBuilderConversation(rawEvents) {
     messageIds: new Set(),
     taskIds: new Set(),
     runIds: new Set(),
+    stepIds: new Set(),
+    toolCallIds: new Set(),
     interruptRequestIds: new Set(),
     cancelRequestIds: new Set(),
     reviewIds: new Set(),

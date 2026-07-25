@@ -230,6 +230,8 @@ const packagedGenerationHost = packagedSource('electron/builder-generation-host-
 const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
 const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation-ipc-runtime.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
+const packagedConversationRecords = packagedSource('electron/builder-conversation-records.cjs');
+const packagedConversationReplay = packagedSource('electron/builder-conversation-replay.cjs');
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
 const packagedTaskStreamProjection = packagedSource('electron/builder-task-stream-projection.cjs');
 const packagedTaskStreamIpcAdapter = packagedSource('electron/builder-task-stream-ipc-adapter.cjs');
@@ -700,6 +702,21 @@ assert.doesNotMatch(
   packagedGenerationMainService,
   /ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider-secret-store|builder-provider-config-repository|local-provider-executor/iu,
 );
+assert.match(packagedConversationRecords, /tool_call_requested/u);
+assert.match(packagedConversationRecords, /sanitizeBuilderToolCallRecord/u);
+assert.match(packagedConversationRecords, /builder-tool-call-records\.cjs/u);
+assert.doesNotMatch(
+  packagedConversationRecords,
+  /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|local-provider-executor/iu,
+);
+assert.match(packagedConversationReplay, /tool_call_requested/u);
+assert.match(packagedConversationReplay, /applyToolCallRequested/u);
+assert.match(packagedConversationReplay, /tool_calls:\s*\[\]/u);
+assert.match(packagedConversationReplay, /run\.tool_calls\.length > 0 && payload\.terminal_status === 'succeeded'/u);
+assert.doesNotMatch(
+  packagedConversationReplay,
+  /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|fetch\s*\(|require\(['"](?:node:http|node:https|http|https)['"]\)|local-provider-executor/iu,
+);
 assert.match(packagedConversationMainService, /sqlite_conversation_event_chain/u);
 assert.match(packagedConversationMainService, /begin_work:\s*beginWork/u);
 assert.match(packagedConversationMainService, /verify_candidate:\s*verifyCandidate/u);
@@ -717,6 +734,13 @@ assert.match(packagedTaskStreamProjection, /replayBuilderConversation/u);
 assert.match(packagedTaskStreamProjection, /Object\.getPrototypeOf\(value\) !== Array\.prototype/u);
 assert.doesNotMatch(packagedTaskStreamProjection, /events\.map\(itemFromEvent\)/u);
 assert.match(packagedTaskStreamProjection, /recorded_state:\s*'started'/u);
+assert.match(packagedTaskStreamProjection, /tool_call_requested/u);
+assert.match(packagedTaskStreamProjection, /recorded_state:\s*'requested'/u);
+assert.match(packagedTaskStreamProjection, /dispatch_admission:\s*'not_started'/u);
+assert.match(packagedTaskStreamProjection, /execution_admission:\s*'not_performed'/u);
+assert.match(packagedTaskStreamProjection, /result_admission:\s*'not_recorded'/u);
+assert.match(packagedTaskStreamProjection, /tool_label:\s*publicToolLabel\(record\.action\)/u);
+assert.doesNotMatch(packagedTaskStreamProjection, /tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|resource_id/u);
 assert.match(packagedTaskStreamProjection, /candidate_state:\s*'proposed'/u);
 assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/u);
 assert.doesNotMatch(

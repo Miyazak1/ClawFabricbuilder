@@ -12,6 +12,16 @@ const {
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
+  BUILDER_PERMISSION_DECISION_VERSION,
+  BUILDER_PERMISSION_POLICY_VERSION,
+} = require('../electron/builder-permission-authority-contract.cjs');
+const {
+  createBuilderToolPermissionAdmission,
+} = require('../electron/builder-tool-permission-admission.cjs');
+const {
+  createBuilderToolCallRecord,
+} = require('../electron/builder-tool-call-records.cjs');
+const {
   BUILDER_TASK_STREAM_VERSION,
   MAX_PUBLIC_BYTES,
   MAX_PUBLIC_ITEMS,
@@ -23,6 +33,7 @@ const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
 const DIGEST = `sha256:${'1'.repeat(64)}`;
+const PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
 
 function id(kind, index) {
   return `builder-${kind}:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
@@ -79,6 +90,53 @@ function candidateReceipt(turnId, taskId, runId) {
   };
 }
 
+async function toolCallRecord({
+  turnId = id('turn', 1),
+  taskId = id('task', 2),
+  runId = id('run', 3),
+  stepId = id('run-step', 4),
+  toolCallId = id('tool-call', 5),
+} = {}) {
+  const guard = createBuilderToolPermissionAdmission({
+    actor_id: id('user', 6),
+    now_ms: () => 50,
+    evaluate_permission: async (body) => ({
+      decision_version: BUILDER_PERMISSION_DECISION_VERSION,
+      policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+      actor_id: id('user', 6),
+      action: body.action,
+      resource: body.resource,
+      evaluated_at_ms: body.now_ms,
+      decision: 'allowed',
+      reason: 'matching_active_grant',
+      permission_id: PERMISSION_ID,
+      permission_authority: 'builder_permission_facts_deny_by_default_v1',
+      ui_selection_authority: 'not_permission',
+    }),
+  });
+  const admission = await guard.admit({
+    tool_call_id: toolCallId,
+    tool_name: 'filesystem.read',
+    project_id: PROJECT_ID,
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+      project_id: PROJECT_ID,
+      resource_id: 'project:/src/app.tsx',
+    },
+  });
+  return createBuilderToolCallRecord({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    step_id: stepId,
+    admission,
+    requested_at_ms: 51,
+  });
+}
+
 function candidateEvents() {
   const events = [];
   const turnId = id('turn', 1);
@@ -121,6 +179,38 @@ function candidateEvents() {
     run_id: runId,
     outcome: 'candidate_ready',
   }, 9);
+  return events;
+}
+
+async function toolCallEvents() {
+  const events = [];
+  const turnId = id('turn', 30);
+  const taskId = id('task', 31);
+  const runId = id('run', 32);
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 33), text: 'Inspect the project source.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Inspect source' },
+    base_revision: null,
+  }, 34);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 35);
+  append(events, 'tool_call_requested', {
+    tool_call_record: await toolCallRecord({
+      turnId,
+      taskId,
+      runId,
+      stepId: id('run-step', 36),
+      toolCallId: id('tool-call', 37),
+    }),
+  }, 36);
   return events;
 }
 
@@ -316,6 +406,35 @@ test('describes a persisted start as recorded rather than claiming a live run', 
   assert.equal(stream.conversation.recorded_active_turn_id, id('turn', 1));
   assert.equal(stream.conversation.items.at(-1).recorded_state, 'started');
   assert.doesNotMatch(JSON.stringify(stream), /running|live|save_admission|save_available/iu);
+});
+
+test('projects pre-dispatch tool calls without exposing permission or resource evidence', async () => {
+  const stream = projectBuilderTaskStream(input(await toolCallEvents()));
+  assert.equal(stream.conversation.recorded_active_turn_id, id('turn', 30));
+  assert.deepEqual(stream.conversation.items.at(-1), {
+    item_kind: 'tool_call_requested',
+    sequence: 3,
+    turn_id: id('turn', 30),
+    run_id: id('run', 32),
+    step_id: id('run-step', 36),
+    tool_call_id: id('tool-call', 37),
+    tool_label: 'Read project file',
+    action: 'filesystem.read',
+    resource: {
+      resource_kind: 'filesystem',
+    },
+    lifecycle: {
+      permission_admission: 'verified_allowed',
+      dispatch_admission: 'not_started',
+      execution_admission: 'not_performed',
+      result_admission: 'not_recorded',
+    },
+    recorded_state: 'requested',
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /permission_id|permission_admission_receipt|record_digest|evidence_digest|resource_id|project:\/src\/app\.tsx|provider|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+  );
 });
 
 test('replays the complete chain before exposing only the latest 128 items', () => {
