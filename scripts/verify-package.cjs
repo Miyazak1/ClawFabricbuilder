@@ -85,6 +85,7 @@ for (const expected of [
   '/electron/builder-tool-filesystem-read-adapter.cjs',
   '/electron/builder-tool-filesystem-read-execution-service.cjs',
   '/electron/builder-tool-source-context-collector.cjs',
+  '/electron/builder-plan-proposal-records.cjs',
   '/electron/builder-tool-filesystem-read-output-records.cjs',
   '/electron/builder-tool-call-records.cjs',
   '/electron/builder-tool-result-records.cjs',
@@ -241,6 +242,7 @@ const packagedToolProjectWorkspaceAdmission = packagedSource('electron/builder-t
 const packagedToolFilesystemReadAdapter = packagedSource('electron/builder-tool-filesystem-read-adapter.cjs');
 const packagedToolFilesystemReadExecutionService = packagedSource('electron/builder-tool-filesystem-read-execution-service.cjs');
 const packagedToolSourceContextCollector = packagedSource('electron/builder-tool-source-context-collector.cjs');
+const packagedPlanProposalRecords = packagedSource('electron/builder-plan-proposal-records.cjs');
 const packagedToolFilesystemReadOutputRecords = packagedSource('electron/builder-tool-filesystem-read-output-records.cjs');
 const packagedToolCallRecords = packagedSource('electron/builder-tool-call-records.cjs');
 const packagedToolResultRecords = packagedSource('electron/builder-tool-result-records.cjs');
@@ -799,6 +801,18 @@ assert.match(packagedToolSourceContextCollector, /segment === '\.\.'/u);
 assert.doesNotMatch(
   packagedToolSourceContextCollector,
   /require\(['"](?:electron|node:fs|node:fs\/promises|fs|fs\/promises|node:path|path|node:process|process)['"]\)|\bprocess\.|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation-main-service|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|child_process|execFile|spawn\s*\(|readFile|createReadStream|readdir|statSync|openSync|writeFile|appendFile|createWriteStream|unlink|rmSync|rm\s*\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+);
+assert.match(packagedPlanProposalRecords, /builder-plan-proposal-record\.v1/u);
+assert.match(packagedPlanProposalRecords, /builder_plan_proposal_record/u);
+assert.match(packagedPlanProposalRecords, /main_plan_proposal_record_contract_v1/u);
+assert.match(packagedPlanProposalRecords, /builder-private-source-context\.v1/u);
+assert.match(packagedPlanProposalRecords, /createBuilderProjectSourceTree/u);
+assert.match(packagedPlanProposalRecords, /bounded_private_source_context_digest_only/u);
+assert.match(packagedPlanProposalRecords, /proposed_not_approved/u);
+assert.match(packagedPlanProposalRecords, /not_admitted_by_record_contract/u);
+assert.doesNotMatch(
+  packagedPlanProposalRecords,
+  /require\(['"](?:electron|node:fs|node:fs\/promises|fs|fs\/promises|node:path|path|node:process|process|node:http|node:https|http|https)['"]\)|\bprocess\.|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-conversation-main-service|builder-project-main-authority|fetch\s*\(|child_process|execFile|spawn\s*\(|readFile|createReadStream|writeFile|appendFile|unlink|rm\(|mkdir|eval\s*\(|new Function|shell:\s*true|persist_candidate_commit|write_current|commit_oid|tree_oid|provider_secret|credential_secret|credential_value|secret_ref|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
 );
 assert.match(packagedToolFilesystemReadOutputRecords, /builder-tool-filesystem-read-output-record\.v1/u);
 assert.match(packagedToolFilesystemReadOutputRecords, /builder_tool_filesystem_read_output_record/u);

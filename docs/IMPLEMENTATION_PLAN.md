@@ -320,6 +320,13 @@ Evidence requirements:
   request/result facts in the Task Stream, with no IPC/preload command,
   provider dispatch, Git mutation, Save, raw-output durability, or revision
   authority;
+- the current plan-proposal record checkpoint consumes that private
+  source-context result only inside main-side code, verifies the bounded file
+  facts through the source-tree sanitizer, stores only a context digest, file
+  count, byte count, and bounded plan text, and marks the outcome as proposed
+  but not approved; it does not append a Conversation event, expose
+  IPC/preload, dispatch a provider or tool, mutate source, run generated code,
+  create Git evidence, or create a Project Revision;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project
