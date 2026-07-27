@@ -24,7 +24,7 @@ function styleBlock(source: string, selector: string): string {
 }
 
 describe('Builder desktop layout styles', () => {
-  it('keeps a compact review summary rail beside the conversation on desktop widths', () => {
+  it('supports a compact review summary rail only when the desktop sidebar is mounted', () => {
     const source = styles();
 
     expect(source).toContain('.cf-builder-chat-shell {');

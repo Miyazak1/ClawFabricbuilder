@@ -391,8 +391,11 @@ Evidence requirements:
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
   main content bottom. Assistant activity, draft review summary, preview, and
-  source-file cards appear in that same flow, while Git-style draft changes and
-  saved Versions move to a secondary right review sidebar. It adds no fake edit
+  source-file cards appear in that same flow. Draft changes stay summarized in
+  the review card and open an on-demand right sidebar only when the user asks
+  to inspect them, so an unsaved result does not squeeze the primary preview
+  and Save actions. Saved Versions can remain in the secondary right review
+  sidebar outside the unsaved-draft landing state. This adds no fake edit
   command, does not add a dedicated code workbench, and still uses only the
   existing read-only task stream, plan review, generation, draft reject, cancel,
   and explicit Save bridges;

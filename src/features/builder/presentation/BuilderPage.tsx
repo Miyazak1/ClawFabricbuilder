@@ -1155,9 +1155,10 @@ export function BuilderPage({
   const sourceDisclosureOpen = selected !== null;
   const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
   const showResultFlow = preview !== null || showPreviewUnavailableResult;
-  const showReviewSidebar = hasUnsavedDraft || saved !== null;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
   const draftReviewRef = useRef<HTMLElement | null>(null);
+  const resultFlowRef = useRef<HTMLElement | null>(null);
+  const pendingChangesFocusRef = useRef(false);
   const pendingSourceFocusRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTailRef = useRef<HTMLDivElement | null>(null);
@@ -1177,6 +1178,8 @@ export function BuilderPage({
   const changesPanelOpen = changesPanelState.identity === changesPanelIdentity
     ? changesPanelState.open
     : false;
+  const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
+  const showReviewSidebar = showChangesPanel || (saved !== null && !hasUnsavedDraft);
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
       ? 'no-live-output'
@@ -1217,8 +1220,17 @@ export function BuilderPage({
 
   useEffect(() => {
     if (!hasUnsavedDraft) return;
-    draftReviewRef.current?.scrollIntoView?.({ block: 'start' });
-  }, [draft?.draft_id, hasUnsavedDraft]);
+    const landingTarget = showResultFlow ? resultFlowRef.current : draftReviewRef.current;
+    landingTarget?.scrollIntoView?.({ block: 'start' });
+  }, [draft?.draft_id, hasUnsavedDraft, showResultFlow]);
+
+  useEffect(() => {
+    if (!pendingChangesFocusRef.current || !showChangesPanel) return;
+    const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
+    if (disclosure === null) return;
+    pendingChangesFocusRef.current = false;
+    disclosure.focus();
+  }, [showChangesPanel]);
 
   function updateChatFollowState(): void {
     const scroll = chatScrollRef.current;
@@ -1256,9 +1268,11 @@ export function BuilderPage({
   }
 
   function openChangesPanel(): void {
+    pendingChangesFocusRef.current = true;
     setChangesPanelOpen(true);
     const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     if (disclosure !== null) {
+      pendingChangesFocusRef.current = false;
       disclosure.open = true;
       disclosure.focus();
       return;
@@ -1635,7 +1649,6 @@ export function BuilderPage({
                 />
               ) : null}
               {showStarterPrompt ? <StarterPrompt /> : null}
-              {draftReview}
 
               {showResultFlow ? (
                 <section
@@ -1644,6 +1657,7 @@ export function BuilderPage({
                   data-builder-preview-flow="true"
                   data-builder-result-flow="true"
                   id="builder-tool-preview"
+                  ref={resultFlowRef}
                 >
                   <div className="cf-builder-result-toolbar">
                     <Eye aria-hidden="true" className="size-4" />
@@ -1654,6 +1668,7 @@ export function BuilderPage({
                   </div>
                 </section>
               ) : null}
+              {draftReview}
 
               {sourceFile === null ? null : (
                 <details
@@ -1722,12 +1737,14 @@ export function BuilderPage({
               className="cf-builder-review-sidebar"
               data-builder-review-sidebar="true"
             >
-              <ChangesPanel
-                changes={changes}
-                onOpenChange={setChangesPanelOpen}
-                onOpenFile={openChangedFile}
-                open={changesPanelOpen}
-              />
+              {showChangesPanel ? (
+                <ChangesPanel
+                  changes={changes}
+                  onOpenChange={setChangesPanelOpen}
+                  onOpenFile={openChangedFile}
+                  open={changesPanelOpen}
+                />
+              ) : null}
               <VersionHistoryPanel
                 hasSavedProject={saved !== null}
                 inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
