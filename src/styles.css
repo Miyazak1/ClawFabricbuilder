@@ -1467,19 +1467,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-height: clamp(320px, 48vh, 620px);
 }
 
-@media (max-width: 1280px) {
-  .cf-builder-chat-shell[data-builder-review-sidebar-visible="true"] {
-    height: auto;
-    min-height: 680px;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .cf-builder-review-sidebar {
-    border-left: 0;
-    border-top: 1px solid var(--cf-border);
-  }
-}
-
 .cf-builder-empty {
   background: var(--cf-surface-muted);
   border-color: var(--cf-border-strong);
