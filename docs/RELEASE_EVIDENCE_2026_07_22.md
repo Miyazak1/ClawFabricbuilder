@@ -68,6 +68,30 @@ or public release readiness.
 - Static preview evidence stayed nonblank with script-denying preview policy, and
   no unexpected renderer network request was observed during the canary scope.
 
+## 2026-07-27 Controlled Plan Review Action Checkpoint
+
+This addendum records verification for code checkpoint `42a1859`, which exposed
+the main-owned plan review fact through one controlled renderer request path.
+It is not a real-provider canary and does not claim code execution, source
+mutation, Save, Project Revision, publication, or arbitrary tool authority.
+
+- Targeted Node tests for the plan-review IPC adapter and generation IPC
+  runtime passed: 22 tests.
+- Targeted Vitest for the renderer bridge root, plan-review port,
+  BuilderPage, BuilderApp, and Builder architecture boundary passed: 49 tests.
+- `node --test tests\verify-packaged-canary.test.cjs` passed: 35 tests, after
+  extending canary evidence to prove the `planReview` namespace is exactly the
+  review method.
+- `npm run typecheck`, `npm run lint`, and `npm run test` passed. The full test
+  run reported 31 Vitest files / 279 tests; `test:boundaries` reported 487
+  Node-test subtests passed.
+- `npm run pack` passed; package verification reported production
+  network-denying CSP and 740 ASAR entries.
+- An independent read-only review found no edit, generate, save, revision,
+  source, provider, or credential authority leak in the plan-review path. Its
+  only finding was the packaged canary namespace evidence gap, which was fixed
+  before the final full test and package verification reruns.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
