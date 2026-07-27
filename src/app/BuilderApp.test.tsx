@@ -486,6 +486,7 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
   it('retries a failed draft through the retry bridge and refreshes activity', async () => {
@@ -504,6 +505,8 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
     });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
+      .toBe('Make a timer.');
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
         ?.call(textarea, 'Make a different timer.');
@@ -519,6 +522,7 @@ describe('BuilderApp v2', () => {
     expect(retry).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     expect(saveDraft).not.toHaveBeenCalled();
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.textContent).not.toMatch(/request_digest|existing_project_id|provider|credential/iu);
   });
 
@@ -680,6 +684,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('request_id');
   });

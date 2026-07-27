@@ -339,6 +339,13 @@ function latestRestorableDraft(
   return null;
 }
 
+function shouldClearSubmittedIdea(snapshot: BuilderVisibleProjectSnapshot): boolean {
+  return snapshot.draft !== null || (
+    snapshot.answer !== null
+    && snapshot.error === null
+  );
+}
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
@@ -469,6 +476,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const commandEpoch = workspaceEpochRef.current;
     const result = await project.generate(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
+    if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
   }, [idea, project, readActivityAfterTerminal]);
 
@@ -476,6 +484,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const commandEpoch = workspaceEpochRef.current;
     const result = await project.retryGenerate();
     if (workspaceEpochRef.current !== commandEpoch) return;
+    if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
   }, [project, readActivityAfterTerminal]);
 
@@ -483,6 +492,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const commandEpoch = workspaceEpochRef.current;
     const result = await project.answer(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
+    if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
   }, [idea, project, readActivityAfterTerminal]);
 
