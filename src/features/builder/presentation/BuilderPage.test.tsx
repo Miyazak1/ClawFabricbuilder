@@ -905,10 +905,11 @@ describe('BuilderPage v2', () => {
     const draftActions = container.querySelector('[data-builder-draft-review-actions="true"]');
     expect(chatMain).not.toBeNull();
     expect(workspace?.getAttribute('data-builder-review-sidebar-visible')).toBe('true');
+    expect(workspace?.getAttribute('data-builder-review-sidebar-mode')).toBe('summary');
     expect(reviewSidebar).not.toBeNull();
     expect(conversation).not.toBeNull();
     expect(review).not.toBeNull();
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('stacked');
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('action-row');
     expect(composer).not.toBeNull();
     expect(preview).not.toBeNull();
     expect(code).toBeNull();
@@ -954,6 +955,7 @@ describe('BuilderPage v2', () => {
     expect(draftActions?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
     click(container, '[data-builder-review-open-changes="true"]');
     expect(changesDisclosure?.open).toBe(true);
+    expect(workspace?.getAttribute('data-builder-review-sidebar-mode')).toBe('expanded');
     expect(document.activeElement).toBe(changesDisclosure);
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
@@ -1118,6 +1120,7 @@ describe('BuilderPage v2', () => {
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     const contextReady = container.querySelector('[data-builder-activity-card="Context ready"]');
     const responseStarted = container.querySelector('[data-builder-activity-card="AI response started"]');
+    const started = container.querySelector('[data-builder-activity-card="Started"]');
     expect(container.querySelectorAll('[data-builder-work-status="true"]')).toHaveLength(1);
     expect(workStatus?.getAttribute('data-builder-activity-role')).toBe('status');
     expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
@@ -1127,6 +1130,7 @@ describe('BuilderPage v2', () => {
     ).toBe('status');
     expect(workStatus?.textContent).toContain('Assistant is working');
     expect(workStatus?.textContent).toContain('Writing the response.');
+    expect(started).toBeNull();
     expect(contextReady).toBeNull();
     expect(responseStarted).toBeNull();
     expect(container.textContent).not.toMatch(
@@ -1149,7 +1153,7 @@ describe('BuilderPage v2', () => {
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(reviewStrip).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('stacked');
+    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('action-row');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(reviewStrip?.textContent).toContain('Preview and changes are ready.');

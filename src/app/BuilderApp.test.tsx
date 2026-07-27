@@ -710,6 +710,37 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
+  it('does not restore submitted text when the send command is triggered again while work is pending', async () => {
+    const { container, resolveGenerate, submit } = await setup({
+      deferredGenerate: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const send = container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')!;
+
+    act(() => {
+      send.click();
+      send.click();
+    });
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledOnce();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    });
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+
+    expect(submit).toHaveBeenCalledOnce();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
   it('loads the visible project activity through the read-only task stream bridge', async () => {
     const { container, readTaskStream } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;

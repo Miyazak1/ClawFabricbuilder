@@ -42,7 +42,11 @@ describe('BuilderStaticPreview', () => {
     expect(container.querySelector('h2')?.textContent).toBe('Color picker');
     expect(container.textContent).toContain('Static preview');
     expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
-      .toContain('static HTML and CSS only');
+      .toContain('does not run JavaScript modules');
+    expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
+      .toContain('Three.js');
+    expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
+      .toContain('runtime preview is needed');
     expect(container.textContent).not.toContain('Safe preview');
     const frame = container.querySelector<HTMLIFrameElement>('iframe');
     expect(frame?.getAttribute('sandbox')).toBe('');

@@ -405,6 +405,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
   const restoreAttemptKeysRef = useRef(new Set<string>());
+  const submitInFlightRef = useRef(false);
   const workspacePorts = useMemo(() => {
     void workspaceEpoch;
     const generator: BuilderCodeGeneratorPort = Object.freeze({
@@ -526,6 +527,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
     restoreAttemptKeysRef.current.clear();
+    submitInFlightRef.current = false;
     setWorkspaceEpoch(workspaceEpochRef.current);
     setProjectId(nextProjectId);
     setIdea('');
@@ -581,15 +583,23 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [conversation.snapshot, project, project.snapshot, readActivityAfterTerminal]);
 
   const submitInstruction = useCallback(async () => {
+    if (submitInFlightRef.current || idea.trim().length === 0) return;
     const commandEpoch = workspaceEpochRef.current;
     const submittedIdea = idea;
+    submitInFlightRef.current = true;
     setIdea('');
     setLiveOutput(null);
-    const result = await project.submit(submittedIdea);
-    if (workspaceEpochRef.current !== commandEpoch) return;
-    if (!shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
-    await readActivityAfterTerminal(result, commandEpoch);
-    setLiveOutput(null);
+    try {
+      const result = await project.submit(submittedIdea);
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      if (!shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
+      await readActivityAfterTerminal(result, commandEpoch);
+      setLiveOutput(null);
+    } finally {
+      if (workspaceEpochRef.current === commandEpoch) {
+        submitInFlightRef.current = false;
+      }
+    }
   }, [idea, project, readActivityAfterTerminal]);
 
   const retryGenerate = useCallback(async () => {

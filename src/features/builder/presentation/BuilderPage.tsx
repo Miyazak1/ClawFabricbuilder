@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   AlertCircle,
   ArrowUp,
@@ -482,9 +482,13 @@ function lineNumberLabel(value: number | null): string {
 
 function ChangesPanel({
   changes,
+  open,
+  onOpenChange,
   onOpenFile,
 }: Readonly<{
   changes: BuilderSourceTreeChanges;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
 }>) {
   return (
@@ -498,6 +502,8 @@ function ChangesPanel({
       <details
         className="cf-builder-changes-disclosure"
         data-builder-changes-disclosure="true"
+        onToggle={(event) => onOpenChange(event.currentTarget.open)}
+        open={open}
         tabIndex={-1}
       >
         <summary className="cf-builder-panel-toolbar cf-builder-changes-summary-row">
@@ -1044,6 +1050,21 @@ export function BuilderPage({
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTailRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowChatRef = useRef(true);
+  const changesPanelIdentity = [
+    draft?.draft_id ?? 'no-draft',
+    inspected?.target.revision_receipt_digest ?? 'no-inspected',
+    saved?.target.revision_receipt_digest ?? 'no-saved',
+  ].join('|');
+  const [changesPanelState, setChangesPanelState] = useState<Readonly<{
+    identity: string;
+    open: boolean;
+  }>>(() => ({
+    identity: changesPanelIdentity,
+    open: false,
+  }));
+  const changesPanelOpen = changesPanelState.identity === changesPanelIdentity
+    ? changesPanelState.open
+    : false;
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
       ? 'no-live-output'
@@ -1093,6 +1114,18 @@ export function BuilderPage({
     shouldFollowChatRef.current = isNearChatBottom(scroll);
   }
 
+  function setChangesPanelOpen(open: boolean): void {
+    setChangesPanelState((panelState) => {
+      if (panelState.identity === changesPanelIdentity && panelState.open === open) {
+        return panelState;
+      }
+      return {
+        identity: changesPanelIdentity,
+        open,
+      };
+    });
+  }
+
   function selectFile(path: string): boolean {
     if (typeof onSelectFile !== 'function') return false;
     onSelectFile(path);
@@ -1111,6 +1144,7 @@ export function BuilderPage({
   }
 
   function openChangesPanel(): void {
+    setChangesPanelOpen(true);
     const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     if (disclosure !== null) {
       disclosure.open = true;
@@ -1328,7 +1362,7 @@ export function BuilderPage({
     <section
       aria-label="Draft review"
       className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
-      data-builder-review-layout="stacked"
+      data-builder-review-layout="action-row"
       data-builder-review-checkpoint="true"
       ref={draftReviewRef}
     >
@@ -1480,6 +1514,7 @@ export function BuilderPage({
           aria-label="Project conversation workspace"
           className="cf-builder-chat-shell"
           data-builder-chat-workspace="true"
+          data-builder-review-sidebar-mode={showReviewSidebar ? (changesPanelOpen ? 'expanded' : 'summary') : 'hidden'}
           data-builder-review-sidebar-visible={showReviewSidebar ? 'true' : 'false'}
         >
           <div className="cf-builder-chat-main" data-builder-chat-main="true">
@@ -1590,7 +1625,9 @@ export function BuilderPage({
             >
               <ChangesPanel
                 changes={changes}
+                onOpenChange={setChangesPanelOpen}
                 onOpenFile={openChangedFile}
+                open={changesPanelOpen}
               />
               <VersionHistoryPanel
                 hasSavedProject={saved !== null}

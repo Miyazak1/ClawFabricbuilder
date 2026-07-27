@@ -24,8 +24,9 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
       </header>
       {projection.preview_script_admission === 'not_authorized' ? (
         <p className="cf-builder-preview-note" data-builder-preview-limitation="true">
-          This preview shows static HTML and CSS only. Projects that rely on JavaScript modules, Three.js,
-          canvas animation, or live network assets may appear blank here; review the source files before saving.
+          Static preview does not run JavaScript modules, Three.js, canvas animation, network assets,
+          or app servers. If this pane is blank, review the files and changes; a runtime preview is
+          needed to run it.
         </p>
       ) : null}
       <iframe
