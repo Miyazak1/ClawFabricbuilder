@@ -403,7 +403,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v7');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v8');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -412,7 +412,18 @@ const planReviewBridge = frozenObjectLiteral(planReviewProperty.initializer);
 const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
-exactObjectKeys(generationBridge, ['submit', 'generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability', 'subscribeStarted']);
+exactObjectKeys(generationBridge, [
+  'submit',
+  'generate',
+  'retry',
+  'answer',
+  'restoreDraft',
+  'rejectDraft',
+  'cancel',
+  'availability',
+  'subscribeStarted',
+  'subscribeOutput',
+]);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
 exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
@@ -433,6 +444,8 @@ assert.deepEqual(rendererPropertyAccesses, [
   'invoke',
   'invoke',
   'invoke',
+  'on',
+  'removeListener',
   'on',
   'removeListener',
   'invoke',

@@ -9,6 +9,7 @@ const {
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_CHANNEL,
+  GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
@@ -66,6 +67,11 @@ const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'use
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const REQUEST_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -234,6 +240,67 @@ function generationStartedEvent(rawEvent) {
   });
 }
 
+function safeDisplayDeltaText(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_DISPLAY_DELTA_TEXT_BYTES
+    || Buffer.byteLength(value, 'utf8') > MAX_DISPLAY_DELTA_TEXT_BYTES
+  ) fail();
+  return value;
+}
+
+function generationOutputEvent(rawEvent) {
+  if (!isPlainObject(rawEvent)) fail();
+  const keys = Reflect.ownKeys(rawEvent);
+  const expectedKeys = [
+    'event_version',
+    'request_id',
+    'project_id',
+    'conversation_id',
+    'turn_id',
+    'task_id',
+    'run_id',
+    'display_delta_text',
+  ];
+  if (
+    keys.length !== expectedKeys.length
+    || keys.some((key) => typeof key !== 'string' || !expectedKeys.includes(key))
+  ) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(rawEvent);
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  const taskId = descriptors.task_id.value;
+  if (
+    descriptors.event_version.value !== 'builder-generation-output.v1'
+    || typeof descriptors.request_id.value !== 'string'
+    || !REQUEST_DIGEST_PATTERN.test(descriptors.request_id.value)
+    || typeof descriptors.project_id.value !== 'string'
+    || !PROJECT_ID_PATTERN.test(descriptors.project_id.value)
+    || typeof descriptors.conversation_id.value !== 'string'
+    || !CONVERSATION_ID_PATTERN.test(descriptors.conversation_id.value)
+    || descriptors.conversation_id.value.slice('builder-conversation:'.length)
+      !== descriptors.project_id.value.slice('builder-project:'.length)
+    || typeof descriptors.turn_id.value !== 'string'
+    || !TURN_ID_PATTERN.test(descriptors.turn_id.value)
+    || (taskId !== null && (typeof taskId !== 'string' || !TASK_ID_PATTERN.test(taskId)))
+    || typeof descriptors.run_id.value !== 'string'
+    || !RUN_ID_PATTERN.test(descriptors.run_id.value)
+  ) fail();
+  return Object.freeze({
+    event_version: 'builder-generation-output.v1',
+    request_id: descriptors.request_id.value,
+    project_id: descriptors.project_id.value,
+    conversation_id: descriptors.conversation_id.value,
+    turn_id: descriptors.turn_id.value,
+    task_id: taskId,
+    run_id: descriptors.run_id.value,
+    display_delta_text: safeDisplayDeltaText(descriptors.display_delta_text.value),
+  });
+}
+
 function saveResultProjectId(value) {
   if (!isPlainObject(value)) fail();
   const projectId = Object.getOwnPropertyDescriptor(value, 'project_id');
@@ -342,6 +409,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const webContents = activeWebContents(options.mainWindowRef);
         if (webContents === null) return;
         webContents.send(GENERATION_STARTED_CHANNEL, generationStartedEvent(event));
+      },
+      onProviderOutputDelta(event) {
+        const webContents = activeWebContents(options.mainWindowRef);
+        if (webContents === null) return;
+        webContents.send(GENERATION_OUTPUT_CHANNEL, generationOutputEvent(event));
       },
     });
     const saveAuthority = createBuilderProjectSaveAuthority({

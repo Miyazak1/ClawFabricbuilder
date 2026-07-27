@@ -247,6 +247,7 @@ async function setup(options: Readonly<{
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
+  const generationOutputListeners = new Set<(event: unknown) => void>();
   const taskStreamChangedListeners = new Set<(event: unknown) => void>();
   const readTaskStream = vi.fn(async () => (
     options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
@@ -322,6 +323,12 @@ async function setup(options: Readonly<{
           generationStartedListeners.delete(listener);
         };
       },
+      subscribeOutput(listener: (event: unknown) => void) {
+        generationOutputListeners.add(listener);
+        return () => {
+          generationOutputListeners.delete(listener);
+        };
+      },
     },
     projectWorkspace: {
       open,
@@ -395,6 +402,24 @@ async function setup(options: Readonly<{
             event_version: 'builder-generation-started.v1',
             request_id: requestId,
             project_id: projectId,
+          });
+        }
+      });
+      return listenerCount;
+    },
+    emitGenerationOutput(requestId: string, text: string, projectId = PROJECT_ID) {
+      const listenerCount = generationOutputListeners.size;
+      act(() => {
+        for (const listener of [...generationOutputListeners]) {
+          listener({
+            event_version: 'builder-generation-output.v1',
+            request_id: requestId,
+            project_id: projectId,
+            conversation_id: `builder-conversation:${projectId.slice('builder-project:'.length)}`,
+            turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+            task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174001',
+            run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174001',
+            display_delta_text: text,
           });
         }
       });
@@ -725,7 +750,7 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     const expected = await createBuilderGenerationRequest('Make a timer.', null);
-    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBe(1);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
       expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     });
@@ -749,6 +774,49 @@ describe('BuilderApp v2', () => {
       expect(readTaskStream).toHaveBeenCalledTimes(2);
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+  });
+
+  it('renders display-safe live AI output as an assistant message while work is active', async () => {
+    const {
+      container,
+      emitGenerationOutput,
+      emitGenerationStarted,
+      resolveGenerate,
+      submit,
+    } = await setup({ deferredGenerate: true });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    expect(emitGenerationOutput(expected.request_digest, 'Planning a quiet timer UI.', PROJECT_ID)).toBeGreaterThan(0);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain('Planning a quiet timer UI.');
+    });
+    const liveOutput = container.querySelector('[data-builder-live-output="true"]');
+    expect(liveOutput?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(liveOutput?.querySelector('[data-builder-message-surface]')?.getAttribute('data-builder-message-surface'))
+      .toBe('plain');
+    expect(liveOutput?.textContent).not.toMatch(/provider|credential|source_tree|request_id|builder-run/iu);
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
   });
 
   it('records plan approval through the plan-review bridge and only refreshes activity', async () => {

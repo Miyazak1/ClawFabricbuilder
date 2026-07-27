@@ -687,7 +687,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   });
 });
 
-test('observes provider output deltas through a redacted main-only envelope', async () => {
+test('observes display-safe provider output deltas through a redacted main-only envelope', async () => {
   const observed = [];
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
@@ -699,8 +699,9 @@ test('observes provider output deltas through a redacted main-only envelope', as
     transport: async (_input, control) => {
       assert.equal(control.signal instanceof AbortSignal, true);
       assert.equal(typeof control.on_output_delta, 'function');
-      await control.on_output_delta({ delta_text: '{"kind"' });
-      await control.on_output_delta({ delta_text: ':"builder_code_project"}' });
+      await control.on_output_delta({ delta_text: '{"kind":"builder_code_change_operations","title":"Focus",' });
+      await control.on_output_delta({ delta_text: '"summary":"A quiet' });
+      await control.on_output_delta({ delta_text: ' timer","operations":[{"operation":"upsert","path":"index.html","content":"<main>secret</main>"}]}' });
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput()),
@@ -713,13 +714,13 @@ test('observes provider output deltas through a redacted main-only envelope', as
 
   assert.equal(result.request_id, raw.request_digest);
   assert.equal(lifecycle.calls.candidate.length, 1);
-  assert.deepEqual(observed.map((event) => event.delta_text), [
-    '{"kind"',
-    ':"builder_code_project"}',
+  assert.deepEqual(observed.map((event) => event.display_delta_text), [
+    'A quiet',
+    ' timer',
   ]);
   assert.deepEqual(Reflect.ownKeys(observed[0]).sort(), [
     'conversation_id',
-    'delta_text',
+    'display_delta_text',
     'event_version',
     'project_id',
     'request_id',
@@ -727,7 +728,7 @@ test('observes provider output deltas through a redacted main-only envelope', as
     'task_id',
     'turn_id',
   ]);
-  assert.equal(observed[0].event_version, 'builder-provider-output-delta-observed.v1');
+  assert.equal(observed[0].event_version, 'builder-generation-output.v1');
   assert.equal(observed[0].request_id, raw.request_digest);
   assert.equal(observed[0].project_id, PROJECT_ID);
   assert.match(observed[0].conversation_id, /^builder-conversation:/u);
@@ -737,7 +738,7 @@ test('observes provider output deltas through a redacted main-only envelope', as
   assert.equal(Object.isFrozen(observed[0]), true);
   assert.doesNotMatch(
     JSON.stringify(observed),
-    /credential|provider\.example|builder-model|source_tree|operations|git_request|receipt/iu,
+    /credential|provider\.example|builder-model|source_tree|operations|index\.html|<main>|secret|git_request|receipt/iu,
   );
 });
 

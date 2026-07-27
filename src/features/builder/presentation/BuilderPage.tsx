@@ -47,8 +47,17 @@ import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourc
 
 export type BuilderFileName = string;
 
+export type BuilderLiveOutputSnapshot = Readonly<{
+  state: 'streaming';
+  request_id: string;
+  project_id: string;
+  text: string;
+  chunk_count: number;
+}>;
+
 export type BuilderPageProps = {
   instruction: string;
+  liveOutput?: BuilderLiveOutputSnapshot | null;
   onInstructionChange?: (value: string) => void;
   onCancel?: () => void;
   onSubmitInstruction?: () => void;
@@ -721,8 +730,38 @@ function ActivityItem({
   );
 }
 
+function ActivityLiveOutputItem({
+  liveOutput,
+}: Readonly<{
+  liveOutput: BuilderLiveOutputSnapshot;
+}>) {
+  return (
+    <li
+      className="cf-builder-activity-item"
+      data-builder-activity-card="Assistant live output"
+      data-builder-activity-role="assistant"
+      data-builder-live-output="true"
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <Bot className="size-3.5" />
+      </div>
+      <div
+        className="cf-builder-activity-content min-w-0"
+        data-builder-message-surface="plain"
+      >
+        <div className="cf-builder-activity-title">Assistant</div>
+        <p className="cf-builder-activity-body">
+          {liveOutput.text}
+          <span className="cf-builder-live-output-cursor" aria-hidden="true" />
+        </p>
+      </div>
+    </li>
+  );
+}
+
 function ActivityPanel({
   hasUnsavedDraft,
+  liveOutput,
   snapshot,
   onRefresh,
   onReviewPlan,
@@ -731,6 +770,7 @@ function ActivityPanel({
 }: Readonly<{
   canReviewPlan: boolean;
   hasUnsavedDraft: boolean;
+  liveOutput: BuilderLiveOutputSnapshot | null;
   snapshot: BuilderConversationControllerSnapshot | null;
   onRefresh?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
@@ -768,7 +808,7 @@ function ActivityPanel({
         {snapshot?.status === 'refreshing' ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {items.length === 0 && message !== null ? (
+        {items.length === 0 && liveOutput === null && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
             {message}
           </div>
@@ -784,6 +824,9 @@ function ActivityPanel({
                 pendingPlanReview={pendingPlanReview}
               />
             ))}
+            {liveOutput !== null && liveOutput.text.length > 0 ? (
+              <ActivityLiveOutputItem liveOutput={liveOutput} />
+            ) : null}
           </ol>
         )}
         {items.length > 0 && message !== null ? (
@@ -835,6 +878,7 @@ export function BuilderPage({
   historySnapshot,
   snapshot,
   activeFile,
+  liveOutput = null,
   onSelectFile,
 }: BuilderPageProps) {
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
@@ -872,7 +916,8 @@ export function BuilderPage({
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
   const history = visibleHistorySnapshot(historySnapshot);
-  const showActivity = shouldShowActivityPanel(activity);
+  const visibleLiveOutput = liveOutput !== null && liveOutput.text.length > 0 ? liveOutput : null;
+  const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
   const planReviewTarget = pendingPlanReviewTarget(activity);
   const canReviewPlan = typeof onReviewPlan === 'function'
     && planReviewTarget !== null
@@ -893,14 +938,18 @@ export function BuilderPage({
   const chatTailRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowChatRef = useRef(true);
   const activityFollowCursor = (() => {
+    const liveCursor = visibleLiveOutput === null
+      ? 'no-live-output'
+      : `${visibleLiveOutput.request_id}:${visibleLiveOutput.chunk_count}:${visibleLiveOutput.text}`;
     const conversation = activity?.conversation;
-    if (conversation?.state !== 'ready') return activity?.status ?? 'no-activity';
+    if (conversation?.state !== 'ready') return `${activity?.status ?? 'no-activity'}:${liveCursor}`;
     const items = conversation.conversation.items;
     const tail = items.at(-1);
     return [
       conversation.conversation.head_sequence,
       items.length,
       tail === undefined ? 'empty' : `${tail.sequence}:${tail.item_kind}:${activityTitle(tail)}:${activityBody(tail)}`,
+      liveCursor,
     ].join(':');
   })();
   const chatFollowKey = [
@@ -1316,6 +1365,7 @@ export function BuilderPage({
                 <ActivityPanel
                   canReviewPlan={canReviewPlan}
                   hasUnsavedDraft={hasUnsavedDraft}
+                  liveOutput={visibleLiveOutput}
                   onRefresh={onRefreshConversation}
                   onReviewPlan={onReviewPlan}
                   pendingPlanReview={planReviewTarget}

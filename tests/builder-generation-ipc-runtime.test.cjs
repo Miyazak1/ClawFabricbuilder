@@ -13,6 +13,7 @@ const {
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_CHANNEL,
+  GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
@@ -124,6 +125,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           ANSWER_CHANNEL,
           GENERATE_CHANNEL,
+          GENERATION_OUTPUT_CHANNEL,
           GENERATION_STARTED_CHANNEL,
           SUBMIT_CHANNEL,
           CANCEL_CHANNEL,
@@ -154,6 +156,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.conversationService, context.__conversationService);
             assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
             assert.equal(typeof options.onGenerationStarted, 'function');
+            assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
           },
         };
@@ -684,6 +687,75 @@ test('publishes generation started hints to bind live reads without exposing sou
   assert.doesNotMatch(
     JSON.stringify(mainWindow.webContents.sent[0].payload),
     /credential|provider|source_tree|commit_oid|tree_oid|receipt/iu,
+  );
+  runtime.dispose();
+});
+
+test('publishes display-safe generation output deltas without exposing provider internals', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const requestId = hostRequestDigest('Make a timer.', null);
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    async submit() {
+      probes.serviceOptions.onProviderOutputDelta(Object.assign(Object.create(null), {
+        event_version: 'builder-generation-output.v1',
+        request_id: requestId,
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+        task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174002',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
+        display_delta_text: 'A quiet timer',
+      }));
+      return { ok: true };
+    },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: requestId, cancelled: true }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: false,
+        reason: 'not_configured',
+        supports_cancel: true,
+      };
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Make a timer." })', harness.context),
+  );
+
+  assert.equal(mainWindow.webContents.sent.length, 1);
+  assert.equal(mainWindow.webContents.sent[0].channel, GENERATION_OUTPUT_CHANNEL);
+  assert.deepEqual(Reflect.ownKeys(mainWindow.webContents.sent[0].payload), [
+    'event_version',
+    'request_id',
+    'project_id',
+    'conversation_id',
+    'turn_id',
+    'task_id',
+    'run_id',
+    'display_delta_text',
+  ]);
+  assert.equal(mainWindow.webContents.sent[0].payload.event_version, 'builder-generation-output.v1');
+  assert.equal(mainWindow.webContents.sent[0].payload.display_delta_text, 'A quiet timer');
+  assert.doesNotMatch(
+    JSON.stringify(mainWindow.webContents.sent[0].payload),
+    /credential|provider|source_tree|commit_oid|tree_oid|receipt|operations|index\.html/iu,
   );
   runtime.dispose();
 });

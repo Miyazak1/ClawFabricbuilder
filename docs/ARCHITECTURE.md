@@ -75,14 +75,17 @@ source content, Git evidence, Save authority, or Project Revision authority.
 This is durable work visibility, not a token-streaming or tool-execution
 protocol.
 
-The OpenAI-compatible provider transport also has a main-only streaming observer
-path. When the Generation host supplies an internal observer, the request uses a
-bounded `text/event-stream` response, assembles the same terminal generated-text
-result, and forwards only advisory delta text through a redacted
-Project/Conversation/Run envelope inside main. This path has no renderer
-IPC/preload exposure and does not project raw provider deltas into the Task
-Stream; user-visible token output and tool-output streaming still require
-separate projection and UI gates.
+The OpenAI-compatible provider transport also has a streaming observer path.
+When the Generation host supplies an internal observer, the request uses a
+bounded `text/event-stream` response and assembles the same terminal
+generated-text result. Raw provider deltas stay main-only. The Generation main
+service may extract top-level display text from the approved generation result
+shape and send that through one renderer-safe live output event so the
+conversation can show active AI text while the Run is in flight. This event is
+ephemeral UI state, not a Task Stream fact, and it carries no raw provider
+envelope, prompt, credential, source content, Git evidence, Save authority, or
+Project Revision authority; tool-output streaming still requires a separate
+projection gate.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

@@ -25,6 +25,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderGenerationOutputEvent,
   BuilderGenerationStartedEvent,
   BuilderPlanReviewPort,
   BuilderPlanReviewRequest,
@@ -87,6 +88,16 @@ const BUILDER_RAIL_ITEMS: readonly BuilderRailItem[] = Object.freeze([
   { Icon: MessageSquare, enabled: false, id: 'contacts', label: 'Contacts', view: null },
   { Icon: Settings, enabled: true, id: 'settings', label: 'Settings', view: 'settings' },
 ]);
+const MAX_LIVE_OUTPUT_TEXT_BYTES = 16 * 1024;
+const LIVE_OUTPUT_ENCODER = new TextEncoder();
+
+export type BuilderLiveOutputSnapshot = Readonly<{
+  state: 'streaming';
+  request_id: string;
+  project_id: string;
+  text: string;
+  chunk_count: number;
+}>;
 
 const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   bridgeVersion: 'builder-preload.v0',
@@ -222,6 +233,14 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
   cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
+  subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
+    void listener;
+    return () => undefined;
+  },
+  subscribeOutput(listener: (event: BuilderGenerationOutputEvent) => void) {
+    void listener;
+    return () => undefined;
   },
 });
 
@@ -365,6 +384,12 @@ function shouldReadChangedTaskStream(
   return visibleProjectId !== null && eventProjectId === visibleProjectId;
 }
 
+function appendLiveOutputText(current: string, delta: string): string | null {
+  const next = `${current}${delta}`;
+  if (LIVE_OUTPUT_ENCODER.encode(next).byteLength > MAX_LIVE_OUTPUT_TEXT_BYTES) return null;
+  return next;
+}
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
@@ -375,6 +400,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
+  const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
@@ -405,6 +431,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
         return ports.generator.subscribeStarted?.(listener) ?? (() => undefined);
+      },
+      subscribeOutput(listener: (event: BuilderGenerationOutputEvent) => void) {
+        return ports.generator.subscribeOutput?.(listener) ?? (() => undefined);
       },
     });
     const workspace: BuilderProjectWorkspacePort = Object.freeze({
@@ -459,6 +488,41 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     })
   ), [ports.taskStream]);
 
+  useEffect(() => (
+    ports.generator.subscribeStarted?.((event) => {
+      const currentSnapshot = projectSnapshotRef.current;
+      const visibleProjectId = visibleConversationProjectId(currentSnapshot);
+      if (!currentSnapshot.busy) return;
+      if (visibleProjectId !== null && visibleProjectId !== event.project_id) return;
+      setLiveOutput(Object.freeze({
+        state: 'streaming',
+        request_id: event.request_id,
+        project_id: event.project_id,
+        text: '',
+        chunk_count: 0,
+      }));
+    }) ?? (() => undefined)
+  ), [ports.generator]);
+
+  useEffect(() => (
+    ports.generator.subscribeOutput?.((event) => {
+      setLiveOutput((current) => {
+        if (
+          current === null
+          || current.request_id !== event.request_id
+          || current.project_id !== event.project_id
+        ) return current;
+        const text = appendLiveOutputText(current.text, event.display_delta_text);
+        if (text === null) return current;
+        return Object.freeze({
+          ...current,
+          text,
+          chunk_count: current.chunk_count + 1,
+        });
+      });
+    }) ?? (() => undefined)
+  ), [ports.generator]);
+
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
     restoreAttemptKeysRef.current.clear();
@@ -466,6 +530,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setProjectId(nextProjectId);
     setIdea('');
     setActiveFile(null);
+    setLiveOutput(null);
     setView('project');
   }, []);
 
@@ -517,18 +582,22 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const submitInstruction = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
+    setLiveOutput(null);
     const result = await project.submit(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
     if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
+    setLiveOutput(null);
   }, [idea, project, readActivityAfterTerminal]);
 
   const retryGenerate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
+    setLiveOutput(null);
     const result = await project.retryGenerate();
     if (workspaceEpochRef.current !== commandEpoch) return;
     if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
+    setLiveOutput(null);
   }, [project, readActivityAfterTerminal]);
 
   const cancel = useCallback(async () => {
@@ -536,6 +605,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const result = await project.cancel();
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
+    setLiveOutput(null);
   }, [project, readActivityAfterTerminal]);
 
   const rejectDraft = useCallback(async () => {
@@ -544,6 +614,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const result = await project.rejectDraft();
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch, draftProjectId);
+    setLiveOutput(null);
   }, [project, readActivityAfterTerminal]);
 
   const save = useCallback(async () => {
@@ -551,6 +622,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const result = await project.save();
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
+    setLiveOutput(null);
     const savedProjectId = durableProjectId(result);
     if (savedProjectId !== null) {
       setProjectId(savedProjectId);
@@ -755,6 +827,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             <BuilderPage
               activeFile={activeFile}
               instruction={idea}
+              liveOutput={liveOutput}
               onSubmitInstruction={submitInstruction}
               onInstructionChange={setIdea}
               onInspectRevision={inspectRevision}

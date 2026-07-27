@@ -6,6 +6,17 @@ export type BuilderGenerationStartedEvent = Readonly<{
   project_id: string;
 }>;
 
+export type BuilderGenerationOutputEvent = Readonly<{
+  event_version: 'builder-generation-output.v1';
+  request_id: string;
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  task_id: string | null;
+  run_id: string;
+  display_delta_text: string;
+}>;
+
 export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_parent_unavailable'
   | 'builder_generation_provider_unavailable'
@@ -75,6 +86,7 @@ export interface BuilderCodeGeneratorPort {
   rejectDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   cancel(request: Readonly<{ request_id: string }>): Promise<unknown>;
   subscribeStarted?(listener: (event: BuilderGenerationStartedEvent) => void): () => void;
+  subscribeOutput?(listener: (event: BuilderGenerationOutputEvent) => void): () => void;
 }
 
 export interface BuilderProjectWorkspacePort {

@@ -29,6 +29,9 @@ const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
 const GENERATE_OPERATION_PREFIX = 'generate:';
 const ANSWER_OPERATION_PREFIX = 'answer:';
+const PROVIDER_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
+const MAX_LIVE_OUTPUT_BUFFER_BYTES = 512 * 1024;
+const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
@@ -48,6 +51,10 @@ const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
+const CREDENTIAL_PATTERN =
+  /(?:["'`]?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|secret|credential|client[_-]?secret|private[_-]?key)["'`]?\s*[:=]\s*(?!["'`]?\s*(?:null|undefined)\b)\S|\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|https?:\/\/[^\s/:@]+:[^\s/@]+@|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/iu;
+const LOCAL_PATH_PATTERN =
+  /(?:file:\/{1,3}|\\\\|(?:^|[\s"'`=(,:])(?:[A-Za-z]:[\\/]|~[\\/]|\/(?!\/)[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*))/iu;
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_draft_conflict: 'The generated project draft could not be verified.',
@@ -149,6 +156,18 @@ function freezeDeep(value) {
   return value;
 }
 
+function hasUnpairedSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
+}
+
 function canonicalJson(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' && Number.isSafeInteger(value)) return JSON.stringify(value);
@@ -189,6 +208,76 @@ function safeDigest(value) {
 function safePattern(value, pattern, maximum) {
   if (typeof value !== 'string' || value.length > maximum || !pattern.test(value)) fail();
   return value;
+}
+
+function safeLiveDisplayText(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || hasUnpairedSurrogate(value)
+    || Buffer.byteLength(value, 'utf8') > MAX_LIVE_DISPLAY_TEXT_BYTES
+    || CREDENTIAL_PATTERN.test(value)
+    || LOCAL_PATH_PATTERN.test(value)
+  ) return null;
+  return value;
+}
+
+function appendProviderOutputBuffer(state, deltaText) {
+  if (
+    typeof deltaText !== 'string'
+    || deltaText.length === 0
+    || hasUnpairedSurrogate(deltaText)
+  ) return null;
+  const nextBytes = Buffer.byteLength(deltaText, 'utf8');
+  if (state.buffer_bytes + nextBytes > MAX_LIVE_OUTPUT_BUFFER_BYTES) return null;
+  state.buffer_text += deltaText;
+  state.buffer_bytes += nextBytes;
+  return state.buffer_text;
+}
+
+function decodeJsonEscape(sequence) {
+  if (sequence.length < 2) return null;
+  const marker = sequence[1];
+  if (marker === '"') return '"';
+  if (marker === '\\') return '\\';
+  if (marker === '/') return '/';
+  if (marker === 'b') return '\b';
+  if (marker === 'f') return '\f';
+  if (marker === 'n') return '\n';
+  if (marker === 'r') return '\r';
+  if (marker === 't') return '\t';
+  if (marker !== 'u') return null;
+  if (sequence.length < 6 || !/^[0-9a-f]{4}$/iu.test(sequence.slice(2, 6))) return null;
+  return String.fromCharCode(Number.parseInt(sequence.slice(2, 6), 16));
+}
+
+function extractPartialJsonStringField(source, fieldName) {
+  const marker = `"${fieldName}"`;
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex === -1) return '';
+  let index = markerIndex + marker.length;
+  while (/\s/u.test(source[index] ?? '')) index += 1;
+  if (source[index] !== ':') return '';
+  index += 1;
+  while (/\s/u.test(source[index] ?? '')) index += 1;
+  if (source[index] !== '"') return '';
+  index += 1;
+  let output = '';
+  for (; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '"') return output;
+    if (character === '\\') {
+      const remaining = source.slice(index, index + 6);
+      const decoded = decodeJsonEscape(remaining);
+      if (decoded === null) return output;
+      output += decoded;
+      index += remaining[1] === 'u' ? 5 : 1;
+      continue;
+    }
+    if (character < ' ') return '';
+    output += character;
+  }
+  return output;
 }
 
 function safeOid(value, nullable = false) {
@@ -555,6 +644,8 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingRetryContexts = new Map();
   const generationContexts = new WeakMap();
   const explanationContexts = new WeakMap();
+  const providerOutputStates = new WeakMap();
+  const liveOutputContextsByRunId = new Map();
   let pendingAuthority = null;
   let bindingAuthority = false;
 
@@ -614,20 +705,56 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function notifyProviderOutputDelta(context, deltaText) {
+  function liveOutputState(context) {
+    const existing = providerOutputStates.get(context);
+    if (existing !== undefined) return existing;
+    const created = {
+      buffer_text: '',
+      buffer_bytes: 0,
+      emitted_text: '',
+    };
+    providerOutputStates.set(context, created);
+    return created;
+  }
+
+  function inheritLiveOutputState(previousContext, nextContext) {
+    const existing = providerOutputStates.get(previousContext);
+    if (existing !== undefined) providerOutputStates.set(nextContext, existing);
+  }
+
+  function displayDeltaFromProviderOutput(context, deltaText, fieldName) {
+    const state = liveOutputState(context);
+    const buffer = appendProviderOutputBuffer(state, deltaText);
+    if (buffer === null) return null;
+    const displayText = safeLiveDisplayText(extractPartialJsonStringField(buffer, fieldName));
+    if (displayText === null || displayText.length <= state.emitted_text.length) return null;
+    const delta = displayText.slice(state.emitted_text.length);
+    const safeDelta = safeLiveDisplayText(delta);
+    if (safeDelta === null) return null;
+    state.emitted_text = displayText;
+    return safeDelta;
+  }
+
+  function notifyProviderOutputDelta(context, rawDeltaText) {
     if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
-    const conversationContext = generationContexts.get(context) ?? explanationContexts.get(context);
+    const runId = typeof context.run_id === 'string' ? context.run_id : null;
+    const conversationContext = generationContexts.get(context)
+      ?? explanationContexts.get(context)
+      ?? (runId === null ? undefined : liveOutputContextsByRunId.get(runId));
     if (conversationContext === undefined) return;
+    const fieldName = conversationContext.ids.task_id === null ? 'explanation' : 'summary';
+    const displayDeltaText = displayDeltaFromProviderOutput(context, rawDeltaText, fieldName);
+    if (displayDeltaText === null) return;
     try {
       Reflect.apply(options.onProviderOutputDelta, undefined, [freezeDeep({
-        event_version: 'builder-provider-output-delta-observed.v1',
+        event_version: PROVIDER_OUTPUT_EVENT_VERSION,
         request_id: conversationContext.request_digest,
         project_id: conversationContext.project.project_id,
         conversation_id: conversationContext.conversation.conversation_id,
         turn_id: conversationContext.ids.turn_id,
         task_id: conversationContext.ids.task_id,
         run_id: conversationContext.ids.run_id,
-        delta_text: deltaText,
+        display_delta_text: displayDeltaText,
       })]);
     } catch {
       // Live output observation cannot alter durable Conversation, Git, or SQLite facts.
@@ -683,6 +810,7 @@ function createBuilderGenerationMainService(rawOptions) {
       git_request_id: newId(options.createUuid, 'builder-git-request'),
     });
     generationContexts.set(generationContext, conversationContext);
+    liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
     return generationContext;
   }
 
@@ -785,6 +913,7 @@ function createBuilderGenerationMainService(rawOptions) {
         run_id: conversationContext.ids.run_id,
       });
       explanationContexts.set(explanationContext, conversationContext);
+      liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
       return explanationContext;
     } catch {
       fail();
@@ -808,7 +937,9 @@ function createBuilderGenerationMainService(rawOptions) {
           ...context,
           conversation_events: progressed.events,
         });
+        inheritLiveOutputState(context, updated);
         generationContexts.set(updated, progressed);
+        liveOutputContextsByRunId.set(progressed.ids.run_id, progressed);
         activeContexts.set(
           operationKey(GENERATE_OPERATION_PREFIX, generationContext.request_digest),
           progressed,
@@ -826,7 +957,9 @@ function createBuilderGenerationMainService(rawOptions) {
           ...context,
           conversation_events: progressed.events,
         });
+        inheritLiveOutputState(context, updated);
         explanationContexts.set(updated, progressed);
+        liveOutputContextsByRunId.set(progressed.ids.run_id, progressed);
         activeContexts.set(
           operationKey(ANSWER_OPERATION_PREFIX, explanationContext.request_digest),
           progressed,

@@ -234,13 +234,15 @@ unless explicitly sent through the dedicated Builder provider authority.
 - The composer remains available as the continuing input surface.
 - Source/preview tools stay accessible without dominating the conversation.
 
-Provider output streaming is currently a main-only observer contract. It can
-consume bounded OpenAI-compatible `text/event-stream` deltas while preserving the
-same terminal generation result, but those raw deltas are not yet a renderer-safe
-Task Stream item. User-visible streaming text and tool-output rows require a
-later projection gate that turns internal provider/tool facts into ordinary
-conversation language without exposing provider envelopes, prompts, credentials,
-source evidence, Git receipts, Save authority, or Project Revision facts.
+Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`
+deltas while preserving the same terminal generation result. Raw provider deltas
+remain main-only. The current renderer path exposes only ephemeral live display
+text extracted from approved generation result fields, so the conversation can
+show active AI text without making it a durable Task Stream item. Tool-output
+rows still require a later projection gate that turns internal tool facts into
+ordinary conversation language without exposing provider envelopes, prompts,
+credentials, source evidence, Git receipts, Save authority, or Project Revision
+facts.
 - Candidate, saved, failed, and superseded states are visually distinct.
 - The user can always identify the current saved Version.
 - Engineering terms such as IPC, schema, receipt, adapter, and admission remain

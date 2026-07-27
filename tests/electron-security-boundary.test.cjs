@@ -44,7 +44,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v7/u);
+  assert.match(preload, /builder-preload\.v8/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /saveDraft/u);
@@ -67,6 +67,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:code-generator:started/u);
   assert.match(preload, /ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\)/u);
   assert.match(preload, /ipcRenderer\.removeListener\(GENERATION_STARTED_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /subscribeOutput/u);
+  assert.match(preload, /clawfabric-builder:code-generator:output/u);
+  assert.match(preload, /ipcRenderer\.on\(GENERATION_OUTPUT_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /ipcRenderer\.removeListener\(GENERATION_OUTPUT_CHANNEL,\s*handler\)/u);
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /taskStream/u);
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
@@ -88,6 +92,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.removeListener\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.on\(GENERATION_OUTPUT_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(GENERATION_OUTPUT_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '');
   assert.doesNotMatch(

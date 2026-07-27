@@ -1177,6 +1177,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-weight: 500;
 }
 
+.cf-builder-live-output-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.16em;
+  background: var(--cf-primary);
+  opacity: 0.62;
+}
+
 .cf-builder-version-name {
   margin-top: 3px;
   color: var(--cf-text-muted);

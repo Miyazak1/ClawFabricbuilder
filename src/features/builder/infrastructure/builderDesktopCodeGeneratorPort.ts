@@ -2,6 +2,7 @@ import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
   BuilderGenerationDiagnosticError,
   type BuilderCodeGeneratorPort,
+  type BuilderGenerationOutputEvent,
   type BuilderGenerationStartedEvent,
   type BuilderGenerationDiagnosticCode as ApplicationBuilderGenerationDiagnosticCode,
 } from '../application/builderPorts';
@@ -19,6 +20,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
   cancel(request: unknown): Promise<unknown>;
   availability(): Promise<unknown>;
   subscribeStarted(listener: (event: unknown) => void): () => void;
+  subscribeOutput(listener: (event: unknown) => void): () => void;
 }>;
 
 const BRIDGE_KEYS = new Set([
@@ -31,6 +33,7 @@ const BRIDGE_KEYS = new Set([
   'cancel',
   'availability',
   'subscribeStarted',
+  'subscribeOutput',
 ]);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
@@ -40,12 +43,22 @@ const UTF8_ENCODER = new TextEncoder();
 
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const GENERATION_STARTED_EVENT_VERSION = 'builder-generation-started.v1';
+const GENERATION_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
 const FAILURE_CODES = new Set<BuilderGenerationDiagnosticCode>(
   Object.keys(BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY) as BuilderGenerationDiagnosticCode[],
 );
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const CONVERSATION_ID_PATTERN =
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TURN_ID_PATTERN =
+  /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TASK_ID_PATTERN =
+  /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RUN_ID_PATTERN =
+  /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 
 function portError(
   code: BuilderGenerationDiagnosticCode = 'builder_generation_failed',
@@ -176,6 +189,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       cancel: methods.cancel as BuilderCodeGeneratorBridge['cancel'],
       availability: methods.availability as BuilderCodeGeneratorBridge['availability'],
       subscribeStarted: methods.subscribeStarted as BuilderCodeGeneratorBridge['subscribeStarted'],
+      subscribeOutput: methods.subscribeOutput as BuilderCodeGeneratorBridge['subscribeOutput'],
     });
   } catch {
     throw portError();
@@ -263,6 +277,55 @@ function sanitizeStartedEvent(value: unknown): BuilderGenerationStartedEvent {
   });
 }
 
+function safeDisplayDeltaText(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_DISPLAY_DELTA_TEXT_BYTES
+    || UTF8_ENCODER.encode(value).byteLength > MAX_DISPLAY_DELTA_TEXT_BYTES
+  ) throw portError();
+  return value;
+}
+
+function sanitizeOutputEvent(value: unknown): BuilderGenerationOutputEvent {
+  const event = exactDataRecord(value, [
+    'event_version',
+    'request_id',
+    'project_id',
+    'conversation_id',
+    'turn_id',
+    'task_id',
+    'run_id',
+    'display_delta_text',
+  ]);
+  if (
+    event.event_version !== GENERATION_OUTPUT_EVENT_VERSION
+    || typeof event.request_id !== 'string'
+    || !DIGEST_PATTERN.test(event.request_id)
+    || typeof event.project_id !== 'string'
+    || !PROJECT_ID_PATTERN.test(event.project_id)
+    || typeof event.conversation_id !== 'string'
+    || !CONVERSATION_ID_PATTERN.test(event.conversation_id)
+    || event.conversation_id.slice('builder-conversation:'.length)
+      !== event.project_id.slice('builder-project:'.length)
+    || typeof event.turn_id !== 'string'
+    || !TURN_ID_PATTERN.test(event.turn_id)
+    || (event.task_id !== null && (typeof event.task_id !== 'string' || !TASK_ID_PATTERN.test(event.task_id)))
+    || typeof event.run_id !== 'string'
+    || !RUN_ID_PATTERN.test(event.run_id)
+  ) throw portError();
+  return Object.freeze({
+    event_version: GENERATION_OUTPUT_EVENT_VERSION,
+    request_id: event.request_id,
+    project_id: event.project_id,
+    conversation_id: event.conversation_id,
+    turn_id: event.turn_id,
+    task_id: event.task_id,
+    run_id: event.run_id,
+    display_delta_text: safeDisplayDeltaText(event.display_delta_text),
+  });
+}
+
 export function createBuilderDesktopCodeGeneratorPort(
   value: unknown,
 ): BuilderCodeGeneratorPort {
@@ -311,6 +374,26 @@ export function createBuilderDesktopCodeGeneratorPort(
         let sanitized: BuilderGenerationStartedEvent;
         try {
           sanitized = sanitizeStartedEvent(event);
+        } catch {
+          return;
+        }
+        listener(sanitized);
+      });
+      if (typeof unsubscribe !== 'function') throw portError();
+      return () => {
+        if (!active) return;
+        active = false;
+        unsubscribe();
+      };
+    },
+    subscribeOutput(listener: (event: BuilderGenerationOutputEvent) => void) {
+      if (typeof listener !== 'function') throw portError();
+      let active = true;
+      const unsubscribe = bridge.subscribeOutput((event) => {
+        if (!active) return;
+        let sanitized: BuilderGenerationOutputEvent;
+        try {
+          sanitized = sanitizeOutputEvent(event);
         } catch {
           return;
         }
