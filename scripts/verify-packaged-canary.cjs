@@ -172,7 +172,11 @@ const ERROR_STAGES = Object.freeze({
   canary_cleanup_failed: 'cleanup',
 });
 
-const BRIDGE_CONTRACT_KEYS = Object.freeze(['bridge_version', 'legacy_namespaces_absent']);
+const BRIDGE_CONTRACT_KEYS = Object.freeze([
+  'bridge_version',
+  'legacy_namespaces_absent',
+  'plan_review_namespace',
+]);
 const CATALOG_RESULT_KEYS = Object.freeze(['authority_evidence', 'operation', 'projects', 'result_version']);
 const CATALOG_PROJECT_KEYS = Object.freeze([
   'commit_oid',
@@ -1775,10 +1779,29 @@ async function readOnlyBridgeEvidence(page, projectId = null) {
   try {
     return await page.evaluate(async (request) => {
       const bridge = globalThis.clawfabricBuilder;
+      const planReview = bridge.planReview;
+      const planReviewDescriptors = planReview !== null
+        && (typeof planReview === 'object' || typeof planReview === 'function')
+        ? Object.getOwnPropertyDescriptors(planReview)
+        : null;
+      const planReviewKeys = planReviewDescriptors === null
+        ? []
+        : Reflect.ownKeys(planReviewDescriptors);
+      const reviewDescriptor = planReviewDescriptors === null
+        ? null
+        : planReviewDescriptors.review;
       const bridge_contract = {
         bridge_version: bridge.bridgeVersion,
         legacy_namespaces_absent: !Object.hasOwn(bridge, 'projectCatalog')
           && !Object.hasOwn(bridge, 'projectRevisions'),
+        plan_review_namespace: planReviewKeys.length === 1
+          && planReviewKeys[0] === 'review'
+          && reviewDescriptor !== null
+          && reviewDescriptor.enumerable === true
+          && Object.hasOwn(reviewDescriptor, 'value')
+          && typeof reviewDescriptor.value === 'function'
+          ? 'review_method_only'
+          : 'unavailable',
       };
       const status = await bridge.providerSettings.status();
       const catalog = await bridge.projectWorkspace.listCurrent();
@@ -1818,12 +1841,14 @@ function assertReadEvidence(value) {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v4'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v5'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
+    || bridgeContractDescriptors.plan_review_namespace.value !== 'review_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v4',
+    bridge_version: 'builder-preload.v5',
     legacy_namespaces_absent: true,
+    plan_review_namespace: 'review_method_only',
   });
   const status = sanitizeStatus(evidenceDescriptors.status.value);
   const catalog = sanitizeCatalog(evidenceDescriptors.catalog.value);

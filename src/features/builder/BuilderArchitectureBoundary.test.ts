@@ -25,6 +25,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
+  'infrastructure/builderDesktopPlanReviewPort.ts',
   'infrastructure/builderDesktopPermissionPort.ts',
   'infrastructure/builderDesktopProjectWorkspacePort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
@@ -121,6 +122,10 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'infrastructure', 'builderDesktopPermissionPort.ts'),
       'utf8',
     );
+    const planReviewPort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopPlanReviewPort.ts'),
+      'utf8',
+    );
     const conversationController = readFileSync(
       join(BUILDER_ROOT, 'application', 'builderConversationController.ts'),
       'utf8',
@@ -147,6 +152,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
+    expect(ports).toContain('review(request: BuilderPlanReviewRequest)');
     expect(ports).toContain('evaluate(request: BuilderPermissionRequest)');
     const portsWithoutLoadRevision = ports.replace(
       / {2}loadRevision\(request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>\): Promise<unknown>;\r?\n/u,
@@ -174,6 +180,11 @@ describe('Builder v2 architecture boundary', () => {
     expect(permissionPort).toContain('ACTOR_ID_PATTERN');
     expect(permissionPort).not.toMatch(
       /saveDraft|generate|projectWorkspace|providerSettings|record_grant|record_revocation|commit_oid|tree_oid|source_tree|credential/u,
+    );
+    expect(planReviewPort).toContain("const BRIDGE_KEYS = Object.freeze(['review'])");
+    expect(planReviewPort).toContain("review_admission: 'sqlite_recorded_no_execution'");
+    expect(planReviewPort).not.toMatch(
+      /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|source_tree|credential|plan_result_digest|review_id|reviewer_id|reviewed_at_ms/u,
     );
     expect(conversationController).toContain("port.read({ project_id: projectId })");
     expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);

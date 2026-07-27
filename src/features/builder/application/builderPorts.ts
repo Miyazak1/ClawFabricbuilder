@@ -82,6 +82,30 @@ export interface BuilderTaskStreamPort {
   read(request: Readonly<{ project_id: string }>): Promise<unknown>;
 }
 
+export type BuilderPlanReviewDecision = 'approved' | 'rejected';
+
+export type BuilderPlanReviewRequest = Readonly<{
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  run_id: string;
+  decision: BuilderPlanReviewDecision;
+}>;
+
+export type BuilderPlanReviewResult = Readonly<{
+  result_version: 'builder-conversation-plan-review-result.v1';
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  run_id: string;
+  decision: BuilderPlanReviewDecision;
+  review_admission: 'sqlite_recorded_no_execution';
+}>;
+
+export interface BuilderPlanReviewPort {
+  review(request: BuilderPlanReviewRequest): Promise<BuilderPlanReviewResult>;
+}
+
 export type BuilderPermissionAction =
   | 'context.read'
   | 'project.read'

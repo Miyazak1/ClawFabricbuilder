@@ -15,6 +15,7 @@ import {
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
+  createPlanTaskStreamWire,
   createPlanReviewTaskStreamWire,
   createReadWire,
   createRejectedTaskStreamWire,
@@ -127,6 +128,13 @@ async function acceptedCandidateActivity() {
 async function planReviewActivity(decision: 'approved' | 'rejected' = 'approved') {
   const controller = createBuilderConversationController({
     read: async () => createPlanReviewTaskStreamWire(decision),
+  });
+  return controller.load(PROJECT_ID);
+}
+
+async function pendingPlanActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => createPlanTaskStreamWire(),
   });
   return controller.load(PROJECT_ID);
 }
@@ -748,6 +756,37 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|builder-generation-draft:|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('offers plan approval without exposing edit, save, or internal evidence', async () => {
+    const { saved } = await snapshots();
+    const activity = await pendingPlanActivity();
+    const onReviewPlan = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onReviewPlan={onReviewPlan}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-card="Plan ready"]')?.textContent)
+      .toContain('Plan ready.');
+    expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    click(container, '[data-builder-approve-plan="true"]');
+    expect(onReviewPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+      decision: 'approved',
+    });
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
     );
   });
 

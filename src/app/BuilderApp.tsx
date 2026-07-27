@@ -25,6 +25,8 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderPlanReviewPort,
+  BuilderPlanReviewRequest,
   BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
 } from '../features/builder/application/builderPorts';
@@ -37,6 +39,10 @@ import {
   BuilderDesktopTaskStreamPortError,
   createBuilderDesktopTaskStreamPort,
 } from '../features/builder/infrastructure/builderDesktopTaskStreamPort';
+import {
+  BuilderDesktopPlanReviewPortError,
+  createBuilderDesktopPlanReviewPort,
+} from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
@@ -86,6 +92,7 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   projectWorkspace: null,
   providerSettings: null,
   permissions: null,
+  planReview: null,
   taskStream: null,
   windowControls: null,
 });
@@ -219,6 +226,13 @@ const UNAVAILABLE_TASK_STREAM: BuilderTaskStreamPort = Object.freeze({
   },
 });
 
+const UNAVAILABLE_PLAN_REVIEW: BuilderPlanReviewPort = Object.freeze({
+  review(request: BuilderPlanReviewRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopPlanReviewPortError());
+  },
+});
+
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
   try {
     return value === undefined
@@ -233,6 +247,7 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   let workspace = UNAVAILABLE_WORKSPACE;
   let generator = UNAVAILABLE_GENERATOR;
   let taskStream = UNAVAILABLE_TASK_STREAM;
+  let planReview = UNAVAILABLE_PLAN_REVIEW;
   try {
     workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
@@ -248,7 +263,12 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   } catch {
     taskStream = UNAVAILABLE_TASK_STREAM;
   }
-  return Object.freeze({ generator, taskStream, workspace });
+  try {
+    planReview = createBuilderDesktopPlanReviewPort(root.planReview);
+  } catch {
+    planReview = UNAVAILABLE_PLAN_REVIEW;
+  }
+  return Object.freeze({ generator, planReview, taskStream, workspace });
 }
 
 function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): string | null {
@@ -497,6 +517,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [catalog, history, project, readActivityAfterTerminal]);
+  const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
+    const commandEpoch = workspaceEpochRef.current;
+    await ports.planReview.review(request).catch(() => undefined);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await conversation.load(request.project_id).catch(() => undefined);
+  }, [conversation, ports.planReview]);
   const inspectRevision = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
     setActiveFile(null);
     await project.inspectRevision(targetProjectId, revisionReceiptDigest);
@@ -696,6 +722,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onSelectFile={setActiveFile}
               onRefreshConversation={conversation.refresh}
               onRefreshHistory={history.refresh}
+              onReviewPlan={reviewPlan}
               onShowCurrentRevision={showCurrentRevision}
               conversationSnapshot={conversation.snapshot}
               historySnapshot={history.snapshot}

@@ -25,7 +25,11 @@ import {
   type BuilderProjectControllerSnapshot,
   type BuilderProjectControllerStatus,
 } from '../application/builderProjectController';
-import { BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY } from '../application/builderPorts';
+import {
+  BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
+  type BuilderPlanReviewDecision,
+  type BuilderPlanReviewRequest,
+} from '../application/builderPorts';
 import {
   isTrustedBuilderProjectHistorySnapshot,
   type BuilderProjectHistorySnapshot,
@@ -53,6 +57,7 @@ export type BuilderPageProps = {
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
+  onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onSave?: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onShowCurrentRevision?: () => Promise<unknown> | void;
@@ -125,6 +130,44 @@ function activityItems(
 ): readonly BuilderConversationItem[] {
   const conversation = snapshot?.conversation;
   return conversation?.state === 'ready' ? conversation.conversation.items : [];
+}
+
+function planReviewKey(turnId: string, runId: string): string {
+  return `${turnId}:${runId}`;
+}
+
+function pendingPlanReviewTarget(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): BuilderPlanReviewRequest | null {
+  const conversation = snapshot?.conversation;
+  if (conversation?.state !== 'ready') return null;
+  const planRuns = new Set<string>();
+  const pending = new Map<string, BuilderPlanReviewRequest>();
+  for (const item of conversation.conversation.items) {
+    if (
+      item.item_kind === 'run_completed'
+      && item.terminal_status === 'succeeded'
+      && item.result_kind === 'plan'
+    ) {
+      planRuns.add(planReviewKey(item.turn_id, item.run_id));
+    } else if (
+      item.item_kind === 'turn_completed'
+      && item.outcome === 'plan_proposed'
+      && item.run_id !== null
+      && planRuns.has(planReviewKey(item.turn_id, item.run_id))
+    ) {
+      pending.set(planReviewKey(item.turn_id, item.run_id), Object.freeze({
+        project_id: conversation.project_id,
+        conversation_id: conversation.conversation.conversation_id,
+        turn_id: item.turn_id,
+        run_id: item.run_id,
+        decision: 'approved',
+      }));
+    } else if (item.item_kind === 'plan_reviewed') {
+      pending.delete(planReviewKey(item.turn_id, item.run_id));
+    }
+  }
+  return [...pending.values()].at(-1) ?? null;
 }
 
 function activityMessage(
@@ -545,12 +588,30 @@ function VersionHistoryPanel({
 }
 
 function ActivityItem({
+  canReviewPlan,
   hasUnsavedDraft,
   item,
+  onReviewPlan,
+  pendingPlanReview,
 }: Readonly<{
+  canReviewPlan: boolean;
   hasUnsavedDraft: boolean;
   item: BuilderConversationItem;
+  onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
+  const itemPlanReviewKey = item.item_kind === 'turn_completed' && item.run_id !== null
+    ? planReviewKey(item.turn_id, item.run_id)
+    : null;
+  const showPlanReviewActions = item.item_kind === 'turn_completed'
+    && item.outcome === 'plan_proposed'
+    && pendingPlanReview !== null
+    && itemPlanReviewKey === planReviewKey(pendingPlanReview.turn_id, pendingPlanReview.run_id);
+  function review(decision: BuilderPlanReviewDecision): void {
+    if (pendingPlanReview === null || typeof onReviewPlan !== 'function') return;
+    void onReviewPlan({ ...pendingPlanReview, decision });
+  }
+
   return (
     <li
       className="cf-builder-activity-item"
@@ -572,6 +633,30 @@ function ActivityItem({
             </p>
           </>
         ) : null}
+        {showPlanReviewActions ? (
+          <div className="mt-2 flex flex-wrap gap-2" data-builder-plan-review-actions="true">
+            <button
+              className="cf-builder-primary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-approve-plan="true"
+              disabled={!canReviewPlan}
+              onClick={() => review('approved')}
+              type="button"
+            >
+              <CheckCircle2 aria-hidden="true" className="size-3.5" />
+              Approve plan
+            </button>
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-reject-plan="true"
+              disabled={!canReviewPlan}
+              onClick={() => review('rejected')}
+              type="button"
+            >
+              <AlertCircle aria-hidden="true" className="size-3.5" />
+              Reject plan
+            </button>
+          </div>
+        ) : null}
       </div>
     </li>
   );
@@ -581,10 +666,16 @@ function ActivityPanel({
   hasUnsavedDraft,
   snapshot,
   onRefresh,
+  onReviewPlan,
+  pendingPlanReview,
+  canReviewPlan,
 }: Readonly<{
+  canReviewPlan: boolean;
   hasUnsavedDraft: boolean;
   snapshot: BuilderConversationControllerSnapshot | null;
   onRefresh?: () => Promise<unknown> | void;
+  onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const items = activityItems(snapshot);
   const message = activityMessage(snapshot);
@@ -628,9 +719,12 @@ function ActivityPanel({
           <ol className="cf-builder-activity-list">
             {items.map((item) => (
               <ActivityItem
+                canReviewPlan={canReviewPlan}
                 hasUnsavedDraft={hasUnsavedDraft}
                 item={item}
                 key={item.sequence}
+                onReviewPlan={onReviewPlan}
+                pendingPlanReview={pendingPlanReview}
               />
             ))}
           </ol>
@@ -655,6 +749,7 @@ export function BuilderPage({
   onRefreshConversation,
   onRefreshHistory,
   onRejectDraft,
+  onReviewPlan,
   onSave,
   onInspectRevision,
   onShowCurrentRevision,
@@ -705,6 +800,12 @@ export function BuilderPage({
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
   const history = visibleHistorySnapshot(historySnapshot);
+  const planReviewTarget = pendingPlanReviewTarget(activity);
+  const canReviewPlan = typeof onReviewPlan === 'function'
+    && planReviewTarget !== null
+    && !busy
+    && !hasUnsavedDraft
+    && !viewingHistory;
   const changes = useMemo(() => createBuilderSourceTreeChanges(
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,
@@ -978,11 +1079,14 @@ export function BuilderPage({
                 onShowCurrentRevision={onShowCurrentRevision}
                 snapshot={history}
               />
-              <ActivityPanel
-                hasUnsavedDraft={hasUnsavedDraft}
-                onRefresh={onRefreshConversation}
-                snapshot={activity}
-              />
+            <ActivityPanel
+              canReviewPlan={canReviewPlan}
+              hasUnsavedDraft={hasUnsavedDraft}
+              onRefresh={onRefreshConversation}
+              onReviewPlan={onReviewPlan}
+              pendingPlanReview={planReviewTarget}
+              snapshot={activity}
+            />
             </div>
           </div>
         </section>

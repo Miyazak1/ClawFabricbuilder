@@ -29,6 +29,9 @@ const {
   READ_TASK_STREAM_CHANNEL,
 } = require('../electron/builder-task-stream-ipc-adapter.cjs');
 const {
+  REVIEW_PLAN_CHANNEL,
+} = require('../electron/builder-plan-review-ipc-adapter.cjs');
+const {
   BuilderGenerationIpcRuntimeError,
   createBuilderGenerationIpcRuntime,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
@@ -174,6 +177,19 @@ function runtimeWithService(service, probes = {}) {
                   },
                 };
               },
+              review_plan(body) {
+                probes.reviewPlanRequests ??= [];
+                probes.reviewPlanRequests.push(body);
+                return {
+                  result_version: 'builder-conversation-plan-review-result.v1',
+                  project_id: body.project_id,
+                  conversation_id: body.conversation_id,
+                  turn_id: body.turn_id,
+                  run_id: body.run_id,
+                  decision: body.decision,
+                  review_admission: 'sqlite_recorded_no_execution',
+                };
+              },
               verify_candidate() {},
               read_candidate_draft() {},
             };
@@ -221,6 +237,16 @@ function runtimeWithService(service, probes = {}) {
           createBuilderTaskStreamIpcAdapter: (options) => ({
             channels: {
               read: { invoke: (_event, body) => options.readStream(body) },
+            },
+          }),
+        };
+      }
+      if (specifier === './builder-plan-review-ipc-adapter.cjs') {
+        return {
+          REVIEW_PLAN_CHANNEL,
+          createBuilderPlanReviewIpcAdapter: (options) => ({
+            channels: {
+              review: { invoke: (_event, body) => options.reviewPlan(body) },
             },
           }),
         };
@@ -380,6 +406,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     LIST_CURRENT_CHANNEL,
     LIST_HISTORY_CHANNEL,
     READ_TASK_STREAM_CHANNEL,
+    REVIEW_PLAN_CHANNEL,
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
@@ -469,6 +496,27 @@ test('keeps active-renderer and request validation inside the controlled adapter
   await assert.rejects(
     ipcMain.handlers.get(READ_TASK_STREAM_CHANNEL)({ sender: mainWindow.webContents }, { project_id: 'bad' }),
     (error) => error.code === 'builder_task_stream_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(REVIEW_PLAN_CHANNEL)({ sender: {} }, {
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+      decision: 'approved',
+    }),
+    (error) => error.code === 'builder_plan_review_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(REVIEW_PLAN_CHANNEL)({ sender: mainWindow.webContents }, {
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+      decision: 'accepted',
+    }),
+    (error) => error.code === 'builder_plan_review_invalid',
   );
   await assert.rejects(
     ipcMain.handlers.get(LIST_HISTORY_CHANNEL)({ sender: {} }, { project_id: PROJECT_ID, limit: 32 }),
@@ -672,6 +720,49 @@ test('registers a read-only task stream channel backed by the conversation servi
     },
   });
   assert.deepEqual(probes.readStreamRequests, [{ project_id: PROJECT_ID }]);
+  runtime.dispose();
+});
+
+test('registers a plan review channel backed only by the conversation service', async (t) => {
+  const probes = {};
+  const runtimeModule = runtimeWithService({
+    generate() { return Promise.reject(new Error('not used')); },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const body = vm.runInContext(`({
+    project_id: ${JSON.stringify(PROJECT_ID)},
+    conversation_id: "builder-conversation:123e4567-e89b-42d3-a456-426614174000",
+    turn_id: "builder-turn:123e4567-e89b-42d3-a456-426614174001",
+    run_id: "builder-run:123e4567-e89b-42d3-a456-426614174002",
+    decision: "approved"
+  })`, runtimeModule.context);
+  const reviewed = await ipcMain.handlers.get(REVIEW_PLAN_CHANNEL)(
+    { sender: mainWindow.webContents },
+    body,
+  );
+  assert.deepEqual(reviewed, {
+    result_version: 'builder-conversation-plan-review-result.v1',
+    project_id: PROJECT_ID,
+    conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+    decision: 'approved',
+    review_admission: 'sqlite_recorded_no_execution',
+  });
+  assert.deepEqual(probes.reviewPlanRequests, [body]);
   runtime.dispose();
 });
 
@@ -1174,7 +1265,9 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.doesNotMatch(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
   assert.match(source, /createBuilderTaskStreamIpcAdapter/u);
+  assert.match(source, /createBuilderPlanReviewIpcAdapter/u);
   assert.match(source, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
+  assert.match(source, /channel:\s*REVIEW_PLAN_CHANNEL/u);
   assert.match(source, /channel:\s*LOAD_REVISION_CHANNEL/u);
   assert.match(source, /createBuilderOpenAICompatibleTransport\(\{ fetchImpl: options\.fetchImpl \}\)/u);
   assert.doesNotMatch(source, /globalThis\.fetch/u);

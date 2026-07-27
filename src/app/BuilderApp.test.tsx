@@ -16,6 +16,8 @@ import {
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
+  createPlanTaskStreamWire,
+  createPlanReviewTaskStreamWire,
   createReadWire,
   createRejectedTaskStreamWire,
   createRestoredGenerationDraft,
@@ -61,6 +63,7 @@ async function setup(options: Readonly<{
   failGenerate?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
+  pendingPlanActivity?: boolean;
   pendingAfterRevisionView?: boolean;
   acceptedPendingActivity?: boolean;
   rejectActivityAfterDiscard?: boolean;
@@ -182,10 +185,19 @@ async function setup(options: Readonly<{
     request_id: (request as { request_id: string }).request_id,
     cancelled: true,
   }));
+  const reviewPlan = vi.fn(async (request: unknown) => ({
+    result_version: 'builder-conversation-plan-review-result.v1',
+    ...(request as object),
+    review_admission: 'sqlite_recorded_no_execution',
+  }));
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const readTaskStream = vi.fn(async () => (
-    options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
+    options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
+      ? createPlanReviewTaskStreamWire('approved')
+    : options.pendingPlanActivity === true
+      ? createPlanTaskStreamWire()
+    : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
       ? createRejectedTaskStreamWire()
       : options.answerActivity === true
       ? createAnswerTaskStreamWire()
@@ -256,6 +268,9 @@ async function setup(options: Readonly<{
     },
     providerSettings: {},
     permissions: {},
+    planReview: {
+      review: reviewPlan,
+    },
     taskStream: {
       read: readTaskStream,
     },
@@ -288,6 +303,7 @@ async function setup(options: Readonly<{
     loadCurrent,
     open,
     readTaskStream,
+    reviewPlan,
     rejectDraft,
     restoreDraft,
     async resolveGenerate() {
@@ -558,6 +574,45 @@ describe('BuilderApp v2', () => {
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('sqlite');
+  });
+
+  it('records plan approval through the plan-review bridge and only refreshes activity', async () => {
+    const {
+      container,
+      generate,
+      readTaskStream,
+      reviewPlan,
+      saveDraft,
+    } = await setup({ initiallySaved: true, pendingPlanActivity: true });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+    click(container, 'Approve plan');
+
+    await waitFor(() => {
+      expect(reviewPlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
+        .toContain('The plan was approved. The project has not changed yet.');
+    });
+    expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+      decision: 'approved',
+    });
+    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
+    );
   });
 
   it('discards an unsaved draft through draft-id-only control and refreshes activity', async () => {

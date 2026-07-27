@@ -14,13 +14,14 @@ function bridge() {
     projectWorkspace: Object.freeze({}),
     providerSettings: Object.freeze({}),
     permissions: Object.freeze({}),
+    planReview: Object.freeze({}),
     taskStream: Object.freeze({}),
     windowControls: Object.freeze({}),
   };
 }
 
-describe('Builder desktop bridge root v4', () => {
-  it('accepts the exact v4 namespaces and returns a fresh frozen root', () => {
+describe('Builder desktop bridge root v5', () => {
+  it('accepts the exact v5 namespaces and returns a fresh frozen root', () => {
     const input = bridge();
     const result = sanitizeBuilderDesktopBridgeRoot(input);
     expect(result).toEqual(input);

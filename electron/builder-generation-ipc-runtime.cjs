@@ -37,6 +37,10 @@ const {
   createBuilderTaskStreamIpcAdapter,
 } = require('./builder-task-stream-ipc-adapter.cjs');
 const {
+  REVIEW_PLAN_CHANNEL,
+  createBuilderPlanReviewIpcAdapter,
+} = require('./builder-plan-review-ipc-adapter.cjs');
+const {
   createBuilderOpenAICompatibleTransport,
 } = require('./builder-openai-compatible-transport.cjs');
 const {
@@ -216,6 +220,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let adapter;
   let workspaceAdapter;
   let taskStreamAdapter;
+  let planReviewAdapter;
   let selectedProjectId = null;
   let selectionEpoch = 0;
   let selectionPending = false;
@@ -355,6 +360,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       readStream: conversationService.read_stream,
       mainWindowRef: options.mainWindowRef,
     });
+    planReviewAdapter = createBuilderPlanReviewIpcAdapter({
+      reviewPlan: conversationService.review_plan,
+      mainWindowRef: options.mainWindowRef,
+    });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
     try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
@@ -376,6 +385,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: LIST_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.listCurrent.invoke }),
     Object.freeze({ channel: LIST_HISTORY_CHANNEL, invoke: workspaceAdapter.channels.listHistory.invoke }),
     Object.freeze({ channel: READ_TASK_STREAM_CHANNEL, invoke: taskStreamAdapter.channels.read.invoke }),
+    Object.freeze({ channel: REVIEW_PLAN_CHANNEL, invoke: planReviewAdapter.channels.review.invoke }),
   ]);
   const installed = [];
   let state = 'idle';
