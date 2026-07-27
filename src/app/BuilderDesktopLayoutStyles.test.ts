@@ -73,23 +73,23 @@ describe('Builder desktop layout styles', () => {
     const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
 
-    expect(review).toContain('grid-template-columns: minmax(0, 1fr) auto;');
-    expect(review).toContain('align-items: center;');
-    expect(review).toContain('column-gap: 18px;');
+    expect(review).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(review).toContain('align-items: start;');
+    expect(review).toContain('row-gap: 12px;');
     expect(review).toContain('border-top: 1px solid var(--cf-border);');
     expect(review).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(review).not.toContain('border-radius: 8px;');
     expect(review).not.toContain('minmax(320px, 360px)');
     expect(actions).toContain('display: flex;');
-    expect(actions).toContain('flex-wrap: nowrap;');
-    expect(actions).toContain('align-self: center;');
-    expect(actions).toContain('justify-self: end;');
-    expect(actions).toContain('justify-content: flex-end;');
+    expect(actions).toContain('flex-wrap: wrap;');
+    expect(actions).toContain('align-self: start;');
+    expect(actions).toContain('justify-self: start;');
+    expect(actions).toContain('justify-content: flex-start;');
     expect(actions).toContain('padding-left: 0;');
     expect(actions).not.toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
-    expect(actionButtons).toContain('flex: 0 0 auto;');
+    expect(actionButtons).toContain('flex: 0 1 auto;');
     expect(actionButtons).toContain('width: auto;');
-    expect(actionButtons).toContain('min-width: 108px;');
+    expect(actionButtons).toContain('min-width: 116px;');
     expect(actionButtons).toContain('white-space: nowrap;');
     expect(versionAction).toContain('grid-column: 2;');
     expect(source).not.toMatch(/\.cf-builder-review-actions \{[\s\S]*?padding-left: 38px/u);
@@ -122,5 +122,18 @@ describe('Builder desktop layout styles', () => {
     expect(toolbar).toContain('border-bottom: 0;');
     expect(toolbar).toContain('background: transparent;');
     expect(body).toContain('padding: 0;');
+  });
+
+  it('uses lightweight preview explanation instead of another nested card', () => {
+    const source = styles();
+    const runtimeNotice = styleBlock(source, '.cf-builder-preview-runtime-notice');
+    const unavailable = styleBlock(source, '.cf-builder-preview-unavailable');
+
+    expect(runtimeNotice).toContain('border-left: 3px solid var(--cf-warning-border);');
+    expect(runtimeNotice).not.toContain('border: 1px solid var(--cf-warning-border);');
+    expect(runtimeNotice).not.toContain('border-radius: 7px;');
+    expect(unavailable).toContain('border-top: 1px solid var(--cf-border);');
+    expect(unavailable).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(unavailable).not.toContain('border-radius');
   });
 });

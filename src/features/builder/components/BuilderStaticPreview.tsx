@@ -38,11 +38,11 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
       >
         <h2 className="cf-builder-preview-unavailable-title">Preview unavailable</h2>
         <p className="cf-builder-preview-note">
-          Visual preview is not available for this project. This safe preview can show static HTML
-          and CSS only. Review the source files and changes before saving.
+          The files were generated, but this preview cannot run this kind of project yet. Review
+          the source files and changes before saving.
         </p>
         <p className="cf-builder-preview-note">
-          JavaScript modules, Three.js, canvas animation, network assets, local servers, and backend
+          3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, and backend
           code need live preview support.
         </p>
       </section>
@@ -68,9 +68,9 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
         >
           <h3 className="cf-builder-preview-runtime-title">Preview may look blank</h3>
           <p className="cf-builder-preview-note">
-            Interactive code is not running here. If this draft uses JavaScript modules, Three.js,
-            canvas animation, network assets, local servers, or backend code, the preview can look
-            blank even when the files were generated. Review Changes or Source before saving.
+            The files were generated, but interactive code is not running here. If this draft uses
+            3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or
+            backend code, this preview can look blank. Review Changes or Source before saving.
           </p>
           {projection.preview_runtime_limitations.length > 0 ? (
             <ul className="cf-builder-preview-limitation-list">

@@ -1615,7 +1615,7 @@ export function BuilderPage({
     <section
       aria-label="Draft review"
       className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
-      data-builder-review-layout="desktop-inline-actions"
+      data-builder-review-layout="desktop-stacked-actions"
       data-builder-review-checkpoint="true"
       ref={draftReviewRef}
     >

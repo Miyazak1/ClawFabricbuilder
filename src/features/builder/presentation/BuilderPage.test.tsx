@@ -1368,7 +1368,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(conversation).not.toBeNull();
     expect(review).not.toBeNull();
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-inline-actions');
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(composer).not.toBeNull();
     expect(preview).not.toBeNull();
     expect(code).toBeNull();
@@ -1892,7 +1892,7 @@ describe('BuilderPage v2', () => {
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(reviewStrip).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-inline-actions');
+    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(reviewStrip?.textContent).toContain('Preview may be incomplete');
@@ -1975,6 +1975,33 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toContain('model.glb');
     expect(container.textContent).not.toContain('src/scene.js');
     expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|receipt/iu);
+  });
+
+  it('keeps draft review actions on a separate desktop row so summary text is not squeezed', async () => {
+    const draftReady = await changedDraftSnapshot();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Update the saved project."
+        snapshot={draftReady}
+      />,
+    );
+
+    const review = container.querySelector('[data-builder-review-checkpoint="true"]');
+    const copy = review?.querySelector('.cf-builder-review-copy');
+    const actions = review?.querySelector('[data-builder-draft-review-actions="true"]');
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
+    expect(copy).not.toBeNull();
+    expect(actions).not.toBeNull();
+    expect(actions?.previousElementSibling).toBe(copy);
+    expect(copy?.textContent).toContain('Review before saving');
+    expect(copy?.textContent).toContain('file changes');
+    expect(actions?.textContent).toContain('Changes');
+    expect(actions?.textContent).toContain('Discard draft');
+    expect(actions?.textContent).toContain('Save version');
+    expect(review?.textContent).not.toMatch(
+      /sha256:|commit_oid|tree_oid|receipt|review_id|provider|credential|ipc|schema/iu,
+    );
   });
 
   it('opens and focuses inline source after choosing a changed file from the sidebar', async () => {
@@ -2420,6 +2447,8 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('Preview unavailable');
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
+      .toContain('files were generated');
+    expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('live preview support');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Preview unavailable');
@@ -2433,9 +2462,8 @@ describe('BuilderPage v2', () => {
       .toContain('1 file - src/tool.py');
     expect(container.querySelector('[data-builder-source-code="src/tool.py"]')).toBeNull();
     expect(container.textContent).not.toContain('print("new")');
-    expect(container.textContent).toContain('Visual preview is not available for this project.');
-    expect(container.textContent).toContain('static HTML and CSS only');
-    expect(container.textContent).toContain('Three.js');
+    expect(container.textContent).toContain('this preview cannot run this kind of project yet');
+    expect(container.textContent).toContain('3D/WebGL');
     expect(container.textContent).not.toContain('This project has files, but no visual preview.');
 
     click(container, '[data-builder-source-summary="true"]');

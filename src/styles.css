@@ -532,14 +532,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-checkpoint {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 18px;
-  row-gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  row-gap: 12px;
   border-top: 1px solid var(--cf-border);
   border-bottom: 1px solid var(--cf-border);
   background: transparent;
-  padding: 14px 0;
+  padding: 14px 0 12px;
   scroll-margin-block-start: 12px;
 }
 
@@ -584,19 +583,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-review-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   min-width: 0;
-  align-self: center;
-  justify-self: end;
-  justify-content: flex-end;
+  align-self: start;
+  justify-self: start;
+  justify-content: flex-start;
   gap: 8px;
   padding-left: 0;
 }
 
 .cf-builder-review-actions > button {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   width: auto;
-  min-width: 108px;
+  min-width: 116px;
   max-width: 100%;
   white-space: nowrap;
 }
@@ -1527,10 +1526,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-preview-runtime-notice {
   display: grid;
   gap: 4px;
-  border: 1px solid var(--cf-warning-border);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--cf-warning-soft) 78%, var(--cf-surface));
-  padding: 9px 11px;
+  border-left: 3px solid var(--cf-warning-border);
+  background: color-mix(in srgb, var(--cf-warning-soft) 46%, transparent);
+  padding: 7px 0 7px 10px;
 }
 
 .cf-builder-preview-runtime-title {
@@ -1542,7 +1540,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-preview-unavailable {
-  padding: 2px 0;
+  border-top: 1px solid var(--cf-border);
+  border-bottom: 1px solid var(--cf-border);
+  padding: 12px 0;
 }
 
 .cf-builder-preview-unavailable-title {
