@@ -79,6 +79,37 @@ async function renderHook(
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
+  const proposePlan = vi.fn(async (request) => ({
+    version: 'builder-generation-result.v2',
+    result_kind: 'plan',
+    request_id: request.request_digest,
+    project_id: request.existing_project_id ?? PROJECT_ID,
+    existing_project_id: request.existing_project_id,
+    title: 'Project update plan',
+    summary: 'Review the saved project before editing.',
+    steps: [
+      {
+        title: 'Review current files',
+        purpose: 'Understand the saved project before editing.',
+        expected_change: 'No files change in this step.',
+        status: 'proposed',
+      },
+    ],
+    admissions: {
+      conversation: 'sqlite_recorded',
+      draft: 'not_created',
+      save: 'not_performed',
+      preview: 'not_applicable',
+      execution: 'not_evaluated',
+      revision: 'not_created',
+      review: 'not_recorded',
+    },
+    conversation_head: {
+      sequence: 3,
+      event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+      event_digest: `sha256:${'2'.repeat(64)}`,
+    },
+  }));
   const retry = vi.fn(async (request) => {
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
@@ -112,6 +143,7 @@ async function renderHook(
   const generator = {
     submit,
     generateApprovedPlan,
+    proposePlan,
     generate,
     retry,
     answer,
@@ -156,6 +188,7 @@ async function renderHook(
     cancel,
     generate,
     generateApprovedPlan,
+    proposePlan,
     submit,
     retry,
     loadCurrent,
@@ -263,6 +296,28 @@ describe('useBuilderProjectController', () => {
     expect(hook.current().snapshot).toMatchObject({
       status: 'draft_ready',
       draft: { draft_id: DRAFT_ID },
+    });
+  });
+
+  it('exposes plan proposal without creating a draft or save', async () => {
+    const hook = await renderHook(PROJECT_ID);
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
+
+    await act(async () => {
+      await hook.current().proposePlan('Plan the next saved-project change.');
+    });
+
+    expect(hook.proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      instruction: 'Plan the next saved-project change.',
+      existing_project_id: PROJECT_ID,
+    }));
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'ready',
+      draft: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
     });
   });
 

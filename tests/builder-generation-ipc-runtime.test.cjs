@@ -16,6 +16,7 @@ const {
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
@@ -128,6 +129,7 @@ function runtimeWithService(service, probes = {}) {
           ANSWER_CHANNEL,
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
+          PROPOSE_PLAN_CHANNEL,
           GENERATION_OUTPUT_CHANNEL,
           GENERATION_STARTED_CHANNEL,
           SUBMIT_CHANNEL,
@@ -141,6 +143,7 @@ function runtimeWithService(service, probes = {}) {
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
               generateApprovedPlan: { invoke: (_event, body) => options.generateApprovedPlan(body) },
+              proposePlan: { invoke: (_event, body) => options.proposePlan(body) },
               submit: { invoke: (_event, body) => options.submit(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
@@ -420,6 +423,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.deepEqual(runtime.channels, [
     GENERATE_CHANNEL,
     GENERATE_APPROVED_PLAN_CHANNEL,
+    PROPOSE_PLAN_CHANNEL,
     SUBMIT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
@@ -494,6 +498,15 @@ test('keeps active-renderer and request validation inside the controlled adapter
     ipcMain.handlers.get(SUBMIT_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
     (error) => error.code === 'builder_generation_request_invalid'
       && !`${error.message}:${error.stack}`.includes('marker'),
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)({ sender: {} }, { instruction: 'Plan this change.' }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
     ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)({ sender: {} }, { instruction: 'Retry.' }),
@@ -814,6 +827,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     SUBMIT_CHANNEL,
+    PROPOSE_PLAN_CHANNEL,
     GENERATE_APPROVED_PLAN_CHANNEL,
     GENERATE_CHANNEL,
   ]);
@@ -1188,7 +1202,25 @@ test('keeps selected project identity in main and accepts only instruction over 
   const submitted = [];
   const retried = [];
   const answered = [];
-  const probes = {};
+  const proposedPlans = [];
+  const probes = {
+    loadCurrent(body) {
+      runtimeModule.context.__readProjectId = body.project_id;
+      return vm.runInContext(
+        `({
+          product_revision_receipt: { project_id: __readProjectId },
+          source_tree: {
+            files: [
+              { path: "src/app.ts" },
+              { path: "index.html" },
+              { path: "styles/main.css" }
+            ]
+          }
+        })`,
+        runtimeModule.context,
+      );
+    },
+  };
   const service = {
     generate(body) {
       generated.push(body);
@@ -1197,6 +1229,10 @@ test('keeps selected project identity in main and accepts only instruction over 
     generate_approved_plan(body) {
       approvedPlanGenerated.push(body);
       return Promise.resolve({ request_id: `sha256:${'d'.repeat(64)}` });
+    },
+    propose_plan(body) {
+      proposedPlans.push(body);
+      return Promise.resolve({ request_id: body.request.request_digest });
     },
     submit(body) {
       submitted.push(body);
@@ -1253,6 +1289,24 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(submitted[0].existing_project_id, PROJECT_ID);
   assert.equal(submitted[0].instruction, 'Continue selected project.');
   assert.equal(submitted[0].request_digest, hostRequestDigest('Continue selected project.', PROJECT_ID));
+  await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Plan this saved-project change." })', runtimeModule.context),
+  );
+  assert.equal(proposedPlans.length, 1);
+  assert.equal(proposedPlans[0].request.existing_project_id, PROJECT_ID);
+  assert.equal(proposedPlans[0].request.instruction, 'Plan this saved-project change.');
+  assert.equal(
+    proposedPlans[0].request.request_digest,
+    hostRequestDigest('Plan this saved-project change.', PROJECT_ID),
+  );
+  assert.deepEqual([...proposedPlans[0].resource_ids], [
+    'project:/index.html',
+    'project:/src/app.ts',
+    'project:/styles/main.css',
+  ]);
+  assert.equal(Object.hasOwn(proposedPlans[0].request, 'source_tree'), false);
+  assert.equal(Object.hasOwn(proposedPlans[0], 'source_tree'), false);
   await ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Revise the timer." })', runtimeModule.context),
@@ -1293,6 +1347,16 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'instruction'), false);
   assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'request_digest'), false);
   assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'source_tree'), false);
+  await assert.rejects(
+    async () => ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        instruction: "forged plan",
+        existing_project_id: ${JSON.stringify(PROJECT_ID)}
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_request_invalid' },
+  );
   await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ project_id: null })', runtimeModule.context),

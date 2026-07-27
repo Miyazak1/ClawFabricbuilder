@@ -396,6 +396,29 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1;
 }
 
+.cf-builder-composer-tool-button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cf-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 8px;
+}
+
+.cf-builder-composer-tool-button:hover,
+.cf-builder-composer-tool-button:focus-visible {
+  background: var(--cf-surface-muted);
+  border-color: var(--cf-border);
+  color: var(--cf-text);
+  outline: none;
+}
+
 .cf-builder-composer-actions {
   display: inline-flex;
   min-width: 0;

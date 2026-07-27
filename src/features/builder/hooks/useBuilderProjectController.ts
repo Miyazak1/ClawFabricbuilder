@@ -21,6 +21,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   snapshot: BuilderProjectControllerSnapshot;
   submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
+  proposePlan: BuilderProjectController['proposePlan'];
   generate: BuilderProjectController['generate'];
   generateApprovedPlan: BuilderProjectController['generateApprovedPlan'];
   retryGenerate: BuilderProjectController['retryGenerate'];
@@ -96,6 +97,10 @@ export function useBuilderProjectController(
     (instruction) => controller.answer(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
+  const proposePlan = useCallback<BuilderProjectController['proposePlan']>(
+    (instruction) => controller.proposePlan(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
+    [controller],
+  );
   const generateApprovedPlan = useCallback<BuilderProjectController['generateApprovedPlan']>(
     (request) => controller.generateApprovedPlan(request).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
@@ -139,6 +144,7 @@ export function useBuilderProjectController(
       snapshot,
       submit,
       answer,
+      proposePlan,
       generate,
       generateApprovedPlan,
       retryGenerate,
@@ -154,6 +160,7 @@ export function useBuilderProjectController(
       snapshot,
       submit,
       answer,
+      proposePlan,
       generate,
       generateApprovedPlan,
       retryGenerate,

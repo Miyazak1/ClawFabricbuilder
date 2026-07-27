@@ -8,6 +8,7 @@ import {
   sanitizeBuilderApprovedPlanGenerationRequest,
   sanitizeBuilderGenerationAnswer,
   sanitizeBuilderGenerationDraft,
+  sanitizeBuilderGenerationPlan,
   sanitizeBuilderGenerationRequest,
   sanitizeRestoredBuilderGenerationDraft,
 } from './builderGeneration';
@@ -251,6 +252,103 @@ describe('Builder generation v2', () => {
     ]) {
       await expect(sanitizeBuilderGenerationAnswer(forged, request)).rejects.toMatchObject({
         code: 'invalid_generated_answer',
+      });
+    }
+  });
+
+  it('accepts a proposed plan without draft, save, source, or review authority', async () => {
+    const request = await createBuilderGenerationRequest('Plan the saved project change.', PROJECT_ID);
+    const result = await sanitizeBuilderGenerationPlan({
+      version: 'builder-generation-result.v2',
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      title: 'Project update plan',
+      summary: 'Review the current project, then prepare a small update.',
+      steps: [
+        {
+          title: 'Review current files',
+          purpose: 'Understand the saved project before editing.',
+          expected_change: 'No files change in this step.',
+          status: 'proposed',
+        },
+      ],
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+        revision: 'not_created',
+        review: 'not_recorded',
+      },
+      conversation_head: {
+        sequence: 3,
+        event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+        event_digest: `sha256:${'2'.repeat(64)}`,
+      },
+    }, request);
+
+    expect(result).toMatchObject({
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      admissions: {
+        draft: 'not_created',
+        save: 'not_performed',
+        revision: 'not_created',
+        review: 'not_recorded',
+      },
+    });
+    expect(result).not.toHaveProperty('source_tree');
+    expect(result).not.toHaveProperty('draft_id');
+    expect(result).not.toHaveProperty('candidate');
+    expect(Object.isFrozen(result.steps)).toBe(true);
+  });
+
+  it('rejects plan result authority drift and generated source fields', async () => {
+    const request = await createBuilderGenerationRequest('Plan the saved project change.', PROJECT_ID);
+    const plan = {
+      version: 'builder-generation-result.v2',
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      title: 'Project update plan',
+      summary: 'Review before changing files.',
+      steps: [
+        {
+          title: 'Review current files',
+          purpose: 'Understand the saved project before editing.',
+          expected_change: 'No files change in this step.',
+          status: 'proposed',
+        },
+      ],
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+        revision: 'not_created',
+        review: 'not_recorded',
+      },
+      conversation_head: {
+        sequence: 3,
+        event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+        event_digest: `sha256:${'2'.repeat(64)}`,
+      },
+    };
+    for (const forged of [
+      { ...plan, request_id: `sha256:${'f'.repeat(64)}` },
+      { ...plan, existing_project_id: null },
+      { ...plan, source_tree: await createSourceTree() },
+      { ...plan, admissions: { ...plan.admissions, review: 'approved' } },
+    ]) {
+      await expect(sanitizeBuilderGenerationPlan(forged, request)).rejects.toMatchObject({
+        code: 'invalid_generated_plan',
       });
     }
   });

@@ -67,6 +67,7 @@ async function setup(options: Readonly<{
   failGenerate?: boolean;
   failSubmitOnce?: boolean;
   initiallySaved?: boolean;
+  planAfterPropose?: boolean;
   pendingActivity?: boolean;
   pendingPlanActivity?: boolean;
   pendingAfterRevisionView?: boolean;
@@ -278,13 +279,54 @@ async function setup(options: Readonly<{
       result: latestDraft,
     };
   });
+  const proposePlan = vi.fn(async (request: unknown) => {
+    const instruction = (request as { instruction: string }).instruction;
+    const hostRequest = await createBuilderGenerationRequest(instruction, PROJECT_ID);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: {
+        version: 'builder-generation-result.v2',
+        result_kind: 'plan',
+        request_id: hostRequest.request_digest,
+        project_id: PROJECT_ID,
+        existing_project_id: PROJECT_ID,
+        title: 'Project update plan',
+        summary: 'Review the saved project before editing.',
+        steps: [
+          {
+            title: 'Review current files',
+            purpose: 'Understand the saved project before editing.',
+            expected_change: 'No files change in this step.',
+            status: 'proposed',
+          },
+        ],
+        admissions: {
+          conversation: 'sqlite_recorded',
+          draft: 'not_created',
+          save: 'not_performed',
+          preview: 'not_applicable',
+          execution: 'not_evaluated',
+          revision: 'not_created',
+          review: 'not_recorded',
+        },
+        conversation_head: {
+          sequence: 3,
+          event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+          event_digest: `sha256:${'2'.repeat(64)}`,
+        },
+      },
+    };
+  });
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
   const generationOutputListeners = new Set<(event: unknown) => void>();
   const taskStreamChangedListeners = new Set<(event: unknown) => void>();
   const readTaskStream = vi.fn(async () => (
-    options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
+    options.planAfterPropose === true && proposePlan.mock.calls.length > 0
+      ? createPlanTaskStreamWire()
+    : options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
       ? createPlanReviewTaskStreamWire('approved')
     : options.pendingPlanActivity === true
       ? createPlanTaskStreamWire()
@@ -346,6 +388,7 @@ async function setup(options: Readonly<{
       submit,
       generate,
       generateApprovedPlan,
+      proposePlan,
       retry,
       answer,
       restoreDraft,
@@ -411,6 +454,7 @@ async function setup(options: Readonly<{
     cancel,
     generate,
     generateApprovedPlan,
+    proposePlan,
     submit,
     retry,
     steer,
@@ -958,6 +1002,52 @@ describe('BuilderApp v2', () => {
       await resolveGenerate();
       await Promise.resolve();
     });
+  });
+
+  it('proposes a saved-project plan from the desktop composer without generating or saving', async () => {
+    const {
+      container,
+      generate,
+      proposePlan,
+      readTaskStream,
+      saveDraft,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      planAfterPropose: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('#builder-idea')).not.toBeNull();
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Plan the next project update.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-propose-plan="true"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+    click(container, 'Plan first');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+      instruction: 'Plan the next project update.',
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(textarea.value).toBe('');
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
   });
 
   it('records plan approval then continues into an unsaved draft without saving', async () => {

@@ -12,6 +12,7 @@ const {
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
@@ -74,6 +75,8 @@ const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-
 const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
+const MAX_PLAN_CONTEXT_RESOURCES = 8;
+const MAX_PROJECT_RESOURCE_ID_LENGTH = 128;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -200,6 +203,71 @@ function readResultProjectId(value) {
     || !PROJECT_ID_PATTERN.test(projectId.value)
   ) fail();
   return projectId.value;
+}
+
+function safeProjectSourcePath(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_PROJECT_RESOURCE_ID_LENGTH - 'project:/'.length
+    || value.includes('\\')
+    || value.startsWith('/')
+    || value.endsWith('/')
+    || /^[A-Za-z]:/u.test(value)
+    || value.startsWith('//')
+  ) fail();
+  const segments = value.split('/');
+  if (
+    segments.length === 0
+    || segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) fail();
+  return value;
+}
+
+function sourceTreeResourceIds(readResult) {
+  if (!isPlainObject(readResult)) fail();
+  const sourceTree = Object.getOwnPropertyDescriptor(readResult, 'source_tree');
+  if (
+    !sourceTree
+    || sourceTree.enumerable !== true
+    || !Object.hasOwn(sourceTree, 'value')
+    || !isPlainObject(sourceTree.value)
+  ) fail();
+  const files = Object.getOwnPropertyDescriptor(sourceTree.value, 'files');
+  if (
+    !files
+    || files.enumerable !== true
+    || !Object.hasOwn(files, 'value')
+    || !Array.isArray(files.value)
+    || utilTypes.isProxy(files.value)
+  ) fail();
+  const keys = Reflect.ownKeys(files.value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== files.value.length + 1) fail();
+  const resourceIds = [];
+  const seen = new Set();
+  for (let index = 0; index < files.value.length; index += 1) {
+    const file = Object.getOwnPropertyDescriptor(files.value, String(index));
+    if (
+      !file
+      || file.enumerable !== true
+      || !Object.hasOwn(file, 'value')
+      || !isPlainObject(file.value)
+    ) fail();
+    const pathDescriptor = Object.getOwnPropertyDescriptor(file.value, 'path');
+    if (
+      !pathDescriptor
+      || pathDescriptor.enumerable !== true
+      || !Object.hasOwn(pathDescriptor, 'value')
+    ) fail();
+    const resourceId = `project:/${safeProjectSourcePath(pathDescriptor.value)}`;
+    if (resourceId.length > MAX_PROJECT_RESOURCE_ID_LENGTH || seen.has(resourceId)) fail();
+    seen.add(resourceId);
+    resourceIds.push(resourceId);
+  }
+  resourceIds.sort();
+  const selected = resourceIds.slice(0, MAX_PLAN_CONTEXT_RESOURCES);
+  if (selected.length === 0) fail();
+  return Object.freeze(selected);
 }
 
 function activeWebContents(mainWindowRef) {
@@ -500,6 +568,29 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return service.generate_approved_plan(request);
     }
 
+    async function trackedProposePlan(rawRequest) {
+      if (selectionPending || selectedProjectId === null) fail();
+      const projectId = selectedProjectId;
+      const request = createBuilderGenerationRequest({
+        instruction: publicInstruction(rawRequest),
+        existing_project_id: projectId,
+      });
+      const requestId = request.request_digest;
+      activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
+      try {
+        const currentProject = await projectMainAuthority.project_read_authority.load_current({ project_id: projectId });
+        if (readResultProjectId(currentProject) !== projectId) fail();
+        return await service.propose_plan({
+          request,
+          resource_ids: sourceTreeResourceIds(currentProject),
+        });
+      } finally {
+        const remaining = (activeRequests.get(requestId) ?? 1) - 1;
+        if (remaining === 0) activeRequests.delete(requestId);
+        else activeRequests.set(requestId, remaining);
+      }
+    }
+
     function trackedSubmit(rawRequest) {
       return trackedGenerationOperation(rawRequest, service.submit);
     }
@@ -515,6 +606,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
       generateApprovedPlan: trackedGenerateApprovedPlan,
+      proposePlan: trackedProposePlan,
       submit: trackedSubmit,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
@@ -591,6 +683,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   const handlers = Object.freeze([
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
     Object.freeze({ channel: GENERATE_APPROVED_PLAN_CHANNEL, invoke: adapter.channels.generateApprovedPlan.invoke }),
+    Object.freeze({ channel: PROPOSE_PLAN_CHANNEL, invoke: adapter.channels.proposePlan.invoke }),
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),

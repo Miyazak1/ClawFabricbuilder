@@ -84,6 +84,7 @@ export interface BuilderCodeGeneratorPort {
   submit(request: BuilderGenerationRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<unknown>;
+  proposePlan(request: BuilderGenerationRequest): Promise<unknown>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;

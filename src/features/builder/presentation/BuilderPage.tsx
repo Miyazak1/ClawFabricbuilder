@@ -8,6 +8,7 @@ import {
   FileCode2,
   GitCompareArrows,
   History,
+  ListChecks,
   Play,
   RefreshCw,
   Save,
@@ -67,6 +68,7 @@ export type BuilderPageProps = {
   onInstructionChange?: (value: string) => void;
   onCancel?: () => void;
   onSteerInstruction?: () => void;
+  onProposePlan?: () => void;
   onSubmitInstruction?: () => void;
   onRetryGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
@@ -1103,6 +1105,7 @@ export function BuilderPage({
   onCancel,
   onInstructionChange,
   onSteerInstruction,
+  onProposePlan,
   onSubmitInstruction,
   onRetryGenerate,
   onRefreshConversation,
@@ -1172,6 +1175,13 @@ export function BuilderPage({
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory;
+  const canProposePlan = typeof onProposePlan === 'function'
+    && saved !== null
+    && !busy
+    && !hasUnsavedDraft
+    && !viewingHistory
+    && (status === 'ready' || status === 'preview_unavailable')
+    && instruction.trim().length > 0;
   const changes = useMemo(() => createBuilderSourceTreeChanges(
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,
@@ -1617,6 +1627,18 @@ export function BuilderPage({
             <span className="cf-builder-status-pill">
               {composerStatusLabel}
             </span>
+            {canProposePlan ? (
+              <button
+                className="cf-builder-composer-tool-button"
+                data-builder-propose-plan="true"
+                onClick={onProposePlan}
+                title="Plan first"
+                type="button"
+              >
+                <ListChecks aria-hidden="true" className="size-3.5" />
+                Plan first
+              </button>
+            ) : null}
           </div>
           <div className="cf-builder-composer-actions">
             {canCancel ? (

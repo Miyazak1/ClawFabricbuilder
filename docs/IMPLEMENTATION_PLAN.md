@@ -398,14 +398,22 @@ Evidence requirements:
   The public Generation result exposes bounded plan text and a Conversation
   head, not private source content, plan record bodies/digests, provider
   config, credential, Git candidate evidence, Save authority, source mutation,
-  Project Revision authority, IPC/preload, or renderer authority;
+  Project Revision authority, or renderer-owned authority. The visible desktop
+  workspace can request this through one active-renderer-bound
+  code-generator IPC/preload/desktop port method, but the renderer sends only
+  bounded user instruction text. Main derives the selected Project, re-reads
+  the current source tree, chooses bounded resource IDs, and returns only the
+  public plan result before the renderer re-reads the existing read-only Task
+  Stream;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
   main content bottom. The composer owns a single primary action: idle turns send
   with Enter or the send button, and active AI work replaces that same action
   with Stop instead of adding a second command in the chat flow. Assistant
   activity, draft review summary, preview, and source-file cards appear in that
-  same flow. For an unsaved draft, the Review/Save action strip appears before
+  same flow. Plan-first work is exposed as a secondary composer tool for saved
+  projects, not as a second send button. For an unsaved draft, the Review/Save
+  action strip appears before
   the Result preview and becomes the generation-complete landing target, so the
   next user decision is visible before any large preview surface. Draft changes
   stay summarized in the review card and open as an on-demand disclosure in the

@@ -68,6 +68,9 @@ async function snapshots() {
       async generateApprovedPlan() {
         return draft;
       },
+      async proposePlan() {
+        return null;
+      },
       async retry(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
@@ -505,6 +508,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async generateApprovedPlan() {
         return draft;
       },
+      async proposePlan() {
+        return null;
+      },
       async retry() {
         return draft;
       },
@@ -582,6 +588,9 @@ async function inspectedHistorySnapshot() {
           await createBuilderGenerationRequest('Continue approved plan.', PROJECT_ID),
           currentTree,
         );
+      },
+      async proposePlan() {
+        return null;
       },
       async retry(request) {
         return createGenerationDraft(request, currentTree);
@@ -866,6 +875,40 @@ describe('BuilderPage v2', () => {
     expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
+  it('offers desktop plan-first as a composer tool without adding a second send button', async () => {
+    const { draftReady, saved } = await snapshots();
+    const onProposePlan = vi.fn();
+    const onSubmitInstruction = vi.fn();
+    const savedContainer = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Plan the next project update."
+        onProposePlan={onProposePlan}
+        onSubmitInstruction={onSubmitInstruction}
+        snapshot={saved}
+      />,
+    );
+
+    expect(savedContainer.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+    const planButton = savedContainer.querySelector<HTMLButtonElement>('[data-builder-propose-plan="true"]');
+    expect(planButton).not.toBeNull();
+    expect(planButton?.closest('[data-builder-composer="true"]')).not.toBeNull();
+    click(savedContainer, '[data-builder-propose-plan="true"]');
+    expect(onProposePlan).toHaveBeenCalledOnce();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
+
+    const draftContainer = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Plan while draft exists."
+        onProposePlan={onProposePlan}
+        onSubmitInstruction={onSubmitInstruction}
+        snapshot={draftReady}
+      />,
+    );
+    expect(draftContainer.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+  });
+
   it('offers one submit command for questions and project changes', async () => {
     const { fresh } = await snapshots();
     const onSubmitInstruction = vi.fn();
@@ -895,6 +938,7 @@ describe('BuilderPage v2', () => {
           throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
         },
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
@@ -941,6 +985,7 @@ describe('BuilderPage v2', () => {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -987,6 +1032,7 @@ describe('BuilderPage v2', () => {
         submit: async () => null,
         generate: async () => null,
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
         restoreDraft: async () => null,
@@ -1043,6 +1089,7 @@ describe('BuilderPage v2', () => {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1087,6 +1134,7 @@ describe('BuilderPage v2', () => {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1148,6 +1196,7 @@ describe('BuilderPage v2', () => {
         submit: async (request) => createGenerationDraft(request),
         generate: async (request) => createGenerationDraft(request),
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => new Promise((resolve) => {
@@ -2228,6 +2277,7 @@ describe('BuilderPage v2', () => {
           throw error;
         },
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -2264,6 +2314,7 @@ describe('BuilderPage v2', () => {
         submit: async (request) => createGenerationDraft(request),
         generate: async (request) => createGenerationDraft(request),
         generateApprovedPlan: async () => null,
+        proposePlan: async () => null,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,

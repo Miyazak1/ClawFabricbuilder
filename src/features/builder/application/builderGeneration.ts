@@ -70,11 +70,42 @@ export type BuilderGenerationAnswer = Readonly<{
   }>;
 }>;
 
+export type BuilderGenerationPlan = Readonly<{
+  version: typeof BUILDER_GENERATION_RESULT_PROTOCOL;
+  result_kind: 'plan';
+  request_id: string;
+  project_id: string;
+  existing_project_id: string;
+  title: string;
+  summary: string;
+  steps: readonly Readonly<{
+    title: string;
+    purpose: string;
+    expected_change: string;
+    status: 'proposed';
+  }>[];
+  admissions: Readonly<{
+    conversation: 'sqlite_recorded';
+    draft: 'not_created';
+    save: 'not_performed';
+    preview: 'not_applicable';
+    execution: 'not_evaluated';
+    revision: 'not_created';
+    review: 'not_recorded';
+  }>;
+  conversation_head: Readonly<{
+    sequence: number;
+    event_id: string;
+    event_digest: string;
+  }>;
+}>;
+
 export type BuilderGenerationErrorCode =
   | 'invalid_instruction'
   | 'invalid_generation_request'
   | 'invalid_generated_draft'
-  | 'invalid_generated_answer';
+  | 'invalid_generated_answer'
+  | 'invalid_generated_plan';
 
 export class BuilderGenerationError extends Error {
   readonly code: BuilderGenerationErrorCode;
@@ -86,7 +117,9 @@ export class BuilderGenerationError extends Error {
         ? 'This project request could not be verified.'
         : code === 'invalid_generated_answer'
           ? 'The answer could not be verified.'
-          : 'The generated draft could not be verified.');
+          : code === 'invalid_generated_plan'
+            ? 'The plan could not be verified.'
+            : 'The generated draft could not be verified.');
     this.name = 'BuilderGenerationError';
     this.code = code;
     this.stack = `${this.name}: ${this.message}`;
@@ -131,6 +164,34 @@ const ANSWER_KEYS = Object.freeze([
   'explanation',
   'admissions',
 ]);
+const PLAN_KEYS = Object.freeze([
+  'version',
+  'result_kind',
+  'request_id',
+  'project_id',
+  'existing_project_id',
+  'title',
+  'summary',
+  'steps',
+  'admissions',
+  'conversation_head',
+]);
+const PLAN_STEP_KEYS = Object.freeze([
+  'title',
+  'purpose',
+  'expected_change',
+  'status',
+]);
+const PLAN_ADMISSION_KEYS = Object.freeze([
+  'conversation',
+  'draft',
+  'save',
+  'preview',
+  'execution',
+  'revision',
+  'review',
+]);
+const CONVERSATION_HEAD_KEYS = Object.freeze(['sequence', 'event_id', 'event_digest']);
 const CANDIDATE_KEYS = Object.freeze([
   'candidate_version',
   'candidate_id',
@@ -160,6 +221,7 @@ const TURN_ID_PATTERN =
   /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN =
   /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const CONVERSATION_EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -626,6 +688,94 @@ export async function sanitizeBuilderGenerationAnswer(
   } catch (error) {
     if (error instanceof BuilderGenerationError) throw error;
     throw invalid('invalid_generated_answer');
+  }
+}
+
+function sanitizeConversationHead(value: unknown): BuilderGenerationPlan['conversation_head'] {
+  const source = exactRecord(value, CONVERSATION_HEAD_KEYS, 'invalid_generated_plan');
+  if (
+    !Number.isSafeInteger(source.sequence)
+    || (source.sequence as number) < 1
+    || typeof source.event_id !== 'string'
+    || !CONVERSATION_EVENT_ID_PATTERN.test(source.event_id)
+    || typeof source.event_digest !== 'string'
+    || !DIGEST_PATTERN.test(source.event_digest)
+  ) throw invalid('invalid_generated_plan');
+  return deepFreeze({
+    sequence: source.sequence as number,
+    event_id: source.event_id,
+    event_digest: source.event_digest,
+  });
+}
+
+function sanitizePlanSteps(value: unknown): BuilderGenerationPlan['steps'] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 8) {
+    throw invalid('invalid_generated_plan');
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string') || keys.length !== value.length + 1) {
+    throw invalid('invalid_generated_plan');
+  }
+  return deepFreeze(value.map((step) => {
+    const source = exactRecord(step, PLAN_STEP_KEYS, 'invalid_generated_plan');
+    if (source.status !== 'proposed') throw invalid('invalid_generated_plan');
+    return {
+      title: safeDisplayText(source.title, 360, 'invalid_generated_plan'),
+      purpose: safeDisplayText(source.purpose, 360, 'invalid_generated_plan'),
+      expected_change: safeDisplayText(source.expected_change, 360, 'invalid_generated_plan'),
+      status: 'proposed' as const,
+    };
+  }));
+}
+
+export async function sanitizeBuilderGenerationPlan(
+  value: unknown,
+  expectedRequest: BuilderGenerationRequest,
+): Promise<BuilderGenerationPlan> {
+  try {
+    const request = await sanitizeBuilderGenerationRequest(expectedRequest);
+    if (request.existing_project_id === null) throw invalid('invalid_generated_plan');
+    const source = exactRecord(value, PLAN_KEYS, 'invalid_generated_plan');
+    if (
+      source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
+      || source.result_kind !== 'plan'
+      || source.request_id !== request.request_digest
+      || source.project_id !== request.existing_project_id
+      || source.existing_project_id !== request.existing_project_id
+    ) throw invalid('invalid_generated_plan');
+    const admissions = exactRecord(source.admissions, PLAN_ADMISSION_KEYS, 'invalid_generated_plan');
+    if (
+      admissions.conversation !== 'sqlite_recorded'
+      || admissions.draft !== 'not_created'
+      || admissions.save !== 'not_performed'
+      || admissions.preview !== 'not_applicable'
+      || admissions.execution !== 'not_evaluated'
+      || admissions.revision !== 'not_created'
+      || admissions.review !== 'not_recorded'
+    ) throw invalid('invalid_generated_plan');
+    return deepFreeze({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      project_id: request.existing_project_id,
+      existing_project_id: request.existing_project_id,
+      title: safeDisplayText(source.title, 80, 'invalid_generated_plan'),
+      summary: safeDisplayText(source.summary, 400, 'invalid_generated_plan'),
+      steps: sanitizePlanSteps(source.steps),
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+        revision: 'not_created',
+        review: 'not_recorded',
+      },
+      conversation_head: sanitizeConversationHead(source.conversation_head),
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationError) throw error;
+    throw invalid('invalid_generated_plan');
   }
 }
 

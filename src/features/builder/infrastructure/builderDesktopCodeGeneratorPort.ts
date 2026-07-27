@@ -14,6 +14,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
   submit(request: unknown): Promise<unknown>;
   generate(request: unknown): Promise<unknown>;
   generateApprovedPlan(request: unknown): Promise<unknown>;
+  proposePlan(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   restoreDraft(request: unknown): Promise<unknown>;
@@ -29,6 +30,7 @@ const BRIDGE_KEYS = new Set([
   'submit',
   'generate',
   'generateApprovedPlan',
+  'proposePlan',
   'retry',
   'answer',
   'restoreDraft',
@@ -187,6 +189,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       submit: methods.submit as BuilderCodeGeneratorBridge['submit'],
       generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
       generateApprovedPlan: methods.generateApprovedPlan as BuilderCodeGeneratorBridge['generateApprovedPlan'],
+      proposePlan: methods.proposePlan as BuilderCodeGeneratorBridge['proposePlan'],
       retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
       answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
       restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
@@ -365,6 +368,11 @@ export function createBuilderDesktopCodeGeneratorPort(
         conversation_id: request.conversation_id,
         turn_id: request.turn_id,
         run_id: request.run_id,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
+      return callBridge(bridge, bridge.proposePlan, [{
+        instruction: request.instruction,
       }]).then(unwrapGenerationEnvelope);
     },
     submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {

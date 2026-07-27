@@ -218,6 +218,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -426,6 +430,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       generateApprovedPlan(request: Parameters<BuilderCodeGeneratorPort['generateApprovedPlan']>[0]) {
         return ports.generator.generateApprovedPlan(request);
+      },
+      proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
+        return ports.generator.proposePlan(request);
       },
       retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
         return ports.generator.retry(request);
@@ -645,6 +652,38 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [idea, project, readActivityAfterTerminal, steerInstruction]);
+
+  const proposePlan = useCallback(async () => {
+    const currentSnapshot = projectSnapshotRef.current;
+    if (
+      currentSnapshot.busy
+      || currentSnapshot.draft !== null
+      || currentSnapshot.inspectedRevision !== null
+      || currentSnapshot.savedProject === null
+      || !['ready', 'preview_unavailable'].includes(currentSnapshot.status)
+      || submitInFlightRef.current
+      || idea.trim().length === 0
+    ) return;
+    const commandEpoch = workspaceEpochRef.current;
+    const submittedIdea = idea;
+    const fallbackProjectId = currentSnapshot.savedProject.target.project_id;
+    submitInFlightRef.current = true;
+    setIdea('');
+    setLiveOutput(null);
+    try {
+      const result = await project.proposePlan(submittedIdea);
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      if (result.status === 'submit_failed' || result.status === 'unavailable') {
+        setIdea(submittedIdea);
+      }
+      await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
+      setLiveOutput(null);
+    } finally {
+      if (workspaceEpochRef.current === commandEpoch) {
+        submitInFlightRef.current = false;
+      }
+    }
+  }, [idea, project, readActivityAfterTerminal]);
 
   const retryGenerate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -901,6 +940,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               activeFile={activeFile}
               instruction={idea}
               liveOutput={liveOutput}
+              onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
               onInstructionChange={setIdea}

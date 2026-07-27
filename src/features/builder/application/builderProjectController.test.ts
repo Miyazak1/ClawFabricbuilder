@@ -29,6 +29,7 @@ function setup(options: {
   submit?: BuilderCodeGeneratorPort['submit'];
   generate?: BuilderCodeGeneratorPort['generate'];
   generateApprovedPlan?: BuilderCodeGeneratorPort['generateApprovedPlan'];
+  proposePlan?: BuilderCodeGeneratorPort['proposePlan'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
@@ -46,6 +47,37 @@ function setup(options: {
   const generateApprovedPlan = vi.fn(options.generateApprovedPlan ?? (async () => (
     createGenerationDraft(await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID))
   )));
+  const proposePlan = vi.fn(options.proposePlan ?? (async (request) => ({
+    version: 'builder-generation-result.v2',
+    result_kind: 'plan',
+    request_id: request.request_digest,
+    project_id: request.existing_project_id ?? PROJECT_ID,
+    existing_project_id: request.existing_project_id,
+    title: 'Project update plan',
+    summary: 'Review the current project before editing.',
+    steps: [
+      {
+        title: 'Review current files',
+        purpose: 'Understand the saved project before editing.',
+        expected_change: 'No files change in this step.',
+        status: 'proposed',
+      },
+    ],
+    admissions: {
+      conversation: 'sqlite_recorded',
+      draft: 'not_created',
+      save: 'not_performed',
+      preview: 'not_applicable',
+      execution: 'not_evaluated',
+      revision: 'not_created',
+      review: 'not_recorded',
+    },
+    conversation_head: {
+      sequence: 3,
+      event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+      event_digest: `sha256:${'2'.repeat(64)}`,
+    },
+  })));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
@@ -95,6 +127,7 @@ function setup(options: {
       submit,
       generate,
       generateApprovedPlan,
+      proposePlan,
       retry,
       answer,
       restoreDraft,
@@ -113,6 +146,7 @@ function setup(options: {
     controller,
     generate,
     generateApprovedPlan,
+    proposePlan,
     submit,
     retry,
     steer,
@@ -215,6 +249,27 @@ describe('Builder project controller v2', () => {
     });
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('proposes a plan for a saved project without creating a draft or saving', async () => {
+    const { controller, generate, proposePlan, saveDraft } = setup();
+    const saved = await controller.open(PROJECT_ID);
+
+    const result = await controller.proposePlan('Plan the next saved-project change.');
+
+    expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      version: 'builder-generation-request.v2',
+      instruction: 'Plan the next saved-project change.',
+      existing_project_id: PROJECT_ID,
+    }));
+    expect(proposePlan.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('ready');
+    expect(result.savedProject).toBe(saved.savedProject);
+    expect(result.preview).toBe(saved.preview);
+    expect(result.draft).toBeNull();
+    expect(result.answer).toBeNull();
   });
 
   it('discards an unsaved draft by draft_id without saving it', async () => {

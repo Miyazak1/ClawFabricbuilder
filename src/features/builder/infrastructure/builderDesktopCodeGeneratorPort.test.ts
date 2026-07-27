@@ -29,6 +29,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate,
       retry: async () => null,
       answer: async () => null,
@@ -65,6 +66,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -97,6 +99,74 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('forwards one plan proposal request without renderer-owned authority', async () => {
+    const request = await createBuilderGenerationRequest('Plan the saved project update.', PROJECT_ID);
+    const proposedPlan = Object.freeze({
+      version: 'builder-generation-result.v2',
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      title: 'Project update plan',
+      summary: 'Review the saved project before editing.',
+      steps: [
+        {
+          title: 'Review current files',
+          purpose: 'Understand the saved project before editing.',
+          expected_change: 'No files change in this step.',
+          status: 'proposed',
+        },
+      ],
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+        revision: 'not_created',
+        review: 'not_recorded',
+      },
+      conversation_head: {
+        sequence: 3,
+        event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+        event_digest: `sha256:${'2'.repeat(64)}`,
+      },
+    });
+    const proposePlan = vi.fn(async (request: unknown) => {
+      void request;
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: proposedPlan,
+      };
+    });
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      proposePlan,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    const result = await port.proposePlan(request);
+
+    expect(proposePlan).toHaveBeenCalledExactlyOnceWith({ instruction: request.instruction });
+    expect(proposePlan.mock.calls[0][0]).not.toHaveProperty('existing_project_id');
+    expect(proposePlan.mock.calls[0][0]).not.toHaveProperty('request_digest');
+    expect(proposePlan.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(result).toEqual(proposedPlan);
+    expect(result).not.toBe(proposedPlan);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('forwards one submit request without renderer-owned authority', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const draft = await createGenerationDraft(request);
@@ -111,6 +181,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -140,6 +211,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -192,6 +264,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -272,6 +345,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry,
       answer: async () => null,
@@ -306,6 +380,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         },
       }),
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => ({
         version: 'builder-generation-ipc-result.v1',
         ok: false,
@@ -362,6 +437,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer,
@@ -394,6 +470,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -431,6 +508,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -459,6 +537,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -489,6 +568,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -521,6 +601,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -554,6 +635,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     {},
     {
       generateApprovedPlan: async (): Promise<unknown> => null,
+      proposePlan: async (): Promise<unknown> => null,
       generate: async (): Promise<unknown> => null,
       submit: async (): Promise<unknown> => null,
       retry: async (): Promise<unknown> => null,
@@ -564,6 +646,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     },
     {
       generateApprovedPlan: async (): Promise<unknown> => null,
+      proposePlan: async (): Promise<unknown> => null,
       generate: async (): Promise<unknown> => null,
       submit: async (): Promise<unknown> => null,
       retry: async (): Promise<unknown> => null,
@@ -596,6 +679,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       const port = createBuilderDesktopCodeGeneratorPort({
         submit: async (): Promise<unknown> => response,
         generateApprovedPlan: async (): Promise<unknown> => response,
+        proposePlan: async (): Promise<unknown> => response,
         generate: async (): Promise<unknown> => response,
         retry: async (): Promise<unknown> => response,
         answer: async (): Promise<unknown> => response,
@@ -618,6 +702,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -644,6 +729,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
       generateApprovedPlan: async () => null,
+      proposePlan: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,

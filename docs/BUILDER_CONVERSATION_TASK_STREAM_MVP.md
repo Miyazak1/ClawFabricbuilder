@@ -231,7 +231,10 @@ unless explicitly sent through the dedicated Builder provider authority.
 - The main stage prioritizes the current preview/result.
 - A lightweight conversation and task stream shows user messages, AI status,
   explanations, candidate outcomes, failures, and save decisions.
-- The composer remains available as the continuing input surface.
+- The composer remains available as the continuing input surface with one
+  primary send action. Plan-first work may appear as a secondary composer tool,
+  but it must route through the same conversation/task stream rather than a
+  separate planning panel.
 - Source/preview tools stay accessible without dominating the conversation.
 
 Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`
