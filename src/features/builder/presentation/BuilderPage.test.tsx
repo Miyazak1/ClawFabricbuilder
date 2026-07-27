@@ -961,8 +961,9 @@ describe('BuilderPage v2', () => {
     expect(notice?.textContent).toContain('Making your draft...');
     expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
     expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
-    expect(notice?.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
-    expect(composer?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(notice?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(composer?.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(composer?.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
     expect(composer?.querySelector('[data-builder-ask-question="true"]')).toBeNull();
     expect(composer?.querySelector('[data-builder-make-draft="true"]')).toBeNull();
     expect(composer?.textContent).toContain('Making your draft');
@@ -1003,8 +1004,9 @@ describe('BuilderPage v2', () => {
     const answeringComposer = answering.querySelector('[data-builder-composer="true"]');
     expect(answeringNotice?.textContent).toContain('Answering...');
     expect(answeringNotice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(answeringNotice?.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
-    expect(answeringComposer?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(answeringNotice?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(answeringComposer?.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(answeringComposer?.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
     expect(answeringComposer?.querySelector('[data-builder-ask-question="true"]')).toBeNull();
     expect(answeringComposer?.querySelector('[data-builder-make-draft="true"]')).toBeNull();
     expect(answeringComposer?.textContent).toContain('Answering');

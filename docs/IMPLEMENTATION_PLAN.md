@@ -390,11 +390,14 @@ Evidence requirements:
   Revision;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
-  main content bottom. Assistant activity, draft review summary, preview, and
-  source-file cards appear in that same flow. Draft changes stay summarized in
-  the review card and open an on-demand right sidebar only when the user asks
-  to inspect them, so an unsaved result does not squeeze the primary preview
-  and Save actions. The preview surface explicitly marks the first-release
+  main content bottom. The composer owns a single primary action: idle turns send
+  with Enter or the send button, and active AI work replaces that same action
+  with Stop instead of adding a second command in the chat flow. Assistant
+  activity, draft review summary, preview, and source-file cards appear in that
+  same flow. Draft changes stay summarized in the review card and open an
+  on-demand right sidebar only when the user asks to inspect them, so an unsaved
+  result does not squeeze the primary preview and Save actions. The preview
+  surface explicitly marks the first-release
   static-only runtime boundary, so JavaScript, Three.js, canvas, server, network,
   or backend-dependent drafts can explain a blank preview without claiming the
   generated files failed. Saved Versions can remain in the secondary right review

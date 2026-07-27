@@ -711,7 +711,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(generate).not.toHaveBeenCalled();
     const expected = await createBuilderGenerationRequest('Make a timer.', null);
-    click(container, 'Stop');
+    click(container, '[data-builder-cancel-work="true"]');
 
     await waitFor(() => {
       expect(cancel).toHaveBeenCalledExactlyOnceWith({ request_id: expected.request_digest });

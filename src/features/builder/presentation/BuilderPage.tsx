@@ -1304,18 +1304,6 @@ export function BuilderPage({
     if (hasUnsavedDraft) return 'Review draft before continuing';
     return saved ? 'Continue this project' : 'Start from an idea';
   })();
-  const cancelWorkButton = canCancel ? (
-    <button
-      className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium"
-      data-builder-cancel-work="true"
-      onClick={onCancel}
-      type="button"
-    >
-      <StopCircle aria-hidden="true" className="size-4" />
-      Stop
-    </button>
-  ) : null;
-
   const conversationNotice = (() => {
     if (status === 'opening') {
       return (
@@ -1330,38 +1318,35 @@ export function BuilderPage({
     }
     if (status === 'generating') {
       return (
-        <div
-          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice flex flex-col gap-2 text-sm"
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
           data-builder-conversation-notice="generating"
           role="status"
         >
-          <p>Making your draft...</p>
-          {cancelWorkButton}
-        </div>
+          Making your draft...
+        </p>
       );
     }
     if (status === 'submitting') {
       return (
-        <div
-          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice flex flex-col gap-2 text-sm"
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
           data-builder-conversation-notice="submitting"
           role="status"
         >
-          <p>Working on your request...</p>
-          {cancelWorkButton}
-        </div>
+          Working on your request...
+        </p>
       );
     }
     if (status === 'answering') {
       return (
-        <div
-          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice flex flex-col gap-2 text-sm"
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
           data-builder-conversation-notice="answering"
           role="status"
         >
-          <p>Answering...</p>
-          {cancelWorkButton}
-        </div>
+          Answering...
+        </p>
       );
     }
     if (status === 'saving') {
@@ -1554,7 +1539,18 @@ export function BuilderPage({
             </span>
           </div>
           <div className="cf-builder-composer-actions">
-            {hasUnsavedDraft || canCancel ? null : (
+            {canCancel ? (
+              <button
+                aria-label="Stop"
+                className="cf-builder-secondary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center"
+                data-builder-cancel-work="true"
+                onClick={onCancel}
+                title="Stop"
+                type="button"
+              >
+                <StopCircle aria-hidden="true" className="size-4" />
+              </button>
+            ) : hasUnsavedDraft ? null : (
               <button
                 aria-label={busy ? busyLabel(status) : 'Send'}
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
