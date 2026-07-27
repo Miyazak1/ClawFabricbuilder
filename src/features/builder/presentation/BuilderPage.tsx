@@ -1220,7 +1220,7 @@ export function BuilderPage({
 
   useEffect(() => {
     if (!hasUnsavedDraft) return;
-    const landingTarget = showResultFlow ? resultFlowRef.current : draftReviewRef.current;
+    const landingTarget = draftReviewRef.current ?? (showResultFlow ? resultFlowRef.current : null);
     landingTarget?.scrollIntoView?.({ block: 'start' });
   }, [draft?.draft_id, hasUnsavedDraft, showResultFlow]);
 
@@ -1646,6 +1646,8 @@ export function BuilderPage({
               ) : null}
               {showStarterPrompt ? <StarterPrompt /> : null}
 
+              {draftReview}
+
               {showResultFlow ? (
                 <section
                   aria-label="Project result"
@@ -1664,7 +1666,6 @@ export function BuilderPage({
                   </div>
                 </section>
               ) : null}
-              {draftReview}
 
               {sourceFile === null ? null : (
                 <details

@@ -1163,11 +1163,11 @@ describe('BuilderPage v2', () => {
       .toBe(chatMain);
     expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-review-sidebar="true"]'))
       .toBeNull();
-    expect(Boolean(conversation!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(conversation!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(Boolean(preview!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(review!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(Boolean(review!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(preview!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
     expect(composer?.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(composer?.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
@@ -1295,7 +1295,7 @@ describe('BuilderPage v2', () => {
     }
   });
 
-  it('lands on the draft result when generation finishes', async () => {
+  it('lands on the draft review actions when generation finishes', async () => {
     const { saved } = await snapshots();
     const draftReady = await changedDraftSnapshot();
     const activity = await candidateActivity();
@@ -1325,10 +1325,10 @@ describe('BuilderPage v2', () => {
       expect(result).not.toBeNull();
       expect(review).not.toBeNull();
       expect(spy).toHaveBeenCalled();
-      expect(spy.mock.contexts.at(-1)).toBe(result);
+      expect(spy.mock.contexts.at(-1)).toBe(review);
       expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
-      expect(Boolean(result!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
+      expect(Boolean(review!.compareDocumentPosition(result!) & Node.DOCUMENT_POSITION_FOLLOWING))
         .toBe(true);
     } finally {
       restore();

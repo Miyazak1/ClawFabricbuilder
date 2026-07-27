@@ -394,7 +394,10 @@ Evidence requirements:
   with Enter or the send button, and active AI work replaces that same action
   with Stop instead of adding a second command in the chat flow. Assistant
   activity, draft review summary, preview, and source-file cards appear in that
-  same flow. Draft changes stay summarized in the review card and open an
+  same flow. For an unsaved draft, the Review/Save action strip appears before
+  the Result preview and becomes the generation-complete landing target, so the
+  next user decision is visible before any large preview surface. Draft changes
+  stay summarized in the review card and open an
   on-demand right sidebar only when the user asks to inspect them, so an unsaved
   result does not squeeze the primary preview and Save actions. The preview
   surface explicitly marks the first-release
