@@ -66,6 +66,7 @@ async function setup(options: Readonly<{
   deferredGenerate?: boolean;
   failGenerate?: boolean;
   failPlanReview?: boolean;
+  failTaskStreamAfterPlanReview?: boolean;
   deferredPlanReview?: boolean;
   failSubmitOnce?: boolean;
   initiallySaved?: boolean;
@@ -340,29 +341,32 @@ async function setup(options: Readonly<{
   const generationStartedListeners = new Set<(event: unknown) => void>();
   const generationOutputListeners = new Set<(event: unknown) => void>();
   const taskStreamChangedListeners = new Set<(event: unknown) => void>();
-  const readTaskStream = vi.fn(async () => (
-    options.planAfterPropose === true && proposePlan.mock.calls.length > 0
+  const readTaskStream = vi.fn(async () => {
+    if (options.failTaskStreamAfterPlanReview === true && planReviewRecorded) {
+      throw new Error('activity unavailable');
+    }
+    return options.planAfterPropose === true && proposePlan.mock.calls.length > 0
       ? createPlanTaskStreamWire()
-    : options.pendingPlanActivity === true && planReviewRecorded
-      ? createPlanReviewTaskStreamWire('approved')
-    : options.pendingPlanActivity === true
-      ? createPlanTaskStreamWire()
-    : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
-      ? createRejectedTaskStreamWire()
-      : options.answerActivity === true
-      ? createAnswerTaskStreamWire()
-    : options.acceptedPendingActivity === true
-      ? pendingCandidateTaskStreamWire('accepted')
-    : options.rejectedPendingActivity === true
-      ? pendingCandidateTaskStreamWire('rejected')
-    : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
-        ? pendingCandidateTaskStreamWire('proposed')
-        : options.runningActivity === true
-          ? runningTaskStreamWire()
-        : options.pendingActivity === true
-          ? pendingCandidateTaskStreamWire('proposed')
-        : createTaskStreamWire()
-  ));
+      : options.pendingPlanActivity === true && planReviewRecorded
+        ? createPlanReviewTaskStreamWire('approved')
+        : options.pendingPlanActivity === true
+          ? createPlanTaskStreamWire()
+          : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
+            ? createRejectedTaskStreamWire()
+            : options.answerActivity === true
+              ? createAnswerTaskStreamWire()
+              : options.acceptedPendingActivity === true
+                ? pendingCandidateTaskStreamWire('accepted')
+                : options.rejectedPendingActivity === true
+                  ? pendingCandidateTaskStreamWire('rejected')
+                  : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
+                    ? pendingCandidateTaskStreamWire('proposed')
+                    : options.runningActivity === true
+                      ? runningTaskStreamWire()
+                      : options.pendingActivity === true
+                        ? pendingCandidateTaskStreamWire('proposed')
+                        : createTaskStreamWire();
+  });
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
     return request.project_id === null
@@ -1242,6 +1246,49 @@ describe('BuilderApp v2', () => {
     expect(generateApprovedPlan).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-activity-card="Plan approved"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
+    );
+  });
+
+  it('keeps recorded plan decisions locked when activity refresh is stale', async () => {
+    const {
+      container,
+      generateApprovedPlan,
+      readTaskStream,
+      reviewPlan,
+      saveDraft,
+    } = await setup({
+      failTaskStreamAfterPlanReview: true,
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+
+    click(container, 'Reject');
+    await waitFor(() => {
+      expect(reviewPlan).toHaveBeenCalledOnce();
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      const actions = container.querySelector('[data-builder-plan-review-actions="true"]');
+      expect(actions?.getAttribute('data-builder-plan-review-state')).toBe('recorded');
+      expect(actions?.textContent).toContain('Decision recorded. Updating the conversation...');
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-approve-plan="true"]')?.disabled)
+        .toBe(true);
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-reject-plan="true"]')?.disabled)
+        .toBe(true);
+    });
+    click(container, '[data-builder-approve-plan="true"]');
+    expect(reviewPlan).toHaveBeenCalledOnce();
+    expect(generateApprovedPlan).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-activity-card="Plan rejected"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
     );

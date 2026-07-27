@@ -75,6 +75,7 @@ export type BuilderPageProps = {
   liveOutput?: BuilderLiveOutputSnapshot | null;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
+  planReviewRecorded?: BuilderPlanReviewInFlight | null;
   onInstructionChange?: (value: string) => void;
   onCancel?: () => void;
   onSteerInstruction?: () => void;
@@ -858,6 +859,7 @@ function ActivityItem({
   onReviewPlan,
   planReviewBusy,
   planReviewFailed,
+  planReviewRecorded,
   pendingPlanReview,
 }: Readonly<{
   canReviewPlan: boolean;
@@ -866,6 +868,7 @@ function ActivityItem({
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   planReviewBusy: boolean;
   planReviewFailed: boolean;
+  planReviewRecorded: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const displayRole = activityDisplayRole(item);
@@ -882,7 +885,12 @@ function ActivityItem({
     && pendingPlanReview !== null
     && itemPlanReviewKey === planReviewKey(pendingPlanReview.turn_id, pendingPlanReview.run_id);
   function review(decision: BuilderPlanReviewDecision): void {
-    if (pendingPlanReview === null || typeof onReviewPlan !== 'function' || planReviewBusy) return;
+    if (
+      pendingPlanReview === null
+      || typeof onReviewPlan !== 'function'
+      || planReviewBusy
+      || planReviewRecorded
+    ) return;
     void onReviewPlan({ ...pendingPlanReview, decision });
   }
 
@@ -920,14 +928,20 @@ function ActivityItem({
           <div
             className="cf-builder-plan-review-actions"
             data-builder-plan-review-actions="true"
-            data-builder-plan-review-state={planReviewBusy ? 'recording' : planReviewFailed ? 'failed' : 'ready'}
+            data-builder-plan-review-state={planReviewBusy
+              ? 'recording'
+              : planReviewRecorded
+                ? 'recorded'
+                : planReviewFailed ? 'failed' : 'ready'}
           >
             <p className="cf-builder-activity-note" role={planReviewFailed ? 'alert' : undefined}>
               {planReviewBusy
                 ? 'Recording your decision...'
-                : planReviewFailed
-                  ? 'That decision could not be recorded. Try again.'
-                  : 'Approve this plan to let the assistant continue. Reject it to keep the project unchanged.'}
+                : planReviewRecorded
+                  ? 'Decision recorded. Updating the conversation...'
+                  : planReviewFailed
+                    ? 'That decision could not be recorded. Try again.'
+                    : 'Approve this plan to let the assistant continue. Reject it to keep the project unchanged.'}
             </p>
             <button
               className="cf-builder-primary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
@@ -1023,6 +1037,7 @@ function ActivityPanel({
   onReviewPlan,
   planReviewBusy,
   planReviewFailed,
+  planReviewRecorded,
   pendingPlanReview,
   canReviewPlan,
 }: Readonly<{
@@ -1034,6 +1049,7 @@ function ActivityPanel({
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   planReviewBusy: boolean;
   planReviewFailed: boolean;
+  planReviewRecorded: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const entries = activityEntries(snapshot);
@@ -1089,6 +1105,7 @@ function ActivityPanel({
                   onReviewPlan={onReviewPlan}
                   planReviewBusy={planReviewBusy}
                   planReviewFailed={planReviewFailed}
+                  planReviewRecorded={planReviewRecorded}
                   pendingPlanReview={pendingPlanReview}
                 />
               )
@@ -1152,6 +1169,7 @@ export function BuilderPage({
   liveOutput = null,
   planReviewFailure = null,
   planReviewInFlight = null,
+  planReviewRecorded = null,
   onSelectFile,
 }: BuilderPageProps) {
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
@@ -1213,9 +1231,16 @@ export function BuilderPage({
     && planReviewFailure.conversation_id === planReviewTarget.conversation_id
     && planReviewFailure.turn_id === planReviewTarget.turn_id
     && planReviewFailure.run_id === planReviewTarget.run_id;
+  const planReviewRecordedForTarget = planReviewTarget !== null
+    && planReviewRecorded !== null
+    && planReviewRecorded.project_id === planReviewTarget.project_id
+    && planReviewRecorded.conversation_id === planReviewTarget.conversation_id
+    && planReviewRecorded.turn_id === planReviewTarget.turn_id
+    && planReviewRecorded.run_id === planReviewTarget.run_id;
   const canReviewPlan = typeof onReviewPlan === 'function'
     && planReviewTarget !== null
     && !planReviewBusy
+    && !planReviewRecordedForTarget
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory;
@@ -1789,6 +1814,7 @@ export function BuilderPage({
                   onReviewPlan={onReviewPlan}
                   planReviewBusy={planReviewBusy}
                   planReviewFailed={planReviewFailed}
+                  planReviewRecorded={planReviewRecordedForTarget}
                   pendingPlanReview={planReviewTarget}
                   snapshot={activity}
                 />

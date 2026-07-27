@@ -422,6 +422,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
+  const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
@@ -560,6 +561,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     workspaceEpochRef.current += 1;
     approvedPlanWaitingProjectRef.current = null;
     setPlanReviewFailure(null);
+    setPlanReviewRecorded(null);
     publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
     submitInFlightRef.current = false;
@@ -748,6 +750,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     });
     const inFlightKey = planReviewInFlightKey(inFlight);
     setPlanReviewFailure(null);
+    setPlanReviewRecorded(null);
     publishPlanReviewInFlight(inFlight);
     const commandEpoch = workspaceEpochRef.current;
     let reviewed = false;
@@ -755,6 +758,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     try {
       await ports.planReview.review(request);
       reviewed = true;
+      setPlanReviewRecorded(inFlight);
     } catch {
       reviewFailed = true;
       reviewed = false;
@@ -994,6 +998,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               liveOutput={liveOutput}
               planReviewFailure={planReviewFailure}
               planReviewInFlight={planReviewInFlight}
+              planReviewRecorded={planReviewRecorded}
               onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
