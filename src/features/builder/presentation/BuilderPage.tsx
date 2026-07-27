@@ -105,6 +105,7 @@ function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'submitting') return 'Working...';
   if (status === 'answering') return 'Answering...';
   if (status === 'generating') return 'Making...';
+  if (status === 'restoring') return 'Restoring draft...';
   if (status === 'rejecting') return 'Discarding...';
   return 'Saving...';
 }
@@ -1301,6 +1302,7 @@ export function BuilderPage({
     if (status === 'submitting') return 'Working';
     if (status === 'generating') return 'Making your draft';
     if (status === 'answering') return 'Answering';
+    if (status === 'restoring') return 'Restoring draft';
     if (viewingHistory) return 'Viewing a saved version';
     if (hasUnsavedDraft) return 'Review draft before continuing';
     return saved ? 'Continue this project' : 'Start from an idea';
@@ -1358,6 +1360,17 @@ export function BuilderPage({
           role="status"
         >
           Saving this version...
+        </p>
+      );
+    }
+    if (status === 'restoring') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="restoring"
+          role="status"
+        >
+          Restoring draft for review...
         </p>
       );
     }

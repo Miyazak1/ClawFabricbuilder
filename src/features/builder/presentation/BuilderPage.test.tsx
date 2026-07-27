@@ -25,6 +25,7 @@ import {
   createProgressTaskStreamWire,
   createReadWire,
   createRejectedTaskStreamWire,
+  createRestoredGenerationDraft,
   createSaveResult,
   createSourceTree,
   createTaskStreamWire,
@@ -1022,6 +1023,59 @@ describe('BuilderPage v2', () => {
       />,
     );
     expect(idle.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+  });
+
+  it('shows draft recovery as a visible restoring state without save or stop actions', async () => {
+    const readWire = await createReadWire();
+    const restored = await createRestoredGenerationDraft(readWire.source_tree);
+    let resolveRestore: (value: unknown) => void = () => {
+      throw new Error('restore promise was not initialized');
+    };
+    const controller = createBuilderProjectController({
+      generator: {
+        submit: async (request) => createGenerationDraft(request),
+        generate: async (request) => createGenerationDraft(request),
+        generateApprovedPlan: async () => null,
+        retry: async (request) => createGenerationDraft(request),
+        answer: async () => null,
+        restoreDraft: async () => new Promise((resolve) => {
+          resolveRestore = resolve;
+        }),
+        rejectDraft: async () => null,
+        cancel: async () => null,
+      },
+      workspace: {
+        open: async () => readWire,
+        saveDraft: async () => null,
+        loadCurrent: async () => null,
+        loadRevision: async () => null,
+        listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
+      },
+    });
+    await controller.open(PROJECT_ID);
+    const restoring = controller.restoreDraft(DRAFT_ID);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        onSubmitInstruction={vi.fn()}
+        snapshot={controller.getSnapshot()}
+      />,
+    );
+
+    const notice = container.querySelector('[data-builder-conversation-notice="restoring"]');
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(notice?.textContent).toContain('Restoring draft for review...');
+    expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
+    expect(composer?.textContent).toContain('Restoring draft');
+    expect(composer?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
+
+    resolveRestore(restored);
+    await restoring;
   });
 
   it('shows an unsaved draft and requires the explicit Save version command', async () => {

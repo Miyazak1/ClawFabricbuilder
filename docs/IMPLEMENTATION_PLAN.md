@@ -404,7 +404,9 @@ Evidence requirements:
   static-only runtime boundary, so JavaScript, Three.js, canvas, server, network,
   or backend-dependent drafts can explain a blank preview without claiming the
   generated files failed. Saved Versions can remain in the secondary right review
-  sidebar outside the unsaved-draft landing state. This adds no fake edit
+  sidebar outside the unsaved-draft landing state. Restoring a pending draft
+  from project activity uses its own visible restoring state before Review
+  appears, without implying a Save. This adds no fake edit
   command, does not add a dedicated code workbench, and still uses only the
   existing read-only task stream, plan review, generation, draft reject, cancel,
   and explicit Save bridges;

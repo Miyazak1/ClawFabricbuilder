@@ -775,6 +775,37 @@ describe('Builder project controller v2', () => {
     expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
   });
 
+  it('shows a distinct restoring state while recovering a pending draft without saving it', async () => {
+    const readWire = await createReadWire();
+    const restored = await createRestoredGenerationDraft(readWire.source_tree);
+    let resolveRestore: (value: unknown) => void = () => {
+      throw new Error('restore promise was not initialized');
+    };
+    const { controller, restoreDraft, saveDraft } = setup({
+      open: async () => readWire,
+      restoreDraft: async () => new Promise((resolve) => {
+        resolveRestore = resolve;
+      }),
+    });
+    await controller.open(PROJECT_ID);
+
+    const restoring = controller.restoreDraft(DRAFT_ID);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'restoring',
+      busy: true,
+      savedProject: { target: { project_id: PROJECT_ID } },
+      draft: null,
+    });
+    expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    resolveRestore(restored);
+    const result = await restoring;
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.restart_restore).toBe('git_sqlite_verified');
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('inspects a historical revision without changing the current generation base', async () => {
     const currentTree = await createSourceTree([
       { path: 'index.html', content: '<main>Current</main>\n' },

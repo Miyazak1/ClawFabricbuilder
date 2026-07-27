@@ -34,6 +34,7 @@ export type BuilderProjectControllerStatus =
   | 'submitting'
   | 'answering'
   | 'generating'
+  | 'restoring'
   | 'draft_ready'
   | 'saving'
   | 'rejecting'
@@ -143,6 +144,7 @@ function snapshot(
       || status === 'submitting'
       || status === 'answering'
       || status === 'generating'
+      || status === 'restoring'
       || status === 'saving'
       || status === 'rejecting',
     savedProject,
@@ -809,7 +811,7 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const beforeRestore = current;
     return run(async (operationEpoch) => {
-      publish(snapshot('opening', retained, null, current.preview, null));
+      publish(snapshot('restoring', retained, null, current.preview, null));
       try {
         const draft = await sanitizeRestoredBuilderGenerationDraft(
           await dependencies.generator.restoreDraft({ draft_id: draftId }),
