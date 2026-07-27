@@ -62,6 +62,7 @@ async function waitFor(assertion: () => void): Promise<void> {
 
 async function setup(options: Readonly<{
   answerActivity?: boolean;
+  deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
   failSubmitOnce?: boolean;
@@ -254,6 +255,18 @@ async function setup(options: Readonly<{
       run_id: RUN_ID,
     });
     const hostRequest = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
+    if (options.deferredApprovedPlanGenerate === true) {
+      return new Promise<unknown>((resolve) => {
+        resolveGenerate = async () => {
+          latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
+          resolve({
+            version: 'builder-generation-ipc-result.v1',
+            ok: true,
+            result: latestDraft,
+          });
+        };
+      });
+    }
     latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
     return {
       version: 'builder-generation-ipc-result.v1',
@@ -877,12 +890,19 @@ describe('BuilderApp v2', () => {
   it('records plan approval then continues into an unsaved draft without saving', async () => {
     const {
       container,
+      emitGenerationOutput,
+      emitGenerationStarted,
       generate,
       generateApprovedPlan,
       readTaskStream,
       reviewPlan,
+      resolveGenerate,
       saveDraft,
-    } = await setup({ initiallySaved: true, pendingPlanActivity: true });
+    } = await setup({
+      deferredApprovedPlanGenerate: true,
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
     await waitFor(() => {
       expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
     });
@@ -897,7 +917,7 @@ describe('BuilderApp v2', () => {
       expect(reviewPlan).toHaveBeenCalledOnce();
       expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
         .toContain('The plan was approved. The project has not changed yet.');
-      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+      expect(generateApprovedPlan).toHaveBeenCalledOnce();
     });
     expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
@@ -911,6 +931,29 @@ describe('BuilderApp v2', () => {
       conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+    });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    const expected = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain("I'm working on this...");
+    });
+    expect(container.querySelector('[data-builder-live-output="true"]')?.getAttribute('data-builder-live-output-state'))
+      .toBe('waiting');
+    expect(emitGenerationOutput(expected.request_digest, 'Applying the approved plan.', PROJECT_ID))
+      .toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain('Applying the approved plan.');
+    });
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
     expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     expect(saveDraft).not.toHaveBeenCalled();

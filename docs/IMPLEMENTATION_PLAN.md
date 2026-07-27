@@ -439,7 +439,10 @@ Evidence requirements:
   IPC/preload. Once main has durably bound the generation start to the active
   Project Conversation, the desktop chat flow shows a single assistant waiting
   reply before the first display-safe delta arrives; later safe deltas replace
-  that waiting text in the same assistant row. This live output is ephemeral
+  that waiting text in the same assistant row. The same visible waiting path is
+  covered for approved-plan continuation after the user approves a proposed
+  plan, so plan review does not fall back to an invisible background step. This
+  live output is ephemeral
   conversation UI, not durable Task Stream fact, and carries no raw provider
   envelope, prompt, credential, source, Git, Save, or Project Revision authority.
   Tool streaming and arbitrary execution remain later independent protocols;
