@@ -137,9 +137,12 @@ only an internal identity/version/lifecycle fact authority: it persists
 owner-bound Agent records in main-owned SQLite. The current Agent Assignment
 store is only an internal owner-supervised assignment/status fact authority: it
 persists one Agent version binding to a Project/Conversation/Task/Run and
-ordered assignment status records in main-owned SQLite. Neither store exposes
-Agents UI, IPC/preload command, permission grant, provider/tool dispatch,
-source read, Git mutation, Review, Revision, or Artifact authority.
+ordered assignment status records in main-owned SQLite. The current Agent
+Supervision Lease contract is only a pure main-side record shape for one active
+assignment lease and release; it is not yet a persisted lease store or Run
+executor. These Agent authorities expose no Agents UI, IPC/preload command,
+permission grant, provider/tool dispatch, source read, Git mutation, Review,
+Revision, or Artifact authority.
 
 ## Project Storage Model
 

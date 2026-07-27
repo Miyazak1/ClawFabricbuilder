@@ -27,11 +27,12 @@ facts, but may not replace or mutate them implicitly.
 
 The current implementation has a real local Project Revision authority, a
 main-only local Agent Definition/Version/lifecycle record store, and a
-main-only local Agent Assignment/status record store. The Agent stores are not
-visible activation: they create no Delegation, Run supervision, permission
-grant, tool/provider dispatch, Review, Revision, or Artifact authority. The
-remaining authorities are roadmap contracts and must be introduced through
-independent implementation gates.
+main-only local Agent Assignment/status record store, and a pure main-side
+Agent Supervision Lease record contract. The Agent stores and lease contract are
+not visible activation: they create no Delegation, persisted Run supervision,
+permission grant, tool/provider dispatch, Review, Revision, or Artifact
+authority. The remaining authorities are roadmap contracts and must be
+introduced through independent implementation gates.
 
 ## Actor Model
 
