@@ -428,6 +428,13 @@ Evidence requirements:
   Stream fact, and carries no raw provider envelope, prompt, credential, source,
   Git, Save, or Project Revision authority. Tool streaming and arbitrary
   execution remain later independent protocols;
+- the current renderer-safe tool activity projection turns admitted Task Stream
+  tool request/result facts into ordinary conversation status language. Pending
+  requests remain visible as project steps; once the matching fixed-code result
+  is recorded, the request row folds into one final result row. This is a
+  read-only projection only: it adds no tool dispatch, raw-output exposure,
+  provider call, source mutation, Git evidence, Save authority, or Project
+  Revision authority;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

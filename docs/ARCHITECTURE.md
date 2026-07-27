@@ -99,8 +99,13 @@ shape and send that through one renderer-safe live output event so the
 conversation can show active AI text while the Run is in flight. This event is
 ephemeral UI state, not a Task Stream fact, and it carries no raw provider
 envelope, prompt, credential, source content, Git evidence, Save authority, or
-Project Revision authority; tool-output streaming still requires a separate
-projection gate.
+Project Revision authority. Separately, already-admitted Task Stream tool
+request/result facts have a renderer-safe activity projection: pending requests
+show as ordinary project steps, and matching fixed-code results fold the request
+into one final status row. That projection is read-only UI state and exposes no
+raw tool output, dispatch evidence, provider envelope, source content, Git
+evidence, Save authority, or Project Revision authority; tool-output streaming
+and arbitrary execution still require separate protocols.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
