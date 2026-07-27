@@ -388,6 +388,17 @@ Evidence requirements:
   Project/Conversation/Turn/Run IDs and cannot send plan text, provider config,
   source content, source receipt authority, Save authority, or Project
   Revision;
+- the current main-only plan-proposal generation checkpoint lets the Generation
+  main service propose a plan for an existing project without creating a code
+  candidate. Main first re-reads the current Git/SQLite project state, starts a
+  trusted Conversation work Run, collects bounded private source context through
+  the main source-context collector, and then asks the configured provider for
+  the plan-only JSON contract. Conversation admits the terminal `plan` result
+  only after the source-context result and plan proposal record cross-check.
+  The public Generation result exposes bounded plan text and a Conversation
+  head, not private source content, plan record bodies/digests, provider
+  config, credential, Git candidate evidence, Save authority, source mutation,
+  Project Revision authority, IPC/preload, or renderer authority;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
   main content bottom. The composer owns a single primary action: idle turns send

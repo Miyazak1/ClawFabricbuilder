@@ -79,6 +79,19 @@ approved-plan fact and prepares the private edit context; the renderer cannot
 send plan text, provider config, source content, source receipt authority, Save
 authority, or Project Revision authority.
 
+The Generation main service can also create a main-only plan proposal for an
+existing project by binding the user request to the current Git/SQLite project
+read result, starting a trusted Conversation work Run, collecting bounded
+private source context through the main source-context collector, and then
+asking the configured provider for the plan-only JSON contract. The private
+source context is used only inside main for the provider prompt and plan record
+creation. Conversation admits only the completed plan fact after cross-checking
+the source-context result and plan proposal record; the public Generation result
+contains bounded plan text and a Conversation head, not the plan record body,
+record digests, source context, provider config, credential, Git evidence, Save
+authority, Project Revision authority, or source mutation. This route currently
+has no IPC/preload/renderer command.
+
 The Generation main service can also record fixed Run progress stages through
 the Conversation main service while a provider generation or explanation is in
 flight. The only current stages are `context_ready`,

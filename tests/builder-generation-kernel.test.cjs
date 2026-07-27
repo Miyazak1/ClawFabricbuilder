@@ -9,14 +9,17 @@ const test = require('node:test');
 const {
   BUILDER_GENERATED_EXPLANATION_KIND,
   BUILDER_GENERATED_OPERATIONS_KIND,
+  BUILDER_GENERATED_PLAN_KIND,
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
   createBuilderGenerationRequest,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
   projectBuilderGenerationResult,
+  projectBuilderPlanProposalResult,
   sanitizeBuilderGenerationRequest,
 } = require('../electron/builder-generation-kernel.cjs');
 const {
@@ -61,6 +64,89 @@ function request({
 
 function sourceTree(files = []) {
   return createBuilderProjectSourceTree({ files });
+}
+
+function builderId(kind, index) {
+  return `builder-${kind}:123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
+}
+
+function planSourceContextResult(rawRequest = request({ existingProjectId: PROJECT_ID }), rawFiles = [
+  { path: 'src/app.tsx', content: 'export const ready = true;\n' },
+]) {
+  const tree = sourceTree(rawFiles);
+  const files = tree.files.map((file) => ({
+    path: file.path,
+    entry_kind: file.entry_kind,
+    content: file.content,
+    content_digest: file.content_digest,
+    content_bytes: Buffer.byteLength(file.content, 'utf8'),
+  }));
+  return {
+    result_version: 'builder-tool-source-context-result.v1',
+    operation: 'project_source_context_collected',
+    status: 'succeeded',
+    context: {
+      context_version: 'builder-conversation-run-context.v1',
+      mode: 'work',
+      project: {
+        project_id: PROJECT_ID,
+        created_at_ms: 10,
+      },
+      conversation: {
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${UUID}`,
+        created_at_ms: 11,
+      },
+      request_digest: rawRequest.request_digest,
+      start_head: {
+        sequence: 4,
+        event_id: `builder-conversation-event:${'a'.repeat(64)}`,
+        event_digest: `sha256:${'b'.repeat(64)}`,
+      },
+      attempt_number: 1,
+      events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+      run_terminal_failure_code: null,
+      ids: {
+        turn_command_id: builderId('command', 1),
+        run_command_id: builderId('command', 2),
+        terminal_command_id: builderId('command', 3),
+        turn_terminal_command_id: builderId('command', 4),
+        cancel_command_id: builderId('command', 5),
+        cancel_request_id: builderId('cancel-request', 6),
+        interrupt_command_id: builderId('command', 7),
+        interrupt_request_id: builderId('interrupt-request', 8),
+        message_id: builderId('message', 9),
+        assistant_message_id: builderId('message', 10),
+        turn_id: builderId('turn', 11),
+        task_id: builderId('task', 12),
+        run_id: builderId('run', 13),
+      },
+      cancel_requested: false,
+    },
+    private_source_context: {
+      context_version: 'builder-private-source-context.v1',
+      files,
+    },
+    reads: files.map((file, index) => ({
+      resource_id: `project:/${file.path}`,
+      status: 'succeeded',
+      tool_call_id: builderId('tool-call', index + 20),
+    })),
+    authority: {
+      collector_authority: 'main_tool_source_context_collector_v1',
+      permission_authority: 'main_permission_decision_before_tool_dispatch_v1',
+      policy_authority: 'main_tool_session_policy_contract_v1',
+      conversation_authority: 'trusted_conversation_main_service_methods',
+      execution_authority: 'main_tool_filesystem_read_execution_service_v1',
+      renderer_authority: 'not_present',
+      provider_dispatch: false,
+      credential_readback: false,
+      raw_output_storage: 'not_durable',
+      conversation_event: 'tool_request_and_fixed_result_only',
+      git_authority: 'not_present',
+      revision_admission: 'not_created',
+    },
+  };
 }
 
 function baseEvidence(tree = sourceTree()) {
@@ -154,6 +240,27 @@ function generatedExplanationText(overrides = {}) {
     title: 'Current project',
     summary: 'Explains the current local project.',
     explanation: 'The current project is a local Builder project. This answer does not change files.',
+    ...overrides,
+  });
+}
+
+function generatedPlanText(overrides = {}) {
+  return JSON.stringify({
+    kind: BUILDER_GENERATED_PLAN_KIND,
+    title: 'Review the change plan',
+    summary: 'Prepare a bounded implementation before editing the project.',
+    steps: [
+      {
+        title: 'Inspect the current shape',
+        purpose: 'Use the collected context to choose a small implementation path.',
+        expected_change: 'No source files change during planning.',
+      },
+      {
+        title: 'Prepare the edit pass',
+        purpose: 'Keep source mutation separate from approval.',
+        expected_change: 'The next approved step can create a draft.',
+      },
+    ],
     ...overrides,
   });
 }
@@ -253,6 +360,37 @@ test('builds a route-specific explanation prompt without allowing source operati
   assert.doesNotMatch(descriptor.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
 });
 
+test('builds a route-specific plan prompt from bounded private source context', () => {
+  const rawRequest = request({ instruction: 'Plan a smaller settings panel.', existingProjectId: PROJECT_ID });
+  const sourceContext = planSourceContextResult(rawRequest, [
+    { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
+  ]);
+  const descriptor = createBuilderPlanPromptDescriptor({
+    request: rawRequest,
+    source_context_result: sourceContext,
+  });
+
+  assert.equal(descriptor.version, BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION);
+  assert.equal(descriptor.prompt_version, 'builder-project-plan.v1');
+  assert.equal(descriptor.request_id, rawRequest.request_digest);
+  assert.deepEqual(descriptor.output_contract, {
+    kind: BUILDER_GENERATED_PLAN_KIND,
+    exact_keys: ['kind', 'title', 'summary', 'steps'],
+    step_keys: ['title', 'purpose', 'expected_change'],
+    format: 'json_object_only',
+  });
+  assert.match(descriptor.system_instruction, /Do not include source-change operations/u);
+  assert.match(descriptor.user_instruction, /Plan a smaller settings panel/u);
+  assert.match(descriptor.user_instruction, /export const Settings/u);
+  assert.deepEqual(JSON.parse(descriptor.user_instruction).current_source_context.files, [
+    { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
+  ]);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-project:|request_digest|context_digest|record_digest|tool_call_id|credential|provider/iu,
+  );
+});
+
 test('includes verified source text for existing-project revision prompts', () => {
   const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Add keyboard shortcuts.' });
   const base = sourceTree([
@@ -319,6 +457,41 @@ test('projects provider explanation without creating a candidate or source chang
   assert.doesNotMatch(JSON.stringify(result), /candidate|source_tree|revision_receipt|commit_oid|credential|provider/iu);
 });
 
+test('projects provider plan into a proposed record without creating source changes', () => {
+  const rawRequest = request({ instruction: 'Plan a settings panel update.', existingProjectId: PROJECT_ID });
+  const sourceContext = planSourceContextResult(rawRequest);
+  const result = projectBuilderPlanProposalResult({
+    request: rawRequest,
+    source_context_result: sourceContext,
+    proposed_at_ms: 100,
+    generated_text: generatedPlanText(),
+  });
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'plan');
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.equal(result.title, 'Review the change plan');
+  assert.deepEqual(result.steps.map((step) => step.status), ['proposed', 'proposed']);
+  assert.equal(result.plan_proposal_record.record_version, 'builder-plan-proposal-record.v1');
+  assert.equal(result.plan_proposal_record.project_id, PROJECT_ID);
+  assert.equal(result.plan_proposal_record.context_binding.file_count, 1);
+  assert.equal(result.plan_proposal_record.lifecycle.source_mutation, 'not_performed');
+  assert.equal(result.plan_proposal_record.authority.provider_dispatch, false);
+  assert.deepEqual(result.admissions, {
+    conversation: 'plan_local_not_recorded',
+    draft: 'not_created',
+    save: 'not_performed',
+    preview: 'not_applicable',
+    execution: 'not_evaluated',
+    revision: 'not_created',
+  });
+  assert.equal(Object.hasOwn(result, 'candidate'), false);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /"private_source_context"|"content_digest"|"source_tree"|"tool_call_id"|export const|credential_value|credential_secret|"secret_ref"|api[_-]?key|provider\.example|builder-model|"commit_oid"|"tree_oid"|"revision_receipt"|"operations"/iu,
+  );
+});
+
 test('rejects provider output when it belongs to the other generation route', () => {
   const rawRequest = request({ instruction: 'Explain or change this project.' });
   const candidateContext = {
@@ -340,6 +513,25 @@ test('rejects provider output when it belongs to the other generation route', ()
   expectKernelError(
     () => projectBuilderExplanationResult({
       request: rawRequest,
+      generated_text: generatedText(),
+    }),
+    'builder_generation_structured_response_invalid',
+  );
+  expectKernelError(
+    () => projectBuilderGenerationResult({
+      ...candidateContext,
+      generated_text: generatedPlanText(),
+    }),
+    'builder_generation_structured_response_invalid',
+  );
+  expectKernelError(
+    () => projectBuilderPlanProposalResult({
+      request: rawRequest,
+      source_context_result: planSourceContextResult(request({
+        instruction: 'Explain or change this project.',
+        existingProjectId: PROJECT_ID,
+      })),
+      proposed_at_ms: 100,
       generated_text: generatedText(),
     }),
     'builder_generation_structured_response_invalid',
@@ -531,12 +723,15 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     'node:util',
     './builder-code-change-kernel.cjs',
     './builder-project-source-tree.cjs',
+    './builder-plan-proposal-records.cjs',
   ]);
   for (const literal of [
     'builder-generation-request.v2',
     'builder-generation-result.v2',
     'builder-code-project.v3',
     'builder_code_change_operations',
+    'builder-project-plan.v1',
+    'builder_project_plan_proposal',
     'candidate_not_saved',
     'not_performed',
   ]) {

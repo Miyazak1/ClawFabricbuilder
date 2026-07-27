@@ -13,18 +13,28 @@ const {
   MAX_SOURCE_TREE_UTF8_BYTES,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
+const {
+  BuilderPlanProposalRecordError,
+  createBuilderPlanProposalRecord,
+  sanitizeBuilderPlanProposalSourceContextResult,
+} = require('./builder-plan-proposal-records.cjs');
 
 const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v3';
+const BUILDER_PLAN_PROJECT_PROMPT_VERSION = 'builder-project-plan.v1';
 const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2';
 const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-descriptor.v2';
 const BUILDER_GENERATED_OPERATIONS_KIND = 'builder_code_change_operations';
 const BUILDER_GENERATED_EXPLANATION_KIND = 'builder_conversation_explanation';
+const BUILDER_GENERATED_PLAN_KIND = 'builder_project_plan_proposal';
 
 const MAX_INSTRUCTION_CODE_POINTS = 4000;
 const MAX_INSTRUCTION_UTF8_BYTES = 16 * 1024;
 const MAX_EXPLANATION_CODE_POINTS = 4000;
 const MAX_EXPLANATION_UTF8_BYTES = 16 * 1024;
+const MAX_PLAN_STEP_COUNT = 12;
+const MAX_PLAN_STEP_TEXT_CODE_POINTS = 360;
+const MAX_PLAN_STEP_TEXT_UTF8_BYTES = 1536;
 const MAX_GENERATED_TEXT_BYTES = MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES;
 const MAX_PROMPT_DESCRIPTOR_BYTES = MAX_SOURCE_TREE_UTF8_BYTES + (96 * 1024);
 
@@ -41,6 +51,7 @@ const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
 const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
 const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree']);
+const PLAN_PROMPT_INPUT_KEYS = Object.freeze(['request', 'source_context_result']);
 const RESULT_INPUT_KEYS = Object.freeze([
   'request',
   'base_revision_evidence',
@@ -50,9 +61,14 @@ const RESULT_INPUT_KEYS = Object.freeze([
   'run_id',
   'generated_text',
 ]);
+const PLAN_RESULT_INPUT_KEYS = Object.freeze(['request', 'source_context_result', 'proposed_at_ms', 'generated_text']);
 const PROVIDER_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'operations']);
 const EXPLANATION_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'explanation']);
+const PLAN_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'steps']);
 const RAW_OPERATION_KEYS = Object.freeze(['operation', 'path', 'content']);
+const RAW_PLAN_STEP_KEYS = Object.freeze(['title', 'purpose', 'expected_change']);
+const PLAN_PROMPT_PRIVATE_CONTEXT_KEYS = Object.freeze(['context_version', 'files']);
+const PLAN_PROMPT_PRIVATE_FILE_KEYS = Object.freeze(['path', 'entry_kind', 'content', 'content_digest', 'content_bytes']);
 
 const JSON_OUTPUT_EXAMPLE = JSON.stringify({
   kind: BUILDER_GENERATED_OPERATIONS_KIND,
@@ -68,6 +84,23 @@ const EXPLANATION_OUTPUT_EXAMPLE = JSON.stringify({
   title: 'Current project',
   summary: 'Explains the saved project without changing files.',
   explanation: 'The project is a small local app. No source files were changed by this answer.',
+});
+const PLAN_OUTPUT_EXAMPLE = JSON.stringify({
+  kind: BUILDER_GENERATED_PLAN_KIND,
+  title: 'Review the change plan',
+  summary: 'A short plan for the requested project update.',
+  steps: [
+    {
+      title: 'Inspect the current project shape',
+      purpose: 'Understand the files that need to change.',
+      expected_change: 'No source files change during planning.',
+    },
+    {
+      title: 'Prepare the implementation pass',
+      purpose: 'Keep the next edit bounded and reviewable.',
+      expected_change: 'A later approved step can create the draft.',
+    },
+  ],
 });
 
 const CODE_CHANGE_SYSTEM_INSTRUCTION = [
@@ -97,6 +130,17 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
 ].join('\n');
+const PLAN_SYSTEM_INSTRUCTION = [
+  'Propose one bounded implementation plan for the current local software project.',
+  'Return one JSON object only, with no markdown fence or surrounding text.',
+  'Use exactly the keys kind, title, summary, and steps.',
+  `Set kind to ${BUILDER_GENERATED_PLAN_KIND}.`,
+  `Example JSON object: ${PLAN_OUTPUT_EXAMPLE}`,
+  'steps is an array of 1 to 12 plan steps. Each step uses exactly title, purpose, and expected_change.',
+  'Do not include source-change operations, complete file content, host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
+  'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
+  'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
+].join('\n');
 
 const CODE_CHANGE_OUTPUT_CONTRACT = Object.freeze({
   kind: BUILDER_GENERATED_OPERATIONS_KIND,
@@ -107,6 +151,12 @@ const CODE_CHANGE_OUTPUT_CONTRACT = Object.freeze({
 const EXPLANATION_OUTPUT_CONTRACT = Object.freeze({
   kind: BUILDER_GENERATED_EXPLANATION_KIND,
   exact_keys: Object.freeze(['kind', 'title', 'summary', 'explanation']),
+  format: 'json_object_only',
+});
+const PLAN_OUTPUT_CONTRACT = Object.freeze({
+  kind: BUILDER_GENERATED_PLAN_KIND,
+  exact_keys: Object.freeze(['kind', 'title', 'summary', 'steps']),
+  step_keys: Object.freeze(['title', 'purpose', 'expected_change']),
   format: 'json_object_only',
 });
 
@@ -245,6 +295,14 @@ function safeDigest(value, code) {
   return value;
 }
 
+function deterministicUuidFromText(value) {
+  const bytes = nodeCrypto.createHash('sha256').update(value, 'utf8').digest();
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.subarray(0, 16).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 function sanitizeBuilderGenerationRequestInternal(value) {
   assertExactObject(value, REQUEST_KEYS, 'builder_generation_request_invalid');
   const version = valueAt(value, 'version', 'builder_generation_request_invalid');
@@ -323,6 +381,65 @@ function sanitizePromptInput(value) {
   return { request, baseSourceTree };
 }
 
+function sanitizePlanPromptInput(value) {
+  assertExactObject(value, PLAN_PROMPT_INPUT_KEYS, 'builder_generation_request_invalid');
+  const request = sanitizeBuilderGenerationRequestInternal(
+    valueAt(value, 'request', 'builder_generation_request_invalid'),
+  );
+  let sourceContextResult;
+  try {
+    sourceContextResult = sanitizePlanPromptSourceContextResult(
+      valueAt(value, 'source_context_result', 'builder_generation_base_unavailable'),
+    );
+  } catch {
+    fail('builder_generation_base_unavailable');
+  }
+  return { request, sourceContextResult };
+}
+
+function sanitizePlanPromptSourceContextResult(value) {
+  const publicBinding = sanitizeBuilderPlanProposalSourceContextResult(value);
+  const privateContext = valueAt(value, 'private_source_context', 'builder_generation_base_unavailable');
+  assertExactObject(privateContext, PLAN_PROMPT_PRIVATE_CONTEXT_KEYS, 'builder_generation_base_unavailable');
+  if (
+    valueAt(privateContext, 'context_version', 'builder_generation_base_unavailable')
+      !== 'builder-private-source-context.v1'
+  ) fail('builder_generation_base_unavailable');
+  const files = valueAt(privateContext, 'files', 'builder_generation_base_unavailable');
+  if (
+    !Array.isArray(files)
+    || utilTypes.isProxy(files)
+    || files.length !== publicBinding.context_binding.file_count
+  ) fail('builder_generation_base_unavailable');
+  const keys = Reflect.ownKeys(files);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== files.length + 1) {
+    fail('builder_generation_base_unavailable');
+  }
+  const safeFiles = [];
+  for (let index = 0; index < files.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(files, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      fail('builder_generation_base_unavailable');
+    }
+    const file = descriptor.value;
+    assertExactObject(file, PLAN_PROMPT_PRIVATE_FILE_KEYS, 'builder_generation_base_unavailable');
+    if (valueAt(file, 'entry_kind', 'builder_generation_base_unavailable') !== 'text_file') {
+      fail('builder_generation_base_unavailable');
+    }
+    safeFiles.push({
+      path: valueAt(file, 'path', 'builder_generation_base_unavailable'),
+      content: valueAt(file, 'content', 'builder_generation_base_unavailable'),
+    });
+  }
+  return freezeDeep({
+    ...publicBinding,
+    private_source_context: {
+      context_version: 'builder-private-source-context.v1',
+      files: safeFiles,
+    },
+  });
+}
+
 function promptDescriptor(value, promptVersion, systemInstruction, outputContract) {
   try {
     const { request, baseSourceTree } = sanitizePromptInput(value);
@@ -331,6 +448,39 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
       mode: request.existing_project_id === null ? 'create' : 'revise',
       current_source_tree: {
         files: baseSourceTree.files.map((file) => ({
+          path: file.path,
+          content: file.content,
+        })),
+      },
+    };
+    const descriptor = {
+      version: BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
+      request_id: request.request_digest,
+      prompt_version: promptVersion,
+      system_instruction: systemInstruction,
+      user_instruction: canonicalJson(userContext, 'builder_generation_request_invalid'),
+      output_contract: outputContract,
+      max_generated_text_bytes: MAX_GENERATED_TEXT_BYTES,
+    };
+    if (Buffer.byteLength(canonicalJson(descriptor, 'builder_generation_request_invalid'), 'utf8')
+      > MAX_PROMPT_DESCRIPTOR_BYTES) {
+      fail('builder_generation_base_unavailable');
+    }
+    return freezeDeep(descriptor);
+  } catch (error) {
+    if (error instanceof BuilderGenerationKernelError) throw error;
+    fail('builder_generation_request_invalid');
+  }
+}
+
+function planPromptDescriptor(value, promptVersion, systemInstruction, outputContract) {
+  try {
+    const { request, sourceContextResult } = sanitizePlanPromptInput(value);
+    const userContext = {
+      instruction: request.instruction,
+      mode: 'plan',
+      current_source_context: {
+        files: sourceContextResult.private_source_context.files.map((file) => ({
           path: file.path,
           content: file.content,
         })),
@@ -383,6 +533,20 @@ function createBuilderExplanationPromptDescriptor(value) {
   );
 }
 
+function createBuilderPlanPromptDescriptor(value) {
+  return planPromptDescriptor(
+    value,
+    BUILDER_PLAN_PROJECT_PROMPT_VERSION,
+    PLAN_SYSTEM_INSTRUCTION,
+    {
+      kind: PLAN_OUTPUT_CONTRACT.kind,
+      exact_keys: [...PLAN_OUTPUT_CONTRACT.exact_keys],
+      step_keys: [...PLAN_OUTPUT_CONTRACT.step_keys],
+      format: PLAN_OUTPUT_CONTRACT.format,
+    },
+  );
+}
+
 function sanitizeGeneratedOperations(value) {
   assertExactObject(value, PROVIDER_OUTPUT_KEYS, 'builder_generation_structured_response_invalid');
   if (valueAt(value, 'kind', 'builder_generation_structured_response_invalid')
@@ -428,6 +592,80 @@ function sanitizeGeneratedOperations(value) {
   };
 }
 
+function sanitizeGeneratedPlanSteps(value, requestDigest) {
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || value.length < 1
+    || value.length > MAX_PLAN_STEP_COUNT
+  ) fail('builder_generation_structured_response_invalid');
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) {
+    fail('builder_generation_structured_response_invalid');
+  }
+  return value.map((rawStep, index) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      fail('builder_generation_structured_response_invalid');
+    }
+    assertExactObject(rawStep, RAW_PLAN_STEP_KEYS, 'builder_generation_structured_response_invalid');
+    const title = safeText(
+      valueAt(rawStep, 'title', 'builder_generation_structured_response_invalid'),
+      MAX_PLAN_STEP_TEXT_CODE_POINTS,
+      MAX_PLAN_STEP_TEXT_UTF8_BYTES,
+      false,
+      'builder_generation_structured_response_invalid',
+    );
+    const purpose = safeText(
+      valueAt(rawStep, 'purpose', 'builder_generation_structured_response_invalid'),
+      MAX_PLAN_STEP_TEXT_CODE_POINTS,
+      MAX_PLAN_STEP_TEXT_UTF8_BYTES,
+      false,
+      'builder_generation_structured_response_invalid',
+    );
+    const expectedChange = safeText(
+      valueAt(rawStep, 'expected_change', 'builder_generation_structured_response_invalid'),
+      MAX_PLAN_STEP_TEXT_CODE_POINTS,
+      MAX_PLAN_STEP_TEXT_UTF8_BYTES,
+      false,
+      'builder_generation_structured_response_invalid',
+    );
+    return {
+      plan_step_id: `builder-plan-step:${deterministicUuidFromText(`${requestDigest}:${index}:${title}:${purpose}:${expectedChange}`)}`,
+      title,
+      purpose,
+      expected_change: expectedChange,
+      status: 'proposed',
+    };
+  });
+}
+
+function sanitizeGeneratedPlan(value, requestDigest) {
+  assertExactObject(value, PLAN_OUTPUT_KEYS, 'builder_generation_structured_response_invalid');
+  if (valueAt(value, 'kind', 'builder_generation_structured_response_invalid')
+    !== BUILDER_GENERATED_PLAN_KIND) fail('builder_generation_structured_response_invalid');
+  return {
+    title: safeText(
+      valueAt(value, 'title', 'builder_generation_structured_response_invalid'),
+      120,
+      512,
+      false,
+      'builder_generation_structured_response_invalid',
+    ),
+    summary: safeText(
+      valueAt(value, 'summary', 'builder_generation_structured_response_invalid'),
+      1200,
+      4 * 1024,
+      true,
+      'builder_generation_structured_response_invalid',
+    ),
+    steps: sanitizeGeneratedPlanSteps(
+      valueAt(value, 'steps', 'builder_generation_structured_response_invalid'),
+      requestDigest,
+    ),
+  };
+}
+
 function sanitizeGeneratedExplanation(value) {
   assertExactObject(value, EXPLANATION_OUTPUT_KEYS, 'builder_generation_structured_response_invalid');
   if (valueAt(value, 'kind', 'builder_generation_structured_response_invalid')
@@ -457,7 +695,7 @@ function sanitizeGeneratedExplanation(value) {
   };
 }
 
-function parseProviderOutputText(value) {
+function parseProviderOutputText(value, requestDigest = '') {
   if (
     typeof value !== 'string'
     || value.length === 0
@@ -477,6 +715,7 @@ function parseProviderOutputText(value) {
   const kind = valueAt(parsed, 'kind', 'builder_generation_structured_response_invalid');
   if (kind === BUILDER_GENERATED_OPERATIONS_KIND) return { result_kind: 'candidate', ...sanitizeGeneratedOperations(parsed) };
   if (kind === BUILDER_GENERATED_EXPLANATION_KIND) return { result_kind: 'explanation', ...sanitizeGeneratedExplanation(parsed) };
+  if (kind === BUILDER_GENERATED_PLAN_KIND) return { result_kind: 'plan', ...sanitizeGeneratedPlan(parsed, requestDigest) };
   fail('builder_generation_structured_response_invalid');
 }
 
@@ -559,7 +798,63 @@ function projectBuilderExplanationResult(value) {
   }
 }
 
+function projectBuilderPlanProposalResult(value) {
+  try {
+    assertExactObject(value, PLAN_RESULT_INPUT_KEYS, 'builder_generation_request_invalid');
+    const request = sanitizeBuilderGenerationRequestInternal(
+      valueAt(value, 'request', 'builder_generation_request_invalid'),
+    );
+    const sourceContextResult = valueAt(value, 'source_context_result', 'builder_generation_base_unavailable');
+    const generated = parseProviderOutputText(
+      valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
+      request.request_digest,
+    );
+    if (generated.result_kind !== 'plan') fail('builder_generation_structured_response_invalid');
+    let planProposalRecord;
+    try {
+      planProposalRecord = createBuilderPlanProposalRecord({
+        source_context_result: sourceContextResult,
+        proposed_at_ms: valueAt(value, 'proposed_at_ms', 'builder_generation_request_invalid'),
+        title: generated.title,
+        summary: generated.summary,
+        steps: generated.steps,
+      });
+    } catch (error) {
+      if (error instanceof BuilderPlanProposalRecordError) {
+        fail('builder_generation_structured_response_invalid');
+      }
+      throw error;
+    }
+    return freezeDeep({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      title: planProposalRecord.title,
+      summary: planProposalRecord.summary,
+      steps: planProposalRecord.steps.map((step) => ({
+        title: step.title,
+        purpose: step.purpose,
+        expected_change: step.expected_change,
+        status: step.status,
+      })),
+      plan_proposal_record: planProposalRecord,
+      admissions: {
+        conversation: 'plan_local_not_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+        revision: 'not_created',
+      },
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationKernelError) throw error;
+    fail('builder_generation_structured_response_invalid');
+  }
+}
+
 module.exports = Object.freeze({
+  BUILDER_GENERATED_PLAN_KIND,
   BUILDER_GENERATED_EXPLANATION_KIND,
   BUILDER_GENERATED_OPERATIONS_KIND,
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
@@ -571,6 +866,8 @@ module.exports = Object.freeze({
   sanitizeBuilderGenerationRequest,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
   projectBuilderGenerationResult,
+  projectBuilderPlanProposalResult,
 });

@@ -70,6 +70,27 @@ function providerExplanation(overrides = {}) {
   };
 }
 
+function providerPlan(overrides = {}) {
+  return {
+    kind: 'builder_project_plan_proposal',
+    title: 'Review the change plan',
+    summary: 'Prepare a bounded implementation before editing the project.',
+    steps: [
+      {
+        title: 'Inspect the current project',
+        purpose: 'Use the collected context to keep the edit focused.',
+        expected_change: 'No source files change during planning.',
+      },
+      {
+        title: 'Prepare the edit pass',
+        purpose: 'Separate approval from source mutation.',
+        expected_change: 'The next approved step can produce a draft.',
+      },
+    ],
+    ...overrides,
+  };
+}
+
 function sourceTree(files = []) {
   return createBuilderProjectSourceTree({ files });
 }
@@ -125,6 +146,89 @@ function events({ requestDigest = request().request_digest, baseRevision = null 
   return [first, second];
 }
 
+function builderId(kind, index) {
+  return `builder-${kind}:123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
+}
+
+function planSourceContextResult(raw = request({ existingProjectId: PROJECT_ID }), rawFiles = [
+  { path: 'src/app.tsx', content: 'export const ready = true;\n' },
+]) {
+  const tree = sourceTree(rawFiles);
+  const files = tree.files.map((file) => ({
+    path: file.path,
+    entry_kind: file.entry_kind,
+    content: file.content,
+    content_digest: file.content_digest,
+    content_bytes: Buffer.byteLength(file.content, 'utf8'),
+  }));
+  return {
+    result_version: 'builder-tool-source-context-result.v1',
+    operation: 'project_source_context_collected',
+    status: 'succeeded',
+    context: {
+      context_version: 'builder-conversation-run-context.v1',
+      mode: 'work',
+      project: {
+        project_id: PROJECT_ID,
+        created_at_ms: 10,
+      },
+      conversation: {
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${UUID}`,
+        created_at_ms: 11,
+      },
+      request_digest: raw.request_digest,
+      start_head: {
+        sequence: 4,
+        event_id: `builder-conversation-event:${'a'.repeat(64)}`,
+        event_digest: `sha256:${'b'.repeat(64)}`,
+      },
+      attempt_number: 1,
+      events: events({ requestDigest: raw.request_digest }),
+      run_terminal_failure_code: null,
+      ids: {
+        turn_command_id: builderId('command', 1),
+        run_command_id: builderId('command', 2),
+        terminal_command_id: builderId('command', 3),
+        turn_terminal_command_id: builderId('command', 4),
+        cancel_command_id: builderId('command', 5),
+        cancel_request_id: builderId('cancel-request', 6),
+        interrupt_command_id: builderId('command', 7),
+        interrupt_request_id: builderId('interrupt-request', 8),
+        message_id: builderId('message', 9),
+        assistant_message_id: builderId('message', 10),
+        turn_id: TURN_ID,
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+      },
+      cancel_requested: false,
+    },
+    private_source_context: {
+      context_version: 'builder-private-source-context.v1',
+      files,
+    },
+    reads: files.map((file, index) => ({
+      resource_id: `project:/${file.path}`,
+      status: 'succeeded',
+      tool_call_id: builderId('tool-call', index + 20),
+    })),
+    authority: {
+      collector_authority: 'main_tool_source_context_collector_v1',
+      permission_authority: 'main_permission_decision_before_tool_dispatch_v1',
+      policy_authority: 'main_tool_session_policy_contract_v1',
+      conversation_authority: 'trusted_conversation_main_service_methods',
+      execution_authority: 'main_tool_filesystem_read_execution_service_v1',
+      renderer_authority: 'not_present',
+      provider_dispatch: false,
+      credential_readback: false,
+      raw_output_storage: 'not_durable',
+      conversation_event: 'tool_request_and_fixed_result_only',
+      git_authority: 'not_present',
+      revision_admission: 'not_created',
+    },
+  };
+}
+
 function contextFor(raw = request(), overrides = {}) {
   const base = overrides.base_source_tree ?? sourceTree();
   return {
@@ -149,6 +253,18 @@ function explanationContextFor(raw = request(), overrides = {}) {
     turn_id: TURN_ID,
     task_id: null,
     run_id: RUN_ID,
+  };
+}
+
+function planContextFor(raw = request({ existingProjectId: PROJECT_ID }), overrides = {}) {
+  return {
+    project_id: PROJECT_ID,
+    source_context_result: overrides.source_context_result ?? planSourceContextResult(raw),
+    conversation_events: overrides.conversation_events ?? events({ requestDigest: raw.request_digest }),
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    proposed_at_ms: 100,
   };
 }
 
@@ -178,6 +294,7 @@ function dependencies(overrides = {}) {
     }),
     buildGenerationContext: (raw) => contextFor(raw),
     buildExplanationContext: (raw) => explanationContextFor(raw),
+    buildPlanContext: (raw) => planContextFor(raw),
     transport: async () => ({
       transport_version: 'builder-openai-compatible-transport.v1',
       generated_text: JSON.stringify(providerOutput()),
@@ -313,6 +430,64 @@ test('generates a bounded explanation without candidate or Git context', async (
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model|candidate_digest|git_request|operations/iu);
 });
 
+test('generates a bounded plan proposal from source context without creating Git evidence', async () => {
+  const rawRequest = request({ instruction: 'Plan a smaller settings panel.', existingProjectId: PROJECT_ID });
+  const sourceContext = planSourceContextResult(rawRequest, [
+    { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
+  ]);
+  let planContexts = 0;
+  let transportInput;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildPlanContext: (raw) => {
+      planContexts += 1;
+      return planContextFor(raw, { source_context_result: sourceContext });
+    },
+    transport: async (...args) => {
+      transportInput = args;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerPlan()),
+      };
+    },
+  }));
+
+  const result = await adapter.plan(rawRequest);
+
+  assert.equal(planContexts, 1);
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'plan');
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.equal(result.context.project_id, PROJECT_ID);
+  assert.equal(result.context.task_id, TASK_ID);
+  assert.equal(result.plan_proposal_record.project_id, PROJECT_ID);
+  assert.equal(result.plan_proposal_record.context_binding.file_count, 1);
+  assert.equal(result.admissions.conversation, 'plan_local_not_recorded');
+  assert.equal(result.admissions.draft, 'not_created');
+  assert.equal(Object.hasOwn(result, 'candidate'), false);
+  assert.match(transportInput[0].messages[0].content, /builder_project_plan_proposal/u);
+  assert.doesNotMatch(transportInput[0].messages[0].content, /builder_code_change_operations|builder_conversation_explanation/u);
+  assert.match(transportInput[0].messages[1].content, /Plan a smaller settings panel/u);
+  assert.match(transportInput[0].messages[1].content, /export const Settings/u);
+  assert.equal(transportInput[1].signal instanceof AbortSignal, true);
+  assert.match(
+    result.context.source_context_result.private_source_context.files[0].content,
+    /export const Settings/u,
+  );
+  assert.doesNotMatch(
+    JSON.stringify({
+      version: result.version,
+      result_kind: result.result_kind,
+      request_id: result.request_id,
+      title: result.title,
+      summary: result.summary,
+      steps: result.steps,
+      plan_proposal_record: result.plan_proposal_record,
+      admissions: result.admissions,
+    }),
+    /real-key|provider\.example|builder-model|"private_source_context"|export const Settings|credential_value|credential_secret|"secret_ref"|api[_-]?key|"git_request"|"commit_oid"|"tree_oid"|"operations"/iu,
+  );
+});
+
 test('passes verified current source into the prompt for an existing project', async () => {
   const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Add a pause button.' });
   const base = sourceTree([{ path: 'src/app.js', content: 'export const before = true;\n' }]);
@@ -411,6 +586,26 @@ test('cancels only the exact active request and propagates abort to transport', 
     cancelled: true,
   });
   await assert.rejects(answer, { code: 'builder_generation_cancelled' });
+
+  const planAdapter = createBuilderGenerationHostAdapter(dependencies({
+    transport: async (_input, control) => new Promise((_resolve, reject) => {
+      control.signal.addEventListener('abort', () => {
+        const error = new Error('cancelled');
+        error.code = 'builder_provider_cancelled';
+        reject(error);
+      }, { once: true });
+    }),
+  }));
+  const plan = planAdapter.plan(request({ existingProjectId: PROJECT_ID }));
+  assert.deepEqual(planAdapter.cancel({ request_id: raw.request_digest }), {
+    request_id: raw.request_digest,
+    cancelled: false,
+  });
+  assert.deepEqual(planAdapter.cancel({ request_id: request({ existingProjectId: PROJECT_ID }).request_digest }), {
+    request_id: request({ existingProjectId: PROJECT_ID }).request_digest,
+    cancelled: true,
+  });
+  await assert.rejects(plan, { code: 'builder_generation_cancelled' });
 });
 
 test('cancels a stalled base read without invoking provider authority', async () => {

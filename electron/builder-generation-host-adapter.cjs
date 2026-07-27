@@ -5,8 +5,10 @@ const { types: utilTypes } = require('node:util');
 const {
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
   projectBuilderGenerationResult,
+  projectBuilderPlanProposalResult,
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
@@ -37,6 +39,15 @@ const EXPLANATION_CONTEXT_KEYS = Object.freeze([
   'turn_id',
   'task_id',
   'run_id',
+]);
+const PLAN_CONTEXT_KEYS = Object.freeze([
+  'project_id',
+  'source_context_result',
+  'conversation_events',
+  'turn_id',
+  'task_id',
+  'run_id',
+  'proposed_at_ms',
 ]);
 const RUN_PROGRESS_STAGES = Object.freeze([
   'context_ready',
@@ -212,6 +223,9 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const buildExplanationContext = options.buildExplanationContext === undefined
     ? null
     : requiredMethod(options.buildExplanationContext, 'builder_generation_base_unavailable');
+  const buildPlanContext = options.buildPlanContext === undefined
+    ? null
+    : requiredMethod(options.buildPlanContext, 'builder_generation_base_unavailable');
   const transport = options.transport === undefined
     ? createBuilderOpenAICompatibleTransport()
     : requiredMethod(options.transport);
@@ -219,6 +233,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const onOutputDelta = options.onOutputDelta === undefined ? null : requiredMethod(options.onOutputDelta);
   const inFlight = new Map();
   const explanationInFlight = new Map();
+  const planInFlight = new Map();
 
   function providerAuthority() {
     try {
@@ -432,6 +447,57 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  async function runPlan(request, controller) {
+    if (buildPlanContext === null) fail('builder_generation_base_unavailable');
+    const context = await boundedContext(
+      request,
+      controller.signal,
+      buildPlanContext,
+      PLAN_CONTEXT_KEYS,
+    );
+    let descriptor;
+    try {
+      descriptor = createBuilderPlanPromptDescriptor({
+        request,
+        source_context_result: ownValue(context, 'source_context_result', 'builder_generation_base_unavailable'),
+      });
+    } catch (error) {
+      mapKernelError(error);
+    }
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const { config, credential } = providerAuthority();
+    let transportResult;
+    try {
+      transportResult = await Reflect.apply(transport, undefined, [{
+        base_url: config.base_url,
+        model: config.model,
+        credential,
+        messages: [
+          { role: 'system', content: descriptor.system_instruction },
+          { role: 'user', content: descriptor.user_instruction },
+        ],
+        timeout_ms: config.timeout_ms,
+        ...(config.temperature === null ? {} : { temperature: config.temperature }),
+        ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
+      }, { signal: controller.signal }]);
+    } catch (error) {
+      mapTransportError(error, controller.signal);
+    }
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const generatedText = sanitizeTransportResult(transportResult);
+    try {
+      const plan = projectBuilderPlanProposalResult({
+        request,
+        source_context_result: ownValue(context, 'source_context_result', 'builder_generation_base_unavailable'),
+        proposed_at_ms: ownValue(context, 'proposed_at_ms', 'builder_generation_base_unavailable'),
+        generated_text: generatedText,
+      });
+      return Object.freeze({ ...plan, context });
+    } catch (error) {
+      mapKernelError(error);
+    }
+  }
+
   function generate(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -466,13 +532,33 @@ function createBuilderGenerationHostAdapter(options = {}) {
     return entry.promise;
   }
 
+  function plan(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationHostAdapterError('builder_generation_request_invalid'));
+    }
+    const existing = planInFlight.get(request.request_digest);
+    if (existing) return existing.promise;
+    const controller = new AbortController();
+    const entry = { controller, promise: null };
+    entry.promise = runPlan(request, controller).finally(() => {
+      if (planInFlight.get(request.request_digest) === entry) {
+        planInFlight.delete(request.request_digest);
+      }
+    });
+    planInFlight.set(request.request_digest, entry);
+    return entry.promise;
+  }
+
   function cancel(rawRequest) {
     const requestId = sanitizeCancelRequest(rawRequest);
     const entry = inFlight.get(requestId);
     const explanationEntry = explanationInFlight.get(requestId);
-    if (!entry && !explanationEntry) return Object.freeze({ request_id: requestId, cancelled: false });
+    const planEntry = planInFlight.get(requestId);
+    if (!entry && !explanationEntry && !planEntry) return Object.freeze({ request_id: requestId, cancelled: false });
     if (entry) entry.controller.abort();
     if (explanationEntry) explanationEntry.controller.abort();
+    if (planEntry) planEntry.controller.abort();
     return Object.freeze({ request_id: requestId, cancelled: true });
   }
 
@@ -495,7 +581,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  return Object.freeze({ generate, explain, cancel, availability });
+  return Object.freeze({ generate, explain, plan, cancel, availability });
 }
 
 module.exports = Object.freeze({

@@ -7,6 +7,9 @@ const {
   createBuilderGenerationHostAdapter,
 } = require('./builder-generation-host-adapter.cjs');
 const {
+  sanitizeBuilderPlanProposalSourceContextResult,
+} = require('./builder-plan-proposal-records.cjs');
+const {
   sanitizeBuilderGitCandidateReceipt,
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
@@ -29,6 +32,7 @@ const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
 const GENERATE_OPERATION_PREFIX = 'generate:';
 const ANSWER_OPERATION_PREFIX = 'answer:';
+const PLAN_OPERATION_PREFIX = 'plan:';
 const PROVIDER_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
 const MAX_LIVE_OUTPUT_BUFFER_BYTES = 512 * 1024;
 const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
@@ -41,6 +45,7 @@ const OPTION_KEYS = Object.freeze([
   'onGenerationStarted',
   'onProviderOutputDelta',
   'createUuid',
+  'sourceContextCollector',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -85,6 +90,7 @@ const APPROVED_PLAN_READ_AUTHORITY_KEYS = Object.freeze([
   'git_authority',
   'revision_admission',
 ]);
+const RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_draft_conflict: 'The generated project draft could not be verified.',
@@ -260,6 +266,11 @@ function safeDigest(value) {
   return value;
 }
 
+function safeTimestamp(value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000) fail();
+  return value;
+}
+
 function safeHead(value) {
   exactObject(value, ['sequence', 'event_id', 'event_digest']);
   const sequence = valueAt(value, 'sequence');
@@ -384,6 +395,25 @@ function safeApprovedPlanPublicText(value) {
   return text;
 }
 
+function safeResourceIds(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 1 || value.length > 8) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) fail();
+  const seen = new Set();
+  const resourceIds = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const resourceId = safePattern(descriptor.value, RESOURCE_ID_PATTERN, 128);
+    const segments = resourceId.slice('project:/'.length).split('/');
+    if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) fail();
+    if (seen.has(resourceId)) fail();
+    seen.add(resourceId);
+    resourceIds.push(resourceId);
+  }
+  return freezeDeep(resourceIds);
+}
+
 function sanitizeApprovedPlanReadAuthority(value) {
   exactObject(value, APPROVED_PLAN_READ_AUTHORITY_KEYS);
   if (
@@ -460,6 +490,7 @@ function sanitizeOptions(value) {
   if (keys.includes('onGenerationStarted') && typeof descriptors.onGenerationStarted.value !== 'function') fail();
   if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
+  if (keys.includes('sourceContextCollector') && !isPlainObject(descriptors.sourceContextCollector.value)) fail();
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -468,6 +499,7 @@ function sanitizeOptions(value) {
     ...(keys.includes('transport') ? { transport: descriptors.transport.value } : {}),
     ...(keys.includes('onGenerationStarted') ? { onGenerationStarted: descriptors.onGenerationStarted.value } : {}),
     ...(keys.includes('onProviderOutputDelta') ? { onProviderOutputDelta: descriptors.onProviderOutputDelta.value } : {}),
+    ...(keys.includes('sourceContextCollector') ? { sourceContextCollector: descriptors.sourceContextCollector.value } : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
 }
@@ -689,6 +721,34 @@ function publicDraftResult(draft) {
   });
 }
 
+function publicPlanResult(plan, request, conversationHead) {
+  return freezeDeep({
+    version: plan.version,
+    result_kind: 'plan',
+    request_id: request.request_digest,
+    project_id: safeProjectId(plan.plan_proposal_record.project_id),
+    existing_project_id: request.existing_project_id,
+    title: plan.title,
+    summary: plan.summary,
+    steps: plan.steps.map((step) => ({
+      title: safeText(step.title, 360, 1536),
+      purpose: safeText(step.purpose, 360, 1536),
+      expected_change: safeText(step.expected_change, 360, 1536),
+      status: 'proposed',
+    })),
+    admissions: {
+      conversation: 'sqlite_recorded',
+      draft: 'not_created',
+      save: 'not_performed',
+      preview: 'not_applicable',
+      execution: 'not_evaluated',
+      revision: 'not_created',
+      review: 'not_recorded',
+    },
+    conversation_head: safeHead(conversationHead),
+  });
+}
+
 function publicRestoredDraftResult(draft, baseRevisionEvidence) {
   const proof = draft.candidate_proof;
   return freezeDeep({
@@ -761,6 +821,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const beginConversationWork = ownMethod(options.conversationService, 'begin_work');
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
+  const completeConversationPlan = ownMethod(options.conversationService, 'complete_plan');
   const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
   const recordConversationRunProgress = ownMethod(options.conversationService, 'record_run_progress');
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
@@ -777,6 +838,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const persistCandidateCommit = ownMethod(options.gitAuthority, 'persist_candidate_commit');
   const verifyCandidateReceipt = ownMethod(options.gitAuthority, 'verify_candidate_receipt');
   const readVerifiedCandidate = ownMethod(options.gitAuthority, 'read_verified_candidate');
+  const collectProjectSourceContext = options.sourceContextCollector === undefined
+    ? null
+    : ownMethod(options.sourceContextCollector, 'collect_project_source_context');
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -787,6 +851,8 @@ function createBuilderGenerationMainService(rawOptions) {
   const providerOutputStates = new WeakMap();
   const liveOutputContextsByRunId = new Map();
   const pendingApprovedPlanEditContexts = new Map();
+  const pendingPlanRequests = new Map();
+  const planContexts = new WeakMap();
   let pendingAuthority = null;
   let bindingAuthority = false;
 
@@ -843,11 +909,10 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   function rejectIfOtherRouteInFlight(prefix, requestDigest) {
-    const otherPrefix = prefix === GENERATE_OPERATION_PREFIX
-      ? ANSWER_OPERATION_PREFIX
-      : GENERATE_OPERATION_PREFIX;
-    if (inFlight.has(operationKey(otherPrefix, requestDigest))) {
-      return Promise.reject(new BuilderGenerationMainServiceError());
+    for (const otherPrefix of [GENERATE_OPERATION_PREFIX, ANSWER_OPERATION_PREFIX, PLAN_OPERATION_PREFIX]) {
+      if (otherPrefix !== prefix && inFlight.has(operationKey(otherPrefix, requestDigest))) {
+        return Promise.reject(new BuilderGenerationMainServiceError());
+      }
     }
     return null;
   }
@@ -1122,11 +1187,62 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  async function buildPlanContext(request) {
+    try {
+      if (collectProjectSourceContext === null || request.existing_project_id === null) fail();
+      const key = operationKey(PLAN_OPERATION_PREFIX, request.request_digest);
+      const pendingPlan = pendingPlanRequests.get(key);
+      if (pendingPlan === undefined) fail();
+      pendingPlanRequests.delete(key);
+      const projectId = request.existing_project_id;
+      const base = sanitizeReadResult(
+        await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: projectId }]),
+        projectId,
+      );
+      const conversationContext = Reflect.apply(
+        beginConversationWork,
+        options.conversationService,
+        [{
+          project_id: projectId,
+          instruction: request.instruction,
+          request_digest: request.request_digest,
+          base_revision: base.base_revision,
+        }],
+      );
+      activeContexts.set(key, conversationContext);
+      retryableContexts.delete(key);
+      notifyGenerationStarted(request, projectId);
+      const sourceContextResult = await Reflect.apply(collectProjectSourceContext, options.sourceContextCollector, [{
+        context: conversationContext,
+        resource_ids: pendingPlan.resource_ids,
+      }]);
+      sanitizeBuilderPlanProposalSourceContextResult(sourceContextResult);
+      const sourceContextConversation = valueAt(sourceContextResult, 'context');
+      const sourceContextIds = valueAt(sourceContextConversation, 'ids');
+      const context = freezeDeep({
+        project_id: projectId,
+        source_context_result: sourceContextResult,
+        conversation_events: valueAt(sourceContextConversation, 'events'),
+        turn_id: valueAt(sourceContextIds, 'turn_id'),
+        task_id: valueAt(sourceContextIds, 'task_id'),
+        run_id: valueAt(sourceContextIds, 'run_id'),
+        proposed_at_ms: safeTimestamp(Date.now()),
+      });
+      planContexts.set(context, sourceContextResult);
+      activeContexts.set(key, sourceContextConversation);
+      liveOutputContextsByRunId.set(valueAt(sourceContextIds, 'run_id'), sourceContextConversation);
+      return context;
+    } catch {
+      fail();
+    }
+  }
+
   const host = createBuilderGenerationHostAdapter({
     readProviderConfig,
     resolveSecret,
     buildGenerationContext,
     buildExplanationContext,
+    buildPlanContext,
     onProgress({ context, stage }) {
       const generationContext = latestConversationContext(context, generationContexts.get(context));
       if (generationContext !== undefined) {
@@ -1415,6 +1531,50 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  async function proposePlan(rawRequest) {
+    let request;
+    let key;
+    try {
+      exactObject(rawRequest, ['request', 'resource_ids']);
+      request = sanitizeBuilderGenerationRequest(valueAt(rawRequest, 'request'));
+      if (request.existing_project_id === null) fail();
+      key = operationKey(PLAN_OPERATION_PREFIX, request.request_digest);
+      if (inFlight.has(key) || pendingPlanRequests.has(key) || collectProjectSourceContext === null) fail();
+      const routeConflict = rejectIfOtherRouteInFlight(PLAN_OPERATION_PREFIX, request.request_digest);
+      if (routeConflict) return routeConflict;
+      pendingPlanRequests.set(key, freezeDeep({
+        resource_ids: safeResourceIds(valueAt(rawRequest, 'resource_ids')),
+      }));
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    const operation = Promise.resolve(host.plan(request)).then((internal) => {
+      const context = valueAt(internal, 'context');
+      const sourceContextResult = planContexts.get(context);
+      if (sourceContextResult === undefined) fail();
+      const completed = Reflect.apply(
+        completeConversationPlan,
+        options.conversationService,
+        [{
+          context: sourceContextResult.context,
+          source_context_result: sourceContextResult,
+          plan_proposal_record: internal.plan_proposal_record,
+        }],
+      );
+      return publicPlanResult(internal, request, completed.head);
+    }).catch((error) => {
+      recordFailure(key, error);
+      throw error;
+    }).finally(() => {
+      pendingPlanRequests.delete(key);
+      activeContexts.delete(key);
+      if (inFlight.get(key) === operation) inFlight.delete(key);
+    });
+    inFlight.set(key, operation);
+    return operation;
+  }
+
   async function submit(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -1484,6 +1644,7 @@ function createBuilderGenerationMainService(rawOptions) {
     const keys = [
       operationKey(GENERATE_OPERATION_PREFIX, requestId),
       operationKey(ANSWER_OPERATION_PREFIX, requestId),
+      operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
     let cancelled = false;
     for (const key of keys) {
@@ -1710,6 +1871,7 @@ function createBuilderGenerationMainService(rawOptions) {
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     submit,
     answer,
+    propose_plan: proposePlan,
     generate,
     generate_approved_plan: generateApprovedPlan,
     retry_generate: retryGenerate,
@@ -1728,6 +1890,7 @@ function createBuilderGenerationMainService(rawOptions) {
       conversation_event_admission: 'sqlite_recorded',
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
+      plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
       run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,
       electron_registration: false,
