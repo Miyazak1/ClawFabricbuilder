@@ -1041,7 +1041,7 @@ function ActivityPanel({
         </button>
       </header>
       <div className="cf-builder-activity-body-wrap">
-        {snapshot?.status === 'refreshing' ? (
+        {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && liveOutput === null ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
         {visibleEntries.length === 0 && liveOutput === null && message !== null ? (

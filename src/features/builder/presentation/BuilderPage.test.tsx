@@ -212,6 +212,24 @@ async function progressActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function refreshingActivityWithVisibleEntries() {
+  let resolveRefresh!: (value: unknown) => void;
+  let reads = 0;
+  const controller = createBuilderConversationController(taskStreamPort(async () => {
+    reads += 1;
+    if (reads === 1) return createTaskStreamWire();
+    return new Promise<unknown>((resolve) => {
+      resolveRefresh = resolve;
+    });
+  }));
+  await controller.load(PROJECT_ID);
+  void controller.refresh();
+  await Promise.resolve();
+  const snapshot = controller.getSnapshot();
+  resolveRefresh(createTaskStreamWire());
+  return snapshot;
+}
+
 async function toolActivity(
   result: Readonly<{
     status: 'succeeded' | 'failed' | 'cancelled';
@@ -1470,6 +1488,28 @@ describe('BuilderPage v2', () => {
     } finally {
       restore();
     }
+  });
+
+  it('keeps background activity refresh out of the visible chat when entries remain', async () => {
+    const { saved } = await snapshots();
+    const activity = await refreshingActivityWithVisibleEntries();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity="true"]')?.getAttribute('data-builder-activity-status'))
+      .toBe('refreshing');
+    expect(container.querySelector('[data-builder-activity-card="You"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Refreshing activity...');
+    expect(container.textContent).not.toMatch(
+      /builder-generation-draft:|request_id|provider|credential|source_tree|commit_oid|tree_oid|receipt/iu,
+    );
   });
 
   it('does not pull the chat back down while the user is reading older content', async () => {
