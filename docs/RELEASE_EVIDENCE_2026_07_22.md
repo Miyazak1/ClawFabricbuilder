@@ -133,6 +133,45 @@ package content for the current desktop trial build.
 - A screenshot was captured under the local temp evidence directory for the
   desktop package view. It is local evidence only and was not committed.
 
+## 2026-07-28 Active Composer Steering Package
+
+This addendum records the current desktop trial package after the active
+composer steering checkpoint. It is not a new real-provider canary and does not
+extend the earlier saved DeepSeek evidence. The packaged application content is
+the desktop package produced at checkpoint `df373e2`, with verifier/canary
+evidence refreshed at checkpoint `125c438`.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused renderer and controller tests for active composer steering passed:
+  102 tests.
+- Full renderer unit tests passed: 339 Vitest tests.
+- Node boundary tests passed after the steering bridge: 518 subtests.
+- The packaged canary verifier tests passed after accepting legal active-run
+  steering facts: 39 tests.
+- Node boundary tests passed after the canary refresh: 519 subtests.
+- `npm run typecheck`, `npm run lint`, `npm run build`, package verification,
+  and the local package verifier passed during the desktop steering package
+  checkpoint.
+- The desktop composer remains one input surface. Idle work submits with Enter
+  or the single send button; active bound work reuses the same composer to add
+  bounded context and keeps Stop as the separate cancel control.
+- Successful submitted or steering text is cleared from the composer and remains
+  visible only as conversation activity. Failed steering restores the typed
+  text instead of silently losing it.
+- The active steering fact is recorded through the main-owned run context and
+  appears only as renderer-safe task-stream activity. It does not claim to
+  mutate an already-issued provider request, dispatch tools, read source, create
+  Git evidence, save a Project Revision, or expose provider/credential/source
+  authority.
+- The packaged canary evidence now accepts legal steering messages only while a
+  run is active, requires them after `run_started` and before `run_completed`,
+  and rejects terminal-after steering. Candidate, Review, Save, and revision
+  counts remain independently verified.
+- A desktop screenshot was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-packaged-desktop-steering.png`.
+  It is local evidence only and was not committed.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
