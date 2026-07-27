@@ -376,12 +376,12 @@ Evidence requirements:
   IPC/preload or renderer projection;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
-  main content bottom. Assistant activity, preview, and source-file cards appear
-  in that same flow, while Git-style draft changes and saved Versions move to a
-  secondary right review sidebar. It adds no fake edit command, does not add a
-  dedicated code workbench, and still uses only the existing read-only task
-  stream, plan review, generation, draft reject, cancel, and explicit Save
-  bridges;
+  main content bottom. Assistant activity, draft review summary, preview, and
+  source-file cards appear in that same flow, while Git-style draft changes and
+  saved Versions move to a secondary right review sidebar. It adds no fake edit
+  command, does not add a dedicated code workbench, and still uses only the
+  existing read-only task stream, plan review, generation, draft reject, cancel,
+  and explicit Save bridges;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

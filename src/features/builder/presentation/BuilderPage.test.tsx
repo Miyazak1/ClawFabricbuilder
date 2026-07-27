@@ -524,6 +524,7 @@ describe('BuilderPage v2', () => {
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
     const reviewSidebar = container.querySelector('[data-builder-review-sidebar="true"]');
     const conversation = container.querySelector('[data-builder-conversation-workspace="true"]');
+    const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const composer = container.querySelector('[data-builder-composer="true"]');
     const preview = container.querySelector('[data-builder-preview-flow="true"]');
     const code = container.querySelector('[data-builder-code-flow="true"]');
@@ -532,19 +533,23 @@ describe('BuilderPage v2', () => {
     expect(chatMain).not.toBeNull();
     expect(reviewSidebar).not.toBeNull();
     expect(conversation).not.toBeNull();
+    expect(review).not.toBeNull();
     expect(composer).not.toBeNull();
     expect(preview).not.toBeNull();
     expect(code).not.toBeNull();
     expect(changes).not.toBeNull();
     expect(versions).not.toBeNull();
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(code?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(composer?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(versions?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
-    expect(Boolean(conversation!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(conversation!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
+      .toBe(true);
+    expect(Boolean(review!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
     expect(Boolean(preview!.compareDocumentPosition(code!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
@@ -577,6 +582,7 @@ describe('BuilderPage v2', () => {
 
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(reviewStrip).not.toBeNull();
+    expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(reviewStrip?.textContent).toContain('Preview and changes are ready.');

@@ -476,10 +476,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid var(--cf-border);
-  border-bottom: 1px solid var(--cf-border);
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
   background: color-mix(in srgb, var(--cf-surface-muted) 78%, white);
-  padding: 10px 12px;
+  padding: 12px;
 }
 
 .cf-builder-review-icon {

@@ -824,6 +824,36 @@ export function BuilderPage({
     selectFile(change.path);
   }
 
+  const draftReview = hasUnsavedDraft ? (
+    <section
+      aria-label="Draft review"
+      className="cf-builder-review-checkpoint"
+      data-builder-review-checkpoint="true"
+    >
+      <div className="cf-builder-review-icon" aria-hidden="true">
+        <GitCompareArrows className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <h2 className="cf-builder-review-title">Review before saving</h2>
+        <p className="cf-builder-review-summary" data-builder-review-summary="true">
+          {changesSummary(changes)}
+        </p>
+        <p className="cf-builder-review-note">
+          {reviewPreviewStatus(preview, hasContent)}
+        </p>
+      </div>
+      <button
+        className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+        data-builder-review-open-changes="true"
+        onClick={() => document.getElementById('builder-tool-changes')?.focus()}
+        type="button"
+      >
+        <GitCompareArrows aria-hidden="true" className="size-3.5" />
+        Changes
+      </button>
+    </section>
+  ) : null;
+
   const composer = (
     <section aria-label="Conversation command" className="cf-builder-composer-card" data-builder-composer="true">
       <div className="cf-builder-composer-shell">
@@ -1050,36 +1080,6 @@ export function BuilderPage({
         </div>
       </header>
 
-      {hasUnsavedDraft ? (
-        <section
-          aria-label="Draft review"
-          className="cf-builder-review-checkpoint"
-          data-builder-review-checkpoint="true"
-        >
-          <div className="cf-builder-review-icon" aria-hidden="true">
-            <GitCompareArrows className="size-4" />
-          </div>
-          <div className="min-w-0">
-            <h2 className="cf-builder-review-title">Review before saving</h2>
-            <p className="cf-builder-review-summary" data-builder-review-summary="true">
-              {changesSummary(changes)}
-            </p>
-            <p className="cf-builder-review-note">
-              {reviewPreviewStatus(preview, hasContent)}
-            </p>
-          </div>
-          <button
-            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-            data-builder-review-open-changes="true"
-            onClick={() => document.getElementById('builder-tool-changes')?.focus()}
-            type="button"
-          >
-            <GitCompareArrows aria-hidden="true" className="size-3.5" />
-            Changes
-          </button>
-        </section>
-      ) : null}
-
       <div className="cf-builder-surface-body">
         <section
           aria-label="Project conversation workspace"
@@ -1096,6 +1096,7 @@ export function BuilderPage({
                 pendingPlanReview={planReviewTarget}
                 snapshot={activity}
               />
+              {draftReview}
 
               <section
                 aria-label="Project preview"
