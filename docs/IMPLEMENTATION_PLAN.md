@@ -357,6 +357,14 @@ Evidence requirements:
   source context, provider credential/config, tool dispatch, source mutation,
   Git evidence, Save, or Project Revision authority, and rejects stale or
   rejected plan facts;
+- the current approved-plan continuation-admission checkpoint turns that
+  compact main-only approved-plan fact into a bounded receipt for a later
+  agent/edit loop. It binds Project/Conversation/Turn/Task/Run IDs, the plan
+  result digest, the Conversation head, a head digest, and a continuation ID,
+  but starts no Run, appends no Conversation event, exposes no IPC/preload or
+  renderer projection, reads no credential/source, dispatches no provider or
+  tool, mutates no source/Git state, and creates no Save or Project Revision.
+  Future executors must read the approved-plan fact fresh before admission;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project
