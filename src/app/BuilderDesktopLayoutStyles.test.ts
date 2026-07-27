@@ -66,14 +66,15 @@ describe('Builder desktop layout styles', () => {
     expect(summaryText).not.toContain('overflow-wrap: anywhere;');
   });
 
-  it('keeps draft review actions from forcing a narrow two-column card', () => {
+  it('keeps draft review actions stable in a desktop two-column checkpoint', () => {
     const source = styles();
     const review = styleBlock(source, '.cf-builder-review-checkpoint');
     const actions = styleBlock(source, '.cf-builder-review-actions');
     const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
 
-    expect(review).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(review).toContain('grid-template-columns: minmax(0, 1fr) auto;');
+    expect(review).toContain('align-items: center;');
     expect(review).not.toContain('minmax(320px, 360px)');
     expect(actions).toContain('display: flex;');
     expect(actions).toContain('flex-wrap: wrap;');
@@ -82,5 +83,23 @@ describe('Builder desktop layout styles', () => {
     expect(actionButtons).toContain('width: auto;');
     expect(actionButtons).toContain('min-width: 112px;');
     expect(versionAction).toContain('grid-column: 2;');
+    expect(source).toMatch(
+      /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-review-checkpoint \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/u,
+    );
+  });
+
+  it('keeps the conversation refresh control from taking a full toolbar row', () => {
+    const source = styles();
+    const activityPanel = styleBlock(source, '.cf-builder-activity-panel');
+    const activityToolbar = styleBlock(source, '.cf-builder-activity-toolbar');
+
+    expect(activityPanel).toContain('position: relative;');
+    expect(activityToolbar).toContain('position: absolute;');
+    expect(activityToolbar).toContain('inset-inline-end: 0;');
+    expect(activityToolbar).toContain('min-height: 0;');
+    expect(activityToolbar).not.toContain('min-height: 32px;');
+    expect(source).toMatch(
+      /(?:^|\n)\.cf-builder-activity-body-wrap \{[\s\S]*?padding: 0 40px 0 0;/u,
+    );
   });
 });

@@ -509,8 +509,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-checkpoint {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 10px;
   border: 1px solid var(--cf-border);
   border-radius: 8px;
@@ -981,6 +981,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-activity-panel {
   display: grid;
+  position: relative;
   min-height: 0;
   min-width: 0;
   gap: 8px;
@@ -1024,7 +1025,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-activity-toolbar {
   display: flex;
-  min-height: 32px;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  z-index: 1;
+  min-height: 0;
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
@@ -1037,7 +1042,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   align-content: start;
   gap: 8px;
   overflow: auto;
-  padding: 0;
+  padding: 0 40px 0 0;
 }
 
 .cf-builder-version-body-wrap {
