@@ -89,6 +89,7 @@ export type BuilderProjectController = Readonly<{
   showCurrentRevision(): Promise<BuilderProjectControllerSnapshot>;
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
   cancel(): Promise<BuilderProjectControllerSnapshot>;
+  steer(message: string): Promise<boolean>;
   save(): Promise<BuilderProjectControllerSnapshot>;
   dispose(): void;
 }>;
@@ -117,6 +118,7 @@ const SAVE_EVIDENCE_KEYS = Object.freeze([
 ]);
 const SELECTION_RESULT_KEYS = Object.freeze(['result_version', 'operation', 'project_id']);
 const CANCEL_RESULT_KEYS = Object.freeze(['request_id', 'cancelled']);
+const STEER_RESULT_KEYS = Object.freeze(['request_id', 'steered']);
 const REJECT_RESULT_KEYS = Object.freeze([
   'result_version',
   'draft_id',
@@ -207,6 +209,12 @@ function sanitizeCancelResult(value: unknown, requestId: string): boolean {
   const source = exactRecord(value, CANCEL_RESULT_KEYS);
   if (source.request_id !== requestId || typeof source.cancelled !== 'boolean') throw new Error();
   return source.cancelled;
+}
+
+function sanitizeSteerResult(value: unknown, requestId: string): boolean {
+  const source = exactRecord(value, STEER_RESULT_KEYS);
+  if (source.request_id !== requestId || typeof source.steered !== 'boolean') throw new Error();
+  return source.steered;
 }
 
 function sanitizeSaveResult(value: unknown, draft: BuilderGenerationDraft) {
@@ -906,6 +914,26 @@ export function createBuilderProjectController(
     }
   }
 
+  async function steer(message: string): Promise<boolean> {
+    const target = activeGeneration;
+    const text = message.trim();
+    if (
+      disposed
+      || target === null
+      || target.requestId === null
+      || text.length === 0
+      || !['answering', 'generating', 'submitting'].includes(current.status)
+    ) return false;
+    try {
+      return sanitizeSteerResult(
+        await dependencies.generator.steer({ request_id: target.requestId, message: text }),
+        target.requestId,
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function rejectDraft(): Promise<BuilderProjectControllerSnapshot> {
     if (disposed || current.busy || current.draft === null) return current;
     const retained = current.savedProject;
@@ -989,6 +1017,7 @@ export function createBuilderProjectController(
     showCurrentRevision,
     rejectDraft,
     cancel,
+    steer,
     save,
     dispose() {
       if (disposed) return;

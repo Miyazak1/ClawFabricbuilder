@@ -29,6 +29,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   showCurrentRevision: BuilderProjectController['showCurrentRevision'];
   rejectDraft: BuilderProjectController['rejectDraft'];
   cancel: BuilderProjectController['cancel'];
+  steer: BuilderProjectController['steer'];
   save: BuilderProjectController['save'];
 }>;
 
@@ -129,6 +130,10 @@ export function useBuilderProjectController(
     () => controller.cancel().catch(() => controller.getSnapshot()),
     [controller],
   );
+  const steer = useCallback<BuilderProjectController['steer']>(
+    (message) => controller.steer(message).catch(() => false),
+    [controller],
+  );
   return useMemo(
     () => Object.freeze({
       snapshot,
@@ -142,6 +147,7 @@ export function useBuilderProjectController(
       showCurrentRevision,
       rejectDraft,
       cancel,
+      steer,
       save,
     }),
     [
@@ -156,6 +162,7 @@ export function useBuilderProjectController(
       showCurrentRevision,
       rejectDraft,
       cancel,
+      steer,
       save,
     ],
   );

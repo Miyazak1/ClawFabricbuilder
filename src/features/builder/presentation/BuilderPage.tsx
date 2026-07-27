@@ -66,6 +66,7 @@ export type BuilderPageProps = {
   liveOutput?: BuilderLiveOutputSnapshot | null;
   onInstructionChange?: (value: string) => void;
   onCancel?: () => void;
+  onSteerInstruction?: () => void;
   onSubmitInstruction?: () => void;
   onRetryGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
@@ -1112,6 +1113,7 @@ export function BuilderPage({
   instruction,
   onCancel,
   onInstructionChange,
+  onSteerInstruction,
   onSubmitInstruction,
   onRetryGenerate,
   onRefreshConversation,
@@ -1144,16 +1146,25 @@ export function BuilderPage({
   const hasContent = files.length > 0;
   const title = draft?.title ?? inspected?.target.title ?? saved?.target.title ?? 'New project';
   const version = saved?.target.revision_number ?? null;
+  const canAddContext = typeof onSteerInstruction === 'function'
+    && busy
+    && !hasUnsavedDraft
+    && !viewingHistory
+    && (status === 'answering' || status === 'generating' || status === 'submitting');
   const canSubmit = typeof onSubmitInstruction === 'function'
     && GENERATABLE_STATUSES.has(status)
     && !hasUnsavedDraft
     && !viewingHistory
     && instruction.trim().length > 0;
+  const canSubmitComposer = canSubmit || (canAddContext && instruction.trim().length > 0);
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
   const canReject = typeof onRejectDraft === 'function' && hasUnsavedDraft && !busy;
   const canCancel = typeof onCancel === 'function'
     && (status === 'answering' || status === 'generating' || status === 'submitting');
-  const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft && !viewingHistory;
+  const canEditInstruction = typeof onInstructionChange === 'function'
+    && !hasUnsavedDraft
+    && !viewingHistory
+    && (!busy || canAddContext);
   const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
   const canRetryGenerate = typeof onRetryGenerate === 'function'
     && status === 'generation_failed'
@@ -1314,15 +1325,17 @@ export function BuilderPage({
       || event.ctrlKey
       || event.metaKey
       || event.nativeEvent.isComposing
-      || !canSubmit
+      || !canSubmitComposer
     ) {
       return;
     }
     event.preventDefault();
-    onSubmitInstruction?.();
+    if (canSubmit) onSubmitInstruction?.();
+    else onSteerInstruction?.();
   }
 
   const composerStatusLabel = (() => {
+    if (canAddContext) return 'Add context';
     if (status === 'submitting') return 'Working';
     if (status === 'generating') return 'Making your draft';
     if (status === 'answering') return 'Answering';
@@ -1560,14 +1573,18 @@ export function BuilderPage({
         <textarea
           aria-label="What do you want to build?"
           className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
-          disabled={busy}
+          disabled={busy && !canAddContext}
           id="builder-idea"
           maxLength={4000}
           onChange={(event) => onInstructionChange?.(event.currentTarget.value)}
           onKeyDown={submitPrimaryComposerCommand}
-          placeholder={busy ? 'Working on your request...' : 'Describe what you want to build or change...'}
+          placeholder={canAddContext
+            ? 'Add context for the current work...'
+            : busy
+              ? 'Working on your request...'
+              : 'Describe what you want to build or change...'}
           readOnly={!canEditInstruction}
-          aria-keyshortcuts={canSubmit ? 'Enter' : undefined}
+          aria-keyshortcuts={canSubmitComposer ? 'Enter' : undefined}
           value={instruction}
         />
         <footer className="cf-builder-composer-footer">
@@ -1588,14 +1605,15 @@ export function BuilderPage({
               >
                 <StopCircle aria-hidden="true" className="size-4" />
               </button>
-            ) : hasUnsavedDraft ? null : (
+            ) : null}
+            {hasUnsavedDraft || (busy && !canAddContext) ? null : (
               <button
-                aria-label={busy ? busyLabel(status) : 'Send'}
+                aria-label={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
                 data-builder-submit-turn="true"
-                disabled={!canSubmit}
-                onClick={onSubmitInstruction}
-                title={busy ? busyLabel(status) : 'Send'}
+                disabled={!canSubmitComposer}
+                onClick={canSubmit ? onSubmitInstruction : onSteerInstruction}
+                title={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 type="button"
               >
                 <ArrowUp aria-hidden="true" className="size-4" />

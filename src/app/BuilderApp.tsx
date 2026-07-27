@@ -412,6 +412,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
+  const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
   const workspacePorts = useMemo(() => {
@@ -494,6 +495,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   useLayoutEffect(() => {
     conversationRef.current = conversation;
   }, [conversation]);
+
+  useLayoutEffect(() => {
+    liveOutputRef.current = liveOutput;
+  }, [liveOutput]);
 
   useEffect(() => (
     ports.taskStream.subscribeChanged((event) => {
@@ -596,7 +601,32 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     });
   }, [conversation.snapshot, project, project.snapshot, readActivityAfterTerminal]);
 
+  const steerInstruction = useCallback(async () => {
+    if (idea.trim().length === 0) return;
+    const live = liveOutputRef.current;
+    if (live === null || !projectSnapshotRef.current.busy) return;
+    const commandEpoch = workspaceEpochRef.current;
+    const submittedIdea = idea;
+    setIdea('');
+    const steered = await project.steer(submittedIdea);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    if (!steered) {
+      setIdea(submittedIdea);
+      return;
+    }
+    const projectId = visibleConversationProjectId(projectSnapshotRef.current) ?? live.project_id;
+    if (conversation.snapshot.project_id === projectId) {
+      await conversation.refresh().catch(() => undefined);
+    } else {
+      await conversation.load(projectId).catch(() => undefined);
+    }
+  }, [conversation, idea, project]);
+
   const submitInstruction = useCallback(async () => {
+    if (projectSnapshotRef.current.busy) {
+      await steerInstruction();
+      return;
+    }
     if (submitInFlightRef.current || idea.trim().length === 0) return;
     const commandEpoch = workspaceEpochRef.current;
     const submittedIdea = idea;
@@ -614,7 +644,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [idea, project, readActivityAfterTerminal]);
+  }, [idea, project, readActivityAfterTerminal, steerInstruction]);
 
   const retryGenerate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -872,6 +902,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               instruction={idea}
               liveOutput={liveOutput}
               onSubmitInstruction={submitInstruction}
+              onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
               onInstructionChange={setIdea}
               onInspectRevision={inspectRevision}
               onOpenSettings={() => setView('settings')}

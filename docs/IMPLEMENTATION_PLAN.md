@@ -446,8 +446,9 @@ Evidence requirements:
   malformed payloads fail with fixed redacted errors, and final candidate or
   explanation recording uses the latest steered Conversation head. This still
   does not mutate an already-issued provider request or consume the steering
-  text inside the provider/tool loop. The visible composer should call it only
-  after the next generation-consumption UI gate makes that limitation clear;
+  text inside the provider/tool loop. The current desktop composer calls it only
+  after live work has been bound to a Project Conversation and presents the
+  action as adding context, not as changing the already-issued provider request;
 - the current provider-output streaming checkpoint lets the main-only
   OpenAI-compatible transport request bounded `text/event-stream` responses only
   when the Generation host supplies an internal observer. The transport assembles

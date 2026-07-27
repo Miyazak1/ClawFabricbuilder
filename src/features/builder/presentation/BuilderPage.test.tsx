@@ -1037,6 +1037,62 @@ describe('BuilderPage v2', () => {
     expect(idle.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
   });
 
+  it('uses the same desktop composer send command to add context while work is active', async () => {
+    const controller = createBuilderProjectController({
+      generator: {
+        submit: async () => null,
+        generate: async () => new Promise(() => undefined),
+        generateApprovedPlan: async () => null,
+        retry: async () => null,
+        answer: async () => null,
+        restoreDraft: async () => null,
+        rejectDraft: async () => null,
+        cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
+        steer: async (request) => ({ request_id: request.request_id, steered: true }),
+      },
+      workspace: {
+        open: async () => null,
+        saveDraft: async () => null,
+        loadCurrent: async () => null,
+        loadRevision: async () => null,
+        listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
+      },
+    });
+    void controller.generate('Make a timer.');
+    const onCancel = vi.fn();
+    const onSteerInstruction = vi.fn();
+    const onSubmitInstruction = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make it blue."
+        onCancel={onCancel}
+        onInstructionChange={vi.fn()}
+        onSteerInstruction={onSteerInstruction}
+        onSubmitInstruction={onSubmitInstruction}
+        snapshot={controller.getSnapshot()}
+      />,
+    );
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea?.disabled).toBe(false);
+    expect(textarea?.readOnly).toBe(false);
+    expect(textarea?.getAttribute('aria-keyshortcuts')).toBe('Enter');
+    expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
+      .toBe('Add context');
+    expect(container.querySelector('[data-builder-composer="true"]')?.textContent)
+      .toContain('Add context');
+
+    const event = keyDown(container, '#builder-idea', { key: 'Enter' });
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSteerInstruction).toHaveBeenCalledOnce();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
   it('shows draft recovery as a visible restoring state without save or stop actions', async () => {
     const readWire = await createReadWire();
     const restored = await createRestoredGenerationDraft(readWire.source_tree);

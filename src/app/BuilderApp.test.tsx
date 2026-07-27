@@ -242,6 +242,10 @@ async function setup(options: Readonly<{
     request_id: (request as { request_id: string }).request_id,
     cancelled: true,
   }));
+  const steer = vi.fn(async (request: unknown) => ({
+    request_id: (request as { request_id: string }).request_id,
+    steered: true,
+  }));
   const reviewPlan = vi.fn(async (request: unknown) => ({
     result_version: 'builder-conversation-plan-review-result.v1',
     ...(request as object),
@@ -347,7 +351,7 @@ async function setup(options: Readonly<{
       restoreDraft,
       rejectDraft,
       cancel,
-      steer: async () => null,
+      steer,
       availability: async () => null,
       subscribeStarted(listener: (event: unknown) => void) {
         generationStartedListeners.add(listener);
@@ -409,6 +413,7 @@ async function setup(options: Readonly<{
     generateApprovedPlan,
     submit,
     retry,
+    steer,
     listHistory,
     loadRevision,
     listCurrent,
@@ -885,6 +890,71 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+  });
+
+  it('adds desktop composer context to live work through request-id-only steering', async () => {
+    const {
+      container,
+      emitGenerationStarted,
+      readTaskStream,
+      resolveGenerate,
+      steer,
+      submit,
+    } = await setup({ deferredGenerate: true, runningActivity: true });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
+      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
+        .toBe('Add context');
+    });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    readTaskStream.mockClear();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make it blue.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(steer).toHaveBeenCalledExactlyOnceWith({
+        request_id: expected.request_digest,
+        message: 'Make it blue.',
+      });
+    });
+    expect(steer.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(steer.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(steer.mock.calls[0][0]).not.toHaveProperty('project_id');
+    expect(submit).toHaveBeenCalledOnce();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
     });
   });
 

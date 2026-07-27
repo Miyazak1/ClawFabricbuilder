@@ -34,6 +34,7 @@ function setup(options: {
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
   cancel?: BuilderCodeGeneratorPort['cancel'];
+  steer?: BuilderCodeGeneratorPort['steer'];
   subscribeStarted?: NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>;
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
@@ -59,6 +60,10 @@ function setup(options: {
   const cancel = vi.fn(options.cancel ?? (async (request) => ({
     request_id: request.request_id,
     cancelled: true,
+  })));
+  const steer = vi.fn(options.steer ?? (async (request) => ({
+    request_id: request.request_id,
+    steered: true,
   })));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
@@ -95,7 +100,7 @@ function setup(options: {
       restoreDraft,
       rejectDraft,
       cancel,
-      steer: async () => null,
+      steer,
       ...(options.subscribeStarted === undefined
         ? {}
         : { subscribeStarted: options.subscribeStarted }),
@@ -110,6 +115,7 @@ function setup(options: {
     generateApprovedPlan,
     submit,
     retry,
+    steer,
     loadCurrent,
     loadRevision,
     open,
@@ -493,6 +499,46 @@ describe('Builder project controller v2', () => {
       status: 'new',
       draft: null,
     });
+  });
+
+  it('steers an active generation by request id and bounded message only', async () => {
+    let resolveGenerate!: (value: unknown) => void;
+    const pending = new Promise<unknown>((resolve) => {
+      resolveGenerate = resolve;
+    });
+    const { controller, generate, saveDraft, steer } = setup({
+      generate: async () => pending,
+    });
+    const generation = controller.generate('Make a timer.');
+    expect(controller.getSnapshot().status).toBe('generating');
+    for (let attempt = 0; attempt < 20 && generate.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(generate).toHaveBeenCalledOnce();
+
+    const steered = await controller.steer('  Make it blue.  ');
+
+    expect(steered).toBe(true);
+    expect(steer).toHaveBeenCalledExactlyOnceWith({
+      request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      message: 'Make it blue.',
+    });
+    expect(steer.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(steer.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(steer.mock.calls[0][0]).not.toHaveProperty('project_id');
+    expect(controller.getSnapshot().status).toBe('generating');
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    resolveGenerate(await createGenerationDraft(generate.mock.calls[0][0]));
+    await generation;
+  });
+
+  it('does not steer when there is no active generation request', async () => {
+    const { controller, steer } = setup();
+
+    await expect(controller.steer('Make it blue.')).resolves.toBe(false);
+
+    expect(steer).not.toHaveBeenCalled();
   });
 
   it('rejects a generated draft that is based on stale project revision evidence', async () => {
