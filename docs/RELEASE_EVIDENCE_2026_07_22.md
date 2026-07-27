@@ -337,6 +337,32 @@ visual evidence.
   expose provider, credential, source, Git, receipt, or internal bridge
   evidence.
 
+## 2026-07-28 Desktop Plan Review Recorded-State Package
+
+This addendum records the desktop package refresh for code checkpoint `ecc2337`,
+after keeping Plan Review actions locked when the main-owned Review bridge has
+recorded a decision but the public activity refresh is stale or unavailable. It
+is not a new real-provider canary and does not extend installer evidence,
+code-signing status, public release readiness, or mobile visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused desktop renderer tests for BuilderPage and BuilderApp passed:
+  70 tests.
+- Full renderer unit tests passed: 360 Vitest tests.
+- `npm exec tsc -b --pretty false`, `npm run lint`, `git diff --check`,
+  and `npm run build` passed during this desktop recorded-state checkpoint.
+- `npm run pack` passed for checkpoint `ecc2337`; package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- After the main Plan Review bridge returns successfully, a stale pending Plan
+  card now stays locked with "Decision recorded. Updating the conversation..."
+  instead of re-exposing Approve/Reject as if no decision happened. The public
+  Task Stream still owns the durable Plan approved/rejected activity, and the
+  temporary desktop projection does not expose provider, credential, source,
+  Git, receipt, or internal bridge evidence.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
