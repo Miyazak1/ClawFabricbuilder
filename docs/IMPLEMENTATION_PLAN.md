@@ -542,6 +542,14 @@ Current checkpoint:
   Revision facts, grants no permissions, and creates no Review/Artifact
   authority. A visible Agent or Agent assignment must build on this store
   instead of introducing an incompatible identity shape.
+- the current Agent assignment contract adds pure main-side records for binding
+  one owner-approved Agent version to one Project/Conversation/Task/Run with an
+  explicit permission-required boundary, owner supervision, review-before-save
+  result contract, bounded steps/tool/runtime/private-source budget, and
+  owner-made assignment status decisions. It exposes no IPC/preload, persists no
+  rows, dispatches no providers or tools, grants no permissions, reads no
+  credentials or source, and mutates no Git, Project Revision, Review, or
+  Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
