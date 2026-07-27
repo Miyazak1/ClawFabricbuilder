@@ -532,9 +532,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-checkpoint {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 18px;
+  row-gap: 10px;
   border-top: 1px solid var(--cf-border);
   border-bottom: 1px solid var(--cf-border);
   background: transparent;
@@ -546,7 +547,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: grid;
   min-width: 0;
   grid-template-columns: 28px minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   gap: 10px;
 }
 
@@ -583,17 +584,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-review-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
-  align-self: start;
-  justify-content: flex-start;
+  align-self: center;
+  justify-self: end;
+  justify-content: flex-end;
   gap: 8px;
-  padding-left: 38px;
+  padding-left: 0;
 }
 
 .cf-builder-review-actions > button {
+  flex: 0 0 auto;
   width: auto;
-  min-width: 118px;
+  min-width: 108px;
   max-width: 100%;
   white-space: nowrap;
 }

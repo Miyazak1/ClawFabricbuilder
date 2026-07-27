@@ -1368,7 +1368,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(conversation).not.toBeNull();
     expect(review).not.toBeNull();
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('action-row');
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-inline-actions');
     expect(composer).not.toBeNull();
     expect(preview).not.toBeNull();
     expect(code).toBeNull();
@@ -1859,7 +1859,7 @@ describe('BuilderPage v2', () => {
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(reviewStrip).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('action-row');
+    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-inline-actions');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(reviewStrip?.textContent).toContain('Preview may be incomplete');
