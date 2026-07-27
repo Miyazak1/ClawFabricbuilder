@@ -95,6 +95,7 @@ function setup(options: {
       restoreDraft,
       rejectDraft,
       cancel,
+      steer: async () => null,
       ...(options.subscribeStarted === undefined
         ? {}
         : { subscribeStarted: options.subscribeStarted }),

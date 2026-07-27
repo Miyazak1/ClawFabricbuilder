@@ -347,6 +347,7 @@ async function setup(options: Readonly<{
       restoreDraft,
       rejectDraft,
       cancel,
+      steer: async () => null,
       availability: async () => null,
       subscribeStarted(listener: (event: unknown) => void) {
         generationStartedListeners.add(listener);

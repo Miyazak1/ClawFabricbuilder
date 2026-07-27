@@ -815,7 +815,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v9',
+      bridge_version: 'builder-preload.v10',
       legacy_namespaces_absent: true,
       plan_review_namespace: 'review_method_only',
     },
@@ -936,7 +936,7 @@ function addProgressAndToolFacts(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v9',
+    bridgeVersion: 'builder-preload.v10',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -946,6 +946,7 @@ function installBridge(page) {
       restoreDraft() { throw new Error('must not write through bridge'); },
       rejectDraft() { throw new Error('must not write through bridge'); },
       cancel() { throw new Error('must not write through bridge'); },
+      steer() { throw new Error('must not write through bridge'); },
       availability() { throw new Error('must not write through bridge'); },
       subscribeStarted() { return () => undefined; },
       subscribeOutput() { return () => undefined; },
@@ -1477,14 +1478,14 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v9');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v10');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
   assert.match(source, /projectWorkspace\.listCurrent/u);
   assert.match(source, /projectWorkspace\.loadCurrent/u);
   assert.match(source, /taskStream\.read/u);
-  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|cancel/u);
+  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|retry|answer|rejectDraft|steer)|projectWorkspace\.saveDraft|cancel/u);
   const unsavedWait = page.events.findIndex(
     (event) => event[0] === 'scopedText' && event[2] === 'Unsaved draft',
   );
@@ -1584,7 +1585,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(evaluateEvents.length, 1);
   assert.doesNotMatch(
     evaluateEvents[0][1],
-    /codeGenerator\.(?:submit|generate|generateApprovedPlan|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent/u,
+    /codeGenerator\.(?:submit|generate|generateApprovedPlan|retry|answer|rejectDraft|steer)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent/u,
   );
 });
 
@@ -3479,7 +3480,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
-  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|retry|answer|rejectDraft)|projectWorkspace\.saveDraft/u);
+  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|retry|answer|rejectDraft|steer)|projectWorkspace\.saveDraft/u);
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);
@@ -3501,7 +3502,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v9['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v10['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /planReview:\s*Object\.freeze/u);
   assert.match(source, /plan_review_namespace/u);

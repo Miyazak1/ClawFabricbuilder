@@ -12,6 +12,7 @@ const {
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
   CANCEL_CHANNEL,
+  STEER_CHANNEL,
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   REJECT_DRAFT_CHANNEL,
@@ -61,6 +62,10 @@ function adapter(overrides = {}) {
       calls.push(['cancel', request]);
       return { cancelled: true };
     },
+    steer: (request) => {
+      calls.push(['steer', request]);
+      return { steered: true };
+    },
     availability: () => {
       calls.push(['availability']);
       return { available: true };
@@ -75,6 +80,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   const { calls, value, windowRef } = adapter();
   const request = Object.freeze({ request_digest: `sha256:${'a'.repeat(64)}` });
   const cancellation = Object.freeze({ request_id: request.request_digest });
+  const steering = Object.freeze({ request_id: request.request_digest, message: 'Keep going.' });
 
   assert.equal(value.adapter_id, 'builder_code_generation.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'builderCodeGenerator');
@@ -88,6 +94,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'restoreDraft',
     'rejectDraft',
     'cancel',
+    'steer',
     'availability',
   ]);
   assert.deepEqual(
@@ -101,6 +108,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       RESTORE_DRAFT_CHANNEL,
       REJECT_DRAFT_CHANNEL,
       CANCEL_CHANNEL,
+      STEER_CHANNEL,
       AVAILABILITY_CHANNEL,
     ],
   );
@@ -169,6 +177,10 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     { cancelled: true },
   );
   assert.deepEqual(
+    await value.channels.steer.invoke({ sender: windowRef.webContents }, steering),
+    { steered: true },
+  );
+  assert.deepEqual(
     await value.channels.availability.invoke({ sender: windowRef.webContents }),
     { available: true },
   );
@@ -181,6 +193,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['restoreDraft', { draft_id: `builder-generation-draft:${'b'.repeat(64)}` }],
     ['rejectDraft', { draft_id: `builder-generation-draft:${'c'.repeat(64)}` }],
     ['cancel', cancellation],
+    ['steer', steering],
     ['availability'],
   ]);
   assert.deepEqual(value.authority, {
@@ -249,6 +262,19 @@ test('rejects inactive renderers and argument-count drift before invoking host a
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
+    value.channels.steer.invoke({ sender: {} }, { marker }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && !error.message.includes(marker),
+  );
+  await assert.rejects(
+    value.channels.steer.invoke(
+      { sender: windowRef.webContents },
+      { request_id: `sha256:${'a'.repeat(64)}`, message: 'Continue.' },
+      { extra: true },
+    ),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
     value.channels.availability.invoke({ sender: windowRef.webContents }, { extra: marker }),
     (error) => error.code === 'builder_generation_request_invalid'
       && !error.message.includes(marker),
@@ -279,6 +305,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       restoreDraft: () => { throw modified; },
       rejectDraft: () => { throw modified; },
       cancel: () => ({}),
+      steer: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -359,6 +386,9 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
         getPrototypeOf() { throw new Error('proxy prototype trap marker'); },
       });
     },
+    steer: () => {
+      throw new Error('steer-private-marker');
+    },
     availability: () => {
       const error = new Error('getter-private-marker');
       Object.defineProperty(error, 'code', {
@@ -437,6 +467,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       error.code = 'builder_generation_provider_http_error';
       throw error;
     },
+    steer: () => {
+      const error = new Error('control-private-marker');
+      error.code = 'builder_generation_provider_http_error';
+      throw error;
+    },
     availability: () => {
       const error = new Error('control-private-marker');
       error.code = 'builder_generation_static_preview_contract_rejected';
@@ -474,6 +509,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
       rejectGenerate(error);
       return { cancelled: true };
     },
+    steer: () => ({}),
     availability: () => ({}),
     mainWindowRef: () => windowRef,
   });
@@ -505,6 +541,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
       restoreDraft: async () => ({}),
       rejectDraft: async () => ({}),
       cancel: () => ({}),
+      steer: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -538,6 +575,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       restoreDraft: async () => result,
       rejectDraft: async () => result,
       cancel: () => ({}),
+      steer: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -582,6 +620,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       restoreDraft: async () => result,
       rejectDraft: async () => result,
       cancel: () => ({}),
+      steer: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -607,6 +646,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     restoreDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => ({}),
+    steer: () => ({}),
     availability: () => ({}),
     mainWindowRef: activeWindow,
   };

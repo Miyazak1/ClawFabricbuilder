@@ -279,6 +279,7 @@ const generationChannels = [
   'clawfabric-builder:code-generator:restore-draft',
   'clawfabric-builder:code-generator:reject-draft',
   'clawfabric-builder:code-generator:cancel',
+  'clawfabric-builder:code-generator:steer',
   'clawfabric-builder:code-generator:availability',
 ];
 const providerSettingsChannels = [
@@ -403,7 +404,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v9');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v10');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -421,6 +422,7 @@ exactObjectKeys(generationBridge, [
   'restoreDraft',
   'rejectDraft',
   'cancel',
+  'steer',
   'availability',
   'subscribeStarted',
   'subscribeOutput',
@@ -431,6 +433,7 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -511,7 +514,8 @@ assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[4]);
 assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[5]);
 assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[6]);
 assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[7]);
-assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[8]);
+assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[8]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[9]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
@@ -536,6 +540,7 @@ exactInvokeMethod(generationBridge, 'answer', 'ANSWER_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'restoreDraft', 'RESTORE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'rejectDraft', 'REJECT_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'cancel', 'CANCEL_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'steer', 'STEER_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
 exactSubscribeMethod(generationBridge, 'subscribeStarted', 'GENERATION_STARTED_CHANNEL');
 exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
@@ -960,6 +965,7 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_CURRENT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_HISTORY_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*REVIEW_PLAN_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*STEER_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectWorkspace/u);
 assert.match(packagedPreload, /loadRevision/u);
@@ -971,6 +977,8 @@ assert.match(packagedPreload, /\bretry\b/u);
 assert.match(packagedPreload, /\banswer\b/u);
 assert.match(packagedPreload, /restoreDraft/u);
 assert.match(packagedPreload, /rejectDraft/u);
+assert.match(packagedPreload, /\bsteer\b/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:steer/u);
 assert.match(packagedPreload, /subscribeStarted/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:started/u);
 assert.match(packagedPreload, /providerSettings/u);
@@ -978,7 +986,7 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 25);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 26);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

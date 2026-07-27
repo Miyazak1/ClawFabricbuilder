@@ -10,6 +10,7 @@ const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
+const STEER_CHANNEL = 'clawfabric-builder:code-generator:steer';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
 const RESTORE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:restore-draft';
 const REJECT_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:reject-draft';
@@ -27,6 +28,7 @@ const OPTION_KEYS = Object.freeze([
   'restoreDraft',
   'rejectDraft',
   'cancel',
+  'steer',
   'availability',
   'mainWindowRef',
 ]);
@@ -332,6 +334,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.cancel, 1);
         },
       }),
+      steer: Object.freeze({
+        channel: STEER_CHANNEL,
+        method: 'steer',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.steer, 1);
+        },
+      }),
       availability: Object.freeze({
         channel: AVAILABILITY_CHANNEL,
         method: 'availability',
@@ -349,6 +358,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'restoreDraft',
       'rejectDraft',
       'cancel',
+      'steer',
       'availability',
     ]),
     authority: Object.freeze({
@@ -372,6 +382,7 @@ module.exports = Object.freeze({
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
   CANCEL_CHANNEL,
+  STEER_CHANNEL,
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   REJECT_DRAFT_CHANNEL,

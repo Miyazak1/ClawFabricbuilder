@@ -437,8 +437,17 @@ Evidence requirements:
   `turn_steered` projection through the existing read-only Task Stream. It does
   not mutate an already-issued provider request, dispatch a tool, read source,
   create a Git candidate, create or accept a Review, save a Project Revision, or
-  add any IPC/preload/renderer command. The visible composer can use this only
-  after a later controlled bridge and generation-consumption gate are added;
+  grant provider, Git, source, or Save authority;
+- the current controlled steering bridge checkpoint exposes that steering fact
+  through one active-renderer-bound code-generator IPC/preload/desktop port
+  method. The renderer may send only `request_id` plus bounded user text; main
+  rebinds the request digest to the trusted active Run context before appending
+  any event. A missing active request returns an inert `steered: false` result,
+  malformed payloads fail with fixed redacted errors, and final candidate or
+  explanation recording uses the latest steered Conversation head. This still
+  does not mutate an already-issued provider request or consume the steering
+  text inside the provider/tool loop. The visible composer should call it only
+  after the next generation-consumption UI gate makes that limitation clear;
 - the current provider-output streaming checkpoint lets the main-only
   OpenAI-compatible transport request bounded `text/event-stream` responses only
   when the Generation host supplies an internal observer. The transport assembles

@@ -91,6 +91,9 @@ async function snapshots() {
       async cancel(request) {
         return { request_id: request.request_id, cancelled: true };
       },
+      async steer(request) {
+        return { request_id: request.request_id, steered: true };
+      },
     },
     workspace: {
       async open(request) {
@@ -524,6 +527,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async cancel(cancelRequest) {
         return { request_id: cancelRequest.request_id, cancelled: true };
       },
+      async steer(steerRequest) {
+        return { request_id: steerRequest.request_id, steered: true };
+      },
     },
     workspace: {
       async open() {
@@ -601,6 +607,9 @@ async function inspectedHistorySnapshot() {
       },
       async cancel(request) {
         return { request_id: request.request_id, cancelled: true };
+      },
+      async steer(request) {
+        return { request_id: request.request_id, steered: true };
       },
     },
     workspace: {
@@ -891,6 +900,7 @@ describe('BuilderPage v2', () => {
         restoreDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
+        steer: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -936,6 +946,7 @@ describe('BuilderPage v2', () => {
         restoreDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
+        steer: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -981,6 +992,7 @@ describe('BuilderPage v2', () => {
         restoreDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
+        steer: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -1043,6 +1055,7 @@ describe('BuilderPage v2', () => {
         }),
         rejectDraft: async () => null,
         cancel: async () => null,
+        steer: async () => null,
       },
       workspace: {
         open: async () => readWire,
@@ -2111,6 +2124,7 @@ describe('BuilderPage v2', () => {
         restoreDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
+        steer: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -2146,6 +2160,7 @@ describe('BuilderPage v2', () => {
         restoreDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
+        steer: async () => null,
       },
       workspace: {
         open: async () => null,

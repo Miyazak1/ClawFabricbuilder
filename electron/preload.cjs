@@ -16,6 +16,7 @@ const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
+const STEER_CHANNEL = 'clawfabric-builder:code-generator:steer';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
 const RESTORE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:restore-draft';
 const REJECT_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:reject-draft';
@@ -32,7 +33,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v9',
+  bridgeVersion: 'builder-preload.v10',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -77,6 +78,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     cancel(request) {
       return ipcRenderer.invoke(CANCEL_CHANNEL, request);
+    },
+    steer(request) {
+      return ipcRenderer.invoke(STEER_CHANNEL, request);
     },
     availability() {
       return ipcRenderer.invoke(AVAILABILITY_CHANNEL);

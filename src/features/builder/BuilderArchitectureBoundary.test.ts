@@ -153,6 +153,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
+    expect(ports).toContain('steer(request: Readonly<{ request_id: string; message: string }>)');
     expect(ports).toContain('review(request: BuilderPlanReviewRequest)');
     expect(ports).toContain('evaluate(request: BuilderPermissionRequest)');
     const portsWithoutLoadRevision = ports.replace(

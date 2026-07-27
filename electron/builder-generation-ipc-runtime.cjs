@@ -15,6 +15,7 @@ const {
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  STEER_CHANNEL,
   SUBMIT_CHANNEL,
   createBuilderGenerationIpcAdapter,
 } = require('./builder-generation-ipc-adapter.cjs');
@@ -520,6 +521,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       restoreDraft: service.restore_draft,
       rejectDraft: service.reject_draft,
       cancel: service.cancel,
+      steer: service.steer,
       availability: service.availability,
       mainWindowRef: options.mainWindowRef,
     });
@@ -595,6 +597,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: RESTORE_DRAFT_CHANNEL, invoke: adapter.channels.restoreDraft.invoke }),
     Object.freeze({ channel: REJECT_DRAFT_CHANNEL, invoke: adapter.channels.rejectDraft.invoke }),
     Object.freeze({ channel: CANCEL_CHANNEL, invoke: adapter.channels.cancel.invoke }),
+    Object.freeze({ channel: STEER_CHANNEL, invoke: adapter.channels.steer.invoke }),
     Object.freeze({ channel: AVAILABILITY_CHANNEL, invoke: adapter.channels.availability.invoke }),
     Object.freeze({ channel: OPEN_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.open.invoke }),
     Object.freeze({ channel: SAVE_DRAFT_CHANNEL, invoke: workspaceAdapter.channels.saveDraft.invoke }),

@@ -19,6 +19,7 @@ const {
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  STEER_CHANNEL,
   SUBMIT_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
 const {
@@ -131,6 +132,7 @@ function runtimeWithService(service, probes = {}) {
           GENERATION_STARTED_CHANNEL,
           SUBMIT_CHANNEL,
           CANCEL_CHANNEL,
+          STEER_CHANNEL,
           AVAILABILITY_CHANNEL,
           RESTORE_DRAFT_CHANNEL,
           REJECT_DRAFT_CHANNEL,
@@ -145,6 +147,7 @@ function runtimeWithService(service, probes = {}) {
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
               rejectDraft: { invoke: (_event, body) => options.rejectDraft(body) },
               cancel: { invoke: (_event, body) => options.cancel(body) },
+              steer: { invoke: (_event, body) => options.steer(body) },
               availability: { invoke: () => options.availability() },
             },
           }),
@@ -181,6 +184,7 @@ function runtimeWithService(service, probes = {}) {
               record_run_progress() {},
               retry_after_failure() {},
               request_cancel() {},
+              record_steering() {},
               accept_candidate() {},
               reject_candidate() {},
               read_stream(body) {
@@ -422,6 +426,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     RESTORE_DRAFT_CHANNEL,
     REJECT_DRAFT_CHANNEL,
     CANCEL_CHANNEL,
+    STEER_CHANNEL,
     AVAILABILITY_CHANNEL,
     OPEN_PROJECT_CHANNEL,
     SAVE_DRAFT_CHANNEL,
@@ -520,6 +525,30 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(CANCEL_CHANNEL)({ sender: mainWindow.webContents }, { request_id: 'bad' }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(STEER_CHANNEL)({ sender: {} }, {
+      request_id: hostRequestDigest(),
+      message: 'Continue with a calmer palette.',
+    }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(STEER_CHANNEL)({ sender: mainWindow.webContents }, {
+      request_id: 'bad',
+      message: 'private marker',
+    }),
+    (error) => error.code === 'builder_generation_request_invalid'
+      && !`${error.message}:${error.stack}`.includes('marker'),
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(STEER_CHANNEL)({ sender: mainWindow.webContents }, {
+      request_id: hostRequestDigest(),
+      message: 'Continue with a calmer palette.',
+      source_tree: [{ path: 'index.html' }],
+    }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(

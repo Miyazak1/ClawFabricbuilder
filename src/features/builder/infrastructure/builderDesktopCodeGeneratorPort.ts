@@ -19,6 +19,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
   restoreDraft(request: unknown): Promise<unknown>;
   rejectDraft(request: unknown): Promise<unknown>;
   cancel(request: unknown): Promise<unknown>;
+  steer(request: unknown): Promise<unknown>;
   availability(): Promise<unknown>;
   subscribeStarted(listener: (event: unknown) => void): () => void;
   subscribeOutput(listener: (event: unknown) => void): () => void;
@@ -33,6 +34,7 @@ const BRIDGE_KEYS = new Set([
   'restoreDraft',
   'rejectDraft',
   'cancel',
+  'steer',
   'availability',
   'subscribeStarted',
   'subscribeOutput',
@@ -190,6 +192,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
       rejectDraft: methods.rejectDraft as BuilderCodeGeneratorBridge['rejectDraft'],
       cancel: methods.cancel as BuilderCodeGeneratorBridge['cancel'],
+      steer: methods.steer as BuilderCodeGeneratorBridge['steer'],
       availability: methods.availability as BuilderCodeGeneratorBridge['availability'],
       subscribeStarted: methods.subscribeStarted as BuilderCodeGeneratorBridge['subscribeStarted'],
       subscribeOutput: methods.subscribeOutput as BuilderCodeGeneratorBridge['subscribeOutput'],
@@ -261,6 +264,23 @@ function unwrapCancelResult(value: unknown, expectedRequestId: string): Readonly
   return Object.freeze({
     request_id: result.request_id,
     cancelled: result.cancelled,
+  });
+}
+
+function unwrapSteerResult(value: unknown, expectedRequestId: string): Readonly<{
+  request_id: string;
+  steered: boolean;
+}> {
+  const result = exactDataRecord(value, ['request_id', 'steered']);
+  if (
+    result.request_id !== expectedRequestId
+    || typeof result.request_id !== 'string'
+    || !DIGEST_PATTERN.test(result.request_id)
+    || typeof result.steered !== 'boolean'
+  ) throw portError();
+  return Object.freeze({
+    request_id: result.request_id,
+    steered: result.steered,
   });
 }
 
@@ -376,6 +396,12 @@ export function createBuilderDesktopCodeGeneratorPort(
       return callBridge(bridge, bridge.cancel, [{
         request_id: request.request_id,
       }]).then((result) => unwrapCancelResult(result, request.request_id));
+    },
+    steer(request: Parameters<BuilderCodeGeneratorPort['steer']>[0]) {
+      return callBridge(bridge, bridge.steer, [{
+        request_id: request.request_id,
+        message: request.message,
+      }]).then((result) => unwrapSteerResult(result, request.request_id));
     },
     subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
       if (typeof listener !== 'function') throw portError();

@@ -168,6 +168,7 @@ function conversationService() {
     progress: [],
     retry: [],
     cancel: [],
+    steering: [],
     readCandidate: [],
     rejectCandidate: [],
     readApprovedPlan: [],
@@ -194,6 +195,27 @@ function conversationService() {
         turn_id: context.ids.turn_id,
         run_id: context.ids.run_id,
         stage,
+      },
+      authority: { ...CONVERSATION_AUTHORITY },
+    });
+  }
+  function steeringEvent(context, message) {
+    return createBuilderConversationEvent({
+      record_version: CONVERSATION_EVENT_VERSION,
+      record_kind: CONVERSATION_EVENT_KIND,
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      command_id: nextProgressCommandId(),
+      event_type: 'turn_steered',
+      previous_event: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        message: {
+          message_id: `builder-message:${UUIDS[(generation + 8) % UUIDS.length]}`,
+          text: message,
+        },
       },
       authority: { ...CONVERSATION_AUTHORITY },
     });
@@ -456,6 +478,15 @@ function conversationService() {
       return {
         ...input.context,
         cancel_requested: true,
+      };
+    },
+    record_steering(input) {
+      calls.steering.push(input);
+      const event = steeringEvent(input.context, input.message);
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
       };
     },
     read_candidate_draft(input) {
@@ -722,6 +753,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     conversation_event_admission: 'sqlite_recorded',
     approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
     approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
+    run_steering: 'request_id_only_main_conversation_fact',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
@@ -1572,6 +1604,156 @@ test('records cancellation intent before aborting provider work and fails closed
   assert.equal(answerLifecycle.calls.failure[0].context.cancel_requested, true);
   assert.equal(answerLifecycle.calls.completeFailure.length, 0);
   assert.equal(answerGit.receipts.length, 0);
+});
+
+test('records steering intent on an active run without cancelling provider work', async () => {
+  const attemptedRequest = request();
+  const lifecycle = conversationService();
+  let activeSignal;
+  let releaseTransport;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async (_input, options) => {
+      activeSignal = options.signal;
+      return new Promise((resolve) => {
+        releaseTransport = () => resolve({
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerOutput()),
+        });
+      });
+    },
+  });
+  const generation = service.generate(attemptedRequest);
+  while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(service.steer({
+    request_id: attemptedRequest.request_digest,
+    message: 'Make the timer calmer and easier to scan.',
+  }), {
+    request_id: attemptedRequest.request_digest,
+    steered: true,
+  });
+  assert.equal(activeSignal.aborted, false);
+  assert.equal(lifecycle.calls.steering.length, 1);
+  assert.equal(lifecycle.calls.steering[0].message, 'Make the timer calmer and easier to scan.');
+  assert.equal(lifecycle.calls.cancel.length, 0);
+
+  releaseTransport();
+  const result = await generation;
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(
+    lifecycle.calls.candidate[0].context.events.some((event) => event.event_type === 'turn_steered'),
+    true,
+  );
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 7);
+  assert.doesNotMatch(
+    JSON.stringify(lifecycle.calls.steering[0]),
+    /credential|source_tree|git_candidate_receipt|tree_oid/iu,
+  );
+});
+
+test('keeps steering request-id bound and inert when no active run exists', () => {
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+  });
+  const requestId = request().request_digest;
+
+  assert.deepEqual(service.steer({
+    request_id: requestId,
+    message: 'Use a quieter layout.',
+  }), {
+    request_id: requestId,
+    steered: false,
+  });
+  assert.equal(lifecycle.calls.steering.length, 0);
+  assert.throws(
+    () => service.steer({ request_id: requestId, message: ' leading space' }),
+    { code: 'builder_generation_request_invalid' },
+  );
+});
+
+test('fails closed when steering cannot be recorded and does not abort provider work', async () => {
+  const attemptedRequest = request();
+  const lifecycle = conversationService();
+  lifecycle.record_steering = (input) => {
+    lifecycle.calls.steering.push(input);
+    throw new Error(PRIVATE_MARKER);
+  };
+  let activeSignal;
+  let releaseTransport;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async (_input, options) => {
+      activeSignal = options.signal;
+      return new Promise((resolve) => {
+        releaseTransport = () => resolve({
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerOutput()),
+        });
+      });
+    },
+  });
+  const generation = service.generate(attemptedRequest);
+  while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  assert.throws(
+    () => service.steer({
+      request_id: attemptedRequest.request_digest,
+      message: 'Please make the timer quieter.',
+    }),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.equal(activeSignal.aborted, false);
+  assert.equal(lifecycle.calls.cancel.length, 0);
+
+  releaseTransport();
+  const result = await generation;
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+});
+
+test('records steering intent on an active answer run without creating Git evidence', async () => {
+  const question = request({ instruction: 'What does this project do?' });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let answerSignal;
+  let releaseTransport;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle, gitAuthority: git }),
+    transport: async (_input, options) => {
+      answerSignal = options.signal;
+      return new Promise((resolve) => {
+        releaseTransport = () => resolve({
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerExplanation()),
+        });
+      });
+    },
+  });
+  const answer = service.answer(question);
+  while (answerSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(service.steer({
+    request_id: question.request_digest,
+    message: 'Explain it in plainer language.',
+  }), {
+    request_id: question.request_digest,
+    steered: true,
+  });
+  releaseTransport();
+  const result = await answer;
+
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(
+    lifecycle.calls.explanation[0].context.events.some((event) => event.event_type === 'turn_steered'),
+    true,
+  );
+  assert.equal(git.receipts.length, 0);
 });
 
 test('rejects same-digest cross-route concurrency before creating a second conversation context', async () => {

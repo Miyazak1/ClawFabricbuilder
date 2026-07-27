@@ -766,6 +766,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
   const beginApprovedPlanWork = ownMethod(options.conversationService, 'begin_approved_plan_work');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
+  const recordConversationSteering = ownMethod(options.conversationService, 'record_steering');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
   const readApprovedPlan = ownMethod(options.conversationService, 'read_approved_plan');
@@ -820,6 +821,25 @@ function createBuilderGenerationMainService(rawOptions) {
 
   function operationKey(prefix, requestDigest) {
     return `${prefix}${requestDigest}`;
+  }
+
+  function latestConversationContext(context, fallback) {
+    if (fallback === undefined) return undefined;
+    const runId = typeof context.run_id === 'string' ? context.run_id : null;
+    if (runId !== null) {
+      const latest = liveOutputContextsByRunId.get(runId);
+      if (latest !== undefined) return latest;
+    }
+    return fallback;
+  }
+
+  function observedConversationContext(context) {
+    const directConversationContext = generationContexts.get(context)
+      ?? explanationContexts.get(context);
+    const latest = latestConversationContext(context, directConversationContext);
+    if (latest !== undefined) return latest;
+    const runId = typeof context.run_id === 'string' ? context.run_id : null;
+    return runId === null ? undefined : liveOutputContextsByRunId.get(runId);
   }
 
   function rejectIfOtherRouteInFlight(prefix, requestDigest) {
@@ -877,10 +897,7 @@ function createBuilderGenerationMainService(rawOptions) {
 
   function notifyProviderOutputDelta(context, rawDeltaText) {
     if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
-    const runId = typeof context.run_id === 'string' ? context.run_id : null;
-    const conversationContext = generationContexts.get(context)
-      ?? explanationContexts.get(context)
-      ?? (runId === null ? undefined : liveOutputContextsByRunId.get(runId));
+    const conversationContext = observedConversationContext(context);
     if (conversationContext === undefined) return;
     const fieldName = conversationContext.ids.task_id === null ? 'explanation' : 'summary';
     const displayDeltaText = displayDeltaFromProviderOutput(context, rawDeltaText, fieldName);
@@ -1111,7 +1128,7 @@ function createBuilderGenerationMainService(rawOptions) {
     buildGenerationContext,
     buildExplanationContext,
     onProgress({ context, stage }) {
-      const generationContext = generationContexts.get(context);
+      const generationContext = latestConversationContext(context, generationContexts.get(context));
       if (generationContext !== undefined) {
         const progressed = Reflect.apply(
           recordConversationRunProgress,
@@ -1131,7 +1148,7 @@ function createBuilderGenerationMainService(rawOptions) {
         );
         return updated;
       }
-      const explanationContext = explanationContexts.get(context);
+      const explanationContext = latestConversationContext(context, explanationContexts.get(context));
       if (explanationContext !== undefined) {
         const progressed = Reflect.apply(
           recordConversationRunProgress,
@@ -1292,7 +1309,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (retryableContext !== null) pendingRetryContexts.set(key, retryableContext);
     const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
-      const conversationContext = generationContexts.get(context);
+      const conversationContext = latestConversationContext(context, generationContexts.get(context));
       if (conversationContext === undefined) fail();
       const draftId = `builder-generation-draft:${sha256Canonical({
         draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
@@ -1434,7 +1451,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (routeConflict) return routeConflict;
     const operation = Promise.resolve(host.explain(request)).then((internal) => {
       const context = valueAt(internal, 'context');
-      const conversationContext = explanationContexts.get(context);
+      const conversationContext = latestConversationContext(context, explanationContexts.get(context));
       if (conversationContext === undefined) fail();
       Reflect.apply(
         completeConversationExplanation,
@@ -1490,6 +1507,41 @@ function createBuilderGenerationMainService(rawOptions) {
     }
     host.cancel({ request_id: requestId });
     return Object.freeze({ request_id: requestId, cancelled: true });
+  }
+
+  function steer(rawRequest) {
+    let requestId;
+    let message;
+    try {
+      exactObject(rawRequest, ['request_id', 'message']);
+      requestId = safeDigest(valueAt(rawRequest, 'request_id'));
+      message = safeText(valueAt(rawRequest, 'message'), 12_000, 48_000);
+    } catch {
+      throw new BuilderGenerationMainServiceError('builder_generation_request_invalid');
+    }
+    const keys = [
+      operationKey(GENERATE_OPERATION_PREFIX, requestId),
+      operationKey(ANSWER_OPERATION_PREFIX, requestId),
+    ];
+    let steered = false;
+    for (const key of keys) {
+      const context = activeContexts.get(key);
+      if (context === undefined) continue;
+      let steeredContext;
+      try {
+        steeredContext = Reflect.apply(
+          recordConversationSteering,
+          options.conversationService,
+          [{ context, message }],
+        );
+      } catch {
+        throw new BuilderGenerationMainServiceError();
+      }
+      activeContexts.set(key, steeredContext);
+      liveOutputContextsByRunId.set(steeredContext.ids.run_id, steeredContext);
+      steered = true;
+    }
+    return Object.freeze({ request_id: requestId, steered });
   }
 
   async function baseRevisionEvidenceForRestoredDraft(proof) {
@@ -1663,6 +1715,7 @@ function createBuilderGenerationMainService(rawOptions) {
     retry_generate: retryGenerate,
     prepare_approved_plan_edit_context: prepareApprovedPlanEditContext,
     cancel,
+    steer,
     availability: host.availability,
     restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
@@ -1675,6 +1728,7 @@ function createBuilderGenerationMainService(rawOptions) {
       conversation_event_admission: 'sqlite_recorded',
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
+      run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,

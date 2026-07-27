@@ -118,6 +118,7 @@ async function renderHook(
     restoreDraft,
     rejectDraft,
     cancel,
+    steer: async () => null,
   };
   const workspace = {
     open,
