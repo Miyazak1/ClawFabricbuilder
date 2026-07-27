@@ -2298,6 +2298,47 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('keeps plan review retry visible after a decision could not be recorded', async () => {
+    const { saved } = await snapshots();
+    const activity = await pendingPlanActivity();
+    const onReviewPlan = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onReviewPlan={onReviewPlan}
+        planReviewFailure={{
+          project_id: PROJECT_ID,
+          conversation_id: CONVERSATION_ID,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const actions = container.querySelector('[data-builder-plan-review-actions="true"]');
+    expect(actions?.getAttribute('data-builder-plan-review-state')).toBe('failed');
+    expect(actions?.querySelector('[role="alert"]')?.textContent)
+      .toContain('That decision could not be recorded. Try again.');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-approve-plan="true"]')?.disabled)
+      .toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-reject-plan="true"]')?.disabled)
+      .toBe(false);
+    click(container, '[data-builder-approve-plan="true"]');
+    expect(onReviewPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      decision: 'approved',
+    });
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
+    );
+  });
+
   it('shows a selected source file as an inline conversation disclosure', async () => {
     const { draftReady } = await snapshots();
     const onSelectFile = vi.fn();

@@ -73,6 +73,7 @@ export type BuilderPlanReviewInFlight = Readonly<{
 export type BuilderPageProps = {
   instruction: string;
   liveOutput?: BuilderLiveOutputSnapshot | null;
+  planReviewFailure?: BuilderPlanReviewInFlight | null;
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
   onInstructionChange?: (value: string) => void;
   onCancel?: () => void;
@@ -856,6 +857,7 @@ function ActivityItem({
   item,
   onReviewPlan,
   planReviewBusy,
+  planReviewFailed,
   pendingPlanReview,
 }: Readonly<{
   canReviewPlan: boolean;
@@ -863,6 +865,7 @@ function ActivityItem({
   item: BuilderConversationItem;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   planReviewBusy: boolean;
+  planReviewFailed: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const displayRole = activityDisplayRole(item);
@@ -917,12 +920,14 @@ function ActivityItem({
           <div
             className="cf-builder-plan-review-actions"
             data-builder-plan-review-actions="true"
-            data-builder-plan-review-state={planReviewBusy ? 'recording' : 'ready'}
+            data-builder-plan-review-state={planReviewBusy ? 'recording' : planReviewFailed ? 'failed' : 'ready'}
           >
-            <p className="cf-builder-activity-note">
+            <p className="cf-builder-activity-note" role={planReviewFailed ? 'alert' : undefined}>
               {planReviewBusy
                 ? 'Recording your decision...'
-                : 'Approve this plan to let the assistant continue. Reject it to keep the project unchanged.'}
+                : planReviewFailed
+                  ? 'That decision could not be recorded. Try again.'
+                  : 'Approve this plan to let the assistant continue. Reject it to keep the project unchanged.'}
             </p>
             <button
               className="cf-builder-primary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
@@ -1017,6 +1022,7 @@ function ActivityPanel({
   onRefresh,
   onReviewPlan,
   planReviewBusy,
+  planReviewFailed,
   pendingPlanReview,
   canReviewPlan,
 }: Readonly<{
@@ -1027,6 +1033,7 @@ function ActivityPanel({
   onRefresh?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   planReviewBusy: boolean;
+  planReviewFailed: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const entries = activityEntries(snapshot);
@@ -1081,6 +1088,7 @@ function ActivityPanel({
                   key={entry.item.sequence}
                   onReviewPlan={onReviewPlan}
                   planReviewBusy={planReviewBusy}
+                  planReviewFailed={planReviewFailed}
                   pendingPlanReview={pendingPlanReview}
                 />
               )
@@ -1142,6 +1150,7 @@ export function BuilderPage({
   snapshot,
   activeFile,
   liveOutput = null,
+  planReviewFailure = null,
   planReviewInFlight = null,
   onSelectFile,
 }: BuilderPageProps) {
@@ -1198,6 +1207,12 @@ export function BuilderPage({
     && planReviewInFlight.conversation_id === planReviewTarget.conversation_id
     && planReviewInFlight.turn_id === planReviewTarget.turn_id
     && planReviewInFlight.run_id === planReviewTarget.run_id;
+  const planReviewFailed = planReviewTarget !== null
+    && planReviewFailure !== null
+    && planReviewFailure.project_id === planReviewTarget.project_id
+    && planReviewFailure.conversation_id === planReviewTarget.conversation_id
+    && planReviewFailure.turn_id === planReviewTarget.turn_id
+    && planReviewFailure.run_id === planReviewTarget.run_id;
   const canReviewPlan = typeof onReviewPlan === 'function'
     && planReviewTarget !== null
     && !planReviewBusy
@@ -1773,6 +1788,7 @@ export function BuilderPage({
                   onRefresh={onRefreshConversation}
                   onReviewPlan={onReviewPlan}
                   planReviewBusy={planReviewBusy}
+                  planReviewFailed={planReviewFailed}
                   pendingPlanReview={planReviewTarget}
                   snapshot={activity}
                 />

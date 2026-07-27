@@ -65,6 +65,7 @@ async function setup(options: Readonly<{
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
+  failPlanReview?: boolean;
   deferredPlanReview?: boolean;
   failSubmitOnce?: boolean;
   initiallySaved?: boolean;
@@ -100,6 +101,7 @@ async function setup(options: Readonly<{
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveGenerate: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
+  let planReviewRecorded = false;
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
@@ -255,13 +257,16 @@ async function setup(options: Readonly<{
       ...(request as object),
       review_admission: 'sqlite_recorded_no_execution',
     };
+    if (options.failPlanReview === true) throw new Error('plan review unavailable');
     if (options.deferredPlanReview === true) {
       return new Promise<unknown>((resolve) => {
         resolvePlanReview = async () => {
+          planReviewRecorded = true;
           resolve(result);
         };
       });
     }
+    planReviewRecorded = true;
     return result;
   });
   const generateApprovedPlan = vi.fn(async (request: unknown) => {
@@ -338,7 +343,7 @@ async function setup(options: Readonly<{
   const readTaskStream = vi.fn(async () => (
     options.planAfterPropose === true && proposePlan.mock.calls.length > 0
       ? createPlanTaskStreamWire()
-    : options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
+    : options.pendingPlanActivity === true && planReviewRecorded
       ? createPlanReviewTaskStreamWire('approved')
     : options.pendingPlanActivity === true
       ? createPlanTaskStreamWire()
@@ -1202,6 +1207,43 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('keeps plan approval retryable when the review decision is not recorded', async () => {
+    const {
+      container,
+      generateApprovedPlan,
+      reviewPlan,
+      saveDraft,
+    } = await setup({
+      failPlanReview: true,
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+
+    click(container, 'Approve plan');
+    await waitFor(() => {
+      expect(reviewPlan).toHaveBeenCalledOnce();
+      const actions = container.querySelector('[data-builder-plan-review-actions="true"]');
+      expect(actions?.getAttribute('data-builder-plan-review-state')).toBe('failed');
+      expect(actions?.querySelector('[role="alert"]')?.textContent)
+        .toContain('That decision could not be recorded. Try again.');
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-approve-plan="true"]')?.disabled)
+        .toBe(false);
+    });
+    expect(generateApprovedPlan).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-activity-card="Plan approved"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
     );
   });
 

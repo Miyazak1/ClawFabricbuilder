@@ -420,6 +420,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
+  const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
@@ -558,6 +559,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
     approvedPlanWaitingProjectRef.current = null;
+    setPlanReviewFailure(null);
     publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
     submitInFlightRef.current = false;
@@ -745,13 +747,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       run_id: request.run_id,
     });
     const inFlightKey = planReviewInFlightKey(inFlight);
+    setPlanReviewFailure(null);
     publishPlanReviewInFlight(inFlight);
     const commandEpoch = workspaceEpochRef.current;
     let reviewed = false;
+    let reviewFailed = false;
     try {
       await ports.planReview.review(request);
       reviewed = true;
     } catch {
+      reviewFailed = true;
       reviewed = false;
     } finally {
       if (
@@ -765,6 +770,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (workspaceEpochRef.current !== commandEpoch) return;
     await conversation.load(request.project_id).catch(() => undefined);
     if (!reviewed || request.decision !== 'approved') {
+      setPlanReviewFailure(reviewFailed ? inFlight : null);
       if (
         planReviewInFlightRef.current !== null
         && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
@@ -986,6 +992,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               activeFile={activeFile}
               instruction={idea}
               liveOutput={liveOutput}
+              planReviewFailure={planReviewFailure}
               planReviewInFlight={planReviewInFlight}
               onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}
