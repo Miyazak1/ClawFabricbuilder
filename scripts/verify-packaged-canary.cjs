@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v11';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v12';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'After reopening, add a compact completed-state summary below the timer.';
@@ -79,7 +79,9 @@ const BUILDER_ID_PATTERNS = Object.freeze({
   request_id: new RegExp(`^builder-git-request:${UUID_PATTERN}$`, 'u'),
   review_id: new RegExp(`^builder-review:${UUID_PATTERN}$`, 'u'),
   run_id: new RegExp(`^builder-run:${UUID_PATTERN}$`, 'u'),
+  run_step_id: new RegExp(`^builder-run-step:${UUID_PATTERN}$`, 'u'),
   task_id: new RegExp(`^builder-task:${UUID_PATTERN}$`, 'u'),
+  tool_call_id: new RegExp(`^builder-tool-call:${UUID_PATTERN}$`, 'u'),
   turn_id: new RegExp(`^builder-turn:${UUID_PATTERN}$`, 'u'),
 });
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
@@ -337,6 +339,14 @@ const TASK_STREAM_RUN_STARTED_KEYS = Object.freeze([
   'retry_of_run_id',
   'recorded_state',
 ]);
+const TASK_STREAM_RUN_PROGRESS_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'stage',
+  'recorded_state',
+]);
 const TASK_STREAM_RUN_CONTROL_KEYS = Object.freeze([
   'item_kind',
   'sequence',
@@ -353,6 +363,50 @@ const TASK_STREAM_RUN_COMPLETED_KEYS = Object.freeze([
   'result_kind',
   'assistant_message',
   'candidate',
+]);
+const TASK_STREAM_TOOL_CALL_REQUESTED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'step_id',
+  'tool_call_id',
+  'tool_label',
+  'action',
+  'resource',
+  'lifecycle',
+  'recorded_state',
+]);
+const TASK_STREAM_TOOL_CALL_RESULT_RECORDED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'step_id',
+  'tool_call_id',
+  'tool_label',
+  'action',
+  'resource',
+  'result',
+  'lifecycle',
+  'recorded_state',
+]);
+const TASK_STREAM_TOOL_RESOURCE_KEYS = Object.freeze(['resource_kind']);
+const TASK_STREAM_TOOL_LIFECYCLE_KEYS = Object.freeze([
+  'permission_admission',
+  'dispatch_admission',
+  'execution_admission',
+  'result_admission',
+]);
+const TASK_STREAM_TOOL_RESULT_KEYS = Object.freeze([
+  'status',
+  'summary_code',
+  'display_summary',
+]);
+const TASK_STREAM_TOOL_RESULT_LIFECYCLE_KEYS = Object.freeze([
+  'result_admission',
+  'raw_output_admission',
+  'revision_admission',
 ]);
 const TASK_STREAM_CANDIDATE_REVIEWED_KEYS = Object.freeze([
   'item_kind',
@@ -379,6 +433,54 @@ const READ_EVIDENCE_KEYS = Object.freeze([
   'status',
   'task_stream',
 ]);
+const TASK_STREAM_RUN_PROGRESS_STAGES = Object.freeze([
+  'context_ready',
+  'provider_request_started',
+  'provider_response_received',
+  'result_preparing',
+]);
+const TASK_STREAM_TOOL_LABEL_BY_ACTION = Object.freeze({
+  'context.read': 'Read project context',
+  'project.read': 'Read project context',
+  'project.edit': 'Prepare project edit',
+  'secret.read': 'Use saved secret',
+  'filesystem.read': 'Read project file',
+  'filesystem.write': 'Prepare file change',
+  'network.request': 'Use network',
+  'process.spawn': 'Run local command',
+  'publication.create': 'Prepare publish',
+  'permission.grant': 'Change access',
+});
+const TASK_STREAM_TOOL_RESOURCE_KINDS_BY_ACTION = Object.freeze({
+  'context.read': Object.freeze(['project', 'conversation', 'task', 'run', 'revision', 'artifact']),
+  'project.read': Object.freeze(['project', 'revision']),
+  'project.edit': Object.freeze(['project']),
+  'secret.read': Object.freeze(['secret']),
+  'filesystem.read': Object.freeze(['filesystem']),
+  'filesystem.write': Object.freeze(['filesystem']),
+  'network.request': Object.freeze(['network']),
+  'process.spawn': Object.freeze(['process']),
+  'publication.create': Object.freeze(['publication']),
+  'permission.grant': Object.freeze(['permission']),
+});
+const TASK_STREAM_TOOL_RESULT_SUMMARY_BY_CODE = Object.freeze({
+  completed_without_raw_output: 'This step completed. Details were not kept.',
+  failed_without_raw_output: 'This step could not finish. Details were not kept.',
+  output_rejected: 'The tool output was not accepted.',
+  adapter_unavailable: 'The tool was unavailable.',
+  timed_out_without_raw_output: 'This step timed out. Details were not kept.',
+  cancelled_without_raw_output: 'This step was stopped. Details were not kept.',
+});
+const TASK_STREAM_TOOL_RESULT_CODES_BY_STATUS = Object.freeze({
+  succeeded: Object.freeze(['completed_without_raw_output']),
+  failed: Object.freeze([
+    'failed_without_raw_output',
+    'output_rejected',
+    'adapter_unavailable',
+    'timed_out_without_raw_output',
+  ]),
+  cancelled: Object.freeze(['cancelled_without_raw_output']),
+});
 const TRUSTED_READ_EVIDENCE = new WeakSet();
 const RUN_OPTION_KEYS = Object.freeze(['argv', 'electron', 'env', 'fs', 'os', 'userDataPath']);
 const FIRST_CONFIG_INPUT_KEYS = Object.freeze(['executable_path', 'idea', 'provider', 'schema_version']);
@@ -2103,6 +2205,22 @@ function sanitizeTaskStreamRunStarted(source, sequence) {
   });
 }
 
+function sanitizeTaskStreamRunProgress(source, sequence) {
+  const stage = source.stage;
+  if (
+    source.recorded_state !== 'recorded'
+    || !TASK_STREAM_RUN_PROGRESS_STAGES.includes(stage)
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    item_kind: 'run_progress_recorded',
+    sequence,
+    turn_id: safeBuilderId(source.turn_id, 'turn_id'),
+    run_id: safeBuilderId(source.run_id, 'run_id'),
+    stage,
+    recorded_state: 'recorded',
+  });
+}
+
 function sanitizeTaskStreamRunControl(source, sequence) {
   if (source.action !== 'cancel' && source.action !== 'interrupt') fail('canary_evidence_failed');
   return Object.freeze({
@@ -2111,6 +2229,109 @@ function sanitizeTaskStreamRunControl(source, sequence) {
     turn_id: safeBuilderId(source.turn_id, 'turn_id'),
     run_id: safeBuilderId(source.run_id, 'run_id'),
     action: source.action,
+  });
+}
+
+function sanitizeTaskStreamToolAction(value) {
+  if (!Object.hasOwn(TASK_STREAM_TOOL_LABEL_BY_ACTION, value)) fail('canary_evidence_failed');
+  return value;
+}
+
+function sanitizeTaskStreamToolResource(value, action) {
+  const descriptors = exactDataObject(value, TASK_STREAM_TOOL_RESOURCE_KEYS);
+  const resourceKind = descriptors.resource_kind.value;
+  const allowedKinds = TASK_STREAM_TOOL_RESOURCE_KINDS_BY_ACTION[action];
+  if (!allowedKinds.includes(resourceKind)) fail('canary_evidence_failed');
+  return Object.freeze({ resource_kind: resourceKind });
+}
+
+function sanitizeTaskStreamToolLifecycle(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_TOOL_LIFECYCLE_KEYS);
+  if (
+    descriptors.permission_admission.value !== 'verified_allowed'
+    || descriptors.dispatch_admission.value !== 'not_started'
+    || descriptors.execution_admission.value !== 'not_performed'
+    || descriptors.result_admission.value !== 'not_recorded'
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    permission_admission: 'verified_allowed',
+    dispatch_admission: 'not_started',
+    execution_admission: 'not_performed',
+    result_admission: 'not_recorded',
+  });
+}
+
+function sanitizeTaskStreamToolResult(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_TOOL_RESULT_KEYS);
+  const status = descriptors.status.value;
+  const summaryCode = descriptors.summary_code.value;
+  const displaySummary = descriptors.display_summary.value;
+  if (
+    !Object.hasOwn(TASK_STREAM_TOOL_RESULT_CODES_BY_STATUS, status)
+    || !TASK_STREAM_TOOL_RESULT_CODES_BY_STATUS[status].includes(summaryCode)
+    || TASK_STREAM_TOOL_RESULT_SUMMARY_BY_CODE[summaryCode] !== displaySummary
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    status,
+    summary_code: summaryCode,
+    display_summary: displaySummary,
+  });
+}
+
+function sanitizeTaskStreamToolResultLifecycle(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_TOOL_RESULT_LIFECYCLE_KEYS);
+  if (
+    descriptors.result_admission.value !== 'fixed_summary_code_recorded'
+    || descriptors.raw_output_admission.value !== 'not_included'
+    || descriptors.revision_admission.value !== 'not_created'
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    result_admission: 'fixed_summary_code_recorded',
+    raw_output_admission: 'not_included',
+    revision_admission: 'not_created',
+  });
+}
+
+function sanitizeTaskStreamToolCallRequested(source, sequence) {
+  const action = sanitizeTaskStreamToolAction(source.action);
+  const toolLabel = TASK_STREAM_TOOL_LABEL_BY_ACTION[action];
+  if (source.recorded_state !== 'requested' || source.tool_label !== toolLabel) {
+    fail('canary_evidence_failed');
+  }
+  return Object.freeze({
+    item_kind: 'tool_call_requested',
+    sequence,
+    turn_id: safeBuilderId(source.turn_id, 'turn_id'),
+    run_id: safeBuilderId(source.run_id, 'run_id'),
+    step_id: safeBuilderId(source.step_id, 'run_step_id'),
+    tool_call_id: safeBuilderId(source.tool_call_id, 'tool_call_id'),
+    tool_label: toolLabel,
+    action,
+    resource: sanitizeTaskStreamToolResource(source.resource, action),
+    lifecycle: sanitizeTaskStreamToolLifecycle(source.lifecycle),
+    recorded_state: 'requested',
+  });
+}
+
+function sanitizeTaskStreamToolCallResultRecorded(source, sequence) {
+  const action = sanitizeTaskStreamToolAction(source.action);
+  const toolLabel = TASK_STREAM_TOOL_LABEL_BY_ACTION[action];
+  if (source.recorded_state !== 'recorded' || source.tool_label !== toolLabel) {
+    fail('canary_evidence_failed');
+  }
+  return Object.freeze({
+    item_kind: 'tool_call_result_recorded',
+    sequence,
+    turn_id: safeBuilderId(source.turn_id, 'turn_id'),
+    run_id: safeBuilderId(source.run_id, 'run_id'),
+    step_id: safeBuilderId(source.step_id, 'run_step_id'),
+    tool_call_id: safeBuilderId(source.tool_call_id, 'tool_call_id'),
+    tool_label: toolLabel,
+    action,
+    resource: sanitizeTaskStreamToolResource(source.resource, action),
+    result: sanitizeTaskStreamToolResult(source.result),
+    lifecycle: sanitizeTaskStreamToolResultLifecycle(source.lifecycle),
+    recorded_state: 'recorded',
   });
 }
 
@@ -2185,8 +2406,14 @@ function sanitizeTaskStreamItem(value) {
     source = exactTaskStreamValues(value, TASK_STREAM_USER_MESSAGE_KEYS);
   } else if (itemKind === 'run_started') {
     source = exactTaskStreamValues(value, TASK_STREAM_RUN_STARTED_KEYS);
+  } else if (itemKind === 'run_progress_recorded') {
+    source = exactTaskStreamValues(value, TASK_STREAM_RUN_PROGRESS_KEYS);
   } else if (itemKind === 'run_control_requested') {
     source = exactTaskStreamValues(value, TASK_STREAM_RUN_CONTROL_KEYS);
+  } else if (itemKind === 'tool_call_requested') {
+    source = exactTaskStreamValues(value, TASK_STREAM_TOOL_CALL_REQUESTED_KEYS);
+  } else if (itemKind === 'tool_call_result_recorded') {
+    source = exactTaskStreamValues(value, TASK_STREAM_TOOL_CALL_RESULT_RECORDED_KEYS);
   } else if (itemKind === 'run_completed') {
     source = exactTaskStreamValues(value, TASK_STREAM_RUN_COMPLETED_KEYS);
   } else if (itemKind === 'candidate_reviewed') {
@@ -2199,7 +2426,10 @@ function sanitizeTaskStreamItem(value) {
   const sequence = safePositiveInteger(source.sequence);
   if (itemKind === 'user_message') return sanitizeTaskStreamUserMessage(source, sequence);
   if (itemKind === 'run_started') return sanitizeTaskStreamRunStarted(source, sequence);
+  if (itemKind === 'run_progress_recorded') return sanitizeTaskStreamRunProgress(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeTaskStreamRunControl(source, sequence);
+  if (itemKind === 'tool_call_requested') return sanitizeTaskStreamToolCallRequested(source, sequence);
+  if (itemKind === 'tool_call_result_recorded') return sanitizeTaskStreamToolCallResultRecorded(source, sequence);
   if (itemKind === 'run_completed') return sanitizeTaskStreamRunCompleted(source, sequence);
   if (itemKind === 'candidate_reviewed') return sanitizeTaskStreamCandidateReviewed(source, sequence);
   return sanitizeTaskStreamTurnCompleted(source, sequence);
@@ -2215,7 +2445,13 @@ function taskStreamItemCounts(items) {
     candidate_result_count: 0,
     explanation_result_count: 0,
     run_completed_count: 0,
+    run_progress_count: 0,
     run_started_count: 0,
+    tool_request_count: 0,
+    tool_result_count: 0,
+    tool_result_cancelled_count: 0,
+    tool_result_failed_count: 0,
+    tool_result_succeeded_count: 0,
     turn_completed_count: 0,
     user_message_count: 0,
   };
@@ -2225,7 +2461,11 @@ function taskStreamItemCounts(items) {
   let latestTurn = null;
   const candidateRunCompletedByRunId = new Map();
   const candidateReviewByRunId = new Map();
+  const progressStageByRunId = new Map();
+  const runCompletedByRunId = new Map();
   const runStartedByRunId = new Map();
+  const toolRequestById = new Map();
+  const toolResultById = new Map();
   const turnCompletedByRunId = new Map();
   const userMessageByTurnId = new Map();
   for (const item of items) {
@@ -2235,10 +2475,65 @@ function taskStreamItemCounts(items) {
     }
     if (item.item_kind === 'run_started') {
       counts.run_started_count += 1;
+      if (runStartedByRunId.has(item.run_id)) fail('canary_evidence_failed');
       runStartedByRunId.set(item.run_id, item);
+    }
+    if (item.item_kind === 'run_progress_recorded') {
+      counts.run_progress_count += 1;
+      const started = runStartedByRunId.get(item.run_id) ?? null;
+      const previousStage = progressStageByRunId.get(item.run_id) ?? null;
+      const previousIndex = previousStage === null
+        ? -1
+        : TASK_STREAM_RUN_PROGRESS_STAGES.indexOf(previousStage);
+      const stageIndex = TASK_STREAM_RUN_PROGRESS_STAGES.indexOf(item.stage);
+      if (
+        started === null
+        || started.turn_id !== item.turn_id
+        || runCompletedByRunId.has(item.run_id)
+        || stageIndex !== previousIndex + 1
+      ) fail('canary_evidence_failed');
+      progressStageByRunId.set(item.run_id, item.stage);
+    }
+    if (item.item_kind === 'tool_call_requested') {
+      counts.tool_request_count += 1;
+      const started = runStartedByRunId.get(item.run_id) ?? null;
+      if (
+        started === null
+        || started.turn_id !== item.turn_id
+        || runCompletedByRunId.has(item.run_id)
+        || toolRequestById.has(item.tool_call_id)
+      ) fail('canary_evidence_failed');
+      toolRequestById.set(item.tool_call_id, item);
+    }
+    if (item.item_kind === 'tool_call_result_recorded') {
+      counts.tool_result_count += 1;
+      if (item.result.status === 'succeeded') counts.tool_result_succeeded_count += 1;
+      if (item.result.status === 'failed') counts.tool_result_failed_count += 1;
+      if (item.result.status === 'cancelled') counts.tool_result_cancelled_count += 1;
+      const request = toolRequestById.get(item.tool_call_id) ?? null;
+      if (
+        request === null
+        || request.turn_id !== item.turn_id
+        || request.run_id !== item.run_id
+        || request.step_id !== item.step_id
+        || request.action !== item.action
+        || request.resource.resource_kind !== item.resource.resource_kind
+        || runCompletedByRunId.has(item.run_id)
+        || request.sequence >= item.sequence
+        || toolResultById.has(item.tool_call_id)
+      ) fail('canary_evidence_failed');
+      toolResultById.set(item.tool_call_id, item);
     }
     if (item.item_kind === 'run_completed') {
       counts.run_completed_count += 1;
+      const started = runStartedByRunId.get(item.run_id) ?? null;
+      if (
+        started === null
+        || started.turn_id !== item.turn_id
+        || started.sequence >= item.sequence
+        || runCompletedByRunId.has(item.run_id)
+      ) fail('canary_evidence_failed');
+      runCompletedByRunId.set(item.run_id, item);
       if (item.result_kind === 'candidate' && item.candidate !== null) {
         counts.candidate_result_count += 1;
         latestCandidate = item;
@@ -2740,7 +3035,11 @@ function assertTaskStreamCandidateFacts(
   const counts = facts.counts;
   const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
   const expectedAcceptedReviews = expectedRevision.revision_number;
-  const expectedItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedBaseItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedItemCount = expectedBaseItemCount
+    + counts.run_progress_count
+    + counts.tool_request_count
+    + counts.tool_result_count;
   if (
     conversation.window.first_sequence !== 1
     || conversation.window.last_sequence !== expectedItemCount
@@ -2758,6 +3057,8 @@ function assertTaskStreamCandidateFacts(
     || counts.candidate_reviewed_count !== expectedAcceptedReviews
     || counts.candidate_accepted_count !== expectedAcceptedReviews
     || counts.candidate_rejected_count !== 0
+    || counts.run_progress_count > expectedTurnCount * TASK_STREAM_RUN_PROGRESS_STAGES.length
+    || counts.tool_request_count !== counts.tool_result_count
   ) fail('canary_evidence_failed');
 
   const latestCandidate = facts.latestCandidate;
@@ -2795,7 +3096,10 @@ function assertTaskStreamCandidateFacts(
     latest_candidate_bound_to_revision: true,
     latest_candidate_review: 'accepted',
     latest_saved_revision_number: expectedRevision.revision_number,
+    run_progress_count: counts.run_progress_count,
     source_availability: 'not_loaded',
+    tool_request_count: counts.tool_request_count,
+    tool_result_count: counts.tool_result_count,
   });
 }
 
@@ -2828,7 +3132,11 @@ function assertTaskStreamExplanationFacts(
   const counts = facts.counts;
   const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
   const expectedAcceptedReviews = expectedRevision.revision_number;
-  const expectedItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedBaseItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedItemCount = expectedBaseItemCount
+    + counts.run_progress_count
+    + counts.tool_request_count
+    + counts.tool_result_count;
   if (
     conversation.window.first_sequence !== 1
     || conversation.window.last_sequence !== expectedItemCount
@@ -2846,6 +3154,8 @@ function assertTaskStreamExplanationFacts(
     || counts.candidate_reviewed_count !== expectedAcceptedReviews
     || counts.candidate_accepted_count !== expectedAcceptedReviews
     || counts.candidate_rejected_count !== 0
+    || counts.run_progress_count > expectedTurnCount * TASK_STREAM_RUN_PROGRESS_STAGES.length
+    || counts.tool_request_count !== counts.tool_result_count
   ) fail('canary_question_evidence_failed');
 
   const latestExplanation = facts.latestExplanation;
@@ -2898,7 +3208,10 @@ function assertTaskStreamExplanationFacts(
     item_count: conversation.item_count,
     latest_candidate_review: 'accepted',
     revision_unchanged: true,
+    run_progress_count: counts.run_progress_count,
     source_availability: 'not_loaded',
+    tool_request_count: counts.tool_request_count,
+    tool_result_count: counts.tool_result_count,
   });
 }
 
@@ -2932,7 +3245,11 @@ function assertTaskStreamPendingCandidateFacts(
   const counts = facts.counts;
   const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
   const expectedAcceptedReviews = expectedSavedRevision.revision_number;
-  const expectedItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedBaseItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedItemCount = expectedBaseItemCount
+    + counts.run_progress_count
+    + counts.tool_request_count
+    + counts.tool_result_count;
   if (
     conversation.window.first_sequence !== 1
     || conversation.window.last_sequence !== expectedItemCount
@@ -2950,6 +3267,8 @@ function assertTaskStreamPendingCandidateFacts(
     || counts.candidate_reviewed_count !== expectedAcceptedReviews
     || counts.candidate_accepted_count !== expectedAcceptedReviews
     || counts.candidate_rejected_count !== 0
+    || counts.run_progress_count > expectedTurnCount * TASK_STREAM_RUN_PROGRESS_STAGES.length
+    || counts.tool_request_count !== counts.tool_result_count
   ) fail('canary_evidence_failed');
 
   const latestCandidate = facts.latestCandidate;
@@ -2985,8 +3304,11 @@ function assertTaskStreamPendingCandidateFacts(
     item_count: conversation.item_count,
     latest_candidate_review: 'pending',
     latest_candidate_distinct_from_saved_revision: true,
+    run_progress_count: counts.run_progress_count,
     saved_revision_number: expectedSavedRevision.revision_number,
     source_availability: 'not_loaded',
+    tool_request_count: counts.tool_request_count,
+    tool_result_count: counts.tool_result_count,
   });
 }
 

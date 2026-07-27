@@ -855,6 +855,85 @@ function bridgeEvidence(
   };
 }
 
+function replaceTaskStreamItems(evidence, items) {
+  const conversation = evidence.task_stream.conversation;
+  conversation.items = items.map((item, index) => ({ ...item, sequence: index + 1 }));
+  conversation.head_sequence = conversation.items.length;
+  conversation.window.last_sequence = conversation.items.length;
+  return evidence;
+}
+
+function addProgressAndToolFacts(evidence) {
+  const conversation = evidence.task_stream.conversation;
+  const items = [];
+  let inserted = false;
+  for (const item of conversation.items) {
+    items.push(item);
+    if (!inserted && item.item_kind === 'run_started' && item.task_id !== null) {
+      inserted = true;
+      items.push(
+        {
+          item_kind: 'run_progress_recorded',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          stage: 'context_ready',
+          recorded_state: 'recorded',
+        },
+        {
+          item_kind: 'run_progress_recorded',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          stage: 'provider_request_started',
+          recorded_state: 'recorded',
+        },
+        {
+          item_kind: 'tool_call_requested',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
+          tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
+          tool_label: 'Read project file',
+          action: 'filesystem.read',
+          resource: { resource_kind: 'filesystem' },
+          lifecycle: {
+            permission_admission: 'verified_allowed',
+            dispatch_admission: 'not_started',
+            execution_admission: 'not_performed',
+            result_admission: 'not_recorded',
+          },
+          recorded_state: 'requested',
+        },
+        {
+          item_kind: 'tool_call_result_recorded',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
+          tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
+          tool_label: 'Read project file',
+          action: 'filesystem.read',
+          resource: { resource_kind: 'filesystem' },
+          result: {
+            status: 'succeeded',
+            summary_code: 'completed_without_raw_output',
+            display_summary: 'This step completed. Details were not kept.',
+          },
+          lifecycle: {
+            result_admission: 'fixed_summary_code_recorded',
+            raw_output_admission: 'not_included',
+            revision_admission: 'not_created',
+          },
+          recorded_state: 'recorded',
+        },
+      );
+    }
+  }
+  return replaceTaskStreamItems(evidence, items);
+}
+
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
     bridgeVersion: 'builder-preload.v9',
@@ -1561,7 +1640,10 @@ test('answers a saved-project question without creating a draft or revision', as
       item_count: 9,
       latest_candidate_review: 'accepted',
       revision_unchanged: true,
+      run_progress_count: 0,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     ui_answer_observed: true,
   });
@@ -1631,8 +1713,11 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
     item_count: 9,
     latest_candidate_review: 'pending',
     latest_candidate_distinct_from_saved_revision: true,
+    run_progress_count: 0,
     saved_revision_number: 1,
     source_availability: 'not_loaded',
+    tool_request_count: 0,
+    tool_result_count: 0,
   });
   assert.deepEqual(await saveUpdateDraftViaUi(page, firstRevision), {
     saved_via_ui: true,
@@ -2108,6 +2193,92 @@ test('sanitizes read evidence before dereferencing renderer-returned shapes', ()
   );
 });
 
+test('accepts renderer-safe run progress and tool activity in task stream evidence', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = addProgressAndToolFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const revision = evidence.current.product_revision_receipt;
+  const facts = assertTaskStreamCandidateFacts(evidence, revision, 1, 0);
+
+  assert.deepEqual(facts, {
+    answer_count: 0,
+    accepted_review_count: 1,
+    candidate_ready_count: 1,
+    candidate_reviewed_count: 1,
+    candidate_result_count: 1,
+    explanation_result_count: 0,
+    head_sequence: 9,
+    item_count: 9,
+    latest_candidate_bound_to_revision: true,
+    latest_candidate_review: 'accepted',
+    latest_saved_revision_number: 1,
+    run_progress_count: 2,
+    source_availability: 'not_loaded',
+    tool_request_count: 1,
+    tool_result_count: 1,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(assertReadEvidence(evidence).task_stream),
+    /permission_admission_receipt|record_digest|resource_id|raw_output|stdout|stderr|provider|credential|source_tree|commit_oid|tree_oid/iu,
+  );
+});
+
+test('rejects forged run progress and tool activity task stream facts', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+
+  const outOfOrderProgress = addProgressAndToolFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  outOfOrderProgress.task_stream.conversation.items[2].stage = 'provider_request_started';
+  assert.throws(
+    () => assertReadEvidence(outOfOrderProgress),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const postTerminalProgress = addProgressAndToolFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const startedRun = postTerminalProgress.task_stream.conversation.items.find(
+    (item) => item.item_kind === 'run_started',
+  );
+  const runCompletedIndex = postTerminalProgress.task_stream.conversation.items.findIndex(
+    (item) => item.item_kind === 'run_completed',
+  );
+  replaceTaskStreamItems(postTerminalProgress, [
+    ...postTerminalProgress.task_stream.conversation.items.slice(0, runCompletedIndex + 1),
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 0,
+      turn_id: startedRun.turn_id,
+      run_id: startedRun.run_id,
+      stage: 'provider_response_received',
+      recorded_state: 'recorded',
+    },
+    ...postTerminalProgress.task_stream.conversation.items.slice(runCompletedIndex + 1),
+  ]);
+  assert.throws(
+    () => assertReadEvidence(postTerminalProgress),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const orphanToolResult = addProgressAndToolFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  replaceTaskStreamItems(
+    orphanToolResult,
+    orphanToolResult.task_stream.conversation.items.filter(
+      (item) => item.item_kind !== 'tool_call_requested',
+    ),
+  );
+  assert.throws(
+    () => assertReadEvidence(orphanToolResult),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const forgedSummary = addProgressAndToolFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const toolResult = forgedSummary.task_stream.conversation.items.find(
+    (item) => item.item_kind === 'tool_call_result_recorded',
+  );
+  toolResult.result.display_summary = 'Loaded project file contents: secret-marker';
+  assert.throws(
+    () => assertReadEvidence(forgedSummary),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+});
+
 test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
   const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
 
@@ -2422,7 +2593,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
         item_count: 9,
         latest_candidate_review: 'accepted',
         revision_unchanged: true,
+        run_progress_count: 0,
         source_availability: 'not_loaded',
+        tool_request_count: 0,
+        tool_result_count: 0,
       },
       ui_answer_observed: true,
     },
@@ -2440,7 +2614,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 1,
+      run_progress_count: 0,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     question: {
       answer_count: 1,
@@ -2453,7 +2630,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       item_count: 9,
       latest_candidate_review: 'accepted',
       revision_unchanged: true,
+      run_progress_count: 0,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     pending_update: {
       answer_count: 1,
@@ -2466,8 +2646,11 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       item_count: 13,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
+      run_progress_count: 0,
       saved_revision_number: 1,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     pending_update_restart: {
       answer_count: 1,
@@ -2480,8 +2663,11 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       item_count: 13,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
+      run_progress_count: 0,
       saved_revision_number: 1,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     updated: {
       answer_count: 1,
@@ -2495,7 +2681,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
+      run_progress_count: 0,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     restart: {
       answer_count: 1,
@@ -2509,7 +2698,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
+      run_progress_count: 0,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     restart_continuation: {
       answer_count: 1,
@@ -2522,8 +2714,11 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       item_count: 18,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
+      run_progress_count: 0,
       saved_revision_number: 2,
       source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
     },
     pending_update_advanced_candidate_count: true,
     question_did_not_advance_candidate_count: true,
@@ -3293,7 +3488,10 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v11/u);
+  assert.match(source, /builder-packaged-canary-result\.v12/u);
+  assert.match(source, /run_progress_recorded/u);
+  assert.match(source, /tool_call_requested/u);
+  assert.match(source, /tool_call_result_recorded/u);
   assert.match(source, /inspectDraftReviewDiffViaUi/u);
   assert.match(source, /data-builder-preview-limitation/u);
   assert.doesNotMatch(source, /previewTab|builder-tool-tab-preview/u);
