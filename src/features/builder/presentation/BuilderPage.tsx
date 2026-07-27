@@ -507,7 +507,7 @@ function activityDisplayRole(item: BuilderConversationItem): 'assistant' | 'stat
 function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
   return hasUnsavedDraft
     ? 'Review the draft preview, files, and changes before saving this version.'
-    : 'Activity keeps this draft summary only and cannot reopen unsaved files.';
+    : 'Activity shows this draft summary only. Review appears only after Builder verifies and restores the files.';
 }
 
 function changesSummary(changes: BuilderSourceTreeChanges): string {

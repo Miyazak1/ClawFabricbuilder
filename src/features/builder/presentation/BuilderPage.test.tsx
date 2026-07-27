@@ -1911,7 +1911,7 @@ describe('BuilderPage v2', () => {
     );
 
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
-      .toContain('Activity keeps this draft summary only and cannot reopen unsaved files.');
+      .toContain('Activity shows this draft summary only. Review appears only after Builder verifies and restores the files.');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
