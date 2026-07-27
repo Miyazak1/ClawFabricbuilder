@@ -388,14 +388,6 @@ function shouldClearSubmittedIdea(snapshot: BuilderVisibleProjectSnapshot): bool
   );
 }
 
-function shouldReadChangedTaskStream(
-  eventProjectId: string,
-  snapshot: BuilderVisibleProjectSnapshot,
-): boolean {
-  const visibleProjectId = visibleConversationProjectId(snapshot);
-  return visibleProjectId !== null && eventProjectId === visibleProjectId;
-}
-
 function appendLiveOutputText(current: string, delta: string): string | null {
   const next = `${current}${delta}`;
   if (LIVE_OUTPUT_ENCODER.encode(next).byteLength > MAX_LIVE_OUTPUT_TEXT_BYTES) return null;
@@ -493,27 +485,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     visibleHistoryProjectId(project.snapshot),
   );
   const projectSnapshotRef = useRef(project.snapshot);
-  const conversationRef = useRef(conversation);
 
   useLayoutEffect(() => {
     projectSnapshotRef.current = project.snapshot;
   }, [project.snapshot]);
 
   useLayoutEffect(() => {
-    conversationRef.current = conversation;
-  }, [conversation]);
-
-  useLayoutEffect(() => {
     liveOutputRef.current = liveOutput;
   }, [liveOutput]);
-
-  useEffect(() => (
-    ports.taskStream.subscribeChanged((event) => {
-      const currentSnapshot = projectSnapshotRef.current;
-      if (!shouldReadChangedTaskStream(event.project_id, currentSnapshot)) return;
-      void conversationRef.current.load(event.project_id).catch(() => undefined);
-    })
-  ), [ports.taskStream]);
 
   useEffect(() => (
     ports.generator.subscribeStarted?.((event) => {

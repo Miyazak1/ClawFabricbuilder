@@ -433,9 +433,11 @@ Evidence requirements:
   Task Stream change hint from main after a Conversation append has been
   durably recorded and replay-verified. The renderer can subscribe through the
   exact preload task-stream namespace and then re-read the existing read-only
-  Task Stream; the notification carries no source, receipt, provider,
-  credential, tool output, save, Git, or revision authority and cannot create or
-  accept work;
+  Task Stream. The desktop conversation controller owns that subscription for
+  the visible project, retains the existing chat flow while refreshing, and
+  queues a follow-up refresh when another hint arrives during an active read.
+  The notification carries no source, receipt, provider, credential, tool
+  output, save, Git, or revision authority and cannot create or accept work;
 - the current generation-started live-binding checkpoint emits a main-owned
   started hint after a generation request has been durably bound to a Project
   Conversation. The renderer may match that request digest to its own active

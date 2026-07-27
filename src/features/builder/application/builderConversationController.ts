@@ -1,4 +1,4 @@
-import type { BuilderTaskStreamPort } from './builderPorts';
+import type { BuilderTaskStreamChangedEvent, BuilderTaskStreamPort } from './builderPorts';
 import {
   sanitizeBuilderConversationSnapshot,
   type BuilderConversationSnapshot,
@@ -67,6 +67,8 @@ export function createBuilderConversationController(
   let generation = 0;
   let disposed = false;
   let active: Promise<BuilderConversationControllerSnapshot> | null = null;
+  let pendingChangedProjectId: string | null = null;
+  let unsubscribeChanged: (() => void) | null = null;
   const listeners = new Set<() => void>();
 
   function publish(next: BuilderConversationControllerSnapshot): BuilderConversationControllerSnapshot {
@@ -110,8 +112,32 @@ export function createBuilderConversationController(
     active = running;
     void running.finally(() => {
       if (active === running) active = null;
+      const pendingProjectId = pendingChangedProjectId;
+      if (
+        disposed
+        || pendingProjectId === null
+        || pendingProjectId !== current.project_id
+        || active !== null
+      ) return;
+      pendingChangedProjectId = null;
+      void run(pendingProjectId, 'refresh').catch(() => undefined);
     }).catch(() => undefined);
     return running;
+  }
+
+  function handleChangedEvent(event: BuilderTaskStreamChangedEvent): void {
+    if (disposed || current.project_id !== event.project_id) return;
+    if (active !== null) {
+      pendingChangedProjectId = event.project_id;
+      return;
+    }
+    void run(event.project_id, 'refresh').catch(() => undefined);
+  }
+
+  try {
+    unsubscribeChanged = port.subscribeChanged(handleChangedEvent);
+  } catch {
+    unsubscribeChanged = null;
   }
 
   return Object.freeze({
@@ -125,16 +151,19 @@ export function createBuilderConversationController(
       if (projectId === null || projectId === undefined) {
         generation += 1;
         active = null;
+        pendingChangedProjectId = null;
         return Promise.resolve(publish(snapshot('idle', null, null, null)));
       }
       if (!PROJECT_ID_PATTERN.test(projectId)) {
         generation += 1;
         active = null;
+        pendingChangedProjectId = null;
         return Promise.resolve(publish(snapshot('unavailable', null, null, 'unavailable')));
       }
       if (current.project_id === projectId && active !== null) return active;
       generation += 1;
       active = null;
+      pendingChangedProjectId = null;
       return run(projectId, 'load');
     },
     refresh() {
@@ -146,7 +175,10 @@ export function createBuilderConversationController(
       disposed = true;
       generation += 1;
       active = null;
+      pendingChangedProjectId = null;
       listeners.clear();
+      try { unsubscribeChanged?.(); } catch { /* unsubscribe is best-effort */ }
+      unsubscribeChanged = null;
     },
   });
 }

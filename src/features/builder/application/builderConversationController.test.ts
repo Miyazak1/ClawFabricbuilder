@@ -109,6 +109,39 @@ function setup(read: BuilderTaskStreamPort['read'] = async () => readyWire()) {
   return { controller, read: readMock };
 }
 
+function setupChanged(read: BuilderTaskStreamPort['read'] = async () => readyWire()) {
+  let listener: Parameters<BuilderTaskStreamPort['subscribeChanged']>[0] | null = null;
+  const unsubscribe = vi.fn();
+  const readMock = vi.fn(read);
+  const subscribeChanged = vi.fn((next: Parameters<BuilderTaskStreamPort['subscribeChanged']>[0]) => {
+    listener = next;
+    return unsubscribe;
+  });
+  const controller = createBuilderConversationController({
+    read: readMock,
+    subscribeChanged,
+  });
+  return {
+    controller,
+    read: readMock,
+    subscribeChanged,
+    unsubscribe,
+    emitChanged(projectId = PROJECT_ID) {
+      if (listener === null) throw new Error('missing changed listener');
+      listener(Object.freeze({
+        event_version: 'builder-task-stream-changed.v1',
+        project_id: projectId,
+      }));
+    },
+  };
+}
+
+async function flushController(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('Builder conversation controller', () => {
   it('loads a ready task stream without fabricating optimistic messages', async () => {
     let resolve!: (value: unknown) => void;
@@ -178,6 +211,80 @@ describe('Builder conversation controller', () => {
     expect(result.error).toBe('unavailable');
     expect(result.conversation?.state).toBe('ready');
     expect(JSON.stringify(result)).not.toContain('private local database marker');
+  });
+
+  it('refreshes the current project from changed hints without blanking visible activity', async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const firstWire = readyWire();
+    const secondWire = readyWire();
+    const refresh = new Promise<unknown>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const { controller, emitChanged, read, subscribeChanged } = setupChanged(async () => firstWire);
+    const loaded = await controller.load(PROJECT_ID);
+    read.mockImplementationOnce(async () => refresh);
+
+    emitChanged(PROJECT_ID);
+    await flushController();
+
+    expect(subscribeChanged).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot().status).toBe('refreshing');
+    expect(controller.getSnapshot().conversation).toBe(loaded.conversation);
+
+    resolveRefresh(secondWire);
+    await flushController();
+
+    expect(controller.getSnapshot().status).toBe('ready');
+    expect(controller.getSnapshot().conversation?.state).toBe('ready');
+  });
+
+  it('ignores other-project changed hints and unsubscribes on dispose', async () => {
+    const { controller, emitChanged, read, unsubscribe } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID);
+    read.mockClear();
+
+    emitChanged(OTHER_PROJECT_ID);
+    await flushController();
+    expect(read).not.toHaveBeenCalled();
+
+    controller.dispose();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    emitChanged(PROJECT_ID);
+    await flushController();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('queues a follow-up refresh when a changed hint arrives during an active read', async () => {
+    let resolveFirstRefresh!: (value: unknown) => void;
+    let resolveSecondRefresh!: (value: unknown) => void;
+    const firstRefresh = new Promise<unknown>((resolve) => {
+      resolveFirstRefresh = resolve;
+    });
+    const secondRefresh = new Promise<unknown>((resolve) => {
+      resolveSecondRefresh = resolve;
+    });
+    const { controller, emitChanged, read } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID);
+    read.mockImplementationOnce(async () => firstRefresh);
+    read.mockImplementationOnce(async () => secondRefresh);
+
+    emitChanged(PROJECT_ID);
+    await flushController();
+    expect(read).toHaveBeenCalledTimes(2);
+
+    emitChanged(PROJECT_ID);
+    await flushController();
+    expect(read).toHaveBeenCalledTimes(2);
+
+    resolveFirstRefresh(readyWire());
+    await flushController();
+    expect(read).toHaveBeenCalledTimes(3);
+
+    resolveSecondRefresh(readyWire());
+    await flushController();
+    expect(controller.getSnapshot().status).toBe('ready');
+    expect(read).toHaveBeenCalledTimes(3);
   });
 
   it('ignores stale completions after a newer project selection starts', async () => {

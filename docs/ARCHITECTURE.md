@@ -129,8 +129,12 @@ renderer-safe activity projection: pending requests show as ordinary project
 steps, and matching fixed-code results fold the request into one final status
 row. That projection is read-only UI state and exposes no raw tool output,
 dispatch evidence, provider envelope, source content, Git evidence, Save
-authority, or Project Revision authority; tool-output streaming and arbitrary
-execution still require separate protocols.
+authority, or Project Revision authority. The project-id-only Task Stream
+changed hint is only a refresh trigger for the visible desktop conversation
+controller; it preserves the current projection while re-reading, queues a
+follow-up read for overlapping hints, and grants no renderer-side work,
+review, Save, Git, provider, source, or revision authority. Tool-output
+streaming and arbitrary execution still require separate protocols.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

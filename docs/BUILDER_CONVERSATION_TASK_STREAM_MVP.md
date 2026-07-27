@@ -248,7 +248,10 @@ workspace: pending tool requests appear as ordinary project steps, and a
 matching recorded tool result folds the request into one final status row. This
 projection is read-only UI language over already-admitted Task Stream facts; it
 exposes no provider envelopes, prompts, credentials, source evidence, Git
-receipts, raw tool output, Save authority, or Project Revision facts.
+receipts, raw tool output, Save authority, or Project Revision facts. Main's
+project-id-only activity hint only tells the desktop conversation controller to
+refresh the current read-only projection; it keeps the existing chat visible
+while reading and never lets the renderer create, accept, or reinterpret work.
 - Candidate, saved, failed, and superseded states are visually distinct.
 - The user can always identify the current saved Version.
 - Engineering terms such as IPC, schema, receipt, adapter, and admission remain
