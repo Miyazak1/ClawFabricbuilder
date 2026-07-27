@@ -486,6 +486,10 @@ describe('BuilderPage v2', () => {
     );
 
     expect(container.querySelector('[data-builder-composer="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-starter-card="true"]')?.textContent)
+      .toContain('What are we building today?');
+    expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-role]')).toBeNull();
+    expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-card]')).toBeNull();
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
