@@ -44,7 +44,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v6/u);
+  assert.match(preload, /builder-preload\.v7/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /saveDraft/u);
@@ -63,6 +63,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:code-generator:restore-draft/u);
   assert.match(preload, /rejectDraft/u);
   assert.match(preload, /clawfabric-builder:code-generator:reject-draft/u);
+  assert.match(preload, /subscribeStarted/u);
+  assert.match(preload, /clawfabric-builder:code-generator:started/u);
+  assert.match(preload, /ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /ipcRenderer\.removeListener\(GENERATION_STARTED_CHANNEL,\s*handler\)/u);
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /taskStream/u);
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
@@ -81,11 +85,13 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
   assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 24);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
-  const preloadWithoutTaskStreamListener = preload
+  const preloadWithoutAllowedListeners = preload
+    .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '');
   assert.doesNotMatch(
-    preloadWithoutTaskStreamListener,
+    preloadWithoutAllowedListeners,
     /ipcRenderer\.(?:send|on|once|removeListener)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,
   );
 });

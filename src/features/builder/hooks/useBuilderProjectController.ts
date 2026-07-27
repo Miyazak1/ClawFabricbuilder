@@ -41,6 +41,7 @@ const UNAVAILABLE_SNAPSHOT: BuilderProjectControllerSnapshot = Object.freeze({
   preview: null,
   error: 'unavailable',
   retryableGeneration: false,
+  workingProjectId: null,
 });
 
 export function useBuilderProjectController(

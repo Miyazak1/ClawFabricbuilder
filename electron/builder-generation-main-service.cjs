@@ -35,6 +35,7 @@ const OPTION_KEYS = Object.freeze([
   'conversationService',
   'gitAuthority',
   'transport',
+  'onGenerationStarted',
   'createUuid',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -229,6 +230,7 @@ function sanitizeOptions(value) {
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
   }
   if (keys.includes('transport') && typeof descriptors.transport.value !== 'function') fail();
+  if (keys.includes('onGenerationStarted') && typeof descriptors.onGenerationStarted.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
@@ -236,6 +238,7 @@ function sanitizeOptions(value) {
     conversationService: descriptors.conversationService.value,
     gitAuthority: descriptors.gitAuthority.value,
     ...(keys.includes('transport') ? { transport: descriptors.transport.value } : {}),
+    ...(keys.includes('onGenerationStarted') ? { onGenerationStarted: descriptors.onGenerationStarted.value } : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
 }
@@ -594,6 +597,19 @@ function createBuilderGenerationMainService(rawOptions) {
     return null;
   }
 
+  function notifyGenerationStarted(request, projectId) {
+    if (!Object.hasOwn(options, 'onGenerationStarted')) return;
+    try {
+      Reflect.apply(options.onGenerationStarted, undefined, [freezeDeep({
+        event_version: 'builder-generation-started.v1',
+        request_id: request.request_digest,
+        project_id: projectId,
+      })]);
+    } catch {
+      // A UI notification cannot change durable Conversation or generation facts.
+    }
+  }
+
   function baseRevisionFromConversationContext(context) {
     const submitted = context.events.find((event) => (
       event.event_type === 'turn_submitted'
@@ -665,6 +681,7 @@ function createBuilderGenerationMainService(rawOptions) {
           baseRevisionFromConversationContext(retriedContext),
         );
         activeContexts.set(key, retriedContext);
+        notifyGenerationStarted(request, retriedContext.project.project_id);
         return generationContextFromConversation(request, base, retriedContext);
       }
       const existingProjectId = request.existing_project_id;
@@ -696,6 +713,7 @@ function createBuilderGenerationMainService(rawOptions) {
         conversationContext,
       );
       retryableContexts.delete(key);
+      notifyGenerationStarted(request, projectId);
       return generationContextFromConversation(request, base, conversationContext);
     } catch {
       fail();
@@ -732,6 +750,7 @@ function createBuilderGenerationMainService(rawOptions) {
         operationKey(ANSWER_OPERATION_PREFIX, request.request_digest),
         conversationContext,
       );
+      notifyGenerationStarted(request, projectId);
       const explanationContext = freezeDeep({
         project_id: projectId,
         base_revision_evidence: base.base_revision_evidence,

@@ -63,6 +63,7 @@ export type BuilderProjectControllerSnapshot = Readonly<{
   preview: BuilderSourceTreePreviewProjection | null;
   error: BuilderProjectControllerError;
   retryableGeneration: boolean;
+  workingProjectId: string | null;
 }>;
 
 export type BuilderProjectControllerDependencies = Readonly<{
@@ -131,6 +132,7 @@ function snapshot(
   answer: BuilderGenerationAnswer | null = null,
   inspectedRevision: BuilderProjectReadSnapshot | null = null,
   retryableGeneration = false,
+  workingProjectId: string | null = null,
 ): BuilderProjectControllerSnapshot {
   const result = Object.freeze({
     status,
@@ -147,6 +149,7 @@ function snapshot(
     preview,
     error,
     retryableGeneration,
+    workingProjectId,
   });
   TRUSTED_SNAPSHOTS.add(result);
   return result;
@@ -357,6 +360,29 @@ export function createBuilderProjectController(
   }> | null = null;
   let retryableGeneration: Readonly<{ request: BuilderGenerationRequest }> | null = null;
   const listeners = new Set<() => void>();
+  const unsubscribeStarted = dependencies.generator.subscribeStarted?.((event) => {
+    const target = activeGeneration;
+    if (
+      disposed
+      || target === null
+      || target.requestId !== event.request_id
+      || !current.busy
+      || current.draft !== null
+      || current.inspectedRevision !== null
+      || (current.savedProject !== null && current.savedProject.target.project_id !== event.project_id)
+    ) return;
+    publish(snapshot(
+      current.status,
+      current.savedProject,
+      current.draft,
+      current.preview,
+      current.error,
+      current.answer,
+      current.inspectedRevision,
+      current.retryableGeneration,
+      event.project_id,
+    ));
+  });
 
   function publish(next: BuilderProjectControllerSnapshot): BuilderProjectControllerSnapshot {
     if (disposed) return current;
@@ -444,6 +470,7 @@ export function createBuilderProjectController(
       value.answer,
       value.inspectedRevision,
       false,
+      value.workingProjectId,
     );
   }
 
@@ -883,6 +910,7 @@ export function createBuilderProjectController(
       activeGeneration = null;
       retryableGeneration = null;
       listeners.clear();
+      unsubscribeStarted?.();
     },
   });
 }

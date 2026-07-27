@@ -994,6 +994,7 @@ test('submits one composer turn through main-owned work or explanation routing',
   });
   const lifecycle = conversationService();
   const git = gitAuthority();
+  const startedEvents = [];
   const service = createBuilderGenerationMainService({
     ...repositories({
       conversationService: lifecycle,
@@ -1004,6 +1005,9 @@ test('submits one composer turn through main-owned work or explanation routing',
         },
       },
     }),
+    onGenerationStarted(event) {
+      startedEvents.push(event);
+    },
     transport: async (input) => ({
       transport_version: 'builder-openai-compatible-transport.v1',
       generated_text: input.messages[1].content.includes('What does this project do')
@@ -1037,6 +1041,24 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(lifecycle.calls.candidate.length, 2);
   assert.equal(lifecycle.calls.explanation.length, 2);
   assert.equal(git.receipts.length, 2);
+  assert.deepEqual(startedEvents.map((event) => event.event_version), [
+    'builder-generation-started.v1',
+    'builder-generation-started.v1',
+    'builder-generation-started.v1',
+    'builder-generation-started.v1',
+  ]);
+  assert.deepEqual(startedEvents.map((event) => event.request_id), [
+    draft.request_id,
+    chineseDraft.request_id,
+    answer.request_id,
+    chineseAnswer.request_id,
+  ]);
+  assert.deepEqual(startedEvents.map((event) => event.project_id), [
+    draft.project_id,
+    chineseDraft.project_id,
+    answer.project_id,
+    chineseAnswer.project_id,
+  ]);
   assert.doesNotMatch(
     JSON.stringify([draft, chineseDraft, answer, chineseAnswer]),
     /credential|provider\.example|builder-model|git_request_id/iu,

@@ -150,6 +150,8 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(generationRuntime, /createBuilderTaskStreamIpcAdapter/u);
   assert.match(generationRuntime, /READ_TASK_STREAM_CHANNEL/u);
   assert.match(generationRuntime, /TASK_STREAM_CHANGED_CHANNEL/u);
+  assert.match(generationRuntime, /GENERATION_STARTED_CHANNEL/u);
+  assert.match(generationRuntime, /builder-generation-started\.v1/u);
   assert.match(taskStreamAdapter, /renderer_authority:\s*'project_id_only'/u);
   assert.match(taskStreamAdapter, /read_only:\s*true/u);
   assert.match(taskStreamAdapter, /change_notification:\s*'project_id_only'/u);

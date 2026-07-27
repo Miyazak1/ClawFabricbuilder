@@ -9,6 +9,7 @@ const {
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_CHANNEL,
+  GENERATION_STARTED_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
@@ -64,6 +65,7 @@ const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v
 const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const REQUEST_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -199,6 +201,39 @@ function taskStreamChangedEvent(rawEvent) {
   });
 }
 
+function generationStartedEvent(rawEvent) {
+  if (!isPlainObject(rawEvent)) fail();
+  const keys = Reflect.ownKeys(rawEvent);
+  if (
+    keys.length !== 3
+    || keys.some((key) => typeof key !== 'string' || !['event_version', 'request_id', 'project_id'].includes(key))
+  ) fail();
+  const version = Object.getOwnPropertyDescriptor(rawEvent, 'event_version');
+  const requestId = Object.getOwnPropertyDescriptor(rawEvent, 'request_id');
+  const projectId = Object.getOwnPropertyDescriptor(rawEvent, 'project_id');
+  if (
+    !version
+    || version.enumerable !== true
+    || !Object.hasOwn(version, 'value')
+    || version.value !== 'builder-generation-started.v1'
+    || !requestId
+    || requestId.enumerable !== true
+    || !Object.hasOwn(requestId, 'value')
+    || typeof requestId.value !== 'string'
+    || !REQUEST_DIGEST_PATTERN.test(requestId.value)
+    || !projectId
+    || projectId.enumerable !== true
+    || !Object.hasOwn(projectId, 'value')
+    || typeof projectId.value !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId.value)
+  ) fail();
+  return Object.freeze({
+    event_version: 'builder-generation-started.v1',
+    request_id: requestId.value,
+    project_id: projectId.value,
+  });
+}
+
 function saveResultProjectId(value) {
   if (!isPlainObject(value)) fail();
   const projectId = Object.getOwnPropertyDescriptor(value, 'project_id');
@@ -303,6 +338,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       conversationService,
       gitAuthority: projectMainAuthority.git_authority,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
+      onGenerationStarted(event) {
+        const webContents = activeWebContents(options.mainWindowRef);
+        if (webContents === null) return;
+        webContents.send(GENERATION_STARTED_CHANNEL, generationStartedEvent(event));
+      },
     });
     const saveAuthority = createBuilderProjectSaveAuthority({
       generationDrafts: service,

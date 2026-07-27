@@ -273,6 +273,7 @@ const channels = [
 const generationChannels = [
   'clawfabric-builder:code-generator:generate',
   'clawfabric-builder:code-generator:submit',
+  'clawfabric-builder:code-generator:started',
   'clawfabric-builder:code-generator:retry',
   'clawfabric-builder:code-generator:answer',
   'clawfabric-builder:code-generator:restore-draft',
@@ -402,7 +403,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v6');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v7');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -411,7 +412,7 @@ const planReviewBridge = frozenObjectLiteral(planReviewProperty.initializer);
 const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
-exactObjectKeys(generationBridge, ['submit', 'generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
+exactObjectKeys(generationBridge, ['submit', 'generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability', 'subscribeStarted']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
 exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
@@ -432,6 +433,8 @@ assert.deepEqual(rendererPropertyAccesses, [
   'invoke',
   'invoke',
   'invoke',
+  'on',
+  'removeListener',
   'invoke',
   'invoke',
   'invoke',
@@ -469,6 +472,16 @@ function exactInvokeMethod(object, methodName, channelName, expectedParameters) 
   );
 }
 
+function exactSubscribeMethod(object, methodName, channelName) {
+  const method = object.properties.find((property) => property.name.text === methodName);
+  assert.equal(ts.isMethodDeclaration(method), true);
+  assert.deepEqual(method.parameters.map((parameter) => parameter.name.text), ['listener']);
+  const source = method.getText(preloadAst);
+  assert.match(source, /typeof listener !== 'function'/u);
+  assert.match(source, new RegExp(`ipcRenderer\\.on\\(${channelName},\\s*handler\\)`, 'u'));
+  assert.match(source, new RegExp(`ipcRenderer\\.removeListener\\(${channelName},\\s*handler\\)`, 'u'));
+}
+
 assert.equal(preloadConstants.get('OPEN_PROJECT_CHANNEL'), channels[0]);
 assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[1]);
 assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[2]);
@@ -477,12 +490,13 @@ assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[4]);
 assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[5]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('SUBMIT_CHANNEL'), generationChannels[1]);
-assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[2]);
-assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[3]);
-assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[4]);
-assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[5]);
-assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[6]);
-assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[7]);
+assert.equal(preloadConstants.get('GENERATION_STARTED_CHANNEL'), generationChannels[2]);
+assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[3]);
+assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[4]);
+assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[5]);
+assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[6]);
+assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[7]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[8]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
@@ -508,16 +522,12 @@ exactInvokeMethod(generationBridge, 'restoreDraft', 'RESTORE_DRAFT_CHANNEL', ['r
 exactInvokeMethod(generationBridge, 'rejectDraft', 'REJECT_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'cancel', 'CANCEL_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
+exactSubscribeMethod(generationBridge, 'subscribeStarted', 'GENERATION_STARTED_CHANNEL');
 exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
 exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['request']);
-const subscribeChanged = taskStreamBridge.properties.find((property) => property.name.text === 'subscribeChanged');
-assert.equal(ts.isMethodDeclaration(subscribeChanged), true);
-assert.deepEqual(subscribeChanged.parameters.map((parameter) => parameter.name.text), ['listener']);
-assert.match(subscribeChanged.getText(preloadAst), /typeof listener !== 'function'/u);
-assert.match(subscribeChanged.getText(preloadAst), /ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
-assert.match(subscribeChanged.getText(preloadAst), /ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
+exactSubscribeMethod(taskStreamBridge, 'subscribeChanged', 'TASK_STREAM_CHANGED_CHANNEL');
 exactInvokeMethod(planReviewBridge, 'review', 'REVIEW_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(permissionsBridge, 'evaluate', 'EVALUATE_PERMISSION_CHANNEL', ['request']);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
@@ -943,6 +953,8 @@ assert.match(packagedPreload, /\bretry\b/u);
 assert.match(packagedPreload, /\banswer\b/u);
 assert.match(packagedPreload, /restoreDraft/u);
 assert.match(packagedPreload, /rejectDraft/u);
+assert.match(packagedPreload, /subscribeStarted/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:started/u);
 assert.match(packagedPreload, /providerSettings/u);
 assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);

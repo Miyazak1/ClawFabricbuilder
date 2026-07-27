@@ -25,6 +25,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderGenerationStartedEvent,
   BuilderPlanReviewPort,
   BuilderPlanReviewRequest,
   BuilderTaskStreamChangedEvent,
@@ -294,6 +295,7 @@ function visibleConversationProjectId(
   return snapshot.draft?.project_id
     ?? snapshot.savedProject?.target.project_id
     ?? snapshot.answer?.project_id
+    ?? snapshot.workingProjectId
     ?? null;
 }
 
@@ -400,6 +402,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
         return ports.generator.cancel(request);
+      },
+      subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
+        return ports.generator.subscribeStarted?.(listener) ?? (() => undefined);
       },
     });
     const workspace: BuilderProjectWorkspacePort = Object.freeze({

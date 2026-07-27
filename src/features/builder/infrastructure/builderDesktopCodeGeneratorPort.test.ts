@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 
 import { createBuilderGenerationRequest } from '../application/builderGeneration';
 import {
   BuilderDesktopCodeGeneratorPortError,
   createBuilderDesktopCodeGeneratorPort,
 } from './builderDesktopCodeGeneratorPort';
-import { createGenerationDraft, createRestoredGenerationDraft } from '../../../test/builderV2Fixtures';
+import { PROJECT_ID, createGenerationDraft, createRestoredGenerationDraft } from '../../../test/builderV2Fixtures';
 
 describe('createBuilderDesktopCodeGeneratorPort', () => {
   it('forwards one v2 request and unwraps a fresh success envelope', async () => {
@@ -28,6 +28,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.generate(request);
@@ -60,6 +61,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.submit(request);
@@ -70,6 +72,55 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(result).toEqual(draft);
     expect(result).not.toBe(draft);
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('subscribes to started hints without accepting malformed renderer events', async () => {
+    const request = await createBuilderGenerationRequest('Make a timer.');
+    const listeners: Array<(event: unknown) => void> = [];
+    const unsubscribeBridge = vi.fn();
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      availability: async () => null,
+      subscribeStarted(listener: (event: unknown) => void) {
+        listeners.push(listener);
+        return unsubscribeBridge;
+      },
+    });
+    const listener = vi.fn();
+    const unsubscribe = port.subscribeStarted!(listener);
+
+    expect(listeners).toHaveLength(1);
+    listeners[0]!({
+      event_version: 'builder-generation-started.v1',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+    });
+    listeners[0]!({
+      event_version: 'builder-generation-started.v1',
+      request_id: `sha256:${'9'.repeat(64)}`,
+      project_id: 'builder-project:not-a-real-project',
+      credential: 'private',
+    });
+    unsubscribe();
+    listeners[0]!({
+      event_version: 'builder-generation-started.v1',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+    });
+
+    expect(listener).toHaveBeenCalledExactlyOnceWith({
+      event_version: 'builder-generation-started.v1',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+    });
+    expect(Object.isFrozen(listener.mock.calls[0]![0])).toBe(true);
+    expect(unsubscribeBridge).toHaveBeenCalledOnce();
   });
 
   it('forwards one retry request without renderer-owned authority', async () => {
@@ -92,6 +143,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.retry(request);
@@ -129,6 +181,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     await expect(port.generate(request)).rejects.toMatchObject({
@@ -174,6 +227,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.answer(request);
@@ -202,6 +256,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.restoreDraft({ draft_id: restoredDraft.draft_id });
@@ -235,6 +290,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.rejectDraft({ draft_id: draftId });
@@ -259,6 +315,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     const result = await port.cancel({ request_id: request.request_digest });
@@ -287,6 +344,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     await expect(port.restoreDraft({
@@ -319,6 +377,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
       availability: async (): Promise<unknown> => null,
+      subscribeStarted: () => () => undefined,
       provider: 'renderer-owned',
     },
   ])('rejects malformed bridge %j', (bridge) => {
@@ -346,6 +405,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         rejectDraft: async (): Promise<unknown> => null,
         cancel: async (): Promise<unknown> => null,
         availability: async (): Promise<unknown> => null,
+        subscribeStarted: () => () => undefined,
       });
       await expect(port.generate(request)).rejects.toBeInstanceOf(
         BuilderDesktopCodeGeneratorPortError,
@@ -368,6 +428,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         provider: 'private',
       }),
       availability: async () => null,
+      subscribeStarted: () => () => undefined,
     });
 
     await expect(port.cancel({ request_id: request.request_digest })).rejects.toBeInstanceOf(

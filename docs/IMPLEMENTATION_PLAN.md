@@ -389,6 +389,13 @@ Evidence requirements:
   Task Stream; the notification carries no source, receipt, provider,
   credential, tool output, save, Git, or revision authority and cannot create or
   accept work;
+- the current generation-started live-binding checkpoint emits a main-owned
+  started hint after a generation request has been durably bound to a Project
+  Conversation. The renderer may match that request digest to its own active
+  composer turn and use the included Project ID only to re-read the existing
+  read-only Task Stream for first-turn unsaved projects; the hint carries no
+  source, receipt, provider, credential, tool output, save, Git, revision, or
+  project-save authority and does not mark the project saved;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

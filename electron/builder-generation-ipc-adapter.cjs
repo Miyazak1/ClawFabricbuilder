@@ -4,6 +4,7 @@ const { types: utilTypes } = require('node:util');
 
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
+const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
@@ -354,6 +355,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
 module.exports = Object.freeze({
   GENERATE_CHANNEL,
   SUBMIT_CHANNEL,
+  GENERATION_STARTED_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
   CANCEL_CHANNEL,

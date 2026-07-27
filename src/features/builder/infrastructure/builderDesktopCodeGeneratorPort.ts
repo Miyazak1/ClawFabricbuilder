@@ -2,6 +2,7 @@ import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
   BuilderGenerationDiagnosticError,
   type BuilderCodeGeneratorPort,
+  type BuilderGenerationStartedEvent,
   type BuilderGenerationDiagnosticCode as ApplicationBuilderGenerationDiagnosticCode,
 } from '../application/builderPorts';
 
@@ -17,9 +18,20 @@ type BuilderCodeGeneratorBridge = Readonly<{
   rejectDraft(request: unknown): Promise<unknown>;
   cancel(request: unknown): Promise<unknown>;
   availability(): Promise<unknown>;
+  subscribeStarted(listener: (event: unknown) => void): () => void;
 }>;
 
-const BRIDGE_KEYS = new Set(['submit', 'generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
+const BRIDGE_KEYS = new Set([
+  'submit',
+  'generate',
+  'retry',
+  'answer',
+  'restoreDraft',
+  'rejectDraft',
+  'cancel',
+  'availability',
+  'subscribeStarted',
+]);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
 const MAX_DATA_GRAPH_UTF8_BYTES = 1024 * 1024;
@@ -27,10 +39,13 @@ const MAX_DATA_GRAPH_DEPTH = 64;
 const UTF8_ENCODER = new TextEncoder();
 
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
+const GENERATION_STARTED_EVENT_VERSION = 'builder-generation-started.v1';
 const FAILURE_CODES = new Set<BuilderGenerationDiagnosticCode>(
   Object.keys(BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY) as BuilderGenerationDiagnosticCode[],
 );
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const PROJECT_ID_PATTERN =
+  /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 function portError(
   code: BuilderGenerationDiagnosticCode = 'builder_generation_failed',
@@ -139,7 +154,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       throw portError();
     }
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const methods = {} as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    const methods = {} as Record<string, (...args: unknown[]) => unknown>;
     for (const key of BRIDGE_KEYS) {
       const descriptor = descriptors[key];
       if (
@@ -149,17 +164,18 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
         || 'set' in descriptor
         || typeof descriptor.value !== 'function'
       ) throw portError();
-      methods[key] = descriptor.value as (...args: unknown[]) => Promise<unknown>;
+      methods[key] = descriptor.value as (...args: unknown[]) => unknown;
     }
     return Object.freeze({
-      submit: methods.submit,
-      generate: methods.generate,
-      retry: methods.retry,
-      answer: methods.answer,
-      restoreDraft: methods.restoreDraft,
-      rejectDraft: methods.rejectDraft,
-      cancel: methods.cancel,
-      availability: methods.availability,
+      submit: methods.submit as BuilderCodeGeneratorBridge['submit'],
+      generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
+      retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
+      answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
+      restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
+      rejectDraft: methods.rejectDraft as BuilderCodeGeneratorBridge['rejectDraft'],
+      cancel: methods.cancel as BuilderCodeGeneratorBridge['cancel'],
+      availability: methods.availability as BuilderCodeGeneratorBridge['availability'],
+      subscribeStarted: methods.subscribeStarted as BuilderCodeGeneratorBridge['subscribeStarted'],
     });
   } catch {
     throw portError();
@@ -168,7 +184,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
 
 async function callBridge(
   receiver: BuilderCodeGeneratorBridge,
-  method: (...args: unknown[]) => Promise<unknown>,
+  method: (...args: unknown[]) => unknown,
   args: unknown[],
 ): Promise<unknown> {
   try {
@@ -231,6 +247,22 @@ function unwrapCancelResult(value: unknown, expectedRequestId: string): Readonly
   });
 }
 
+function sanitizeStartedEvent(value: unknown): BuilderGenerationStartedEvent {
+  const event = exactDataRecord(value, ['event_version', 'request_id', 'project_id']);
+  if (
+    event.event_version !== GENERATION_STARTED_EVENT_VERSION
+    || typeof event.request_id !== 'string'
+    || !DIGEST_PATTERN.test(event.request_id)
+    || typeof event.project_id !== 'string'
+    || !PROJECT_ID_PATTERN.test(event.project_id)
+  ) throw portError();
+  return Object.freeze({
+    event_version: GENERATION_STARTED_EVENT_VERSION,
+    request_id: event.request_id,
+    project_id: event.project_id,
+  });
+}
+
 export function createBuilderDesktopCodeGeneratorPort(
   value: unknown,
 ): BuilderCodeGeneratorPort {
@@ -270,6 +302,26 @@ export function createBuilderDesktopCodeGeneratorPort(
       return callBridge(bridge, bridge.cancel, [{
         request_id: request.request_id,
       }]).then((result) => unwrapCancelResult(result, request.request_id));
+    },
+    subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
+      if (typeof listener !== 'function') throw portError();
+      let active = true;
+      const unsubscribe = bridge.subscribeStarted((event) => {
+        if (!active) return;
+        let sanitized: BuilderGenerationStartedEvent;
+        try {
+          sanitized = sanitizeStartedEvent(event);
+        } catch {
+          return;
+        }
+        listener(sanitized);
+      });
+      if (typeof unsubscribe !== 'function') throw portError();
+      return () => {
+        if (!active) return;
+        active = false;
+        unsubscribe();
+      };
     },
   });
 }

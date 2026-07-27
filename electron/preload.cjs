@@ -10,6 +10,7 @@ const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current'
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
+const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
@@ -29,7 +30,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v6',
+  bridgeVersion: 'builder-preload.v7',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -74,6 +75,14 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     availability() {
       return ipcRenderer.invoke(AVAILABILITY_CHANNEL);
+    },
+    subscribeStarted(listener) {
+      if (typeof listener !== 'function') return () => undefined;
+      const handler = (_event, payload) => listener(payload);
+      ipcRenderer.on(GENERATION_STARTED_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(GENERATION_STARTED_CHANNEL, handler);
+      };
     },
   }),
   providerSettings: Object.freeze({

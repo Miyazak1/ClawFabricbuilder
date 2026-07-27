@@ -4,6 +4,7 @@ import {
   createBuilderProjectController,
   isTrustedBuilderProjectControllerSnapshot,
 } from './builderProjectController';
+import { createBuilderGenerationRequest } from './builderGeneration';
 import type {
   BuilderCodeGeneratorPort,
   BuilderProjectWorkspacePort,
@@ -29,6 +30,7 @@ function setup(options: {
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
   cancel?: BuilderCodeGeneratorPort['cancel'];
+  subscribeStarted?: NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>;
   open?: BuilderProjectWorkspacePort['open'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
@@ -77,7 +79,18 @@ function setup(options: {
     listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { submit, generate, retry, answer, restoreDraft, rejectDraft, cancel },
+    generator: {
+      submit,
+      generate,
+      retry,
+      answer,
+      restoreDraft,
+      rejectDraft,
+      cancel,
+      ...(options.subscribeStarted === undefined
+        ? {}
+        : { subscribeStarted: options.subscribeStarted }),
+    },
     workspace,
   });
   return {
@@ -285,6 +298,54 @@ describe('Builder project controller v2', () => {
 
     expect(submit).toHaveBeenCalledOnce();
     expect(result.status).toBe('draft_ready');
+  });
+
+  it('binds a matching started event to a working project id without making it saved', async () => {
+    let listener!: Parameters<NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>>[0];
+    let resolveSubmit!: (value: unknown) => void;
+    const unsubscribe = vi.fn();
+    const { controller } = setup({
+      subscribeStarted(next) {
+        listener = next;
+        return unsubscribe;
+      },
+      submit: async (request) => new Promise((resolve) => {
+        resolveSubmit = resolve;
+      }).then(() => createGenerationDraft(request)),
+    });
+
+    const operation = controller.submit('Make a timer.');
+    for (let attempt = 0; attempt < 20 && controller.getSnapshot().status !== 'submitting'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const request = await createBuilderGenerationRequest('Make a timer.', null);
+
+    listener({
+      event_version: 'builder-generation-started.v1',
+      request_id: `sha256:${'9'.repeat(64)}`,
+      project_id: PROJECT_ID,
+    });
+    expect(controller.getSnapshot().workingProjectId).toBeNull();
+
+    listener({
+      event_version: 'builder-generation-started.v1',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'submitting',
+      busy: true,
+      savedProject: null,
+      draft: null,
+      workingProjectId: PROJECT_ID,
+    });
+
+    resolveSubmit(null);
+    const result = await operation;
+    expect(result.status).toBe('draft_ready');
+    expect(result.workingProjectId).toBeNull();
+    controller.dispose();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it('keeps submit failures neutral and allows the next composer turn', async () => {

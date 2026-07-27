@@ -795,7 +795,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v6',
+      bridge_version: 'builder-preload.v7',
       legacy_namespaces_absent: true,
       plan_review_namespace: 'review_method_only',
     },
@@ -837,7 +837,7 @@ function bridgeEvidence(
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v6',
+    bridgeVersion: 'builder-preload.v7',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -847,6 +847,7 @@ function installBridge(page) {
       rejectDraft() { throw new Error('must not write through bridge'); },
       cancel() { throw new Error('must not write through bridge'); },
       availability() { throw new Error('must not write through bridge'); },
+      subscribeStarted() { return () => undefined; },
     },
     projectWorkspace: {
       async open(request) {
@@ -1375,7 +1376,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v6');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v7');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -3237,7 +3238,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v6['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v7['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /planReview:\s*Object\.freeze/u);
   assert.match(source, /plan_review_namespace/u);

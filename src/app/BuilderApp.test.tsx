@@ -246,6 +246,7 @@ async function setup(options: Readonly<{
   }));
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
+  const generationStartedListeners = new Set<(event: unknown) => void>();
   const taskStreamChangedListeners = new Set<(event: unknown) => void>();
   const readTaskStream = vi.fn(async () => (
     options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
@@ -315,6 +316,12 @@ async function setup(options: Readonly<{
       rejectDraft,
       cancel,
       availability: async () => null,
+      subscribeStarted(listener: (event: unknown) => void) {
+        generationStartedListeners.add(listener);
+        return () => {
+          generationStartedListeners.delete(listener);
+        };
+      },
     },
     projectWorkspace: {
       open,
@@ -374,6 +381,19 @@ async function setup(options: Readonly<{
         for (const listener of [...taskStreamChangedListeners]) {
           listener({
             event_version: 'builder-task-stream-changed.v1',
+            project_id: projectId,
+          });
+        }
+      });
+      return listenerCount;
+    },
+    emitGenerationStarted(requestId: string, projectId = PROJECT_ID) {
+      const listenerCount = generationStartedListeners.size;
+      act(() => {
+        for (const listener of [...generationStartedListeners]) {
+          listener({
+            event_version: 'builder-generation-started.v1',
+            request_id: requestId,
             project_id: projectId,
           });
         }
@@ -683,9 +703,10 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('sqlite');
   });
 
-  it('ignores task-stream change notifications while a new draft has no visible project id', async () => {
+  it('loads live project activity after main binds a new submit to a working project id', async () => {
     const {
       container,
+      emitGenerationStarted,
       emitTaskStreamChanged,
       readTaskStream,
       resolveGenerate,
@@ -703,8 +724,20 @@ describe('BuilderApp v2', () => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBe(1);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Started"]')?.textContent)
+        .toContain('The assistant began working on this request.');
+    });
+    readTaskStream.mockClear();
     expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
-    expect(readTaskStream).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(/request_id|provider|credential|commit_oid|tree_oid/iu);
 
@@ -713,7 +746,7 @@ describe('BuilderApp v2', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledTimes(2);
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
   });
