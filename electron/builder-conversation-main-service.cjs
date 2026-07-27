@@ -46,6 +46,9 @@ const {
   BuilderTaskStreamProjectionError,
   projectBuilderTaskStream,
 } = require('./builder-task-stream-projection.cjs');
+const {
+  createBuilderApprovedPlanContinuationAdmission,
+} = require('./builder-approved-plan-continuation-admission.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -1810,6 +1813,20 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function admitApprovedPlanContinuation(rawRequest) {
+    try {
+      const request = sanitizePlanRunReference(rawRequest);
+      const approvedPlan = readApprovedPlan(request);
+      return createBuilderApprovedPlanContinuationAdmission({
+        approved_plan: approvedPlan,
+        continuation_id: newId(options.createUuid, 'builder-approved-plan-continuation'),
+        admitted_at_ms: safeTimestamp(Reflect.apply(options.nowMs, undefined, [])),
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function reviewPlan(rawRequest) {
     try {
       exactObject(rawRequest, ['project_id', 'conversation_id', 'turn_id', 'run_id', 'decision']);
@@ -1920,6 +1937,7 @@ function createBuilderConversationMainService(rawOptions) {
     accept_candidate: acceptCandidate,
     reject_candidate: rejectCandidate,
     read_approved_plan: readApprovedPlan,
+    admit_approved_plan_continuation: admitApprovedPlanContinuation,
     review_plan: reviewPlan,
     read_stream: readStream,
     authority: Object.freeze({
@@ -1937,6 +1955,7 @@ function createBuilderConversationMainService(rawOptions) {
       plan_proposal_recording: 'main_only_digest_terminal_event',
       plan_review_recording: 'main_only_review_fact_no_execution',
       approved_plan_read: 'main_only_current_head_approval_gate',
+      approved_plan_continuation_admission: 'main_only_fresh_approved_plan_no_execution',
     }),
   });
 }

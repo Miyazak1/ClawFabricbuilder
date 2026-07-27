@@ -45,15 +45,15 @@ IPC/preload surface, no renderer projection, no review identity or timestamp,
 and no source mutation, provider dispatch, Git evidence, Save authority, or
 Project Revision authority. Stale or rejected plan facts fail closed.
 
-A separate main-only approved-plan continuation admission can consume that
-approved-plan read fact and produce a bounded receipt for a later agent/edit
-loop. It binds Project, Conversation, Turn, Task, Run, plan digest,
+The Conversation main service can also create a main-only approved-plan
+continuation admission by first performing that fresh approved-plan read. The
+receipt binds Project, Conversation, Turn, Task, Run, plan digest,
 Conversation head, head digest, and continuation ID while starting no Run,
 appending no Conversation event, exposing no IPC/preload or renderer
 projection, reading no credential/source, dispatching no provider or tool,
 mutating no source/Git state, and creating no Save or Project Revision. A
-future executor must obtain a fresh approved-plan read fact immediately before
-creating this admission.
+future executor must use this main-service gate instead of caching an older
+approved-plan fact.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

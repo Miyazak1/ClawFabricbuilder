@@ -50,6 +50,10 @@ const {
 const {
   createBuilderPlanProposalRecord,
 } = require('../electron/builder-plan-proposal-records.cjs');
+const {
+  BUILDER_APPROVED_PLAN_CONTINUATION_ADMISSION_VERSION,
+  sanitizeBuilderApprovedPlanContinuationAdmission,
+} = require('../electron/builder-approved-plan-continuation-admission.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -601,6 +605,48 @@ test('records a proposed plan from a run-bound plan record after successful tool
       JSON.stringify(approvedPlan),
       /review_id|reviewer_id|reviewed_at_ms|export const|src\/app|private_source_context|context_digest|head_digest|provider_config|provider_secret|credential|base_url|model|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
     );
+    const continuation = item.service.admit_approved_plan_continuation({
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+    });
+    assert.equal(
+      continuation.admission_version,
+      BUILDER_APPROVED_PLAN_CONTINUATION_ADMISSION_VERSION,
+    );
+    assert.equal(continuation.approved_plan_result_version, APPROVED_PLAN_READ_RESULT_VERSION);
+    assert.equal(continuation.project_id, PROJECT_ID);
+    assert.equal(continuation.conversation_id, context.conversation.conversation_id);
+    assert.equal(continuation.turn_id, context.ids.turn_id);
+    assert.equal(continuation.task_id, context.ids.task_id);
+    assert.equal(continuation.run_id, context.ids.run_id);
+    assert.equal(continuation.decision, 'approved');
+    assert.equal(continuation.plan_result_digest, plan.record_digest);
+    assert.deepEqual(continuation.conversation_head, approvedPlan.conversation_head);
+    assert.match(continuation.continuation_id, /^builder-approved-plan-continuation:/u);
+    assert.equal(continuation.lifecycle.continuation_admission, 'admitted_without_starting_run');
+    assert.equal(continuation.lifecycle.provider_dispatch, 'not_started');
+    assert.equal(continuation.lifecycle.tool_dispatch, 'not_started');
+    assert.equal(continuation.lifecycle.source_mutation, 'not_performed');
+    assert.equal(continuation.lifecycle.git_authority, 'not_present');
+    assert.equal(continuation.lifecycle.revision_admission, 'not_created');
+    assert.equal(continuation.authority.conversation_binding, 'approved_plan_read_current_head_required');
+    assert.equal(continuation.authority.provider_dispatch, false);
+    assert.equal(continuation.authority.credential_readback, false);
+    assert.equal(continuation.authority.tool_dispatch, 'not_performed');
+    assert.equal(continuation.authority.source_mutation, 'not_performed');
+    assert.equal(continuation.authority.git_authority, 'not_present');
+    assert.equal(continuation.authority.revision_authority, 'not_present');
+    assert.deepEqual(sanitizeBuilderApprovedPlanContinuationAdmission(continuation), continuation);
+    assert.equal(
+      item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence,
+      7,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(continuation),
+      /review_id|reviewer_id|reviewed_at_ms|export const|src\/app|private_source_context|context_digest|source_tree|provider_config|provider_secret|credential_secret|credential_value|secret_ref|api[_-]?key|base_url|model|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
+    );
     assert.throws(
       () => item.service.review_plan({
         project_id: PROJECT_ID,
@@ -641,6 +687,17 @@ test('records a proposed plan from a run-bound plan record after successful tool
       }),
       approvedPlan,
     );
+    const restartedContinuation = restartedService.admit_approved_plan_continuation({
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+    });
+    assert.equal(restartedContinuation.project_id, continuation.project_id);
+    assert.equal(restartedContinuation.conversation_id, continuation.conversation_id);
+    assert.equal(restartedContinuation.plan_result_digest, continuation.plan_result_digest);
+    assert.deepEqual(restartedContinuation.conversation_head, continuation.conversation_head);
+    assert.notEqual(restartedContinuation.continuation_id, continuation.continuation_id);
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
     else item.database.close();
@@ -707,6 +764,15 @@ test('reads only the current approved plan and rejects stale or rejected plan fa
       }),
       { code: 'builder_conversation_main_service_unavailable' },
     );
+    assert.throws(
+      () => approvedItem.service.admit_approved_plan_continuation({
+        project_id: PROJECT_ID,
+        conversation_id: approvedContext.conversation.conversation_id,
+        turn_id: approvedContext.ids.turn_id,
+        run_id: approvedContext.ids.run_id,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
 
     const rejectedContext = begin(rejectedItem.service);
     const rejectedCall = await toolCallRecord(rejectedContext);
@@ -746,6 +812,15 @@ test('reads only the current approved plan and rejects stale or rejected plan fa
     });
     assert.throws(
       () => rejectedItem.service.read_approved_plan({
+        project_id: PROJECT_ID,
+        conversation_id: rejectedContext.conversation.conversation_id,
+        turn_id: rejectedContext.ids.turn_id,
+        run_id: rejectedContext.ids.run_id,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+    assert.throws(
+      () => rejectedItem.service.admit_approved_plan_continuation({
         project_id: PROJECT_ID,
         conversation_id: rejectedContext.conversation.conversation_id,
         turn_id: rejectedContext.ids.turn_id,
@@ -2050,7 +2125,9 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
     'utf8',
   );
   assert.match(source, /read_approved_plan/u);
+  assert.match(source, /admit_approved_plan_continuation/u);
   assert.match(source, /main_only_current_head_approval_gate/u);
+  assert.match(source, /main_only_fresh_approved_plan_no_execution/u);
   assert.doesNotMatch(
     source,
     /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit|builder-git-project-repository/iu,
