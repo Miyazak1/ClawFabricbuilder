@@ -1172,7 +1172,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Static preview is ready');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('Static HTML and CSS are shown here');
+      .toContain('HTML and CSS are shown here');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBeUndefined();
     expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
@@ -1729,7 +1729,7 @@ describe('BuilderPage v2', () => {
     expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('action-row');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
-    expect(reviewStrip?.textContent).toContain('Static preview is ready, but interactive parts do not run here');
+    expect(reviewStrip?.textContent).toContain('Preview may be incomplete');
     expect(reviewStrip?.textContent).toContain('JavaScript');
     expect(reviewStrip?.textContent).not.toMatch(
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
@@ -1799,7 +1799,7 @@ describe('BuilderPage v2', () => {
 
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
-    expect(review?.textContent).toContain('preview looks blank');
+    expect(review?.textContent).toContain('If it looks blank');
     expect(review?.textContent).toContain('Three.js/WebGL');
     expect(review?.textContent).toContain('canvas animation');
     expect(limitation?.textContent).toContain('JavaScript modules');
@@ -2139,11 +2139,11 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('Preview unavailable');
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
-      .toContain('runtime preview support');
+      .toContain('live preview support');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Preview unavailable');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('Runtime preview support is needed');
+      .toContain('need live preview support');
     const source = container.querySelector<HTMLDetailsElement>('details[data-builder-source-flow="true"]');
     expect(source).not.toBeNull();
     expect(source?.closest('[data-builder-chat-main="true"]')).not.toBeNull();

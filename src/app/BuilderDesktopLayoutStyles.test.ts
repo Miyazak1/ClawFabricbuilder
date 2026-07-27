@@ -66,26 +66,28 @@ describe('Builder desktop layout styles', () => {
     expect(summaryText).not.toContain('overflow-wrap: anywhere;');
   });
 
-  it('keeps draft review actions stable in a desktop two-column checkpoint', () => {
+  it('keeps draft review actions stable as a desktop conversation checkpoint', () => {
     const source = styles();
     const review = styleBlock(source, '.cf-builder-review-checkpoint');
     const actions = styleBlock(source, '.cf-builder-review-actions');
     const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
 
-    expect(review).toContain('grid-template-columns: minmax(0, 1fr) auto;');
-    expect(review).toContain('align-items: center;');
+    expect(review).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(review).toContain('align-items: start;');
+    expect(review).toContain('border-top: 1px solid var(--cf-border);');
+    expect(review).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(review).not.toContain('border-radius: 8px;');
     expect(review).not.toContain('minmax(320px, 360px)');
     expect(actions).toContain('display: flex;');
     expect(actions).toContain('flex-wrap: wrap;');
-    expect(actions).toContain('justify-content: flex-end;');
+    expect(actions).toContain('justify-content: flex-start;');
+    expect(actions).toContain('padding-left: 38px;');
     expect(actions).not.toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
     expect(actionButtons).toContain('width: auto;');
-    expect(actionButtons).toContain('min-width: 112px;');
+    expect(actionButtons).toContain('min-width: 118px;');
     expect(versionAction).toContain('grid-column: 2;');
-    expect(source).toMatch(
-      /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-review-checkpoint \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/u,
-    );
+    expect(source).not.toMatch(/\.cf-builder-review-checkpoint \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto/u);
   });
 
   it('keeps the conversation refresh control from taking a full toolbar row', () => {
@@ -101,5 +103,19 @@ describe('Builder desktop layout styles', () => {
     expect(source).toMatch(
       /(?:^|\n)\.cf-builder-activity-body-wrap \{[\s\S]*?padding: 0 40px 0 0;/u,
     );
+  });
+
+  it('keeps the result flow unframed so preview is not nested inside another card', () => {
+    const source = styles();
+    const result = styleBlock(source, '.cf-builder-result-card');
+    const toolbar = styleBlock(source, '.cf-builder-result-toolbar');
+    const body = styleBlock(source, '.cf-builder-result-card .cf-builder-flow-card-body');
+
+    expect(result).toContain('border: 0;');
+    expect(result).toContain('border-radius: 0;');
+    expect(result).toContain('overflow: visible;');
+    expect(toolbar).toContain('border-bottom: 0;');
+    expect(toolbar).toContain('background: transparent;');
+    expect(body).toContain('padding: 0;');
   });
 });

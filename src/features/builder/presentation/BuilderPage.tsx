@@ -526,12 +526,12 @@ function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null,
   if (preview !== null) {
     const labels = previewLimitationLabels(preview.preview_runtime_limitations);
     if (labels.length > 0) {
-      return `Static preview is ready, but interactive parts do not run here (${labels.join(', ')}). If the preview looks blank, review Changes or Source before saving.`;
+      return `Preview may be incomplete: interactive code is not running here (${labels.join(', ')}). If it looks blank, the files may still be ready; open Changes or Source before saving.`;
     }
-    return 'Static preview is ready. Static HTML and CSS are shown here; interactive runtime code does not run here.';
+    return 'Static preview is ready. HTML and CSS are shown here; interactive code is not running in this preview.';
   }
   return hasContent
-    ? 'Preview unavailable. Runtime preview support is needed for JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code.'
+    ? 'Preview unavailable. JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code need live preview support.'
     : 'Review this draft before saving.';
 }
 

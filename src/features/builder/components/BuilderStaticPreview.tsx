@@ -19,12 +19,12 @@ function limitationText(limitation: BuilderSourceTreePreviewRuntimeLimitation): 
     return 'It appears to use Three.js or WebGL, which can make the static preview look blank.';
   }
   if (limitation === 'canvas_animation') {
-    return 'It uses canvas or animation work that needs runtime preview support.';
+    return 'It uses canvas or animation work that needs full preview support.';
   }
   if (limitation === 'network_or_external_asset') {
     return 'It references external assets or requests that are blocked in this preview.';
   }
-  return 'It includes app or server code that needs a local runtime preview.';
+  return 'It includes app or server code that needs a local live preview.';
 }
 
 export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
@@ -43,7 +43,7 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
         </p>
         <p className="cf-builder-preview-note">
           JavaScript modules, Three.js, canvas animation, network assets, local servers, and backend
-          code need runtime preview support.
+          code need live preview support.
         </p>
       </section>
     );
@@ -66,7 +66,7 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
           data-builder-preview-limitation="true"
           role="status"
         >
-          <h3 className="cf-builder-preview-runtime-title">Static preview only</h3>
+          <h3 className="cf-builder-preview-runtime-title">Preview may look blank</h3>
           <p className="cf-builder-preview-note">
             Interactive code is not running here. If this draft uses JavaScript modules, Three.js,
             canvas animation, network assets, local servers, or backend code, the preview can look

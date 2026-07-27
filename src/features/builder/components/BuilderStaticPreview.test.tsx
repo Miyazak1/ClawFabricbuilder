@@ -43,7 +43,7 @@ describe('BuilderStaticPreview', () => {
     expect(container.textContent).toContain('Static preview');
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
     expect(limitation?.getAttribute('role')).toBe('status');
-    expect(limitation?.textContent).toContain('Static preview only');
+    expect(limitation?.textContent).toContain('Preview may look blank');
     expect(limitation?.textContent).toContain('Interactive code is not running here');
     expect(limitation?.textContent)
       .toContain('Three.js');
@@ -80,7 +80,7 @@ describe('BuilderStaticPreview', () => {
     expect(limitation?.textContent).toContain('Three.js or WebGL');
     expect(limitation?.textContent).toContain('canvas or animation');
     expect(limitation?.textContent).toContain('external assets or requests');
-    expect(limitation?.textContent).toContain('local runtime preview');
+    expect(limitation?.textContent).toContain('local live preview');
     expect(limitation?.textContent).not.toContain('model.glb');
     expect(limitation?.textContent).not.toContain('express().listen');
   });
@@ -96,7 +96,7 @@ describe('BuilderStaticPreview', () => {
     expect(unavailable?.textContent).toContain('Preview unavailable');
     expect(unavailable?.textContent).toContain('safe preview');
     expect(unavailable?.textContent).toContain('source files and changes');
-    expect(unavailable?.textContent).toContain('runtime preview support');
+    expect(unavailable?.textContent).toContain('live preview support');
     expect(unavailable?.textContent).toContain('Three.js');
     expect(container.querySelector('iframe')).toBeNull();
   });
