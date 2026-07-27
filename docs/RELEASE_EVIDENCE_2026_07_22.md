@@ -284,6 +284,34 @@ code-signing status, public release readiness, or mobile visual evidence.
   visible first-release runtime-limit explanation, and no unexpected renderer
   network requests during the canary scope.
 
+## 2026-07-28 Desktop Plan Review Flow Package
+
+This addendum records the desktop package refresh for code checkpoint `1a050f0`,
+after clarifying approved-plan continuation output and making Plan Review
+actions single-shot while a decision is being recorded. It is not a new
+real-provider canary and does not extend installer evidence, code-signing
+status, public release readiness, or mobile visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused desktop renderer tests for BuilderPage and BuilderApp passed:
+  66 tests.
+- Full renderer unit tests passed: 356 Vitest tests.
+- `npm exec tsc -b --pretty false`, `npm run lint`, `git diff --check`,
+  and `npm run build` passed during this desktop flow checkpoint.
+- `npm run pack` passed for checkpoint `1a050f0`; package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- Approved-plan continuation now shows a specific assistant waiting state in
+  the desktop conversation flow before display-safe live output arrives, instead
+  of falling back to a generic working message.
+- Plan Approve/Reject actions now enter a visible recording state and are
+  single-shot while the main-owned Review fact is being recorded. Repeated user
+  clicks do not create duplicate renderer calls or duplicate continuation
+  generation attempts; the main Plan Review bridge remains the Review fact
+  authority.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
