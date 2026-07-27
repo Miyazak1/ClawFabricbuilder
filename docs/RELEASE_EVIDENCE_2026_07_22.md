@@ -172,6 +172,40 @@ evidence refreshed at checkpoint `125c438`.
   `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-packaged-desktop-steering.png`.
   It is local evidence only and was not committed.
 
+## 2026-07-28 Saved DeepSeek Desktop Canary
+
+This addendum records a real saved-profile DeepSeek desktop canary for code
+checkpoint `419b16f`. It is desktop package evidence only; it does not extend
+installer evidence, code-signing status, public release readiness, or mobile
+visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused desktop renderer tests for BuilderPage and BuilderApp passed:
+  60 tests.
+- Full tests passed: 342 Vitest tests and 525 Node-test boundary subtests.
+- `npm run lint` passed.
+- The packaged canary verifier tests passed: 39 tests.
+- `npm run pack` passed for the same source tree before the checkpoint commit;
+  package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 741 ASAR entries.
+- The packaged app was exercised with the saved DeepSeek profile through the
+  visible desktop Builder UI. Provider credentials were not accepted through
+  stdin, argv, env, logs, or renderer-readable evidence, and the source profile
+  remained unchanged.
+- The canary saved Version 1, answered a saved-project question without creating
+  a draft or revision, produced an unsaved update draft, restored that pending
+  draft after restart with Save still explicit, saved Version 2, inspected saved
+  history, returned to the current preview through the single header return
+  action, restored the project after restart, and continued generation after
+  restart into a pending candidate.
+- Static preview evidence stayed nonblank with script-denying preview policy and
+  the current user-facing blank-preview explanation. The canary now verifies the
+  `Preview may look blank` wording, including JavaScript modules, Three.js, and
+  the instruction to review Changes or Source before saving.
+- No unexpected renderer network request was observed during the canary scope.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
