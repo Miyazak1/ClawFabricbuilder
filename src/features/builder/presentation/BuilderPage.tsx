@@ -1054,7 +1054,7 @@ export function BuilderPage({
   const draftReview = hasUnsavedDraft ? (
     <section
       aria-label="Draft review"
-      className="cf-builder-review-checkpoint"
+      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
       data-builder-review-checkpoint="true"
     >
       <div className="cf-builder-review-icon" aria-hidden="true">
@@ -1251,7 +1251,7 @@ export function BuilderPage({
 
               <section
                 aria-label="Project result"
-                className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card"
+                className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"
                 data-builder-preview-flow="true"
                 data-builder-result-flow="true"
                 id="builder-tool-preview"
@@ -1276,7 +1276,7 @@ export function BuilderPage({
               {sourceFile === null ? null : (
                 <details
                   aria-label="Project source"
-                  className="cf-builder-source-disclosure"
+                  className="cf-builder-source-disclosure cf-builder-chat-flow-surface"
                   data-builder-source-flow="true"
                   id="builder-source-disclosure"
                   open={sourceDisclosureOpen}
