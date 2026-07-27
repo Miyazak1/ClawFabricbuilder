@@ -206,6 +206,26 @@ visual evidence.
   the instruction to review Changes or Source before saving.
 - No unexpected renderer network request was observed during the canary scope.
 
+## 2026-07-28 Desktop Source Disclosure Package
+
+This addendum records the desktop package refresh for code checkpoint `4b27f23`.
+It is not a new real-provider canary and does not extend installer evidence,
+code-signing status, public release readiness, or mobile visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused BuilderPage tests passed after the source disclosure change:
+  41 tests.
+- `npm exec tsc -b --pretty false`, `npm run lint`, and `git diff --check`
+  passed before this package refresh.
+- `npm run pack` passed for checkpoint `4b27f23`; package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 741 ASAR
+  entries.
+- Project source remains available in the desktop conversation flow, but a
+  collapsed source disclosure now renders only the file summary. Source text is
+  rendered only after the user opens the disclosure or selects a changed file.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
