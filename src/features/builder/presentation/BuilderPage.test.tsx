@@ -1189,9 +1189,16 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-activity-card="Plan ready"]')?.textContent)
-      .toContain('Plan ready.');
-    expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    const planCard = container.querySelector('[data-builder-activity-card="Plan proposed"]');
+    const planReady = container.querySelector('[data-builder-activity-card="Plan ready"]');
+    const planActions = container.querySelector('[data-builder-plan-review-actions="true"]');
+    expect(planCard?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(planCard?.textContent).toContain('Review the proposed plan before files change.');
+    expect(planCard?.textContent).toContain('Approve this plan to let the assistant continue.');
+    expect(planReady?.textContent).toContain('Plan ready.');
+    expect(planActions).not.toBeNull();
+    expect(planActions?.closest('[data-builder-activity-card="Plan proposed"]')).toBe(planCard);
+    expect(planActions?.closest('[data-builder-activity-card="Plan ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     click(container, '[data-builder-approve-plan="true"]');
     expect(onReviewPlan).toHaveBeenCalledExactlyOnceWith({

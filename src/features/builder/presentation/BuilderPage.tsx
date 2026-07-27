@@ -614,11 +614,11 @@ function ActivityItem({
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const displayRole = activityDisplayRole(item);
-  const itemPlanReviewKey = item.item_kind === 'turn_completed' && item.run_id !== null
+  const itemPlanReviewKey = item.item_kind === 'run_completed' && item.result_kind === 'plan'
     ? planReviewKey(item.turn_id, item.run_id)
     : null;
-  const showPlanReviewActions = item.item_kind === 'turn_completed'
-    && item.outcome === 'plan_proposed'
+  const showPlanReviewActions = item.item_kind === 'run_completed'
+    && item.result_kind === 'plan'
     && pendingPlanReview !== null
     && itemPlanReviewKey === planReviewKey(pendingPlanReview.turn_id, pendingPlanReview.run_id);
   function review(decision: BuilderPlanReviewDecision): void {
@@ -649,7 +649,10 @@ function ActivityItem({
           </>
         ) : null}
         {showPlanReviewActions ? (
-          <div className="mt-2 flex flex-wrap gap-2" data-builder-plan-review-actions="true">
+          <div className="cf-builder-plan-review-actions" data-builder-plan-review-actions="true">
+            <p className="cf-builder-activity-note">
+              Approve this plan to let the assistant continue. Reject it to keep the project unchanged.
+            </p>
             <button
               className="cf-builder-primary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
               data-builder-approve-plan="true"
@@ -668,7 +671,7 @@ function ActivityItem({
               type="button"
             >
               <AlertCircle aria-hidden="true" className="size-3.5" />
-              Reject plan
+              Reject
             </button>
           </div>
         ) : null}
