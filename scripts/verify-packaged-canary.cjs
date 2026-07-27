@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v10';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v11';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'After reopening, add a compact completed-state summary below the timer.';
@@ -58,7 +58,7 @@ const SELECTORS = Object.freeze({
   projectPage: '[data-builder-page="true"]',
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
-  previewTab: '#builder-tool-tab-preview',
+  previewLimitation: '[data-builder-preview-limitation="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   discardDraft: '[data-builder-discard-draft="true"]',
@@ -3055,9 +3055,20 @@ function summarizePng(buffer, pngModule = PNG) {
 async function capturePreviewEvidence(page, gate) {
   try {
     gate.assertAllowed();
-    await page.locator(SELECTORS.previewTab).click();
     const section = page.locator(SELECTORS.preview);
     await section.waitFor({ state: 'visible' });
+    const limitation = page.locator(SELECTORS.previewLimitation);
+    await limitation.waitFor({ state: 'visible' });
+    const limitationText = await limitation.textContent();
+    if (
+      typeof limitationText !== 'string'
+      || !limitationText.includes('Static preview only')
+      || !limitationText.includes('Interactive code is not running here')
+      || !limitationText.includes('JavaScript modules')
+      || !limitationText.includes('Three.js')
+      || !limitationText.includes('Review Changes or Source before saving')
+      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
+    ) fail('canary_preview_failed');
     const frame = page.locator(SELECTORS.previewFrame);
     await frame.waitFor({ state: 'visible' });
     const sandbox = await frame.getAttribute('sandbox');
@@ -3077,6 +3088,8 @@ async function capturePreviewEvidence(page, gate) {
       frame_body_nonempty: true,
       sandbox: 'empty',
       script_src: 'none',
+      static_preview_limitation_visible: true,
+      runtime_preview_limit_explained: true,
       srcdoc_digest: digestText(srcdoc),
     });
   } catch (error) {

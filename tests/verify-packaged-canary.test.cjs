@@ -187,6 +187,10 @@ class FakeLocator {
       if (this.page.reviewTextOverride !== null) return this.page.reviewTextOverride;
       return 'Review before saving 1 file change: 1 added. Preview and changes are ready.';
     }
+    if (this.selector === SELECTORS.previewLimitation) {
+      if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
+      return 'Static preview only Interactive code is not running here. If this draft uses JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code, the preview can look blank even when the files were generated. Review Changes or Source before saving.';
+    }
     if (this.selector === SELECTORS.changesSummary) {
       return '1 file change: 1 added.';
     }
@@ -347,6 +351,7 @@ class FakePage {
     this.questionTurns = 0;
     this.retryDraftVisible = false;
     this.reviewTextOverride = null;
+    this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
       [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 116 }],
       [SELECTORS.reviewOpenChanges, { x: 760, y: 286, width: 112, height: 32 }],
@@ -2219,7 +2224,7 @@ test('summarizes nonblank preview pixels and tracks unexpected renderer network'
   });
 });
 
-test('selects the preview tab before capturing isolated preview evidence', async () => {
+test('captures chat-flow preview evidence without relying on the retired preview tab', async () => {
   const page = new FakePage();
   const gate = createArtifactGate();
   gate.allow();
@@ -2230,14 +2235,31 @@ test('selects the preview tab before capturing isolated preview evidence', async
   assert.equal(evidence.sandbox, 'empty');
   assert.equal(evidence.script_src, 'none');
   assert.equal(evidence.frame_body_nonempty, true);
-  const previewTabClick = page.events.findIndex((event) => (
-    event[0] === 'click' && event[1] === SELECTORS.previewTab
-  ));
+  assert.equal(evidence.static_preview_limitation_visible, true);
+  assert.equal(evidence.runtime_preview_limit_explained, true);
   const previewWait = page.events.findIndex((event) => (
     event[0] === 'waitFor' && event[1] === SELECTORS.preview
   ));
-  assert.equal(previewTabClick >= 0, true);
-  assert.equal(previewWait > previewTabClick, true);
+  const limitationWait = page.events.findIndex((event) => (
+    event[0] === 'waitFor' && event[1] === SELECTORS.previewLimitation
+  ));
+  const limitationText = page.events.findIndex((event) => (
+    event[0] === 'textContent' && event[1] === SELECTORS.previewLimitation
+  ));
+  const frameWait = page.events.findIndex((event) => (
+    event[0] === 'waitFor' && event[1] === SELECTORS.previewFrame
+  ));
+  assert.equal(previewWait >= 0, true);
+  assert.equal(limitationWait > previewWait, true);
+  assert.equal(limitationText > limitationWait, true);
+  assert.equal(frameWait > limitationText, true);
+  assert.equal(page.events.some((event) => event[0] === 'click'), false);
+
+  page.previewLimitationTextOverride = 'Static preview only';
+  await assert.rejects(
+    capturePreviewEvidence(page, gate),
+    (error) => error.code === 'canary_preview_failed',
+  );
 });
 
 test('sanitizes launch environment and canary root identity without following drift', () => {
@@ -3271,8 +3293,10 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v10/u);
+  assert.match(source, /builder-packaged-canary-result\.v11/u);
   assert.match(source, /inspectDraftReviewDiffViaUi/u);
+  assert.match(source, /data-builder-preview-limitation/u);
+  assert.doesNotMatch(source, /previewTab|builder-tool-tab-preview/u);
   assert.match(source, /data-builder-change-diff-line-kind/u);
   assert.match(source, /canary_review_diff_failed/u);
   assert.match(source, /restart_continuation_instruction_digest/u);
