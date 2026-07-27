@@ -226,6 +226,31 @@ code-signing status, public release readiness, or mobile visual evidence.
   collapsed source disclosure now renders only the file summary. Source text is
   rendered only after the user opens the disclosure or selects a changed file.
 
+## 2026-07-28 Desktop Conversation Flow Package
+
+This addendum records the desktop package refresh for code checkpoint `f92188b`.
+It is not a new real-provider canary and does not extend installer evidence,
+code-signing status, public release readiness, or mobile visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused BuilderPage tests passed after keeping activity refresh out of the
+  chat flow: 43 tests.
+- Full renderer unit tests passed: 353 Vitest tests.
+- Node boundary tests passed: 552 subtests.
+- `npm run lint`, `npm run build`, and `git diff --check` passed before this
+  package refresh.
+- `npm run pack` passed for checkpoint `f92188b`; package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- The desktop package opens to the conversation-first workspace with the
+  composer in the main content bottom and no empty Changes/Versions rail
+  occupying the blank-project main stage.
+- A desktop screenshot was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-packaged-f92188b-window.png`.
+  It is local evidence only and was not committed.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
