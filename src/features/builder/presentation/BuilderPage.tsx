@@ -623,6 +623,11 @@ function ActivityItem({
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const displayRole = activityDisplayRole(item);
+  const messageSurface = displayRole === 'user'
+    ? 'bubble'
+    : displayRole === 'assistant'
+      ? 'plain'
+      : 'status';
   const itemPlanReviewKey = item.item_kind === 'run_completed' && item.result_kind === 'plan'
     ? planReviewKey(item.turn_id, item.run_id)
     : null;
@@ -644,7 +649,10 @@ function ActivityItem({
       <div className="cf-builder-activity-icon" aria-hidden="true">
         <ActivityGlyph item={item} />
       </div>
-      <div className="cf-builder-activity-content min-w-0">
+      <div
+        className="cf-builder-activity-content min-w-0"
+        data-builder-message-surface={messageSurface}
+      >
         <div className="cf-builder-activity-title">{activityTitle(item)}</div>
         <p className="cf-builder-activity-body">{activityBody(item)}</p>
         {item.item_kind === 'run_completed' && item.candidate !== null ? (
@@ -774,7 +782,10 @@ function StarterPrompt() {
       <div className="cf-builder-starter-icon" aria-hidden="true">
         <Bot className="size-3.5" />
       </div>
-      <div className="cf-builder-starter-content min-w-0">
+      <div
+        className="cf-builder-starter-content min-w-0"
+        data-builder-message-surface="plain"
+      >
         <div className="cf-builder-starter-title">ClawFabric Builder</div>
         <p className="cf-builder-starter-body">What are we building today?</p>
       </div>
@@ -1270,7 +1281,7 @@ export function BuilderPage({
       <div className="cf-builder-surface-body">
         <section
           aria-label="Project conversation workspace"
-          className="cf-builder-chat-shell border"
+          className="cf-builder-chat-shell"
           data-builder-chat-workspace="true"
           data-builder-review-sidebar-visible={showReviewSidebar ? 'true' : 'false'}
         >

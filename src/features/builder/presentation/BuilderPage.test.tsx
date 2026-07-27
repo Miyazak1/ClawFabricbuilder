@@ -490,11 +490,17 @@ describe('BuilderPage v2', () => {
       .toContain('What are we building today?');
     expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-role]')).toBeNull();
     expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-card]')).toBeNull();
+    expect(
+      container.querySelector('[data-builder-starter-card="true"] [data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('plain');
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
-    expect(container.querySelector('[data-builder-chat-workspace="true"]')?.getAttribute('data-builder-review-sidebar-visible'))
+    const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
+    expect(workspace?.getAttribute('data-builder-review-sidebar-visible'))
       .toBe('false');
+    expect(workspace?.classList.contains('border')).toBe(false);
     expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-version-history="true"]')).toBeNull();
@@ -1055,11 +1061,27 @@ describe('BuilderPage v2', () => {
     const assistant = container.querySelector('[data-builder-activity-card="Assistant"]');
     const answered = container.querySelector('[data-builder-activity-card="Answered"]');
     expect(userMessage?.getAttribute('data-builder-activity-role')).toBe('user');
+    expect(
+      userMessage?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('bubble');
     expect(userMessage?.textContent).toContain('What does this project do?');
     expect(assistant?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(
+      assistant?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('plain');
     expect(assistant?.textContent).toContain('This answer does not change files.');
     expect(started?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(
+      started?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('status');
     expect(answered?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(
+      answered?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('status');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
@@ -1370,6 +1392,10 @@ describe('BuilderPage v2', () => {
     const planReady = container.querySelector('[data-builder-activity-card="Plan ready"]');
     const planActions = container.querySelector('[data-builder-plan-review-actions="true"]');
     expect(planCard?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(
+      planCard?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('plain');
     expect(planCard?.textContent).toContain('Review the proposed plan before files change.');
     expect(planCard?.textContent).toContain('Approve this plan to let the assistant continue.');
     expect(planReady?.textContent).toContain('Plan ready.');
