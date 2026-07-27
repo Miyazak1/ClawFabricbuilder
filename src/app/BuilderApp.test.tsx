@@ -65,6 +65,7 @@ async function setup(options: Readonly<{
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
+  deferredPlanReview?: boolean;
   failSubmitOnce?: boolean;
   initiallySaved?: boolean;
   planAfterPropose?: boolean;
@@ -98,6 +99,7 @@ async function setup(options: Readonly<{
   let latestDraft = await createGenerationDraft();
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveGenerate: (() => Promise<void>) | null = null;
+  let resolvePlanReview: (() => Promise<void>) | null = null;
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
@@ -247,11 +249,21 @@ async function setup(options: Readonly<{
     request_id: (request as { request_id: string }).request_id,
     steered: true,
   }));
-  const reviewPlan = vi.fn(async (request: unknown) => ({
-    result_version: 'builder-conversation-plan-review-result.v1',
-    ...(request as object),
-    review_admission: 'sqlite_recorded_no_execution',
-  }));
+  const reviewPlan = vi.fn(async (request: unknown) => {
+    const result = {
+      result_version: 'builder-conversation-plan-review-result.v1',
+      ...(request as object),
+      review_admission: 'sqlite_recorded_no_execution',
+    };
+    if (options.deferredPlanReview === true) {
+      return new Promise<unknown>((resolve) => {
+        resolvePlanReview = async () => {
+          resolve(result);
+        };
+      });
+    }
+    return result;
+  });
   const generateApprovedPlan = vi.fn(async (request: unknown) => {
     expect(request).toEqual({
       project_id: PROJECT_ID,
@@ -454,6 +466,10 @@ async function setup(options: Readonly<{
     cancel,
     generate,
     generateApprovedPlan,
+    resolvePlanReview: async () => {
+      if (resolvePlanReview === null) throw new Error('plan review was not deferred');
+      await resolvePlanReview();
+    },
     proposePlan,
     submit,
     retry,
@@ -1122,6 +1138,68 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('keeps plan approval single-shot while the review decision is recording', async () => {
+    const {
+      container,
+      generateApprovedPlan,
+      readTaskStream,
+      resolvePlanReview,
+      reviewPlan,
+      saveDraft,
+    } = await setup({
+      deferredPlanReview: true,
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+
+    const approve = container.querySelector<HTMLButtonElement>('[data-builder-approve-plan="true"]');
+    expect(approve).not.toBeNull();
+    readTaskStream.mockClear();
+    act(() => {
+      approve?.click();
+      approve?.click();
+    });
+
+    expect(reviewPlan).toHaveBeenCalledOnce();
+    expect(generateApprovedPlan).not.toHaveBeenCalled();
+    await waitFor(() => {
+      const actions = container.querySelector('[data-builder-plan-review-actions="true"]');
+      expect(actions?.getAttribute('data-builder-plan-review-state')).toBe('recording');
+      expect(actions?.textContent).toContain('Recording your decision...');
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-approve-plan="true"]')?.disabled)
+        .toBe(true);
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-reject-plan="true"]')?.disabled)
+        .toBe(true);
+    });
+
+    await act(async () => {
+      await resolvePlanReview();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(generateApprovedPlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+      decision: 'approved',
+    });
+    expect(saveDraft).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
     );

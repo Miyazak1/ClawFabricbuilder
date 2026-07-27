@@ -50,7 +50,11 @@ import { useBuilderConversationController } from '../features/builder/hooks/useB
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
 import { useBuilderProjectHistoryController } from '../features/builder/hooks/useBuilderProjectHistoryController';
-import { BuilderPage, type BuilderFileName } from '../features/builder/presentation/BuilderPage';
+import {
+  BuilderPage,
+  type BuilderFileName,
+  type BuilderPlanReviewInFlight,
+} from '../features/builder/presentation/BuilderPage';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -396,6 +400,15 @@ function appendLiveOutputText(current: string, delta: string): string | null {
   return next;
 }
 
+function planReviewInFlightKey(value: BuilderPlanReviewInFlight): string {
+  return [
+    value.project_id,
+    value.conversation_id,
+    value.turn_id,
+    value.run_id,
+  ].join(':');
+}
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
@@ -407,11 +420,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
+  const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
+  const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
   const workspacePorts = useMemo(() => {
@@ -497,6 +512,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     liveOutputRef.current = liveOutput;
   }, [liveOutput]);
 
+  const publishPlanReviewInFlight = useCallback((value: BuilderPlanReviewInFlight | null) => {
+    planReviewInFlightRef.current = value;
+    setPlanReviewInFlight(value);
+  }, []);
+
   useEffect(() => (
     ports.generator.subscribeStarted?.((event) => {
       const currentSnapshot = projectSnapshotRef.current;
@@ -538,6 +558,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
     approvedPlanWaitingProjectRef.current = null;
+    publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
     submitInFlightRef.current = false;
     setWorkspaceEpoch(workspaceEpochRef.current);
@@ -546,7 +567,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setActiveFile(null);
     setLiveOutput(null);
     setView('project');
-  }, []);
+  }, [publishPlanReviewInFlight]);
 
   const openProject = useCallback((nextProjectId: string) => {
     resetWorkspace(nextProjectId);
@@ -716,6 +737,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [catalog, history, project, readActivityAfterTerminal]);
   const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
+    if (planReviewInFlightRef.current !== null) return;
+    const inFlight = Object.freeze({
+      project_id: request.project_id,
+      conversation_id: request.conversation_id,
+      turn_id: request.turn_id,
+      run_id: request.run_id,
+    });
+    const inFlightKey = planReviewInFlightKey(inFlight);
+    publishPlanReviewInFlight(inFlight);
     const commandEpoch = workspaceEpochRef.current;
     let reviewed = false;
     try {
@@ -723,10 +753,26 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       reviewed = true;
     } catch {
       reviewed = false;
+    } finally {
+      if (
+        !reviewed
+        && planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
+      }
     }
     if (workspaceEpochRef.current !== commandEpoch) return;
     await conversation.load(request.project_id).catch(() => undefined);
-    if (!reviewed || request.decision !== 'approved') return;
+    if (!reviewed || request.decision !== 'approved') {
+      if (
+        planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
+      }
+      return;
+    }
     setLiveOutput(null);
     approvedPlanWaitingProjectRef.current = request.project_id;
     let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
@@ -741,11 +787,17 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       if (approvedPlanWaitingProjectRef.current === request.project_id) {
         approvedPlanWaitingProjectRef.current = null;
       }
+      if (
+        planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
+      }
     }
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch, request.project_id);
     setLiveOutput(null);
-  }, [conversation, ports.planReview, project, readActivityAfterTerminal]);
+  }, [conversation, ports.planReview, project, publishPlanReviewInFlight, readActivityAfterTerminal]);
   const inspectRevision = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
     setActiveFile(null);
     await project.inspectRevision(targetProjectId, revisionReceiptDigest);
@@ -934,6 +986,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               activeFile={activeFile}
               instruction={idea}
               liveOutput={liveOutput}
+              planReviewInFlight={planReviewInFlight}
               onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}

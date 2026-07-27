@@ -63,9 +63,17 @@ export type BuilderLiveOutputSnapshot = Readonly<{
   waiting_text?: string;
 }>;
 
+export type BuilderPlanReviewInFlight = Readonly<{
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  run_id: string;
+}>;
+
 export type BuilderPageProps = {
   instruction: string;
   liveOutput?: BuilderLiveOutputSnapshot | null;
+  planReviewInFlight?: BuilderPlanReviewInFlight | null;
   onInstructionChange?: (value: string) => void;
   onCancel?: () => void;
   onSteerInstruction?: () => void;
@@ -847,12 +855,14 @@ function ActivityItem({
   hasUnsavedDraft,
   item,
   onReviewPlan,
+  planReviewBusy,
   pendingPlanReview,
 }: Readonly<{
   canReviewPlan: boolean;
   hasUnsavedDraft: boolean;
   item: BuilderConversationItem;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  planReviewBusy: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const displayRole = activityDisplayRole(item);
@@ -869,7 +879,7 @@ function ActivityItem({
     && pendingPlanReview !== null
     && itemPlanReviewKey === planReviewKey(pendingPlanReview.turn_id, pendingPlanReview.run_id);
   function review(decision: BuilderPlanReviewDecision): void {
-    if (pendingPlanReview === null || typeof onReviewPlan !== 'function') return;
+    if (pendingPlanReview === null || typeof onReviewPlan !== 'function' || planReviewBusy) return;
     void onReviewPlan({ ...pendingPlanReview, decision });
   }
 
@@ -904,9 +914,15 @@ function ActivityItem({
           </>
         ) : null}
         {showPlanReviewActions ? (
-          <div className="cf-builder-plan-review-actions" data-builder-plan-review-actions="true">
+          <div
+            className="cf-builder-plan-review-actions"
+            data-builder-plan-review-actions="true"
+            data-builder-plan-review-state={planReviewBusy ? 'recording' : 'ready'}
+          >
             <p className="cf-builder-activity-note">
-              Approve this plan to let the assistant continue. Reject it to keep the project unchanged.
+              {planReviewBusy
+                ? 'Recording your decision...'
+                : 'Approve this plan to let the assistant continue. Reject it to keep the project unchanged.'}
             </p>
             <button
               className="cf-builder-primary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
@@ -1000,6 +1016,7 @@ function ActivityPanel({
   snapshot,
   onRefresh,
   onReviewPlan,
+  planReviewBusy,
   pendingPlanReview,
   canReviewPlan,
 }: Readonly<{
@@ -1009,6 +1026,7 @@ function ActivityPanel({
   snapshot: BuilderConversationControllerSnapshot | null;
   onRefresh?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  planReviewBusy: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const entries = activityEntries(snapshot);
@@ -1062,6 +1080,7 @@ function ActivityPanel({
                   item={entry.item}
                   key={entry.item.sequence}
                   onReviewPlan={onReviewPlan}
+                  planReviewBusy={planReviewBusy}
                   pendingPlanReview={pendingPlanReview}
                 />
               )
@@ -1123,6 +1142,7 @@ export function BuilderPage({
   snapshot,
   activeFile,
   liveOutput = null,
+  planReviewInFlight = null,
   onSelectFile,
 }: BuilderPageProps) {
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
@@ -1172,8 +1192,15 @@ export function BuilderPage({
   const visibleLiveOutput = liveOutput;
   const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
   const planReviewTarget = pendingPlanReviewTarget(activity);
+  const planReviewBusy = planReviewTarget !== null
+    && planReviewInFlight !== null
+    && planReviewInFlight.project_id === planReviewTarget.project_id
+    && planReviewInFlight.conversation_id === planReviewTarget.conversation_id
+    && planReviewInFlight.turn_id === planReviewTarget.turn_id
+    && planReviewInFlight.run_id === planReviewTarget.run_id;
   const canReviewPlan = typeof onReviewPlan === 'function'
     && planReviewTarget !== null
+    && !planReviewBusy
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory;
@@ -1745,6 +1772,7 @@ export function BuilderPage({
                   liveOutput={visibleLiveOutput}
                   onRefresh={onRefreshConversation}
                   onReviewPlan={onReviewPlan}
+                  planReviewBusy={planReviewBusy}
                   pendingPlanReview={planReviewTarget}
                   snapshot={activity}
                 />
