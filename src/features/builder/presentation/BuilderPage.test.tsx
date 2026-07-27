@@ -9,8 +9,12 @@ import { createBuilderProjectHistoryController } from '../application/builderPro
 import { BuilderGenerationDiagnosticError } from '../application/builderPorts';
 import { BuilderPage } from './BuilderPage';
 import {
+  CONVERSATION_ID,
   DRAFT_ID,
   PROJECT_ID,
+  RUN_ID,
+  TASK_ID,
+  TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
   createGenerationAnswer,
@@ -195,6 +199,138 @@ async function answerActivity() {
 
 async function progressActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createProgressTaskStreamWire()));
+  return controller.load(PROJECT_ID);
+}
+
+async function toolActivity(
+  result: Readonly<{
+    status: 'succeeded' | 'failed' | 'cancelled';
+    summary_code: string;
+    display_summary: string;
+  }> = {
+    status: 'succeeded',
+    summary_code: 'completed_without_raw_output',
+    display_summary: 'This step completed. Details were not kept.',
+  },
+) {
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1234,
+      head_sequence: 6,
+      recorded_active_turn_id: null,
+      window: {
+        first_sequence: 1,
+        last_sequence: 6,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:323e4567-e89b-42d3-a456-426614174000',
+            text: 'Read the current project before planning a change.',
+          },
+          message_kind: 'submitted',
+          mode: 'work',
+          task: {
+            task_id: TASK_ID,
+            title: 'Read project context',
+          },
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'tool_call_requested',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
+          tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
+          tool_label: 'Read project context',
+          action: 'project.read',
+          resource: {
+            resource_kind: 'project',
+          },
+          lifecycle: {
+            permission_admission: 'verified_allowed',
+            dispatch_admission: 'not_started',
+            execution_admission: 'not_performed',
+            result_admission: 'not_recorded',
+          },
+          recorded_state: 'requested',
+        },
+        {
+          item_kind: 'tool_call_result_recorded',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
+          tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
+          tool_label: 'Read project context',
+          action: 'project.read',
+          resource: {
+            resource_kind: 'project',
+          },
+          result: {
+            status: result.status,
+            summary_code: result.summary_code,
+            display_summary: result.display_summary,
+          },
+          lifecycle: {
+            result_admission: 'fixed_summary_code_recorded',
+            raw_output_admission: 'not_included',
+            revision_admission: 'not_created',
+          },
+          recorded_state: 'recorded',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 5,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'candidate',
+          assistant_message: {
+            message_id: 'builder-message:423e4567-e89b-42d3-a456-426614174000',
+            text: 'I prepared a draft after reading the project context.',
+          },
+          candidate: {
+            draft_id: DRAFT_ID,
+            title: 'Context-aware draft',
+            summary: 'The draft uses the current project context.',
+            candidate_state: 'proposed',
+            source_availability: 'not_loaded',
+          },
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 6,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'candidate_ready',
+        },
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  })));
   return controller.load(PROJECT_ID);
 }
 
@@ -1136,6 +1272,84 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toMatch(
       /provider_request_started|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
+  });
+
+  it('renders tool activity as visible project steps without exposing internal evidence', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const requested = container.querySelector('[data-builder-tool-activity="requested"]');
+    const completed = container.querySelector('[data-builder-tool-activity="succeeded"]');
+    expect(requested).not.toBeNull();
+    expect(requested?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(requested?.textContent).toContain('Looking over the project');
+    expect(requested?.textContent).toContain('checking the current project context');
+    expect(requested?.textContent).not.toContain('Read project context');
+    expect(completed).not.toBeNull();
+    expect(completed?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(completed?.textContent).toContain('Project check finished');
+    expect(completed?.textContent).toContain('This project step finished.');
+    expect(completed?.textContent).not.toContain('Read project context');
+    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
+      .toContain('I prepared a draft after reading the project context.');
+    expect(container.textContent).not.toMatch(
+      /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
+  it('maps tool result failures to ordinary status text', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity({
+      status: 'failed',
+      summary_code: 'output_rejected',
+      display_summary: 'The tool output was not accepted.',
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const completed = container.querySelector('[data-builder-tool-activity="failed"]');
+    expect(completed).not.toBeNull();
+    expect(completed?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(completed?.textContent).toContain('Project check needs attention');
+    expect(completed?.textContent).toContain('could not safely use the information from this step');
+    expect(completed?.textContent).not.toMatch(/tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:/iu);
+  });
+
+  it('maps unavailable tool results without exposing adapter language', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity({
+      status: 'failed',
+      summary_code: 'adapter_unavailable',
+      display_summary: 'The tool was unavailable.',
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const completed = container.querySelector('[data-builder-tool-activity="failed"]');
+    expect(completed).not.toBeNull();
+    expect(completed?.textContent).toContain('Project check needs attention');
+    expect(completed?.textContent).toContain('This project step is not available yet.');
+    expect(completed?.textContent).not.toMatch(/tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:/iu);
   });
 
   it('shows draft file changes before Save without exposing source or Git evidence', async () => {

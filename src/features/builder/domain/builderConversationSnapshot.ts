@@ -1294,6 +1294,8 @@ function validateCompleteWindow(
         ...requested,
         result_recorded: true,
       });
+      currentRun.pending_tool_calls -= 1;
+      if (currentRun.pending_tool_calls < 0) throw unavailable();
       continue;
     }
     if (item.item_kind === 'run_control_requested') {
@@ -1714,7 +1716,9 @@ function validateTruncatedWindow(
       if (requested === null) {
         stepIds.add(item.step_id);
         toolCallIds.add(item.tool_call_id);
-        currentRun.pending_tool_calls += 1;
+      } else {
+        currentRun.pending_tool_calls -= 1;
+        if (currentRun.pending_tool_calls < 0) throw unavailable();
       }
       toolCallRequests.set(item.tool_call_id, {
         run_id: item.run_id,

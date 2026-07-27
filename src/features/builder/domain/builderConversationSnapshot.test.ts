@@ -354,6 +354,47 @@ function toolResultWire(): MutableWire {
   return wire;
 }
 
+function successfulToolCandidateWire(): MutableWire {
+  const wire = toolResultWire();
+  wire.conversation.head_sequence = 6;
+  wire.conversation.recorded_active_turn_id = null;
+  wire.conversation.window.last_sequence = 6;
+  wire.conversation.items[3]!.result = {
+    status: 'succeeded',
+    summary_code: 'completed_without_raw_output',
+    display_summary: 'This step completed. Details were not kept.',
+  };
+  wire.conversation.items.push(
+    {
+      item_kind: 'run_completed',
+      sequence: 5,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      assistant_message: {
+        message_id: id('message', 6),
+        text: 'I prepared the draft after checking the file.',
+      },
+      candidate: {
+        draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
+        title: 'Checked draft',
+        summary: 'A draft prepared after checking the project file.',
+        candidate_state: 'proposed',
+        source_availability: 'not_loaded',
+      },
+    },
+    {
+      item_kind: 'turn_completed',
+      sequence: 6,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      outcome: 'candidate_ready',
+    },
+  );
+  return wire;
+}
+
 function completedTurnItems(
   turnIndex: number,
   firstSequence: number,
@@ -640,6 +681,68 @@ describe('Builder conversation snapshot', () => {
     );
   });
 
+  it('accepts a successful run after its tool result is recorded', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(successfulToolCandidateWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.recorded_active_turn_id).toBeNull();
+    expect(snapshot.conversation.items.map((item) => item.item_kind)).toEqual([
+      'user_message',
+      'run_started',
+      'tool_call_requested',
+      'tool_call_result_recorded',
+      'run_completed',
+      'turn_completed',
+    ]);
+    expect(snapshot.conversation.items[4]).toMatchObject({
+      item_kind: 'run_completed',
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      assistant_message: {
+        text: 'I prepared the draft after checking the file.',
+      },
+      candidate: {
+        draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
+        candidate_state: 'proposed',
+        source_availability: 'not_loaded',
+      },
+    });
+  });
+
+  it('accepts a successful run after a recorded failed tool step', () => {
+    const wire = toolResultWire();
+    wire.conversation.head_sequence = 6;
+    wire.conversation.recorded_active_turn_id = null;
+    wire.conversation.window.last_sequence = 6;
+    wire.conversation.items.push(
+      {
+        ...candidateWire().conversation.items[2]!,
+        sequence: 5,
+      },
+      {
+        ...candidateWire().conversation.items[3]!,
+        sequence: 6,
+      },
+    );
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[3]).toMatchObject({
+      item_kind: 'tool_call_result_recorded',
+      result: {
+        status: 'failed',
+        summary_code: 'output_rejected',
+      },
+    });
+    expect(snapshot.conversation.items[4]).toMatchObject({
+      item_kind: 'run_completed',
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+    });
+  });
+
   it('rejects tool call facts that imply execution, leaked resources, or unobserved success', () => {
     const executed = toolCallWire();
     executed.conversation.items[2]!.lifecycle!.execution_admission = 'performed';
@@ -721,21 +824,6 @@ describe('Builder conversation snapshot', () => {
       sequence: 5,
     });
 
-    const successAfterToolResult = toolResultWire();
-    successAfterToolResult.conversation.head_sequence = 6;
-    successAfterToolResult.conversation.recorded_active_turn_id = null;
-    successAfterToolResult.conversation.window.last_sequence = 6;
-    successAfterToolResult.conversation.items.push(
-      {
-        ...candidateWire().conversation.items[2]!,
-        sequence: 5,
-      },
-      {
-        ...candidateWire().conversation.items[3]!,
-        sequence: 6,
-      },
-    );
-
     for (const value of [
       driftedDisplay,
       leakedDigest,
@@ -744,7 +832,6 @@ describe('Builder conversation snapshot', () => {
       resourceDrift,
       resultBeforeRequest,
       duplicateResult,
-      successAfterToolResult,
     ]) {
       expectUnavailable(value);
     }

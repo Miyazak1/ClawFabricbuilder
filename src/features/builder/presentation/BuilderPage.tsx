@@ -349,12 +349,8 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
-  if (item.item_kind === 'tool_call_requested') return 'Project access ready';
-  if (item.item_kind === 'tool_call_result_recorded') {
-    if (item.result.status === 'succeeded') return 'Project step completed';
-    if (item.result.status === 'cancelled') return 'Project step stopped';
-    return 'Project step could not finish';
-  }
+  if (item.item_kind === 'tool_call_requested') return toolRequestTitle(item);
+  if (item.item_kind === 'tool_call_result_recorded') return toolResultTitle(item);
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted' ? 'Version saved' : 'Draft rejected';
   }
@@ -363,6 +359,84 @@ function activityTitle(item: BuilderConversationItem): string {
   }
   if (item.item_kind === 'run_completed') return completionLabel(item);
   return outcomeLabel(item.outcome);
+}
+
+type BuilderToolActivityAction = Extract<
+  BuilderConversationItem,
+  { item_kind: 'tool_call_requested' | 'tool_call_result_recorded' }
+>['action'];
+
+function toolActivitySubject(action: BuilderToolActivityAction): string {
+  if (action === 'context.read' || action === 'project.read') {
+    return 'Project check';
+  }
+  if (action === 'filesystem.read') return 'File check';
+  if (action === 'project.edit' || action === 'filesystem.write') return 'Change step';
+  if (action === 'secret.read' || action === 'permission.grant') return 'Access check';
+  if (action === 'network.request') return 'Online step';
+  if (action === 'process.spawn') return 'Local step';
+  if (action === 'publication.create') return 'Publish step';
+  return 'Project step';
+}
+
+function toolRequestTitle(
+  item: Extract<BuilderConversationItem, { item_kind: 'tool_call_requested' }>,
+): string {
+  if (item.action === 'context.read' || item.action === 'project.read') return 'Looking over the project';
+  if (item.action === 'filesystem.read') return 'Reading project files';
+  if (item.action === 'project.edit' || item.action === 'filesystem.write') return 'Preparing changes';
+  if (item.action === 'secret.read' || item.action === 'permission.grant') return 'Checking access';
+  if (item.action === 'network.request') return 'Checking online information';
+  if (item.action === 'process.spawn') return 'Running a local step';
+  if (item.action === 'publication.create') return 'Preparing to publish';
+  return 'Preparing project work';
+}
+
+function toolRequestBody(
+  item: Extract<BuilderConversationItem, { item_kind: 'tool_call_requested' }>,
+): string {
+  if (item.action === 'context.read' || item.action === 'project.read') {
+    return 'I am checking the current project context.';
+  }
+  if (item.action === 'filesystem.read') return 'I am checking the files needed for this request.';
+  if (item.action === 'project.edit' || item.action === 'filesystem.write') {
+    return 'I am getting the project changes ready.';
+  }
+  if (item.action === 'secret.read' || item.action === 'permission.grant') {
+    return 'I am checking whether this step is allowed.';
+  }
+  if (item.action === 'network.request') return 'I am preparing an online step for this request.';
+  if (item.action === 'process.spawn') return 'I am preparing a local project command.';
+  if (item.action === 'publication.create') return 'I am preparing the publish step.';
+  return 'I am preparing this project step.';
+}
+
+function toolResultTitle(
+  item: Extract<BuilderConversationItem, { item_kind: 'tool_call_result_recorded' }>,
+): string {
+  const subject = toolActivitySubject(item.action);
+  if (item.result.status === 'succeeded') return `${subject} finished`;
+  if (item.result.status === 'cancelled') return `${subject} stopped`;
+  return `${subject} needs attention`;
+}
+
+function toolResultBody(
+  item: Extract<BuilderConversationItem, { item_kind: 'tool_call_result_recorded' }>,
+): string {
+  if (item.result.summary_code === 'completed_without_raw_output') return 'This project step finished.';
+  if (item.result.summary_code === 'output_rejected') {
+    return 'I could not safely use the information from this step.';
+  }
+  if (item.result.summary_code === 'adapter_unavailable') {
+    return 'This project step is not available yet.';
+  }
+  if (item.result.summary_code === 'timed_out_without_raw_output') {
+    return 'This project step took too long and stopped.';
+  }
+  if (item.result.summary_code === 'cancelled_without_raw_output') {
+    return 'This project step was stopped.';
+  }
+  return 'This project step could not finish.';
 }
 
 function activityBody(item: BuilderConversationItem): string {
@@ -374,10 +448,8 @@ function activityBody(item: BuilderConversationItem): string {
       ? 'You asked to steer the current work.'
       : 'You asked to stop the current work.';
   }
-  if (item.item_kind === 'tool_call_requested') {
-    return 'The assistant has approved project access for this step. It has not run yet.';
-  }
-  if (item.item_kind === 'tool_call_result_recorded') return item.result.display_summary;
+  if (item.item_kind === 'tool_call_requested') return toolRequestBody(item);
+  if (item.item_kind === 'tool_call_result_recorded') return toolResultBody(item);
   if (item.item_kind === 'candidate_reviewed') {
     if (item.decision === 'accepted') {
       const revisionNumber = item.saved_revision?.revision_number;
@@ -759,6 +831,11 @@ function ActivityItem({
       className="cf-builder-activity-item"
       data-builder-activity-card={activityTitle(item)}
       data-builder-activity-role={displayRole}
+      data-builder-tool-activity={item.item_kind === 'tool_call_requested'
+        ? 'requested'
+        : item.item_kind === 'tool_call_result_recorded'
+          ? item.result.status
+          : undefined}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
         <ActivityGlyph item={item} />
