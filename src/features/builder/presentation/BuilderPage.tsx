@@ -679,9 +679,11 @@ function VersionItem({
   revision: BuilderProjectHistoryRevision;
 }>) {
   const isInspected = inspectedRevisionReceiptDigest === revision.revision_receipt_digest;
+  const isViewingSavedVersion = inspectedRevisionReceiptDigest !== null;
+  const showAction = isInspected || !revision.is_current || isViewingSavedVersion;
   const canInspect = !isInspected
     && (revision.is_current
-      ? typeof onShowCurrentRevision === 'function'
+      ? isViewingSavedVersion && typeof onShowCurrentRevision === 'function'
       : typeof onInspectRevision === 'function');
   return (
     <li
@@ -702,22 +704,24 @@ function VersionItem({
         <p className="cf-builder-version-name">{revision.title}</p>
         <p className="cf-builder-version-summary">{revision.summary}</p>
       </div>
-      <button
-        className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-        data-builder-show-current-version={revision.is_current ? 'true' : undefined}
-        data-builder-view-version={revision.is_current ? undefined : `Version ${revision.revision_number}`}
-        disabled={!canInspect}
-        onClick={() => {
-          if (revision.is_current) {
-            void onShowCurrentRevision?.();
-          } else {
-            void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
-          }
-        }}
-        type="button"
-      >
-        {isInspected ? 'Viewing' : revision.is_current ? 'Current' : 'View'}
-      </button>
+      {showAction ? (
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-show-current-version={revision.is_current ? 'true' : undefined}
+          data-builder-view-version={revision.is_current ? undefined : `Version ${revision.revision_number}`}
+          disabled={!canInspect}
+          onClick={() => {
+            if (revision.is_current) {
+              void onShowCurrentRevision?.();
+            } else {
+              void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
+            }
+          }}
+          type="button"
+        >
+          {isInspected ? 'Viewing' : revision.is_current ? 'Back to current' : 'View'}
+        </button>
+      ) : null}
     </li>
   );
 }

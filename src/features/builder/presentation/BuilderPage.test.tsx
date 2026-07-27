@@ -1596,6 +1596,10 @@ describe('BuilderPage v2', () => {
       .toContain('Current');
     expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
       .toContain('Version one');
+    expect(container.querySelector('[data-builder-version-card="Version 1"] button'))
+      .toBeNull();
+    expect(container.querySelector('[data-builder-version-card="Version 1"] [data-builder-show-current-version="true"]'))
+      .toBeNull();
     click(container, 'button[aria-label="Refresh versions"]');
     expect(onRefreshHistory).toHaveBeenCalledOnce();
     expect(container.textContent).not.toMatch(
@@ -1650,6 +1654,8 @@ describe('BuilderPage v2', () => {
     const previewFrame = inspectedContainer.querySelector('iframe');
     expect(previewFrame).not.toBeNull();
     expect(previewFrame?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
+    expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"] [data-builder-show-current-version="true"]')?.textContent)
+      .toContain('Back to current');
     click(inspectedContainer, 'header [data-builder-show-current-version="true"]');
     expect(onShowCurrentRevision).toHaveBeenCalledOnce();
     expect(inspectedContainer.textContent).not.toMatch(
