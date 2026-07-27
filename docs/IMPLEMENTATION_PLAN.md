@@ -433,10 +433,13 @@ Evidence requirements:
   delta text to main-side observers; Generation main service now reduces that
   main-only raw output to top-level display text from the approved generation
   result shape and exposes only a renderer-safe live output event through exact
-  IPC/preload. This live output is ephemeral conversation UI, not durable Task
-  Stream fact, and carries no raw provider envelope, prompt, credential, source,
-  Git, Save, or Project Revision authority. Tool streaming and arbitrary
-  execution remain later independent protocols;
+  IPC/preload. Once main has durably bound the generation start to the active
+  Project Conversation, the desktop chat flow shows a single assistant waiting
+  reply before the first display-safe delta arrives; later safe deltas replace
+  that waiting text in the same assistant row. This live output is ephemeral
+  conversation UI, not durable Task Stream fact, and carries no raw provider
+  envelope, prompt, credential, source, Git, Save, or Project Revision authority.
+  Tool streaming and arbitrary execution remain later independent protocols;
 - the current renderer-safe tool activity projection turns admitted Task Stream
   tool request/result facts into ordinary conversation status language. Pending
   requests remain visible as project steps; once the matching fixed-code result

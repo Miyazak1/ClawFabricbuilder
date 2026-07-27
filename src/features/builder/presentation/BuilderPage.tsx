@@ -294,17 +294,15 @@ function completionLabel(item: Extract<BuilderConversationItem, { item_kind: 'ru
 }
 
 function progressLabel(item: Extract<BuilderConversationItem, { item_kind: 'run_progress_recorded' }>): string {
-  if (item.stage === 'context_ready') return 'Context ready';
-  if (item.stage === 'provider_request_started') return 'AI response started';
-  if (item.stage === 'provider_response_received') return 'AI response received';
-  return 'Preparing result';
+  void item;
+  return 'Assistant is working';
 }
 
 function progressBody(item: Extract<BuilderConversationItem, { item_kind: 'run_progress_recorded' }>): string {
-  if (item.stage === 'context_ready') return 'The assistant prepared the current project context.';
-  if (item.stage === 'provider_request_started') return 'The assistant started asking the AI service.';
-  if (item.stage === 'provider_response_received') return 'The assistant received a response and is checking it.';
-  return 'The assistant is preparing the result for review.';
+  if (item.stage === 'context_ready') return 'Reading the current project context.';
+  if (item.stage === 'provider_request_started') return 'Writing the response.';
+  if (item.stage === 'provider_response_received') return 'Checking the response.';
+  return 'Preparing the result for review.';
 }
 
 type ActivityWorkStatus = 'started' | BuilderConversationRunProgressStage;
@@ -367,7 +365,7 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') {
     return item.message_kind === 'steering' ? 'You added context' : 'You';
   }
-  if (item.item_kind === 'run_started') return 'Started';
+  if (item.item_kind === 'run_started') return 'Assistant is working';
   if (item.item_kind === 'run_progress_recorded') return progressLabel(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
@@ -464,7 +462,7 @@ function toolResultBody(
 
 function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') return item.message.text;
-  if (item.item_kind === 'run_started') return 'The assistant began working on this request.';
+  if (item.item_kind === 'run_started') return 'Preparing this request.';
   if (item.item_kind === 'run_progress_recorded') return progressBody(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt'
@@ -924,12 +922,14 @@ function ActivityLiveOutputItem({
 }: Readonly<{
   liveOutput: BuilderLiveOutputSnapshot;
 }>) {
+  const hasText = liveOutput.text.length > 0;
   return (
     <li
       className="cf-builder-activity-item"
       data-builder-activity-card="Assistant live output"
       data-builder-activity-role="assistant"
       data-builder-live-output="true"
+      data-builder-live-output-state={hasText ? 'text' : 'waiting'}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
         <Bot className="size-3.5" />
@@ -940,7 +940,7 @@ function ActivityLiveOutputItem({
       >
         <div className="cf-builder-activity-title">Assistant</div>
         <p className="cf-builder-activity-body">
-          {liveOutput.text}
+          {hasText ? liveOutput.text : "I'm working on this..."}
           <span className="cf-builder-live-output-cursor" aria-hidden="true" />
         </p>
       </div>
@@ -1047,7 +1047,7 @@ function ActivityPanel({
                 />
               )
             ))}
-            {liveOutput !== null && liveOutput.text.length > 0 ? (
+            {liveOutput !== null ? (
               <ActivityLiveOutputItem liveOutput={liveOutput} />
             ) : null}
           </ol>
@@ -1139,7 +1139,7 @@ export function BuilderPage({
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
   const history = visibleHistorySnapshot(historySnapshot);
-  const visibleLiveOutput = liveOutput !== null && liveOutput.text.length > 0 ? liveOutput : null;
+  const visibleLiveOutput = liveOutput;
   const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
   const planReviewTarget = pendingPlanReviewTarget(activity);
   const canReviewPlan = typeof onReviewPlan === 'function'

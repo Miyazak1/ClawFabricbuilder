@@ -806,11 +806,12 @@ describe('BuilderApp v2', () => {
       expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Assistant working"]')?.textContent)
-        .toContain('Preparing this request.');
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain("I'm working on this...");
     });
-    expect(container.querySelector('[data-builder-work-status="true"]')?.getAttribute('data-builder-work-status-stage'))
-      .toBe('started');
+    expect(container.querySelector('[data-builder-live-output="true"]')?.getAttribute('data-builder-live-output-state'))
+      .toBe('waiting');
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
     readTaskStream.mockClear();
     expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
     await waitFor(() => {
