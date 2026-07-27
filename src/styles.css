@@ -766,20 +766,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text-muted);
 }
 
-.cf-builder-activity-panel,
+.cf-builder-activity-panel {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  gap: 8px;
+  color: var(--cf-text-soft);
+}
+
 .cf-builder-version-panel {
   display: grid;
   min-height: 0;
   min-width: 0;
   grid-template-rows: auto minmax(0, 1fr);
   color: var(--cf-text-soft);
-}
-
-.cf-builder-chat-scroll .cf-builder-activity-panel {
-  border: 1px solid var(--cf-border);
-  border-radius: 8px;
-  background: var(--cf-surface);
-  overflow: hidden;
 }
 
 .cf-builder-chat-scroll .cf-builder-activity-body-wrap {
@@ -813,6 +813,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0;
 }
 
+.cf-builder-activity-toolbar {
+  display: flex;
+  min-height: 32px;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .cf-builder-activity-body-wrap {
   display: grid;
   min-height: 0;
@@ -820,7 +828,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   align-content: start;
   gap: 8px;
   overflow: auto;
-  padding: 10px;
+  padding: 0;
 }
 
 .cf-builder-version-body-wrap {

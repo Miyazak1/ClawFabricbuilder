@@ -790,7 +790,7 @@ describe('BuilderApp v2', () => {
     });
     readTaskStream.mockClear();
     const refreshActivity = container.querySelector<HTMLButtonElement>(
-      '[data-builder-activity="true"] button[aria-label="Refresh activity"]',
+      '[data-builder-activity="true"] button[aria-label="Refresh conversation"]',
     );
     expect(refreshActivity).not.toBeNull();
     expect(refreshActivity?.disabled).toBe(false);

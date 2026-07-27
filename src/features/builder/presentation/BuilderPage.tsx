@@ -688,14 +688,11 @@ function ActivityPanel({
       data-builder-activity-status={snapshot?.status ?? 'idle'}
       data-builder-conversation-workspace="true"
     >
-      <header className="cf-builder-side-header">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">Conversation</p>
-          <h3 className="truncate text-sm font-semibold">Work stream</h3>
-        </div>
+      <header className="cf-builder-activity-toolbar" data-builder-activity-toolbar="true">
         <button
-          aria-label="Refresh activity"
+          aria-label="Refresh conversation"
           className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-refresh-activity="true"
           disabled={!canRefresh}
           onClick={() => {
             void onRefresh?.();

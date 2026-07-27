@@ -634,14 +634,22 @@ describe('BuilderPage v2', () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
     const history = await savedHistory();
+    const onAnswer = vi.fn();
+    const onGenerate = vi.fn();
+    const onRefreshConversation = vi.fn();
+    const onRejectDraft = vi.fn();
+    const onSave = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         conversationSnapshot={activity}
         historySnapshot={history}
         instruction="Add a timer."
-        onRejectDraft={vi.fn()}
-        onSave={vi.fn()}
+        onAnswer={onAnswer}
+        onGenerate={onGenerate}
+        onRefreshConversation={onRefreshConversation}
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
         snapshot={draftReady}
       />,
     );
@@ -672,6 +680,14 @@ describe('BuilderPage v2', () => {
     expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(versions?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
+    expect(conversation?.querySelector('.cf-builder-side-header')).toBeNull();
+    expect(conversation?.textContent).not.toContain('Work stream');
+    expect(conversation?.querySelector('[data-builder-activity-toolbar="true"]')).not.toBeNull();
+    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')).not.toBeNull();
+    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
+      .toBe(chatMain);
+    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-review-sidebar="true"]'))
+      .toBeNull();
     expect(Boolean(conversation!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
     expect(Boolean(review!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
@@ -696,6 +712,12 @@ describe('BuilderPage v2', () => {
       .toBe('assistant');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
       .toContain('Review the draft preview, files, and changes before saving this version.');
+    click(container, '[data-builder-refresh-activity="true"]');
+    expect(onRefreshConversation).toHaveBeenCalledOnce();
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onRejectDraft).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
