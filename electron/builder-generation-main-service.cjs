@@ -47,7 +47,9 @@ const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
+const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
@@ -55,6 +57,34 @@ const CREDENTIAL_PATTERN =
   /(?:["'`]?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|secret|credential|client[_-]?secret|private[_-]?key)["'`]?\s*[:=]\s*(?!["'`]?\s*(?:null|undefined)\b)\S|\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|https?:\/\/[^\s/:@]+:[^\s/@]+@|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/iu;
 const LOCAL_PATH_PATTERN =
   /(?:file:\/{1,3}|\\\\|(?:^|[\s"'`=(,:])(?:[A-Za-z]:[\\/]|~[\\/]|\/(?!\/)[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*))/iu;
+const SOURCE_PATH_PATTERN =
+  /(?:^|[\s"'`(,:])(?:[A-Za-z0-9._-]+\/){1,}[A-Za-z0-9._-]+\.[A-Za-z0-9._-]{1,12}(?=$|[\s"'`),.;:])/u;
+const PROJECT_RESOURCE_PATTERN = /\bproject:\/[a-z0-9._/@-]+/iu;
+const MAX_APPROVED_PLAN_PUBLIC_TEXT_CODE_POINTS = 4_000;
+const MAX_APPROVED_PLAN_PUBLIC_TEXT_BYTES = 16_000;
+const APPROVED_PLAN_READ_KEYS = Object.freeze([
+  'result_version',
+  'project_id',
+  'conversation_id',
+  'turn_id',
+  'task_id',
+  'run_id',
+  'decision',
+  'plan_result_digest',
+  'approved_plan_public_text',
+  'conversation_head',
+  'authority',
+]);
+const APPROVED_PLAN_READ_AUTHORITY_KEYS = Object.freeze([
+  'conversation',
+  'plan_review',
+  'renderer_authority',
+  'provider_dispatch',
+  'tool_dispatch',
+  'source_mutation',
+  'git_authority',
+  'revision_admission',
+]);
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_draft_conflict: 'The generated project draft could not be verified.',
@@ -168,6 +198,31 @@ function hasUnpairedSurrogate(value) {
   return false;
 }
 
+function hasForbiddenControl(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code === 0x7f
+      || (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d)
+    ) return true;
+  }
+  return false;
+}
+
+function safeText(value, maximumCodePoints, maximumBytes) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.trim() !== value
+    || value.length > maximumCodePoints * 2
+    || hasUnpairedSurrogate(value)
+    || Array.from(value).length > maximumCodePoints
+    || Buffer.byteLength(value, 'utf8') > maximumBytes
+    || hasForbiddenControl(value)
+  ) fail();
+  return value;
+}
+
 function canonicalJson(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' && Number.isSafeInteger(value)) return JSON.stringify(value);
@@ -203,6 +258,17 @@ function safeConversationId(value, projectId) {
 function safeDigest(value) {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) fail();
   return value;
+}
+
+function safeHead(value) {
+  exactObject(value, ['sequence', 'event_id', 'event_digest']);
+  const sequence = valueAt(value, 'sequence');
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 1_024) fail();
+  return freezeDeep({
+    sequence,
+    event_id: safePattern(valueAt(value, 'event_id'), EVENT_ID_PATTERN, 96),
+    event_digest: safeDigest(valueAt(value, 'event_digest')),
+  });
 }
 
 function safePattern(value, pattern, maximum) {
@@ -299,6 +365,77 @@ function sanitizeApprovedPlanEditRequest(value) {
     conversation_id: safeConversationId(valueAt(value, 'conversation_id'), projectId),
     turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN, 80),
     run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN, 80),
+  });
+}
+
+function safeApprovedPlanPublicText(value) {
+  const text = safeText(
+    value,
+    MAX_APPROVED_PLAN_PUBLIC_TEXT_CODE_POINTS,
+    MAX_APPROVED_PLAN_PUBLIC_TEXT_BYTES,
+  );
+  const normalized = text.normalize('NFKC');
+  if (
+    LOCAL_PATH_PATTERN.test(normalized)
+    || SOURCE_PATH_PATTERN.test(normalized)
+    || PROJECT_RESOURCE_PATTERN.test(normalized)
+    || CREDENTIAL_PATTERN.test(normalized)
+  ) fail();
+  return text;
+}
+
+function sanitizeApprovedPlanReadAuthority(value) {
+  exactObject(value, APPROVED_PLAN_READ_AUTHORITY_KEYS);
+  if (
+    valueAt(value, 'conversation') !== 'sqlite_replay_current_head_verified'
+    || valueAt(value, 'plan_review') !== 'approved_current_head'
+    || valueAt(value, 'renderer_authority') !== 'not_present'
+    || valueAt(value, 'provider_dispatch') !== false
+    || valueAt(value, 'tool_dispatch') !== 'not_performed'
+    || valueAt(value, 'source_mutation') !== 'not_performed'
+    || valueAt(value, 'git_authority') !== 'not_present'
+    || valueAt(value, 'revision_admission') !== 'not_created'
+  ) fail();
+  return freezeDeep({
+    conversation: 'sqlite_replay_current_head_verified',
+    plan_review: 'approved_current_head',
+    renderer_authority: 'not_present',
+    provider_dispatch: false,
+    tool_dispatch: 'not_performed',
+    source_mutation: 'not_performed',
+    git_authority: 'not_present',
+    revision_admission: 'not_created',
+  });
+}
+
+function sanitizeApprovedPlanReadResult(value, expected) {
+  exactObject(value, APPROVED_PLAN_READ_KEYS);
+  if (
+    valueAt(value, 'result_version') !== 'builder-conversation-approved-plan-read-result.v1'
+    || valueAt(value, 'decision') !== 'approved'
+  ) fail();
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
+  const conversationId = safeConversationId(valueAt(value, 'conversation_id'), projectId);
+  const turnId = safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN, 80);
+  const runId = safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN, 80);
+  if (
+    projectId !== expected.project_id
+    || conversationId !== expected.conversation_id
+    || turnId !== expected.turn_id
+    || runId !== expected.run_id
+  ) fail();
+  return freezeDeep({
+    result_version: 'builder-conversation-approved-plan-read-result.v1',
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: turnId,
+    task_id: safePattern(valueAt(value, 'task_id'), TASK_ID_PATTERN, 80),
+    run_id: runId,
+    decision: 'approved',
+    plan_result_digest: safeDigest(valueAt(value, 'plan_result_digest')),
+    approved_plan_public_text: safeApprovedPlanPublicText(valueAt(value, 'approved_plan_public_text')),
+    conversation_head: safeHead(valueAt(value, 'conversation_head')),
+    authority: sanitizeApprovedPlanReadAuthority(valueAt(value, 'authority')),
   });
 }
 
@@ -630,6 +767,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
+  const readApprovedPlan = ownMethod(options.conversationService, 'read_approved_plan');
   const admitApprovedPlanContinuation = ownMethod(
     options.conversationService,
     'admit_approved_plan_continuation',
@@ -1031,6 +1169,10 @@ function createBuilderGenerationMainService(rawOptions) {
   async function prepareApprovedPlanEditContext(rawRequest) {
     try {
       const request = sanitizeApprovedPlanEditRequest(rawRequest);
+      const approvedPlan = sanitizeApprovedPlanReadResult(
+        Reflect.apply(readApprovedPlan, options.conversationService, [request]),
+        request,
+      );
       const continuationAdmission = sanitizeBuilderApprovedPlanContinuationAdmission(
         Reflect.apply(admitApprovedPlanContinuation, options.conversationService, [request]),
       );
@@ -1039,6 +1181,11 @@ function createBuilderGenerationMainService(rawOptions) {
         || continuationAdmission.conversation_id !== request.conversation_id
         || continuationAdmission.turn_id !== request.turn_id
         || continuationAdmission.run_id !== request.run_id
+        || continuationAdmission.task_id !== approvedPlan.task_id
+        || continuationAdmission.plan_result_digest !== approvedPlan.plan_result_digest
+        || continuationAdmission.conversation_head.sequence !== approvedPlan.conversation_head.sequence
+        || continuationAdmission.conversation_head.event_id !== approvedPlan.conversation_head.event_id
+        || continuationAdmission.conversation_head.event_digest !== approvedPlan.conversation_head.event_digest
       ) fail();
       const base = sanitizeReadResult(
         await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: request.project_id }]),
@@ -1052,6 +1199,7 @@ function createBuilderGenerationMainService(rawOptions) {
         task_id: continuationAdmission.task_id,
         run_id: request.run_id,
         plan_result_digest: continuationAdmission.plan_result_digest,
+        approved_plan_public_text: approvedPlan.approved_plan_public_text,
         conversation_head: { ...continuationAdmission.conversation_head },
         continuation_id: continuationAdmission.continuation_id,
         continuation_admission_digest: continuationAdmission.admission_digest,
@@ -1060,6 +1208,7 @@ function createBuilderGenerationMainService(rawOptions) {
         base_source_tree: base.source_tree,
         lifecycle: {
           approved_plan_continuation: 'fresh_current_head_verified',
+          approved_plan_public_text: 'sqlite_public_assistant_message_verified',
           source_read: 'git_sqlite_current_verified',
           provider_dispatch: 'not_started',
           tool_dispatch: 'not_started',
@@ -1070,6 +1219,7 @@ function createBuilderGenerationMainService(rawOptions) {
         authority: {
           context_authority: 'main_generation_approved_plan_edit_context_v1',
           conversation_binding: 'fresh_approved_plan_continuation_required',
+          approved_plan_text_authority: 'sqlite_replay_public_assistant_message',
           project_read_authority: 'git_sqlite_current_source_verified',
           renderer_authority: 'not_present',
           provider_dispatch: false,

@@ -43,7 +43,9 @@ future main-side agent loop, but only when replay proves that the matching
 approved plan review is the current conversation head. This read has no
 IPC/preload surface, no renderer projection, no review identity or timestamp,
 and no source mutation, provider dispatch, Git evidence, Save authority, or
-Project Revision authority. Stale or rejected plan facts fail closed.
+Project Revision authority. It may include only the already-public assistant
+plan text stored as the Run result message, not the plan record body or private
+source context. Stale or rejected plan facts fail closed.
 
 The Conversation main service can also create a main-only approved-plan
 continuation admission by first performing that fresh approved-plan read. The
@@ -58,11 +60,11 @@ approved-plan fact.
 The Generation main service can prepare a main-only approved-plan edit context
 by binding a fresh continuation admission to the current saved project source
 through the Git/SQLite project read authority. The context is private main-side
-input for a later executor: it includes verified base revision evidence and the
-current source tree, but it does not read provider config or credentials,
-dispatch provider/tool work, mutate source, create Git candidate evidence,
-append Conversation events, create Save/Project Revision facts, or expose any
-IPC/preload/renderer projection.
+input for a later executor: it includes the approved plan public text, verified
+base revision evidence, and the current source tree, but it does not read
+provider config or credentials, dispatch provider/tool work, mutate source,
+create Git candidate evidence, append Conversation events, create Save/Project
+Revision facts, or expose any IPC/preload/renderer projection.
 
 The Generation main service can also record fixed Run progress stages through
 the Conversation main service while a provider generation or explanation is in

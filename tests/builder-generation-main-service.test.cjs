@@ -170,6 +170,7 @@ function conversationService() {
     cancel: [],
     readCandidate: [],
     rejectCandidate: [],
+    readApprovedPlan: [],
     approvedPlanContinuation: [],
   };
   let progressCommand = 10_000;
@@ -486,6 +487,35 @@ function conversationService() {
         rejection_admission: 'sqlite_recorded',
       };
     },
+    read_approved_plan(input) {
+      calls.readApprovedPlan.push(input);
+      return {
+        result_version: 'builder-conversation-approved-plan-read-result.v1',
+        project_id: input.project_id,
+        conversation_id: input.conversation_id,
+        turn_id: input.turn_id,
+        task_id: APPROVED_PLAN_TASK_ID,
+        run_id: input.run_id,
+        decision: 'approved',
+        plan_result_digest: `sha256:${'a'.repeat(64)}`,
+        approved_plan_public_text: 'Review the approved plan.\n\nPlan:\n1. Build the approved change.',
+        conversation_head: {
+          sequence: 7,
+          event_id: `builder-conversation-event:${'b'.repeat(64)}`,
+          event_digest: `sha256:${'c'.repeat(64)}`,
+        },
+        authority: {
+          conversation: 'sqlite_replay_current_head_verified',
+          plan_review: 'approved_current_head',
+          renderer_authority: 'not_present',
+          provider_dispatch: false,
+          tool_dispatch: 'not_performed',
+          source_mutation: 'not_performed',
+          git_authority: 'not_present',
+          revision_admission: 'not_created',
+        },
+      };
+    },
     admit_approved_plan_continuation(input) {
       calls.approvedPlanContinuation.push(input);
       return createBuilderApprovedPlanContinuationAdmission({
@@ -781,6 +811,10 @@ test('prepares an approved-plan edit context from fresh conversation proof and c
   assert.equal(context.task_id, APPROVED_PLAN_TASK_ID);
   assert.equal(context.run_id, APPROVED_PLAN_RUN_ID);
   assert.equal(context.plan_result_digest, `sha256:${'a'.repeat(64)}`);
+  assert.equal(
+    context.approved_plan_public_text,
+    'Review the approved plan.\n\nPlan:\n1. Build the approved change.',
+  );
   assert.deepEqual(context.conversation_head, {
     sequence: 7,
     event_id: `builder-conversation-event:${'b'.repeat(64)}`,
@@ -803,6 +837,7 @@ test('prepares an approved-plan edit context from fresh conversation proof and c
   assert.equal(context.base_source_tree.source_tree_digest, sourceTree.source_tree_digest);
   assert.deepEqual(context.lifecycle, {
     approved_plan_continuation: 'fresh_current_head_verified',
+    approved_plan_public_text: 'sqlite_public_assistant_message_verified',
     source_read: 'git_sqlite_current_verified',
     provider_dispatch: 'not_started',
     tool_dispatch: 'not_started',
@@ -813,6 +848,7 @@ test('prepares an approved-plan edit context from fresh conversation proof and c
   assert.deepEqual(context.authority, {
     context_authority: 'main_generation_approved_plan_edit_context_v1',
     conversation_binding: 'fresh_approved_plan_continuation_required',
+    approved_plan_text_authority: 'sqlite_replay_public_assistant_message',
     project_read_authority: 'git_sqlite_current_source_verified',
     renderer_authority: 'not_present',
     provider_dispatch: false,
@@ -822,6 +858,7 @@ test('prepares an approved-plan edit context from fresh conversation proof and c
     git_authority: 'not_present',
     revision_authority: 'not_present',
   });
+  assert.deepEqual(lifecycle.calls.readApprovedPlan, [approvedPlanEditRequest()]);
   assert.deepEqual(lifecycle.calls.approvedPlanContinuation, [approvedPlanEditRequest()]);
   assert.deepEqual(reads, [{ project_id: PROJECT_ID }]);
   assert.deepEqual(lifecycle.calls.begin, []);
@@ -874,6 +911,7 @@ test('fails approved-plan edit context closed on malformed request, stale contin
     (error) => error.code === 'builder_generation_service_unavailable'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
+  assert.deepEqual(malformedLifecycle.calls.readApprovedPlan, []);
   assert.deepEqual(malformedLifecycle.calls.approvedPlanContinuation, []);
   assert.deepEqual(malformedReads, []);
 
@@ -931,6 +969,7 @@ test('fails approved-plan edit context closed on malformed request, stale contin
     (error) => error.code === 'builder_generation_service_unavailable'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
+  assert.deepEqual(staleLifecycle.calls.readApprovedPlan, [approvedPlanEditRequest()]);
   assert.deepEqual(staleLifecycle.calls.approvedPlanContinuation, [approvedPlanEditRequest()]);
   assert.deepEqual(staleReads, []);
 
@@ -966,6 +1005,7 @@ test('fails approved-plan edit context closed on malformed request, stale contin
     (error) => error.code === 'builder_generation_service_unavailable'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
+  assert.deepEqual(driftLifecycle.calls.readApprovedPlan, [approvedPlanEditRequest()]);
   assert.deepEqual(driftLifecycle.calls.approvedPlanContinuation, [approvedPlanEditRequest()]);
   assert.deepEqual(driftReads, [{ project_id: PROJECT_ID }]);
 });

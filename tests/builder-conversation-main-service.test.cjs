@@ -684,6 +684,10 @@ test('records a proposed plan from a run-bound plan record after successful tool
     assert.equal(approvedPlan.run_id, context.ids.run_id);
     assert.equal(approvedPlan.decision, 'approved');
     assert.equal(approvedPlan.plan_result_digest, plan.record_digest);
+    assert.equal(
+      approvedPlan.approved_plan_public_text,
+      terminal.snapshot.turns[0].messages[1].text,
+    );
     assert.equal(approvedPlan.conversation_head.sequence, 7);
     assert.equal(approvedPlan.authority.conversation, 'sqlite_replay_current_head_verified');
     assert.equal(approvedPlan.authority.plan_review, 'approved_current_head');

@@ -352,11 +352,13 @@ Evidence requirements:
 - the current approved-plan read checkpoint gives a future main-side agent loop
   a narrow way to consume that approval: Conversation main service returns a
   compact approved-plan fact only when canonical replay proves the matching
-  approved plan review is the current conversation head. It exposes no
-  IPC/preload command, renderer projection, review identity, timestamp, private
-  source context, provider credential/config, tool dispatch, source mutation,
-  Git evidence, Save, or Project Revision authority, and rejects stale or
-  rejected plan facts;
+  approved plan review is the current conversation head. It may include only
+  the already-public assistant plan text that was stored as the Run result
+  message, not the plan record body or private source context. It exposes no
+  IPC/preload command, renderer projection, review identity, timestamp,
+  provider credential/config, tool dispatch, source mutation, Git evidence,
+  Save, or Project Revision authority, and rejects stale or rejected plan
+  facts;
 - the current approved-plan continuation-admission checkpoint lets the
   Conversation main service perform a fresh approved-plan read and then turn
   that current-head fact into a bounded receipt for a later agent/edit loop. It
@@ -369,8 +371,9 @@ Evidence requirements:
 - the current approved-plan edit-context checkpoint lets the Generation main
   service bind that fresh continuation admission to the current saved project
   source through Git/SQLite project read authority. It prepares private
-  main-side executor input with verified base revision evidence and the current
-  source tree, but reads no provider config/credential, dispatches no
+  main-side executor input with the approved plan public text, verified base
+  revision evidence, and the current source tree, but reads no provider
+  config/credential, dispatches no
   provider/tool work, mutates no source, creates no Git candidate, appends no
   Conversation event, creates no Save or Project Revision, and exposes no
   IPC/preload or renderer projection;

@@ -1872,6 +1872,11 @@ function createBuilderConversationMainService(rawOptions) {
         || run.plan_review.plan_result_digest !== run.result_digest
         || valueAt(reviewPayload, 'plan_result_digest') !== run.result_digest
       ) fail();
+      const publicPlanMessages = turn.messages.filter((message) => (
+        message.role === 'assistant'
+        && message.kind === 'run_result'
+      ));
+      if (publicPlanMessages.length !== 1) fail();
       return freezeDeep({
         result_version: APPROVED_PLAN_READ_RESULT_VERSION,
         project_id: request.project_id,
@@ -1881,6 +1886,7 @@ function createBuilderConversationMainService(rawOptions) {
         run_id: request.run_id,
         decision: 'approved',
         plan_result_digest: run.result_digest,
+        approved_plan_public_text: safeText(publicPlanMessages[0].text, 4_000, 16_000),
         conversation_head: { ...state.head },
         authority: {
           conversation: 'sqlite_replay_current_head_verified',
@@ -1898,12 +1904,27 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function approvedPlanAdmissionInput(approvedPlan) {
+    return freezeDeep({
+      result_version: approvedPlan.result_version,
+      project_id: approvedPlan.project_id,
+      conversation_id: approvedPlan.conversation_id,
+      turn_id: approvedPlan.turn_id,
+      task_id: approvedPlan.task_id,
+      run_id: approvedPlan.run_id,
+      decision: approvedPlan.decision,
+      plan_result_digest: approvedPlan.plan_result_digest,
+      conversation_head: { ...approvedPlan.conversation_head },
+      authority: { ...approvedPlan.authority },
+    });
+  }
+
   function admitApprovedPlanContinuation(rawRequest) {
     try {
       const request = sanitizePlanRunReference(rawRequest);
       const approvedPlan = readApprovedPlan(request);
       return createBuilderApprovedPlanContinuationAdmission({
-        approved_plan: approvedPlan,
+        approved_plan: approvedPlanAdmissionInput(approvedPlan),
         continuation_id: newId(options.createUuid, 'builder-approved-plan-continuation'),
         admitted_at_ms: safeTimestamp(Reflect.apply(options.nowMs, undefined, [])),
       });
