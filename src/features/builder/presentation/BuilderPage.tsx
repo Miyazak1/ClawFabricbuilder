@@ -966,6 +966,9 @@ function ActivityPanel({
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const entries = activityEntries(snapshot);
+  const visibleEntries = liveOutput === null
+    ? entries
+    : entries.filter((entry) => entry.entry_kind !== 'work_status');
   const message = activityMessage(snapshot);
   const canRefresh = snapshot !== null
     && snapshot.project_id !== null
@@ -997,13 +1000,13 @@ function ActivityPanel({
         {snapshot?.status === 'refreshing' ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {entries.length === 0 && liveOutput === null && message !== null ? (
+        {visibleEntries.length === 0 && liveOutput === null && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
             {message}
           </div>
         ) : (
           <ol className="cf-builder-activity-list">
-            {entries.map((entry) => (
+            {visibleEntries.map((entry) => (
               entry.entry_kind === 'work_status' ? (
                 <ActivityWorkStatusItem entry={entry} key={entry.key} />
               ) : (
@@ -1022,7 +1025,7 @@ function ActivityPanel({
             ) : null}
           </ol>
         )}
-        {entries.length > 0 && message !== null ? (
+        {visibleEntries.length > 0 && message !== null ? (
           <p className="cf-builder-activity-status" role={snapshot?.status === 'stale' ? 'alert' : 'status'}>
             {message}
           </p>

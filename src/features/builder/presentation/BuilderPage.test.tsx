@@ -1334,6 +1334,42 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('folds active work status into the streaming assistant reply when live output is visible', async () => {
+    const { saved } = await snapshots();
+    const activity = await progressActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: 'Planning a quiet timer UI.',
+          chunk_count: 1,
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const liveOutput = container.querySelector('[data-builder-live-output="true"]');
+    expect(liveOutput).not.toBeNull();
+    expect(liveOutput?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(
+      liveOutput?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('plain');
+    expect(liveOutput?.textContent).toContain('Planning a quiet timer UI.');
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Assistant working"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /provider_request_started|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
   it('renders tool activity as visible project steps without exposing internal evidence', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity();
