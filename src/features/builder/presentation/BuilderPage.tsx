@@ -1179,7 +1179,7 @@ export function BuilderPage({
     ? changesPanelState.open
     : false;
   const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
-  const showReviewSidebar = showChangesPanel || (saved !== null && !hasUnsavedDraft);
+  const showReviewSidebar = saved !== null && !hasUnsavedDraft;
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
       ? 'no-live-output'
@@ -1202,6 +1202,7 @@ export function BuilderPage({
     inspected?.target.revision_number ?? 'no-inspected',
     sourceFile?.path ?? 'no-source',
     preview === null ? 'no-preview' : 'preview-ready',
+    showChangesPanel ? 'changes-open' : 'changes-closed',
     activityFollowCursor,
   ].join('|');
 
@@ -1623,7 +1624,7 @@ export function BuilderPage({
           aria-label="Project conversation workspace"
           className="cf-builder-chat-shell"
           data-builder-chat-workspace="true"
-          data-builder-review-sidebar-mode={showReviewSidebar ? (changesPanelOpen ? 'expanded' : 'summary') : 'hidden'}
+          data-builder-review-sidebar-mode={showReviewSidebar ? 'summary' : 'hidden'}
           data-builder-review-sidebar-visible={showReviewSidebar ? 'true' : 'false'}
         >
           <div className="cf-builder-chat-main" data-builder-chat-main="true">
@@ -1647,6 +1648,17 @@ export function BuilderPage({
               {showStarterPrompt ? <StarterPrompt /> : null}
 
               {draftReview}
+
+              {showChangesPanel ? (
+                <div className="cf-builder-chat-flow-surface cf-builder-changes-flow" data-builder-changes-flow="true">
+                  <ChangesPanel
+                    changes={changes}
+                    onOpenChange={setChangesPanelOpen}
+                    onOpenFile={openChangedFile}
+                    open={changesPanelOpen}
+                  />
+                </div>
+              ) : null}
 
               {showResultFlow ? (
                 <section
@@ -1730,18 +1742,10 @@ export function BuilderPage({
 
           {showReviewSidebar ? (
             <aside
-              aria-label="Project changes and versions"
+              aria-label="Project versions"
               className="cf-builder-review-sidebar"
               data-builder-review-sidebar="true"
             >
-              {showChangesPanel ? (
-                <ChangesPanel
-                  changes={changes}
-                  onOpenChange={setChangesPanelOpen}
-                  onOpenFile={openChangedFile}
-                  open={changesPanelOpen}
-                />
-              ) : null}
               <VersionHistoryPanel
                 hasSavedProject={saved !== null}
                 inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}

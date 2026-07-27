@@ -397,9 +397,9 @@ Evidence requirements:
   same flow. For an unsaved draft, the Review/Save action strip appears before
   the Result preview and becomes the generation-complete landing target, so the
   next user decision is visible before any large preview surface. Draft changes
-  stay summarized in the review card and open an
-  on-demand right sidebar only when the user asks to inspect them, so an unsaved
-  result does not squeeze the primary preview and Save actions. The preview
+  stay summarized in the review card and open as an on-demand disclosure in the
+  same conversation flow when the user asks to inspect them, so an unsaved result
+  does not squeeze the primary preview and Save actions. The preview
   surface explicitly marks the first-release
   static-only runtime boundary, so JavaScript, Three.js, canvas, server, network,
   or backend-dependent drafts can explain a blank preview without claiming the

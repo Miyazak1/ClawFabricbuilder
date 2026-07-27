@@ -24,15 +24,16 @@ function styleBlock(source: string, selector: string): string {
 }
 
 describe('Builder desktop layout styles', () => {
-  it('supports a compact review summary rail only when the desktop sidebar is mounted', () => {
+  it('keeps the desktop review sidebar compact and out of unsaved draft changes', () => {
     const source = styles();
 
     expect(source).toContain('.cf-builder-chat-shell {');
     expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(176px, 196px);');
-    expect(source).toContain(
+    expect(source).toContain('.cf-builder-chat-shell[data-builder-review-sidebar-visible="false"]');
+    expect(source).not.toContain(
       '.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"]',
     );
-    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, min(42vw, 520px));');
+    expect(source).not.toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, min(42vw, 520px));');
     expect(source).not.toMatch(
       /@media \(max-width: 1280px\)[\s\S]*?\.cf-builder-chat-shell[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/u,
     );
@@ -49,12 +50,14 @@ describe('Builder desktop layout styles', () => {
     );
   });
 
-  it('keeps right-rail change summaries compact instead of wrapping into the main stage', () => {
+  it('keeps on-demand change summaries compact inside the conversation flow', () => {
     const source = styles();
     const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
     const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
+    const changesFlow = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
 
+    expect(changesFlow).toContain('border-radius: 8px;');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
     expect(summaryMain).toContain('display: grid;');
     expect(summaryText).toContain('overflow: hidden;');

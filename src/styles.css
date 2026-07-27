@@ -429,10 +429,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   grid-template-columns: minmax(0, 1fr);
 }
 
-.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"] {
-  grid-template-columns: minmax(0, 1fr) minmax(360px, min(42vw, 520px));
-}
-
 .cf-builder-chat-main {
   display: grid;
   min-height: 0;
@@ -608,6 +604,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   background: var(--cf-surface);
 }
 
+.cf-builder-changes-flow .cf-builder-changes-panel {
+  overflow: hidden;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  box-shadow: var(--cf-shadow-sm);
+}
+
 .cf-builder-changes-disclosure {
   min-height: 0;
   min-width: 0;
@@ -616,7 +619,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-changes-disclosure[open] {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  max-height: min(58vh, 560px);
+  max-height: min(64vh, 680px);
 }
 
 .cf-builder-changes-summary-row {
@@ -999,10 +1002,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-version-panel {
   max-height: 220px;
   border-top: 1px solid var(--cf-border);
-}
-
-.cf-builder-review-sidebar .cf-builder-changes-panel {
-  border-bottom: 1px solid var(--cf-border);
 }
 
 .cf-builder-side-header {
