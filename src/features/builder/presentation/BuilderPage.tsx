@@ -295,6 +295,12 @@ function activityBody(item: BuilderConversationItem): string {
   return `${outcomeLabel(item.outcome)}.`;
 }
 
+function activityDisplayRole(item: BuilderConversationItem): 'assistant' | 'status' | 'user' {
+  if (item.item_kind === 'user_message') return 'user';
+  if (item.item_kind === 'run_completed' && item.assistant_message !== null) return 'assistant';
+  return 'status';
+}
+
 function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
   return hasUnsavedDraft
     ? 'Review the draft preview, files, and changes before saving this version.'
@@ -589,6 +595,7 @@ function ActivityItem({
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
+  const displayRole = activityDisplayRole(item);
   const itemPlanReviewKey = item.item_kind === 'turn_completed' && item.run_id !== null
     ? planReviewKey(item.turn_id, item.run_id)
     : null;
@@ -605,11 +612,12 @@ function ActivityItem({
     <li
       className="cf-builder-activity-item"
       data-builder-activity-card={activityTitle(item)}
+      data-builder-activity-role={displayRole}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
         <ActivityGlyph item={item} />
       </div>
-      <div className="min-w-0">
+      <div className="cf-builder-activity-content min-w-0">
         <div className="cf-builder-activity-title">{activityTitle(item)}</div>
         <p className="cf-builder-activity-body">{activityBody(item)}</p>
         {item.item_kind === 'run_completed' && item.candidate !== null ? (

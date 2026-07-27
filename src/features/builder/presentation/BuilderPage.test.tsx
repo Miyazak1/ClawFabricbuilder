@@ -12,6 +12,7 @@ import {
   DRAFT_ID,
   PROJECT_ID,
   createAcceptedTaskStreamWire,
+  createAnswerTaskStreamWire,
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
@@ -114,6 +115,13 @@ async function snapshots() {
 async function candidateActivity(rejected = false) {
   const controller = createBuilderConversationController({
     read: async () => (rejected ? createRejectedTaskStreamWire() : createTaskStreamWire()),
+  });
+  return controller.load(PROJECT_ID);
+}
+
+async function answerActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => createAnswerTaskStreamWire(),
   });
   return controller.load(PROJECT_ID);
 }
@@ -678,8 +686,45 @@ describe('BuilderPage v2', () => {
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
     expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="You"]')?.getAttribute('data-builder-activity-role'))
+      .toBe('user');
+    expect(container.querySelector('[data-builder-activity-card="Started"]')?.getAttribute('data-builder-activity-role'))
+      .toBe('status');
+    expect(container.querySelector('[data-builder-activity-card="Draft ready"]')?.getAttribute('data-builder-activity-role'))
+      .toBe('status');
+    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.getAttribute('data-builder-activity-role'))
+      .toBe('assistant');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
       .toContain('Review the draft preview, files, and changes before saving this version.');
+    expect(container.textContent).not.toMatch(
+      /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('renders questions and AI answers as chat messages while keeping run events as status', async () => {
+    const { saved } = await snapshots();
+    const activity = await answerActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const userMessage = container.querySelector('[data-builder-activity-card="You"]');
+    const started = container.querySelector('[data-builder-activity-card="Started"]');
+    const assistant = container.querySelector('[data-builder-activity-card="Assistant"]');
+    const answered = container.querySelector('[data-builder-activity-card="Answered"]');
+    expect(userMessage?.getAttribute('data-builder-activity-role')).toBe('user');
+    expect(userMessage?.textContent).toContain('What does this project do?');
+    expect(assistant?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(assistant?.textContent).toContain('This answer does not change files.');
+    expect(started?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(answered?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );

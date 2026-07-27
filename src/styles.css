@@ -836,7 +836,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-activity-list {
   display: grid;
   min-width: 0;
-  gap: 0;
+  gap: 10px;
 }
 
 .cf-builder-version-list {
@@ -850,8 +850,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 8px;
-  border-bottom: 1px solid var(--cf-border);
-  padding: 10px 2px;
+  align-items: start;
+  padding: 0;
 }
 
 .cf-builder-version-item {
@@ -863,12 +863,50 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 9px 2px;
 }
 
-.cf-builder-activity-item:last-child {
+.cf-builder-version-item:last-child {
   border-bottom: 0;
 }
 
-.cf-builder-version-item:last-child {
-  border-bottom: 0;
+.cf-builder-activity-content {
+  max-width: min(720px, 92%);
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface-raised);
+  padding: 9px 11px;
+}
+
+.cf-builder-activity-item[data-builder-activity-role="user"] {
+  grid-template-columns: minmax(0, 1fr) 24px;
+  justify-items: end;
+}
+
+.cf-builder-activity-item[data-builder-activity-role="user"] .cf-builder-activity-icon {
+  grid-column: 2;
+  grid-row: 1;
+  border-color: var(--cf-primary);
+  background: var(--cf-primary);
+  color: var(--cf-primary-foreground);
+}
+
+.cf-builder-activity-item[data-builder-activity-role="user"] .cf-builder-activity-content {
+  grid-column: 1;
+  grid-row: 1;
+  max-width: min(640px, 84%);
+  border-color: var(--cf-primary);
+  background: var(--cf-primary);
+  color: var(--cf-primary-foreground);
+}
+
+.cf-builder-activity-item[data-builder-activity-role="status"] .cf-builder-activity-content {
+  max-width: min(680px, 88%);
+  border-color: var(--cf-border);
+  background: var(--cf-surface-muted);
+  padding: 7px 10px;
+}
+
+.cf-builder-activity-item[data-builder-activity-role="status"] .cf-builder-activity-icon {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text-muted);
 }
 
 .cf-builder-activity-icon {
@@ -888,6 +926,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
+}
+
+.cf-builder-activity-item[data-builder-activity-role="user"] .cf-builder-activity-title,
+.cf-builder-activity-item[data-builder-activity-role="user"] .cf-builder-activity-body,
+.cf-builder-activity-item[data-builder-activity-role="user"] .cf-builder-activity-note {
+  color: var(--cf-primary-foreground);
 }
 
 .cf-builder-version-title {
