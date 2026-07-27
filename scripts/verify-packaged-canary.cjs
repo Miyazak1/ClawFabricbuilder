@@ -2453,6 +2453,8 @@ function taskStreamItemCounts(items) {
     tool_result_failed_count: 0,
     tool_result_succeeded_count: 0,
     turn_completed_count: 0,
+    steering_message_count: 0,
+    submitted_message_count: 0,
     user_message_count: 0,
   };
   let latestCandidate = null;
@@ -2461,6 +2463,7 @@ function taskStreamItemCounts(items) {
   let latestTurn = null;
   const candidateRunCompletedByRunId = new Map();
   const candidateReviewByRunId = new Map();
+  const activeRunByTurnId = new Map();
   const progressStageByRunId = new Map();
   const runCompletedByRunId = new Map();
   const runStartedByRunId = new Map();
@@ -2471,12 +2474,25 @@ function taskStreamItemCounts(items) {
   for (const item of items) {
     if (item.item_kind === 'user_message') {
       counts.user_message_count += 1;
-      userMessageByTurnId.set(item.turn_id, item);
+      if (item.message_kind === 'submitted') {
+        counts.submitted_message_count += 1;
+        if (userMessageByTurnId.has(item.turn_id) || activeRunByTurnId.has(item.turn_id)) {
+          fail('canary_evidence_failed');
+        }
+        userMessageByTurnId.set(item.turn_id, item);
+      } else {
+        counts.steering_message_count += 1;
+        const activeRun = activeRunByTurnId.get(item.turn_id) ?? null;
+        if (activeRun === null || activeRun.sequence >= item.sequence) fail('canary_evidence_failed');
+      }
     }
     if (item.item_kind === 'run_started') {
       counts.run_started_count += 1;
-      if (runStartedByRunId.has(item.run_id)) fail('canary_evidence_failed');
+      if (runStartedByRunId.has(item.run_id) || activeRunByTurnId.has(item.turn_id)) {
+        fail('canary_evidence_failed');
+      }
       runStartedByRunId.set(item.run_id, item);
+      activeRunByTurnId.set(item.turn_id, item);
     }
     if (item.item_kind === 'run_progress_recorded') {
       counts.run_progress_count += 1;
@@ -2534,6 +2550,9 @@ function taskStreamItemCounts(items) {
         || runCompletedByRunId.has(item.run_id)
       ) fail('canary_evidence_failed');
       runCompletedByRunId.set(item.run_id, item);
+      if (activeRunByTurnId.get(item.turn_id)?.run_id === item.run_id) {
+        activeRunByTurnId.delete(item.turn_id);
+      }
       if (item.result_kind === 'candidate' && item.candidate !== null) {
         counts.candidate_result_count += 1;
         latestCandidate = item;
@@ -3036,7 +3055,9 @@ function assertTaskStreamCandidateFacts(
   const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
   const expectedAcceptedReviews = expectedRevision.revision_number;
   const expectedBaseItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedUserMessageCount = expectedTurnCount + counts.steering_message_count;
   const expectedItemCount = expectedBaseItemCount
+    + counts.steering_message_count
     + counts.run_progress_count
     + counts.tool_request_count
     + counts.tool_result_count;
@@ -3046,7 +3067,8 @@ function assertTaskStreamCandidateFacts(
     || conversation.window.has_earlier !== false
     || conversation.head_sequence !== expectedItemCount
     || conversation.item_count !== expectedItemCount
-    || counts.user_message_count !== expectedTurnCount
+    || counts.user_message_count !== expectedUserMessageCount
+    || counts.submitted_message_count !== expectedTurnCount
     || counts.run_started_count !== expectedTurnCount
     || counts.run_completed_count !== expectedTurnCount
     || counts.turn_completed_count !== expectedTurnCount
@@ -3133,7 +3155,9 @@ function assertTaskStreamExplanationFacts(
   const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
   const expectedAcceptedReviews = expectedRevision.revision_number;
   const expectedBaseItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedUserMessageCount = expectedTurnCount + counts.steering_message_count;
   const expectedItemCount = expectedBaseItemCount
+    + counts.steering_message_count
     + counts.run_progress_count
     + counts.tool_request_count
     + counts.tool_result_count;
@@ -3143,7 +3167,8 @@ function assertTaskStreamExplanationFacts(
     || conversation.window.has_earlier !== false
     || conversation.head_sequence !== expectedItemCount
     || conversation.item_count !== expectedItemCount
-    || counts.user_message_count !== expectedTurnCount
+    || counts.user_message_count !== expectedUserMessageCount
+    || counts.submitted_message_count !== expectedTurnCount
     || counts.run_started_count !== expectedTurnCount
     || counts.run_completed_count !== expectedTurnCount
     || counts.turn_completed_count !== expectedTurnCount
@@ -3246,7 +3271,9 @@ function assertTaskStreamPendingCandidateFacts(
   const expectedTurnCount = expectedCandidateTurns + expectedQuestionTurns;
   const expectedAcceptedReviews = expectedSavedRevision.revision_number;
   const expectedBaseItemCount = expectedTurnCount * 4 + expectedAcceptedReviews;
+  const expectedUserMessageCount = expectedTurnCount + counts.steering_message_count;
   const expectedItemCount = expectedBaseItemCount
+    + counts.steering_message_count
     + counts.run_progress_count
     + counts.tool_request_count
     + counts.tool_result_count;
@@ -3256,7 +3283,8 @@ function assertTaskStreamPendingCandidateFacts(
     || conversation.window.has_earlier !== false
     || conversation.head_sequence !== expectedItemCount
     || conversation.item_count !== expectedItemCount
-    || counts.user_message_count !== expectedTurnCount
+    || counts.user_message_count !== expectedUserMessageCount
+    || counts.submitted_message_count !== expectedTurnCount
     || counts.run_started_count !== expectedTurnCount
     || counts.run_completed_count !== expectedTurnCount
     || counts.turn_completed_count !== expectedTurnCount

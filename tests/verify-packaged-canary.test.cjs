@@ -934,6 +934,32 @@ function addProgressAndToolFacts(evidence) {
   return replaceTaskStreamItems(evidence, items);
 }
 
+function addSteeringMessage(evidence) {
+  const items = [...evidence.task_stream.conversation.items];
+  let runStartedIndex = -1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index].item_kind === 'run_started' && items[index].task_id !== null) {
+      runStartedIndex = index;
+      break;
+    }
+  }
+  if (runStartedIndex < 0) throw new Error('missing candidate run');
+  const started = items[runStartedIndex];
+  items.splice(runStartedIndex + 1, 0, {
+    item_kind: 'user_message',
+    sequence: 0,
+    turn_id: started.turn_id,
+    message: {
+      message_id: 'builder-message:21212121-2121-4121-8121-212121212121',
+      text: 'Make the active draft calmer.',
+    },
+    message_kind: 'steering',
+    mode: null,
+    task: null,
+  });
+  return replaceTaskStreamItems(evidence, items);
+}
+
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
     bridgeVersion: 'builder-preload.v10',
@@ -1731,6 +1757,35 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   );
 });
 
+test('accepts active-run steering messages without changing candidate or revision authority', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const firstRevision = bridgeEvidence(projectId, true, 1).current.product_revision_receipt;
+  const steered = addSteeringMessage(bridgeEvidence(projectId, true, 1, 2, 0));
+  const facts = assertTaskStreamPendingCandidateFacts(steered, firstRevision, 2);
+
+  assert.deepEqual(facts, {
+    answer_count: 0,
+    accepted_review_count: 1,
+    candidate_ready_count: 2,
+    candidate_reviewed_count: 1,
+    candidate_result_count: 2,
+    explanation_result_count: 0,
+    head_sequence: 10,
+    item_count: 10,
+    latest_candidate_review: 'pending',
+    latest_candidate_distinct_from_saved_revision: true,
+    run_progress_count: 0,
+    saved_revision_number: 1,
+    source_availability: 'not_loaded',
+    tool_request_count: 0,
+    tool_result_count: 0,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(assertReadEvidence(steered).task_stream),
+    /request_digest|provider|credential|source_tree|commit_oid|tree_oid|save_evidence/iu,
+  );
+});
+
 test('verifies Version 1 before saving a second unsaved draft as Version 2', async (t) => {
   const page = new FakePage();
   installBridge(page);
@@ -2276,6 +2331,32 @@ test('rejects forged run progress and tool activity task stream facts', () => {
   toolResult.result.display_summary = 'Loaded project file contents: secret-marker';
   assert.throws(
     () => assertReadEvidence(forgedSummary),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const postTerminalSteering = bridgeEvidence(projectId, true, 1, 1, 0);
+  const completedIndex = postTerminalSteering.task_stream.conversation.items.findIndex(
+    (item) => item.item_kind === 'run_completed',
+  );
+  const completed = postTerminalSteering.task_stream.conversation.items[completedIndex];
+  replaceTaskStreamItems(postTerminalSteering, [
+    ...postTerminalSteering.task_stream.conversation.items.slice(0, completedIndex + 1),
+    {
+      item_kind: 'user_message',
+      sequence: 0,
+      turn_id: completed.turn_id,
+      message: {
+        message_id: 'builder-message:21212121-2121-4121-8121-212121212121',
+        text: 'This should not steer finished work.',
+      },
+      message_kind: 'steering',
+      mode: null,
+      task: null,
+    },
+    ...postTerminalSteering.task_stream.conversation.items.slice(completedIndex + 1),
+  ]);
+  assert.throws(
+    () => assertReadEvidence(postTerminalSteering),
     (error) => error.code === 'canary_evidence_failed',
   );
 });
