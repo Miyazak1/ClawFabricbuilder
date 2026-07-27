@@ -1345,6 +1345,10 @@ export function BuilderPage({
     return saved ? 'Continue this project' : 'Start from an idea';
   })();
   const conversationNotice = (() => {
+    if (
+      visibleLiveOutput !== null
+      && (status === 'submitting' || status === 'generating' || status === 'answering')
+    ) return null;
     if (status === 'opening') {
       return (
         <p

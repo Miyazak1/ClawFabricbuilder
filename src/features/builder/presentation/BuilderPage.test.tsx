@@ -1037,6 +1037,50 @@ describe('BuilderPage v2', () => {
     expect(idle.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
   });
 
+  it('lets the live assistant output replace the desktop busy notice', async () => {
+    const controller = createBuilderProjectController({
+      generator: {
+        submit: async () => null,
+        generate: async () => new Promise(() => undefined),
+        generateApprovedPlan: async () => null,
+        retry: async () => null,
+        answer: async () => null,
+        restoreDraft: async () => null,
+        rejectDraft: async () => null,
+        cancel: async () => null,
+        steer: async () => null,
+      },
+      workspace: {
+        open: async () => null,
+        saveDraft: async () => null,
+        loadCurrent: async () => null,
+        loadRevision: async () => null,
+        listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
+      },
+    });
+    void controller.generate('Make a timer.');
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: 'Planning the draft.',
+          chunk_count: 1,
+        }}
+        snapshot={controller.getSnapshot()}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+      .toContain('Planning the draft.');
+    expect(container.querySelector('[data-builder-conversation-notice="generating"]')).toBeNull();
+    expect(container.textContent).not.toContain('Making your draft...');
+  });
+
   it('uses the same desktop composer send command to add context while work is active', async () => {
     const controller = createBuilderProjectController({
       generator: {

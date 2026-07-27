@@ -830,6 +830,8 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector('[data-builder-live-output="true"]')?.getAttribute('data-builder-live-output-state'))
       .toBe('waiting');
+    expect(container.querySelector('[data-builder-conversation-notice="submitting"]')).toBeNull();
+    expect(container.querySelector('[data-builder-conversation-notice="generating"]')).toBeNull();
     expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
     readTaskStream.mockClear();
     expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
