@@ -1040,7 +1040,7 @@ export function BuilderPage({
       ) : null}
       {status === 'preview_unavailable' && hasContent ? (
         <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">
-          A static preview is not available for this project. You can still review and save its files.
+          A visual preview is not available for this project. You can still review and save its files.
         </p>
       ) : null}
       {status === 'conflict' ? (
@@ -1124,27 +1124,22 @@ export function BuilderPage({
               {draftReview}
 
               <section
-                aria-label="Project preview"
-                className="cf-builder-flow-card cf-builder-preview-panel cf-builder-preview-primary"
+                aria-label="Project result"
+                className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card"
                 data-builder-preview-flow="true"
+                data-builder-result-flow="true"
                 id="builder-tool-preview"
               >
-                <div className="cf-builder-panel-toolbar">
+                <div className="cf-builder-result-toolbar">
                   <Eye aria-hidden="true" className="size-4" />
-                  Preview
+                  Result
                 </div>
                 <div className="cf-builder-flow-card-body">
-                  <p
-                    className="mb-3 text-xs leading-5 text-muted-foreground"
-                    data-builder-preview-safety-note="true"
-                  >
-                    Preview is isolated for safety.
-                  </p>
                   {preview === null ? (
                     <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
                       {hasContent
-                        ? 'This project can be viewed as code, but it does not have a static preview.'
-                        : 'Your preview will appear here.'}
+                        ? 'This project has files, but no visual preview.'
+                        : 'Your result will appear here.'}
                     </div>
                   ) : (
                     <BuilderStaticPreview projection={preview} />

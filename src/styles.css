@@ -700,8 +700,23 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 7px 8px;
 }
 
-.cf-builder-preview-primary {
+.cf-builder-result-card {
+  width: min(860px, 100%);
+  justify-self: center;
   background: var(--cf-surface);
+}
+
+.cf-builder-result-toolbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--cf-border);
+  background: var(--cf-surface);
+  padding: 0 12px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .cf-builder-source-disclosure {
