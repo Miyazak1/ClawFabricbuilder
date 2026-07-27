@@ -497,9 +497,11 @@ function changesSummary(changes: BuilderSourceTreeChanges): string {
 }
 
 function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null, hasContent: boolean): string {
-  if (preview !== null) return 'Preview and changes are ready.';
+  if (preview !== null) {
+    return 'Static preview is ready. JavaScript, Three.js, canvas animation, servers, and network assets do not run here.';
+  }
   return hasContent
-    ? 'Review the files and changes before saving.'
+    ? 'No safe preview is available yet. Review the source files and changes before saving.'
     : 'Review this draft before saving.';
 }
 
@@ -1119,7 +1121,8 @@ export function BuilderPage({
   ), [draft, saved]);
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
   const sourceDisclosureOpen = selected !== null || preview === null;
-  const showResultFlow = preview !== null;
+  const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
+  const showResultFlow = preview !== null || showPreviewUnavailableResult;
   const showReviewSidebar = hasUnsavedDraft || saved !== null;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
   const draftReviewRef = useRef<HTMLElement | null>(null);
@@ -1387,19 +1390,6 @@ export function BuilderPage({
           role="alert"
         >
           The draft could not be discarded. Your draft is still available; try again.
-        </p>
-      );
-    }
-    if (status === 'preview_unavailable' && hasContent) {
-      return (
-        <p
-          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
-          data-builder-conversation-notice="preview_unavailable"
-          role="status"
-        >
-          Visual preview is not available for this project. This first preview can show static HTML and CSS only;
-          projects that depend on JavaScript modules, Three.js, local servers, or backend code need a runtime
-          preview path. Review the source and changes before saving.
         </p>
       );
     }

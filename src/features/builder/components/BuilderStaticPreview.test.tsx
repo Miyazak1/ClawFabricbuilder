@@ -46,7 +46,7 @@ describe('BuilderStaticPreview', () => {
     expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
       .toContain('Three.js');
     expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
-      .toContain('runtime preview is needed');
+      .toContain('runtime preview support is needed');
     expect(container.textContent).not.toContain('Safe preview');
     const frame = container.querySelector<HTMLIFrameElement>('iframe');
     expect(frame?.getAttribute('sandbox')).toBe('');
@@ -62,7 +62,13 @@ describe('BuilderStaticPreview', () => {
       title: 'Forged',
       src_doc: '<script>alert(1)</script>',
     }} />);
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Preview unavailable.');
+    const unavailable = container.querySelector('[data-builder-preview-unavailable="true"]');
+    expect(unavailable?.getAttribute('role')).toBe('status');
+    expect(unavailable?.textContent).toContain('Preview unavailable');
+    expect(unavailable?.textContent).toContain('safe preview');
+    expect(unavailable?.textContent).toContain('source files and changes');
+    expect(unavailable?.textContent).toContain('runtime preview support');
+    expect(unavailable?.textContent).toContain('Three.js');
     expect(container.querySelector('iframe')).toBeNull();
   });
 });

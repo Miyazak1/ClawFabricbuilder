@@ -9,7 +9,24 @@ export type BuilderStaticPreviewProps = {
 
 export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
   if (!isTrustedBuilderSourceTreePreviewProjection(projection)) {
-    return <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">Preview unavailable.</p>;
+    return (
+      <section
+        aria-label="Project preview unavailable"
+        className="cf-builder-static-preview cf-builder-preview-unavailable flex min-h-0 flex-col gap-1.5"
+        data-builder-preview-unavailable="true"
+        role="status"
+      >
+        <h2 className="cf-builder-preview-unavailable-title">Preview unavailable</h2>
+        <p className="cf-builder-preview-note">
+          Visual preview is not available for this project. This safe preview can show static HTML
+          and CSS only. Review the source files and changes before saving.
+        </p>
+        <p className="cf-builder-preview-note">
+          JavaScript modules, Three.js, canvas animation, network assets, local servers, and backend
+          code need runtime preview support.
+        </p>
+      </section>
+    );
   }
 
   return (
@@ -24,9 +41,9 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
       </header>
       {projection.preview_script_admission === 'not_authorized' ? (
         <p className="cf-builder-preview-note" data-builder-preview-limitation="true">
-          Static preview does not run JavaScript modules, Three.js, canvas animation, network assets,
-          or app servers. If this pane is blank, review the files and changes; a runtime preview is
-          needed to run it.
+          This safe preview does not run JavaScript modules, Three.js, canvas animation, network
+          assets, local servers, or backend code. If the preview looks blank, review the files and
+          changes; runtime preview support is needed to run it.
         </p>
       ) : null}
       <iframe

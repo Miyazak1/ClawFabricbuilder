@@ -972,6 +972,10 @@ describe('BuilderPage v2', () => {
       .toContain('Version 1');
     expect(container.textContent).toContain('Review draft before continuing');
     expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
+      .toContain('Static preview is ready');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
+      .toContain('Three.js');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBeUndefined();
     expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
@@ -1422,7 +1426,8 @@ describe('BuilderPage v2', () => {
     expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('action-row');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
-    expect(reviewStrip?.textContent).toContain('Preview and changes are ready.');
+    expect(reviewStrip?.textContent).toContain('Static preview is ready.');
+    expect(reviewStrip?.textContent).toContain('Three.js');
     expect(reviewStrip?.textContent).not.toMatch(
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
     );
@@ -1780,7 +1785,11 @@ describe('BuilderPage v2', () => {
     );
 
     expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-result-flow="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
+      .toContain('Preview unavailable');
+    expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
+      .toContain('runtime preview support');
     expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
       .toBe('');
     expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
