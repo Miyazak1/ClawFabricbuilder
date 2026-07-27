@@ -1177,7 +1177,6 @@ export function BuilderPage({
     draft?.source_tree ?? null,
   ), [draft, saved]);
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
-  const sourceDisclosureOpen = selected !== null;
   const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
   const showResultFlow = preview !== null || showPreviewUnavailableResult;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
@@ -1193,6 +1192,13 @@ export function BuilderPage({
     inspected?.target.revision_receipt_digest ?? 'no-inspected',
     saved?.target.revision_receipt_digest ?? 'no-saved',
   ].join('|');
+  const sourceDisclosureIdentity = [
+    draft?.draft_id ?? 'no-draft',
+    inspected?.target.revision_receipt_digest ?? 'no-inspected',
+    saved?.target.revision_receipt_digest ?? 'no-saved',
+    sourceFile?.path ?? 'no-source',
+    files.length,
+  ].join('|');
   const [changesPanelState, setChangesPanelState] = useState<Readonly<{
     identity: string;
     open: boolean;
@@ -1203,6 +1209,20 @@ export function BuilderPage({
   const changesPanelOpen = changesPanelState.identity === changesPanelIdentity
     ? changesPanelState.open
     : false;
+  const [sourceDisclosureState, setSourceDisclosureState] = useState<Readonly<{
+    identity: string;
+    open: boolean;
+  }>>(() => ({
+    identity: sourceDisclosureIdentity,
+    open: false,
+  }));
+  const sourceDisclosureOpen = sourceFile !== null && (
+    selected !== null
+    || (
+      sourceDisclosureState.identity === sourceDisclosureIdentity
+      && sourceDisclosureState.open
+    )
+  );
   const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
   const showReviewSidebar = saved !== null && !hasUnsavedDraft;
   const activityFollowCursor = (() => {
@@ -1271,6 +1291,18 @@ export function BuilderPage({
       }
       return {
         identity: changesPanelIdentity,
+        open,
+      };
+    });
+  }
+
+  function setSourceDisclosureOpen(open: boolean): void {
+    setSourceDisclosureState((disclosureState) => {
+      if (disclosureState.identity === sourceDisclosureIdentity && disclosureState.open === open) {
+        return disclosureState;
+      }
+      return {
+        identity: sourceDisclosureIdentity,
         open,
       };
     });
@@ -1737,7 +1769,16 @@ export function BuilderPage({
                   ref={sourceDisclosureRef}
                   tabIndex={-1}
                 >
-                  <summary className="cf-builder-source-summary" data-builder-source-summary="true">
+                  <summary
+                    aria-expanded={sourceDisclosureOpen}
+                    className="cf-builder-source-summary"
+                    data-builder-source-summary="true"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      if (selected !== null) return;
+                      setSourceDisclosureOpen(!sourceDisclosureOpen);
+                    }}
+                  >
                     <span className="cf-builder-source-title">
                       <FileCode2 aria-hidden="true" className="size-3.5" />
                       Source files
@@ -1746,33 +1787,35 @@ export function BuilderPage({
                       {files.length} {files.length === 1 ? 'file' : 'files'} - {sourceFile.path}
                     </span>
                   </summary>
-                  <div className="cf-builder-source-body">
-                    <div className="cf-builder-source-files" aria-label="Project source files">
-                      {files.map((file) => {
-                        const active = sourceFile.path === file.path;
-                        return (
-                          <button
-                            className="cf-builder-source-file"
-                            data-active={active ? 'true' : undefined}
-                            data-builder-source-file={file.path}
-                            disabled={typeof onSelectFile !== 'function' || active}
-                            key={file.path}
-                            onClick={() => selectFile(file.path)}
-                            type="button"
-                          >
-                            <FileCode2 aria-hidden="true" className="size-3.5" />
-                            {file.path}
-                          </button>
-                        );
-                      })}
+                  {sourceDisclosureOpen ? (
+                    <div className="cf-builder-source-body">
+                      <div className="cf-builder-source-files" aria-label="Project source files">
+                        {files.map((file) => {
+                          const active = sourceFile.path === file.path;
+                          return (
+                            <button
+                              className="cf-builder-source-file"
+                              data-active={active ? 'true' : undefined}
+                              data-builder-source-file={file.path}
+                              disabled={typeof onSelectFile !== 'function' || active}
+                              key={file.path}
+                              onClick={() => selectFile(file.path)}
+                              type="button"
+                            >
+                              <FileCode2 aria-hidden="true" className="size-3.5" />
+                              {file.path}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <pre
+                        className="cf-builder-source-code"
+                        data-builder-source-code={sourceFile.path}
+                      >
+                        <code>{sourceFile.content}</code>
+                      </pre>
                     </div>
-                  <pre
-                    className="cf-builder-source-code"
-                    data-builder-source-code={sourceFile.path}
-                  >
-                    <code>{sourceFile.content}</code>
-                  </pre>
-                  </div>
+                  ) : null}
                 </details>
               )}
 

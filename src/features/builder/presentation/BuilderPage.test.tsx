@@ -2198,12 +2198,17 @@ describe('BuilderPage v2', () => {
     expect(source?.getAttribute('open')).toBeNull();
     expect(source?.querySelector('[data-builder-source-summary="true"]')?.textContent)
       .toContain('1 file - src/tool.py');
-    expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
-      .toContain('print("new")');
+    expect(container.querySelector('[data-builder-source-code="src/tool.py"]')).toBeNull();
+    expect(container.textContent).not.toContain('print("new")');
     expect(container.textContent).toContain('Visual preview is not available for this project.');
     expect(container.textContent).toContain('static HTML and CSS only');
     expect(container.textContent).toContain('Three.js');
     expect(container.textContent).not.toContain('This project has files, but no visual preview.');
+
+    click(container, '[data-builder-source-summary="true"]');
+    expect(source?.open).toBe(true);
+    expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
+      .toContain('print("new")');
   });
 
   it('keeps the provider-settings recovery action limited to configuration failures', async () => {
