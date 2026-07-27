@@ -169,12 +169,21 @@ function pendingPlanReviewTarget(
 function activityMessage(
   snapshot: BuilderConversationControllerSnapshot | null,
 ): string | null {
-  if (snapshot === null || snapshot.status === 'idle') return 'Select a project to see activity.';
+  if (snapshot === null || snapshot.status === 'idle') return null;
   if (snapshot.status === 'loading') return 'Loading activity...';
   if (snapshot.status === 'unavailable') return 'Activity is unavailable.';
   if (snapshot.status === 'stale') return 'Activity could not be refreshed.';
-  if (snapshot.conversation?.state === 'absent') return 'No activity yet.';
+  if (snapshot.conversation?.state === 'absent') return null;
   return null;
+}
+
+function shouldShowActivityPanel(snapshot: BuilderConversationControllerSnapshot | null): boolean {
+  if (snapshot === null || snapshot.status === 'idle' || snapshot.status === 'absent') return false;
+  if (activityItems(snapshot).length > 0) return true;
+  return snapshot.status === 'loading'
+    || snapshot.status === 'refreshing'
+    || snapshot.status === 'stale'
+    || snapshot.status === 'unavailable';
 }
 
 function versionHistoryMessage(
@@ -727,9 +736,9 @@ function ActivityPanel({
         {snapshot?.status === 'refreshing' ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {items.length === 0 ? (
+        {items.length === 0 && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
-            {message ?? 'No activity yet.'}
+            {message}
           </div>
         ) : (
           <ol className="cf-builder-activity-list">
@@ -816,6 +825,7 @@ export function BuilderPage({
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
   const history = visibleHistorySnapshot(historySnapshot);
+  const showActivity = shouldShowActivityPanel(activity);
   const planReviewTarget = pendingPlanReviewTarget(activity);
   const canReviewPlan = typeof onReviewPlan === 'function'
     && planReviewTarget !== null
@@ -1244,14 +1254,16 @@ export function BuilderPage({
               onScroll={updateChatFollowState}
               ref={chatScrollRef}
             >
-              <ActivityPanel
-                canReviewPlan={canReviewPlan}
-                hasUnsavedDraft={hasUnsavedDraft}
-                onRefresh={onRefreshConversation}
-                onReviewPlan={onReviewPlan}
-                pendingPlanReview={planReviewTarget}
-                snapshot={activity}
-              />
+              {showActivity ? (
+                <ActivityPanel
+                  canReviewPlan={canReviewPlan}
+                  hasUnsavedDraft={hasUnsavedDraft}
+                  onRefresh={onRefreshConversation}
+                  onReviewPlan={onReviewPlan}
+                  pendingPlanReview={planReviewTarget}
+                  snapshot={activity}
+                />
+              ) : null}
               {draftReview}
 
               {showResultFlow ? (

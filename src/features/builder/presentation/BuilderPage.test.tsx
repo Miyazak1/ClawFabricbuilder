@@ -119,6 +119,63 @@ async function candidateActivity(rejected = false) {
   return controller.load(PROJECT_ID);
 }
 
+async function absentActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => ({
+      stream_version: 'builder-task-stream-read-result.v1',
+      project_id: PROJECT_ID,
+      conversation: null,
+      authority: {
+        conversation: 'sqlite_canonical_event_replay_or_absent',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    }),
+  });
+  return controller.load(PROJECT_ID);
+}
+
+function loadingActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => new Promise(() => undefined),
+  });
+  void controller.load(PROJECT_ID);
+  return controller.getSnapshot();
+}
+
+async function unavailableActivity() {
+  const controller = createBuilderConversationController({
+    read: async () => {
+      throw new Error('private');
+    },
+  });
+  return controller.load(PROJECT_ID);
+}
+
+async function staleActivity() {
+  let fail = false;
+  const controller = createBuilderConversationController({
+    read: async () => {
+      if (fail) throw new Error('private');
+      return {
+        stream_version: 'builder-task-stream-read-result.v1',
+        project_id: PROJECT_ID,
+        conversation: null,
+        authority: {
+          conversation: 'sqlite_canonical_event_replay_or_absent',
+          project_source: 'not_included',
+          candidate_source: 'not_loaded',
+          project_revision: 'not_inferred',
+        },
+      };
+    },
+  });
+  await controller.load(PROJECT_ID);
+  fail = true;
+  return controller.refresh();
+}
+
 async function answerActivity() {
   const controller = createBuilderConversationController({
     read: async () => createAnswerTaskStreamWire(),
@@ -412,12 +469,14 @@ function setScrollMetrics(
 describe('BuilderPage v2', () => {
   it('renders a continuous composer without pretending a new project is saved', async () => {
     const { fresh } = await snapshots();
+    const activity = await absentActivity();
     const onAnswer = vi.fn();
     const onGenerate = vi.fn();
     const onInstructionChange = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
+        conversationSnapshot={activity}
         instruction="Make a timer."
         onAnswer={onAnswer}
         onGenerate={onGenerate}
@@ -431,12 +490,54 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Select a project to see activity.');
+    expect(container.textContent).not.toContain('No activity yet.');
     expect(container.textContent).not.toContain('Your result will appear here.');
     expect(container.textContent).not.toContain('Preview is isolated');
     click(container, '[data-builder-make-draft="true"]');
     expect(onGenerate).toHaveBeenCalledOnce();
     expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicit activity loading and failure states visible without empty placeholders', async () => {
+    const { fresh } = await snapshots();
+    const loading = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={loadingActivity()}
+        instruction="Make a timer."
+        snapshot={fresh}
+      />,
+    );
+    expect(loading.querySelector('[data-builder-activity="true"]')).not.toBeNull();
+    expect(loading.textContent).toContain('Loading activity...');
+    expect(loading.textContent).not.toContain('No activity yet.');
+
+    const unavailable = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={await unavailableActivity()}
+        instruction="Make a timer."
+        snapshot={fresh}
+      />,
+    );
+    expect(unavailable.querySelector('[data-builder-activity="true"]')).not.toBeNull();
+    expect(unavailable.textContent).toContain('Activity is unavailable.');
+    expect(unavailable.textContent).not.toContain('No activity yet.');
+
+    const stale = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={await staleActivity()}
+        instruction="Make a timer."
+        snapshot={fresh}
+      />,
+    );
+    expect(stale.querySelector('[data-builder-activity="true"]')).not.toBeNull();
+    expect(stale.textContent).toContain('Activity could not be refreshed.');
+    expect(stale.textContent).not.toContain('No activity yet.');
   });
 
   it('submits the primary composer command with Enter without using Ask', async () => {
