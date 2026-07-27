@@ -518,6 +518,10 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    const notice = container.querySelector('[data-builder-conversation-notice="generation_failed"]');
+    expect(notice).not.toBeNull();
+    expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
     click(container, '[data-builder-retry-draft="true"]');
 
     expect(onRetryGenerate).toHaveBeenCalledOnce();
@@ -555,6 +559,10 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    const notice = container.querySelector('[data-builder-conversation-notice="generating"]');
+    expect(notice?.textContent).toContain('Making your draft...');
+    expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
     click(container, '[data-builder-cancel-work="true"]');
     expect(onCancel).toHaveBeenCalledOnce();
@@ -683,6 +691,7 @@ describe('BuilderPage v2', () => {
     expect(preview?.textContent).not.toContain('Preview is isolated');
     expect(composer?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(composer?.querySelector('.cf-builder-alert')).toBeNull();
     expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(versions?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(conversation?.querySelector('.cf-builder-side-header')).toBeNull();
@@ -1193,6 +1202,10 @@ describe('BuilderPage v2', () => {
     );
     expect(container.textContent).toContain('The save result could not be confirmed.');
     expect(container.textContent).toContain('Try Save again');
+    const notice = container.querySelector('[data-builder-conversation-notice="save_unknown"]');
+    expect(notice).not.toBeNull();
+    expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
   });
 });

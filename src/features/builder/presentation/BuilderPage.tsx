@@ -321,6 +321,23 @@ function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null,
     : 'Review this draft before saving.';
 }
 
+function failedStatusMessage(
+  status: BuilderProjectControllerStatus,
+  error: BuilderProjectControllerSnapshot['error'],
+): string {
+  if (status === 'answer_failed') {
+    if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
+    if (error === 'builder_generation_timeout') return 'Answering took too long. Try again.';
+    if (error === 'builder_generation_provider_http_error') return 'The AI service could not answer. Try again.';
+    return 'The answer could not be prepared. Try again.';
+  }
+  if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
+  if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
+  if (error === 'builder_generation_provider_http_error') return 'The AI service could not make this draft. Try again.';
+  if (error === 'builder_generation_structured_response_invalid') return 'The draft could not be prepared. Try again.';
+  return 'The draft could not be made. Try again.';
+}
+
 function changeLabel(change: BuilderSourceTreeChange): string {
   if (change.change_kind === 'added') return 'Added';
   if (change.change_kind === 'deleted') return 'Removed';
@@ -847,6 +864,151 @@ export function BuilderPage({
     onGenerate?.();
   }
 
+  const conversationNotice = (() => {
+    if (status === 'opening') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="opening"
+          role="status"
+        >
+          Opening your project...
+        </p>
+      );
+    }
+    if (status === 'generating') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="generating"
+          role="status"
+        >
+          Making your draft...
+        </p>
+      );
+    }
+    if (status === 'answering') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="answering"
+          role="status"
+        >
+          Answering...
+        </p>
+      );
+    }
+    if (status === 'saving') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="saving"
+          role="status"
+        >
+          Saving this version...
+        </p>
+      );
+    }
+    if (status === 'rejecting') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="rejecting"
+          role="status"
+        >
+          Discarding this draft...
+        </p>
+      );
+    }
+    if (failed) {
+      return (
+        <div
+          className="cf-builder-alert cf-builder-alert-danger cf-builder-chat-notice flex flex-col gap-2 text-sm"
+          data-builder-conversation-notice={status}
+          role="alert"
+        >
+          <p>{failedStatusMessage(status, current?.error ?? null)}</p>
+          {canOpenSettings ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium"
+              onClick={onOpenSettings}
+              type="button"
+            >
+              Check AI settings
+            </button>
+          ) : null}
+          {canRetryGenerate ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium"
+              data-builder-retry-draft="true"
+              onClick={onRetryGenerate}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" className="size-4" />
+              Retry
+            </button>
+          ) : null}
+        </div>
+      );
+    }
+    if (status === 'save_unknown') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-danger cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="save_unknown"
+          role="alert"
+        >
+          The save result could not be confirmed. Your draft is still available; check the project and try again.
+        </p>
+      );
+    }
+    if (status === 'reject_failed') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-danger cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="reject_failed"
+          role="alert"
+        >
+          The draft could not be discarded. Your draft is still available; try again.
+        </p>
+      );
+    }
+    if (status === 'preview_unavailable' && hasContent) {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="preview_unavailable"
+          role="status"
+        >
+          A visual preview is not available for this project. You can still review and save its files.
+        </p>
+      );
+    }
+    if (status === 'conflict') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-danger cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="conflict"
+          role="alert"
+        >
+          This project changed before the saved version could be verified.
+        </p>
+      );
+    }
+    if (status === 'unavailable') {
+      return (
+        <p
+          className="cf-builder-alert cf-builder-alert-danger cf-builder-chat-notice text-sm"
+          data-builder-conversation-notice="unavailable"
+          role="alert"
+        >
+          This project is unavailable.
+        </p>
+      );
+    }
+    return null;
+  })();
+
   const draftReview = hasUnsavedDraft ? (
     <section
       aria-label="Draft review"
@@ -971,88 +1133,6 @@ export function BuilderPage({
           </div>
         </footer>
       </div>
-
-      {status === 'opening' ? (
-        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Opening your project...</p>
-      ) : null}
-      {status === 'generating' ? (
-        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Making your draft...</p>
-      ) : null}
-      {status === 'answering' ? (
-        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Answering...</p>
-      ) : null}
-      {status === 'saving' ? (
-        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Saving this version...</p>
-      ) : null}
-      {status === 'rejecting' ? (
-        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Discarding this draft...</p>
-      ) : null}
-      {failed ? (
-        <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
-          <p>{status === 'answer_failed'
-            ? (current?.error === 'builder_generation_provider_unavailable'
-              ? 'AI is not configured yet.'
-              : current?.error === 'builder_generation_timeout'
-                ? 'Answering took too long. Try again.'
-                : current?.error === 'builder_generation_provider_http_error'
-                  ? 'The AI service could not answer. Try again.'
-                  : 'The answer could not be prepared. Try again.')
-            : current?.error === 'builder_generation_provider_unavailable'
-              ? 'AI generation is not configured yet.'
-              : current?.error === 'builder_generation_timeout'
-                ? 'Making this draft took too long. Try again.'
-                : current?.error === 'builder_generation_provider_http_error'
-                  ? 'The AI service could not make this draft. Try again.'
-                  : current?.error === 'builder_generation_structured_response_invalid'
-                    ? 'The draft could not be prepared. Try again.'
-                    : 'The draft could not be made. Try again.'}</p>
-          {canOpenSettings ? (
-            <button
-              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium"
-              onClick={onOpenSettings}
-              type="button"
-            >
-              Check AI settings
-            </button>
-          ) : null}
-          {canRetryGenerate ? (
-            <button
-              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium"
-              data-builder-retry-draft="true"
-              onClick={onRetryGenerate}
-              type="button"
-            >
-              <RefreshCw aria-hidden="true" className="size-4" />
-              Retry
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {status === 'save_unknown' ? (
-        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-          The save result could not be confirmed. Your draft is still available; check the project and try again.
-        </p>
-      ) : null}
-      {status === 'reject_failed' ? (
-        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-          The draft could not be discarded. Your draft is still available; try again.
-        </p>
-      ) : null}
-      {status === 'preview_unavailable' && hasContent ? (
-        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">
-          A visual preview is not available for this project. You can still review and save its files.
-        </p>
-      ) : null}
-      {status === 'conflict' ? (
-        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-          This project changed before the saved version could be verified.
-        </p>
-      ) : null}
-      {status === 'unavailable' ? (
-        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-          This project is unavailable.
-        </p>
-      ) : null}
     </section>
   );
 
@@ -1195,6 +1275,8 @@ export function BuilderPage({
                   </div>
                 </details>
               )}
+
+              {conversationNotice}
             </div>
 
             {composer}

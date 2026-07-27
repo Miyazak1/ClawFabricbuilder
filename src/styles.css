@@ -434,6 +434,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   width: min(860px, 100%);
 }
 
+.cf-builder-chat-notice {
+  justify-self: center;
+}
+
 .cf-builder-review-sidebar {
   display: grid;
   min-height: 0;
