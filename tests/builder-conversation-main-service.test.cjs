@@ -7,6 +7,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  APPROVED_PLAN_READ_RESULT_VERSION,
   createBuilderConversationMainService,
 } = require('../electron/builder-conversation-main-service.cjs');
 const {
@@ -532,6 +533,15 @@ test('records a proposed plan from a run-bound plan record after successful tool
       /export const|src\/app|private_source_context|context_digest|head_digest|record_digest|provider|credential|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
     );
 
+    assert.throws(
+      () => item.service.read_approved_plan({
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
     const reviewed = item.service.review_plan({
       project_id: PROJECT_ID,
       conversation_id: context.conversation.conversation_id,
@@ -561,6 +571,35 @@ test('records a proposed plan from a run-bound plan record after successful tool
     assert.doesNotMatch(
       JSON.stringify(reviewedStream),
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|export const|src\/app|private_source_context|context_digest|head_digest|record_digest|provider|credential|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
+    );
+    const approvedPlan = item.service.read_approved_plan({
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+    });
+    assert.equal(approvedPlan.result_version, APPROVED_PLAN_READ_RESULT_VERSION);
+    assert.equal(approvedPlan.project_id, PROJECT_ID);
+    assert.equal(approvedPlan.conversation_id, context.conversation.conversation_id);
+    assert.equal(approvedPlan.turn_id, context.ids.turn_id);
+    assert.equal(approvedPlan.task_id, context.ids.task_id);
+    assert.equal(approvedPlan.run_id, context.ids.run_id);
+    assert.equal(approvedPlan.decision, 'approved');
+    assert.equal(approvedPlan.plan_result_digest, plan.record_digest);
+    assert.equal(approvedPlan.conversation_head.sequence, 7);
+    assert.equal(approvedPlan.authority.conversation, 'sqlite_replay_current_head_verified');
+    assert.equal(approvedPlan.authority.plan_review, 'approved_current_head');
+    assert.equal(approvedPlan.authority.renderer_authority, 'not_present');
+    assert.equal(approvedPlan.authority.provider_dispatch, false);
+    assert.equal(approvedPlan.authority.tool_dispatch, 'not_performed');
+    assert.equal(approvedPlan.authority.source_mutation, 'not_performed');
+    assert.equal(approvedPlan.authority.git_authority, 'not_present');
+    assert.equal(approvedPlan.authority.revision_admission, 'not_created');
+    assert.equal(Object.isFrozen(approvedPlan), true);
+    assert.equal(Object.isFrozen(approvedPlan.authority), true);
+    assert.doesNotMatch(
+      JSON.stringify(approvedPlan),
+      /review_id|reviewer_id|reviewed_at_ms|export const|src\/app|private_source_context|context_digest|head_digest|provider_config|provider_secret|credential|base_url|model|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
     );
     assert.throws(
       () => item.service.review_plan({
@@ -593,10 +632,130 @@ test('records a proposed plan from a run-bound plan record after successful tool
       nowMs: () => 9_000,
     });
     assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), reviewedStream);
+    assert.deepEqual(
+      restartedService.read_approved_plan({
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+      }),
+      approvedPlan,
+    );
   } finally {
     if (restartedDatabase !== null) restartedDatabase.close();
     else item.database.close();
     removeRoot(item.root);
+  }
+});
+
+test('reads only the current approved plan and rejects stale or rejected plan facts', async () => {
+  const approvedItem = fixture();
+  const rejectedItem = fixture(300, 3_000);
+  try {
+    const approvedContext = begin(approvedItem.service);
+    const call = await toolCallRecord(approvedContext);
+    const requested = approvedItem.service.record_tool_call_request({
+      context: approvedContext,
+      tool_call_record: call,
+    });
+    const resultRecord = toolResultRecord(call, {
+      result: {
+        status: 'succeeded',
+        summary_code: 'completed_without_raw_output',
+      },
+    });
+    const settled = approvedItem.service.record_tool_result({
+      context: requested,
+      runtime_invocation_admission: resultRecord.runtime_invocation_admission,
+      tool_result_record: resultRecord,
+    });
+    const sourceContext = sourceContextResult(settled, {
+      reads: [{
+        resource_id: 'project:/src/app.tsx',
+        status: 'succeeded',
+        tool_call_id: call.tool_call_id,
+      }],
+    });
+    approvedItem.service.complete_plan({
+      context: settled,
+      source_context_result: sourceContext,
+      plan_proposal_record: planProposalRecord(settled, { source_context_result: sourceContext }),
+    });
+    approvedItem.service.review_plan({
+      project_id: PROJECT_ID,
+      conversation_id: approvedContext.conversation.conversation_id,
+      turn_id: approvedContext.ids.turn_id,
+      run_id: approvedContext.ids.run_id,
+      decision: 'approved',
+    });
+    assert.equal(
+      approvedItem.service.read_approved_plan({
+        project_id: PROJECT_ID,
+        conversation_id: approvedContext.conversation.conversation_id,
+        turn_id: approvedContext.ids.turn_id,
+        run_id: approvedContext.ids.run_id,
+      }).decision,
+      'approved',
+    );
+    begin(approvedItem.service, BASE_REVISION, 'Start a newer turn after approving the plan');
+    assert.throws(
+      () => approvedItem.service.read_approved_plan({
+        project_id: PROJECT_ID,
+        conversation_id: approvedContext.conversation.conversation_id,
+        turn_id: approvedContext.ids.turn_id,
+        run_id: approvedContext.ids.run_id,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+
+    const rejectedContext = begin(rejectedItem.service);
+    const rejectedCall = await toolCallRecord(rejectedContext);
+    const rejectedRequested = rejectedItem.service.record_tool_call_request({
+      context: rejectedContext,
+      tool_call_record: rejectedCall,
+    });
+    const rejectedResultRecord = toolResultRecord(rejectedCall, {
+      result: {
+        status: 'succeeded',
+        summary_code: 'completed_without_raw_output',
+      },
+    });
+    const rejectedSettled = rejectedItem.service.record_tool_result({
+      context: rejectedRequested,
+      runtime_invocation_admission: rejectedResultRecord.runtime_invocation_admission,
+      tool_result_record: rejectedResultRecord,
+    });
+    const rejectedSourceContext = sourceContextResult(rejectedSettled, {
+      reads: [{
+        resource_id: 'project:/src/app.tsx',
+        status: 'succeeded',
+        tool_call_id: rejectedCall.tool_call_id,
+      }],
+    });
+    rejectedItem.service.complete_plan({
+      context: rejectedSettled,
+      source_context_result: rejectedSourceContext,
+      plan_proposal_record: planProposalRecord(rejectedSettled, { source_context_result: rejectedSourceContext }),
+    });
+    rejectedItem.service.review_plan({
+      project_id: PROJECT_ID,
+      conversation_id: rejectedContext.conversation.conversation_id,
+      turn_id: rejectedContext.ids.turn_id,
+      run_id: rejectedContext.ids.run_id,
+      decision: 'rejected',
+    });
+    assert.throws(
+      () => rejectedItem.service.read_approved_plan({
+        project_id: PROJECT_ID,
+        conversation_id: rejectedContext.conversation.conversation_id,
+        turn_id: rejectedContext.ids.turn_id,
+        run_id: rejectedContext.ids.run_id,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+  } finally {
+    approvedItem.close();
+    rejectedItem.close();
   }
 });
 
@@ -1890,6 +2049,8 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
     path.join(__dirname, '..', 'electron', 'builder-conversation-main-service.cjs'),
     'utf8',
   );
+  assert.match(source, /read_approved_plan/u);
+  assert.match(source, /main_only_current_head_approval_gate/u);
   assert.doesNotMatch(
     source,
     /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit|builder-git-project-repository/iu,

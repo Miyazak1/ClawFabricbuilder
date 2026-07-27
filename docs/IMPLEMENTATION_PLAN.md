@@ -349,6 +349,14 @@ Evidence requirements:
   renderer-safe Task Stream exposes only the `plan_reviewed` decision/plan
   state, never the plan digest, reviewer identity, timestamps, or private
   plan/source evidence;
+- the current approved-plan read checkpoint gives a future main-side agent loop
+  a narrow way to consume that approval: Conversation main service returns a
+  compact approved-plan fact only when canonical replay proves the matching
+  approved plan review is the current conversation head. It exposes no
+  IPC/preload command, renderer projection, review identity, timestamp, private
+  source context, provider credential/config, tool dispatch, source mutation,
+  Git evidence, Save, or Project Revision authority, and rejects stale or
+  rejected plan facts;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

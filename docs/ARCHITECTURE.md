@@ -38,6 +38,13 @@ Revision. The renderer-safe Task Stream receives only the public
 digests, source context, provider facts, Git evidence, Save authority, and
 Project Revision facts remain outside the projection.
 
+The Conversation main service can also read a compact approved-plan fact for a
+future main-side agent loop, but only when replay proves that the matching
+approved plan review is the current conversation head. This read has no
+IPC/preload surface, no renderer projection, no review identity or timestamp,
+and no source mutation, provider dispatch, Git evidence, Save authority, or
+Project Revision authority. Stale or rejected plan facts fail closed.
+
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
 Builder Project Revision is a SQLite product receipt that binds a Project,

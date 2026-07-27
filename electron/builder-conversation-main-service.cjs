@@ -49,6 +49,7 @@ const {
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
+const APPROVED_PLAN_READ_RESULT_VERSION = 'builder-conversation-approved-plan-read-result.v1';
 const OPTION_KEYS = Object.freeze(['metadataAuthority', 'createUuid', 'nowMs']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -395,6 +396,19 @@ function sanitizeQuestionRequest(value) {
     question: safeText(valueAt(value, 'question'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+  });
+}
+
+function sanitizePlanRunReference(value) {
+  exactObject(value, ['project_id', 'conversation_id', 'turn_id', 'run_id']);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
+  const conversationId = safePattern(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN);
+  if (conversationId !== `builder-conversation:${projectUuid(projectId)}`) fail();
+  return freezeDeep({
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN),
+    run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN),
   });
 }
 
@@ -1739,6 +1753,63 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function readApprovedPlan(rawRequest) {
+    try {
+      const request = sanitizePlanRunReference(rawRequest);
+      const state = load(request.project_id, request.conversation_id);
+      if (state === null || state.snapshot.active_turn_id !== null) fail();
+      const reviewEvent = state.events.at(-1) ?? null;
+      const reviewPayload = reviewEvent?.payload ?? null;
+      const turn = state.snapshot.turns.find((item) => item.turn_id === request.turn_id) ?? null;
+      const run = turn?.runs.find((item) => item.run_id === request.run_id) ?? null;
+      if (
+        reviewEvent === null
+        || reviewEvent.event_type !== 'plan_reviewed'
+        || reviewPayload === null
+        || valueAt(reviewPayload, 'turn_id') !== request.turn_id
+        || valueAt(reviewPayload, 'run_id') !== request.run_id
+        || valueAt(reviewPayload, 'decision') !== 'approved'
+        || turn === null
+        || turn.status !== 'completed'
+        || turn.outcome !== 'plan_proposed'
+        || turn.mode !== 'work'
+        || turn.task === null
+        || run === null
+        || run.status !== 'completed'
+        || run.terminal_status !== 'succeeded'
+        || run.result_kind !== 'plan'
+        || run.result_digest === null
+        || run.plan_review === null
+        || run.plan_review.decision !== 'approved'
+        || run.plan_review.plan_result_digest !== run.result_digest
+        || valueAt(reviewPayload, 'plan_result_digest') !== run.result_digest
+      ) fail();
+      return freezeDeep({
+        result_version: APPROVED_PLAN_READ_RESULT_VERSION,
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        turn_id: request.turn_id,
+        task_id: turn.task.task_id,
+        run_id: request.run_id,
+        decision: 'approved',
+        plan_result_digest: run.result_digest,
+        conversation_head: { ...state.head },
+        authority: {
+          conversation: 'sqlite_replay_current_head_verified',
+          plan_review: 'approved_current_head',
+          renderer_authority: 'not_present',
+          provider_dispatch: false,
+          tool_dispatch: 'not_performed',
+          source_mutation: 'not_performed',
+          git_authority: 'not_present',
+          revision_admission: 'not_created',
+        },
+      });
+    } catch {
+      fail();
+    }
+  }
+
   function reviewPlan(rawRequest) {
     try {
       exactObject(rawRequest, ['project_id', 'conversation_id', 'turn_id', 'run_id', 'decision']);
@@ -1848,6 +1919,7 @@ function createBuilderConversationMainService(rawOptions) {
     read_candidate_draft: readCandidateDraft,
     accept_candidate: acceptCandidate,
     reject_candidate: rejectCandidate,
+    read_approved_plan: readApprovedPlan,
     review_plan: reviewPlan,
     read_stream: readStream,
     authority: Object.freeze({
@@ -1864,11 +1936,13 @@ function createBuilderConversationMainService(rawOptions) {
       tool_runtime_invocation: 'main_only_runtime_envelope_no_execution',
       plan_proposal_recording: 'main_only_digest_terminal_event',
       plan_review_recording: 'main_only_review_fact_no_execution',
+      approved_plan_read: 'main_only_current_head_approval_gate',
     }),
   });
 }
 
 module.exports = Object.freeze({
+  APPROVED_PLAN_READ_RESULT_VERSION,
   BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
   BuilderConversationMainServiceError,
   createBuilderConversationMainService,
