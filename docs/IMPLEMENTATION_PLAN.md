@@ -550,6 +550,14 @@ Current checkpoint:
   rows, dispatches no providers or tools, grants no permissions, reads no
   credentials or source, and mutates no Git, Project Revision, Review, or
   Artifact authority.
+- the current Agent assignment store persists those assignment and status
+  records in a strict main-only SQLite store with restart restore, idempotent
+  replay, owner-scoped reads, task-scoped listing, duplicate Agent/Run
+  protection, ordered queued/active/paused/cancelled/completed status
+  transitions, schema fingerprint verification, and fixed redacted failures. It
+  exposes no IPC/preload, shows no Agents UI, dispatches no providers or tools,
+  grants no permissions, reads no credentials or source, mutates no Git or
+  Project Revision facts, and creates no Review/Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 

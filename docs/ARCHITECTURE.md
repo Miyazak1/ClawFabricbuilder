@@ -129,12 +129,15 @@ Run, Review decision, and Artifact evidence to Git object IDs. It must not copy
 source files into a second JSON revision chain.
 
 Future Goal, Task, Run, Artifact, Review, Permission grant UI/tool enforcement,
-Contribution, Agent assignment/supervision, Delegation, Workflow Version,
-Space/Membership, Identity/Contact/Conversation, and Publication authorities
-must be added independently and must not be inferred from chat, community,
-model identity, renderer state, or Git metadata alone. The current Agent
-Definition store is only an internal identity/version/lifecycle fact authority:
-it persists owner-bound Agent records in main-owned SQLite, but it exposes no
+Contribution, Agent supervision, Delegation, Workflow Version, Space/Membership,
+Identity/Contact/Conversation, and Publication authorities must be added
+independently and must not be inferred from chat, community, model identity,
+renderer state, or Git metadata alone. The current Agent Definition store is
+only an internal identity/version/lifecycle fact authority: it persists
+owner-bound Agent records in main-owned SQLite. The current Agent Assignment
+store is only an internal owner-supervised assignment/status fact authority: it
+persists one Agent version binding to a Project/Conversation/Task/Run and
+ordered assignment status records in main-owned SQLite. Neither store exposes
 Agents UI, IPC/preload command, permission grant, provider/tool dispatch,
 source read, Git mutation, Review, Revision, or Artifact authority.
 

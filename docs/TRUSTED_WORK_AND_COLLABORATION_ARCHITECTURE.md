@@ -25,12 +25,13 @@ facts, but may not replace or mutate them implicitly.
 | Communication | Conversation Thread, Message, delivery and privacy facts | unread badge, chat summary |
 | Published work | Publication bound to a Project/Artifact Version | feed card, profile page |
 
-The current implementation has a real local Project Revision authority and a
-main-only local Agent Definition/Version/lifecycle record store. The Agent store
-is not visible activation: it creates no Agent assignment, Delegation, Run
-supervision, permission grant, tool/provider dispatch, Review, Revision, or
-Artifact authority. The remaining authorities are roadmap contracts and must be
-introduced through independent implementation gates.
+The current implementation has a real local Project Revision authority, a
+main-only local Agent Definition/Version/lifecycle record store, and a
+main-only local Agent Assignment/status record store. The Agent stores are not
+visible activation: they create no Delegation, Run supervision, permission
+grant, tool/provider dispatch, Review, Revision, or Artifact authority. The
+remaining authorities are roadmap contracts and must be introduced through
+independent implementation gates.
 
 ## Actor Model
 
