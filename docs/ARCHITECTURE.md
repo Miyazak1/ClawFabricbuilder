@@ -75,6 +75,15 @@ source content, Git evidence, Save authority, or Project Revision authority.
 This is durable work visibility, not a token-streaming or tool-execution
 protocol.
 
+The OpenAI-compatible provider transport also has a main-only streaming observer
+path. When the Generation host supplies an internal observer, the request uses a
+bounded `text/event-stream` response, assembles the same terminal generated-text
+result, and forwards only advisory delta text through a redacted
+Project/Conversation/Run envelope inside main. This path has no renderer
+IPC/preload exposure and does not project raw provider deltas into the Task
+Stream; user-visible token output and tool-output streaming still require
+separate projection and UI gates.
+
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
 Builder Project Revision is a SQLite product receipt that binds a Project,

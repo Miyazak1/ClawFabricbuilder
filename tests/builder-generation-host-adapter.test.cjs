@@ -247,6 +247,42 @@ test('reports fixed generation progress stages around provider transport', async
   ]);
 });
 
+test('observes provider output deltas with the current run context', async () => {
+  const observed = [];
+  let controlKeys = [];
+  const rawRequest = request();
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    onOutputDelta(event) {
+      observed.push(event);
+      throw new Error(PRIVATE_MARKER);
+    },
+    transport: async (_input, control) => {
+      controlKeys = Reflect.ownKeys(control).sort();
+      await control.on_output_delta({ delta_text: '{"kind"' });
+      await control.on_output_delta({ delta_text: ':"builder_code_project"}' });
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  }));
+
+  const result = await adapter.generate(rawRequest);
+
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.deepEqual(controlKeys, ['on_output_delta', 'signal']);
+  assert.deepEqual(observed.map((event) => event.delta_text), [
+    '{"kind"',
+    ':"builder_code_project"}',
+  ]);
+  assert.equal(observed[0].context.project_id, PROJECT_ID);
+  assert.equal(observed[0].context.turn_id, TURN_ID);
+  assert.equal(observed[0].context.task_id, TASK_ID);
+  assert.equal(observed[0].context.run_id, RUN_ID);
+  assert.equal(Object.isFrozen(observed[0]), true);
+  assert.doesNotMatch(JSON.stringify(observed), /real-key|provider\.example|builder-model/iu);
+});
+
 test('generates a bounded explanation without candidate or Git context', async () => {
   const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
   const base = sourceTree([{ path: 'src/app.js', content: 'export const saved = true;\n' }]);

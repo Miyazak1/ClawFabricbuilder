@@ -58,6 +58,33 @@ function response(payload, overrides = {}) {
   };
 }
 
+function streamResponse(chunks, overrides = {}) {
+  const encoder = new TextEncoder();
+  const bytes = chunks.map((chunk) => (
+    chunk instanceof Uint8Array ? chunk : encoder.encode(chunk)
+  ));
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      for (const chunk of bytes) controller.enqueue(chunk);
+      controller.close();
+    },
+    cancel() { cancelled = true; },
+  });
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'content-type': 'text/event-stream' }),
+    body,
+    wasCancelled: () => cancelled,
+    ...overrides,
+  };
+}
+
+function sse(payload) {
+  return `data: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}\n\n`;
+}
+
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof BuilderOpenAICompatibleTransportError);
@@ -95,6 +122,64 @@ test('posts one fixed non-streaming Builder request and returns only bounded gen
     temperature: 0.2,
     max_tokens: 4096,
   });
+});
+
+test('posts a fixed streaming Builder request when an output observer is supplied', async () => {
+  const calls = [];
+  const deltas = [];
+  const stream = [
+    ': keep-alive\n\n',
+    sse({ choices: [{ finish_reason: null, delta: { role: 'assistant' } }] }),
+    sse({ choices: [{ finish_reason: null, delta: { content: '{"kind"' } }] }),
+    sse({ choices: [{ finish_reason: null, delta: { content: ':"builder_code_project"}' } }] }),
+    sse({ choices: [{ finish_reason: 'stop', delta: {} }] }),
+    sse('[DONE]'),
+  ].join('');
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return streamResponse([stream.slice(0, 67), stream.slice(67)]);
+    },
+  });
+  const controller = new AbortController();
+  const result = await transport(request(), {
+    signal: controller.signal,
+    on_output_delta(event) {
+      deltas.push(event);
+      if (event.delta_text === '{"kind"') throw new Error(PRIVATE_MARKER);
+    },
+  });
+
+  assert.deepEqual(result, {
+    transport_version: 'builder-openai-compatible-transport.v1',
+    generated_text: '{"kind":"builder_code_project"}',
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].headers.Accept, 'text/event-stream');
+  assert.equal(JSON.parse(calls[0][1].body).stream, true);
+  assert.deepEqual(deltas.map((event) => event.delta_text), [
+    '{"kind"',
+    ':"builder_code_project"}',
+  ]);
+  assert.equal(Object.isFrozen(deltas[0]), true);
+});
+
+test('rejects malformed streaming provider events behind fixed errors', async () => {
+  const cases = [
+    response(providerPayload(), { headers: new Headers({ 'content-type': 'application/json' }) }),
+    streamResponse(['data: {not-json}\n\n', sse('[DONE]')]),
+    streamResponse([sse({ choices: [] }), sse('[DONE]')]),
+    streamResponse([sse({ choices: [{ finish_reason: 'length', delta: { content: '{}' } }] }), sse('[DONE]')]),
+    streamResponse([sse({ choices: [{ finish_reason: null, delta: { content: '' } }] }), sse('[DONE]')]),
+    streamResponse([sse({ choices: [{ finish_reason: null, delta: { content: '{}' } }] })]),
+  ];
+  for (const value of cases) {
+    const transport = createBuilderOpenAICompatibleTransport({ fetchImpl: async () => value });
+    await expectCode(
+      transport(request(), { signal: new AbortController().signal, on_output_delta() {} }),
+      'builder_provider_structured_response_invalid',
+    );
+  }
 });
 
 test('disables thinking only for official DeepSeek V4 endpoints and models', async () => {
@@ -280,6 +365,14 @@ test('rejects forged control and contains timer or cleanup failures behind fixed
   const controller = new AbortController();
   await expectCode(
     transport(request(), new Proxy({ signal: controller.signal }, {})),
+    'builder_provider_request_invalid',
+  );
+  await expectCode(
+    transport(request(), { signal: controller.signal, on_output_delta: 'not-a-function' }),
+    'builder_provider_request_invalid',
+  );
+  await expectCode(
+    transport(request(), { signal: controller.signal, on_output_delta() {}, extra: true }),
     'builder_provider_request_invalid',
   );
   const accessor = {};

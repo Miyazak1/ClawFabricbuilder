@@ -216,6 +216,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
     ? createBuilderOpenAICompatibleTransport()
     : requiredMethod(options.transport);
   const onProgress = options.onProgress === undefined ? null : requiredMethod(options.onProgress);
+  const onOutputDelta = options.onOutputDelta === undefined ? null : requiredMethod(options.onOutputDelta);
   const inFlight = new Map();
   const explanationInFlight = new Map();
 
@@ -271,6 +272,26 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  async function notifyOutputDelta(context, rawDelta, signal) {
+    if (onOutputDelta === null || signal.aborted) return;
+    try {
+      const source = exactObject(rawDelta, ['delta_text'], 'builder_generation_structured_response_invalid');
+      const deltaText = ownValue(source, 'delta_text', 'builder_generation_structured_response_invalid');
+      if (
+        typeof deltaText !== 'string'
+        || deltaText.length === 0
+        || hasUnpairedSurrogate(deltaText)
+        || Buffer.byteLength(deltaText, 'utf8') > 64 * 1024
+      ) return;
+      await Promise.resolve(Reflect.apply(onOutputDelta, undefined, [Object.freeze({
+        context,
+        delta_text: deltaText,
+      })]));
+    } catch {
+      // Output observation is advisory and cannot replace the final bounded generation result.
+    }
+  }
+
   async function run(request, controller) {
     let context = await boundedContext(
       request,
@@ -309,7 +330,12 @@ function createBuilderGenerationHostAdapter(options = {}) {
         timeout_ms: config.timeout_ms,
         ...(config.temperature === null ? {} : { temperature: config.temperature }),
         ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
-      }, { signal: controller.signal }]);
+      }, {
+        signal: controller.signal,
+        ...(onOutputDelta === null
+          ? {}
+          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+      }]);
     } catch (error) {
       mapTransportError(error, controller.signal);
     }
@@ -377,7 +403,12 @@ function createBuilderGenerationHostAdapter(options = {}) {
         timeout_ms: config.timeout_ms,
         ...(config.temperature === null ? {} : { temperature: config.temperature }),
         ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
-      }, { signal: controller.signal }]);
+      }, {
+        signal: controller.signal,
+        ...(onOutputDelta === null
+          ? {}
+          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+      }]);
     } catch (error) {
       mapTransportError(error, controller.signal);
     }

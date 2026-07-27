@@ -687,6 +687,60 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   });
 });
 
+test('observes provider output deltas through a redacted main-only envelope', async () => {
+  const observed = [];
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    onProviderOutputDelta(event) {
+      observed.push(event);
+      throw new Error(PRIVATE_MARKER);
+    },
+    transport: async (_input, control) => {
+      assert.equal(control.signal instanceof AbortSignal, true);
+      assert.equal(typeof control.on_output_delta, 'function');
+      await control.on_output_delta({ delta_text: '{"kind"' });
+      await control.on_output_delta({ delta_text: ':"builder_code_project"}' });
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  const raw = request();
+  const result = await service.generate(raw);
+
+  assert.equal(result.request_id, raw.request_digest);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.deepEqual(observed.map((event) => event.delta_text), [
+    '{"kind"',
+    ':"builder_code_project"}',
+  ]);
+  assert.deepEqual(Reflect.ownKeys(observed[0]).sort(), [
+    'conversation_id',
+    'delta_text',
+    'event_version',
+    'project_id',
+    'request_id',
+    'run_id',
+    'task_id',
+    'turn_id',
+  ]);
+  assert.equal(observed[0].event_version, 'builder-provider-output-delta-observed.v1');
+  assert.equal(observed[0].request_id, raw.request_digest);
+  assert.equal(observed[0].project_id, PROJECT_ID);
+  assert.match(observed[0].conversation_id, /^builder-conversation:/u);
+  assert.match(observed[0].turn_id, /^builder-turn:/u);
+  assert.match(observed[0].task_id, /^builder-task:/u);
+  assert.match(observed[0].run_id, /^builder-run:/u);
+  assert.equal(Object.isFrozen(observed[0]), true);
+  assert.doesNotMatch(
+    JSON.stringify(observed),
+    /credential|provider\.example|builder-model|source_tree|operations|git_request|receipt/iu,
+  );
+});
+
 test('prepares an approved-plan edit context from fresh conversation proof and current source without dispatch', async () => {
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],

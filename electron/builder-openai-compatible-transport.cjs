@@ -18,6 +18,7 @@ const REQUEST_KEYS = Object.freeze([
 ]);
 const OPTIONAL_REQUEST_KEYS = Object.freeze(['temperature', 'max_tokens']);
 const MESSAGE_KEYS = Object.freeze(['role', 'content']);
+const CONTROL_KEYS = Object.freeze(['signal', 'on_output_delta']);
 const DEEPSEEK_V4_MODELS = Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']);
 const ERROR_MESSAGES = Object.freeze({
   builder_provider_request_invalid: 'AI provider settings are invalid.',
@@ -321,9 +322,185 @@ function generatedTextFromPayload(payload) {
   return content;
 }
 
+function textChunk(value, maximumBytes, code) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || hasUnpairedSurrogate(value)
+    || Buffer.byteLength(value, 'utf8') > maximumBytes
+  ) fail(code);
+  return value;
+}
+
+function maybeStructuredDelta(payload) {
+  if (!isPlainObject(payload) || !Array.isArray(payload.choices) || payload.choices.length !== 1) {
+    fail('builder_provider_structured_response_invalid');
+  }
+  const choice = payload.choices[0];
+  if (!isPlainObject(choice)) fail('builder_provider_structured_response_invalid');
+  const finishReason = choice.finish_reason;
+  if (finishReason !== null && finishReason !== undefined && finishReason !== 'stop') {
+    fail('builder_provider_structured_response_invalid');
+  }
+  const delta = choice.delta;
+  if (delta === undefined) return '';
+  if (!isPlainObject(delta)) fail('builder_provider_structured_response_invalid');
+  const keys = Reflect.ownKeys(delta);
+  if (keys.some((key) => typeof key !== 'string' || !['role', 'content'].includes(key))) {
+    fail('builder_provider_structured_response_invalid');
+  }
+  if (
+    keys.includes('role')
+    && ownValue(delta, 'role', 'builder_provider_structured_response_invalid') !== 'assistant'
+  ) fail('builder_provider_structured_response_invalid');
+  if (!keys.includes('content')) return '';
+  const content = ownValue(delta, 'content', 'builder_provider_structured_response_invalid');
+  if (content === '') return '';
+  return textChunk(content, MAX_GENERATED_TEXT_BYTES, 'builder_provider_structured_response_invalid');
+}
+
+function eventBoundary(buffer) {
+  let selected = -1;
+  let width = 0;
+  for (const marker of ['\r\n\r\n', '\n\n', '\r\r']) {
+    const index = buffer.indexOf(marker);
+    if (index !== -1 && (selected === -1 || index < selected)) {
+      selected = index;
+      width = marker.length;
+    }
+  }
+  return selected === -1 ? null : { index: selected, width };
+}
+
+function sseDataPayload(eventText) {
+  const lines = eventText.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n').split('\n');
+  const data = [];
+  for (const line of lines) {
+    if (line.startsWith(':')) continue;
+    if (!line.startsWith('data:')) continue;
+    const value = line.startsWith('data: ') ? line.slice(6) : line.slice(5);
+    data.push(value);
+  }
+  return data.length === 0 ? null : data.join('\n');
+}
+
+async function notifyOutputDelta(callback, deltaText) {
+  if (callback === null) return;
+  try {
+    await Promise.resolve(Reflect.apply(callback, undefined, [Object.freeze({ delta_text: deltaText })]));
+  } catch {
+    // Streaming observation is advisory; the final bounded provider result remains authoritative.
+  }
+}
+
+async function readStreamingBody(response, signal, abortCode, onOutputDelta) {
+  const contentLength = responseHeader(response, 'content-length');
+  if (contentLength) {
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(contentLength)) {
+      cancelBody(response.body);
+      fail('builder_provider_structured_response_invalid');
+    }
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared) || declared > MAX_PROVIDER_RESPONSE_BYTES) {
+      cancelBody(response.body);
+      fail('builder_provider_response_too_large');
+    }
+  }
+  const body = response?.body;
+  if (!body || typeof body.getReader !== 'function') fail('builder_provider_structured_response_invalid');
+  const reader = body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let total = 0;
+  let generated = '';
+  let generatedBytes = 0;
+  let buffer = '';
+  let doneReceived = false;
+  let shouldCancel = false;
+  const cancelForAbort = () => {
+    if (typeof reader.cancel !== 'function') return;
+    try {
+      const pending = reader.cancel();
+      if (pending && typeof pending.catch === 'function') pending.catch(() => undefined);
+    } catch {
+      // The fixed abort result remains authoritative.
+    }
+  };
+  async function consumeEvent(eventText) {
+    const payloadText = sseDataPayload(eventText);
+    if (payloadText === null) return;
+    if (payloadText === '[DONE]') {
+      doneReceived = true;
+      return;
+    }
+    let payload;
+    try { payload = JSON.parse(payloadText); } catch { fail('builder_provider_structured_response_invalid'); }
+    const deltaText = maybeStructuredDelta(payload);
+    if (deltaText === '') return;
+    const nextBytes = Buffer.byteLength(deltaText, 'utf8');
+    if (generatedBytes + nextBytes > MAX_GENERATED_TEXT_BYTES) {
+      shouldCancel = true;
+      fail('builder_provider_response_too_large');
+    }
+    generated += deltaText;
+    generatedBytes += nextBytes;
+    await notifyOutputDelta(onOutputDelta, deltaText);
+  }
+  try {
+    signal.addEventListener('abort', cancelForAbort, { once: true });
+    if (signal.aborted) {
+      cancelForAbort();
+      fail(abortCode());
+    }
+    while (!doneReceived) {
+      const next = await reader.read();
+      if (signal.aborted) fail(abortCode());
+      if (next.done) break;
+      if (!(next.value instanceof Uint8Array) || total + next.value.byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
+        shouldCancel = true;
+        fail('builder_provider_response_too_large');
+      }
+      total += next.value.byteLength;
+      try {
+        buffer += decoder.decode(next.value, { stream: true });
+      } catch {
+        fail('builder_provider_structured_response_invalid');
+      }
+      while (true) {
+        const boundary = eventBoundary(buffer);
+        if (boundary === null) break;
+        const eventText = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary.width);
+        await consumeEvent(eventText);
+        if (doneReceived) {
+          shouldCancel = true;
+          break;
+        }
+      }
+    }
+    try {
+      buffer += decoder.decode();
+    } catch {
+      fail('builder_provider_structured_response_invalid');
+    }
+    if (!doneReceived && buffer.trim() !== '') {
+      await consumeEvent(buffer);
+      buffer = '';
+    }
+    if (!doneReceived) fail('builder_provider_structured_response_invalid');
+    if (generated.length === 0) fail('builder_provider_structured_response_invalid');
+    return generated;
+  } finally {
+    try { signal.removeEventListener('abort', cancelForAbort); } catch { /* best-effort cleanup */ }
+    if (shouldCancel && typeof reader.cancel === 'function') {
+      try { await reader.cancel(); } catch { /* bounded failure remains authoritative */ }
+    }
+    if (typeof reader.releaseLock === 'function') reader.releaseLock();
+  }
+}
+
 function sanitizeControl(value) {
-  if (value === undefined) return null;
-  exactObject(value, ['signal'], ['signal'], 'builder_provider_request_invalid');
+  if (value === undefined) return Object.freeze({ signal: null, on_output_delta: null });
+  exactObject(value, CONTROL_KEYS, ['signal'], 'builder_provider_request_invalid');
   const signal = ownValue(value, 'signal', 'builder_provider_request_invalid');
   if (
     signal === null
@@ -332,7 +509,12 @@ function sanitizeControl(value) {
     || typeof AbortSignal !== 'function'
     || !(signal instanceof AbortSignal)
   ) fail('builder_provider_request_invalid');
-  return signal;
+  let onOutputDelta = null;
+  if (Reflect.ownKeys(value).includes('on_output_delta')) {
+    onOutputDelta = ownValue(value, 'on_output_delta', 'builder_provider_request_invalid');
+    if (typeof onOutputDelta !== 'function') fail('builder_provider_request_invalid');
+  }
+  return Object.freeze({ signal, on_output_delta: onOutputDelta });
 }
 
 function createBuilderOpenAICompatibleTransport(options = {}) {
@@ -345,7 +527,10 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
 
   return async function builderOpenAICompatibleTransport(rawRequest, rawControl) {
     const request = sanitizeRequest(rawRequest);
-    const callerSignal = sanitizeControl(rawControl);
+    const control = sanitizeControl(rawControl);
+    const callerSignal = control.signal;
+    const onOutputDelta = control.on_output_delta;
+    const shouldStream = onOutputDelta !== null;
     const controller = new AbortController();
     let abortSource = '';
     let timer = null;
@@ -380,7 +565,7 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
         method: 'POST',
         redirect: 'error',
         headers: {
-          Accept: 'application/json',
+          Accept: shouldStream ? 'text/event-stream' : 'application/json',
           Authorization: `Bearer ${request.credential}`,
           'Content-Type': 'application/json',
         },
@@ -388,7 +573,7 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
           model: request.model,
           messages: request.messages,
           response_format: { type: 'json_object' },
-          stream: false,
+          stream: shouldStream,
           ...providerDialectFields(request),
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
           ...(request.max_tokens === undefined ? {} : { max_tokens: request.max_tokens }),
@@ -407,15 +592,24 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
         fail('builder_provider_http_error');
       }
       const contentType = responseHeader(response, 'content-type').toLowerCase().split(';', 1)[0].trim();
-      if (contentType !== 'application/json' && !contentType.endsWith('+json')) {
+      if (shouldStream && contentType !== 'text/event-stream') {
         cancelBody(response.body);
         fail('builder_provider_structured_response_invalid');
       }
-      const text = await readBoundedBody(response, controller.signal, abortCode);
-      if (controller.signal.aborted) fail(abortCode());
-      let payload;
-      try { payload = JSON.parse(text); } catch { fail('builder_provider_structured_response_invalid'); }
-      const generatedText = generatedTextFromPayload(payload);
+      if (!shouldStream && contentType !== 'application/json' && !contentType.endsWith('+json')) {
+        cancelBody(response.body);
+        fail('builder_provider_structured_response_invalid');
+      }
+      let generatedText;
+      if (shouldStream) {
+        generatedText = await readStreamingBody(response, controller.signal, abortCode, onOutputDelta);
+      } else {
+        const text = await readBoundedBody(response, controller.signal, abortCode);
+        if (controller.signal.aborted) fail(abortCode());
+        let payload;
+        try { payload = JSON.parse(text); } catch { fail('builder_provider_structured_response_invalid'); }
+        generatedText = generatedTextFromPayload(payload);
+      }
       if (controller.signal.aborted) fail(abortCode());
       return Object.freeze({
         transport_version: BUILDER_PROVIDER_TRANSPORT_VERSION,

@@ -402,8 +402,16 @@ Evidence requirements:
   or explanation results. These stages advance the trusted Conversation context
   head and appear in the read-only Task Stream as lightweight status rows, but
   they carry no provider envelope, prompt, token delta, credential, source,
-  Git, Save, or Project Revision authority. Token streaming, tool streaming,
-  and arbitrary execution remain later independent protocols;
+  Git, Save, or Project Revision authority;
+- the current provider-output streaming checkpoint lets the main-only
+  OpenAI-compatible transport request bounded `text/event-stream` responses only
+  when the Generation host supplies an internal observer. The transport assembles
+  the same terminal generated text contract while emitting advisory bounded
+  delta text to main-side observers; Generation main service can reduce that to a
+  redacted Project/Conversation/Run envelope. No renderer IPC/preload path,
+  Task Stream projection, provider envelope, prompt, credential, source, Git,
+  Save, or Project Revision authority is added. User-visible token streaming,
+  tool streaming, and arbitrary execution remain later independent protocols;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

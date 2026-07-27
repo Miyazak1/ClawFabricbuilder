@@ -36,6 +36,7 @@ const OPTION_KEYS = Object.freeze([
   'gitAuthority',
   'transport',
   'onGenerationStarted',
+  'onProviderOutputDelta',
   'createUuid',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -231,6 +232,7 @@ function sanitizeOptions(value) {
   }
   if (keys.includes('transport') && typeof descriptors.transport.value !== 'function') fail();
   if (keys.includes('onGenerationStarted') && typeof descriptors.onGenerationStarted.value !== 'function') fail();
+  if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
@@ -239,6 +241,7 @@ function sanitizeOptions(value) {
     gitAuthority: descriptors.gitAuthority.value,
     ...(keys.includes('transport') ? { transport: descriptors.transport.value } : {}),
     ...(keys.includes('onGenerationStarted') ? { onGenerationStarted: descriptors.onGenerationStarted.value } : {}),
+    ...(keys.includes('onProviderOutputDelta') ? { onProviderOutputDelta: descriptors.onProviderOutputDelta.value } : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
 }
@@ -611,6 +614,26 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function notifyProviderOutputDelta(context, deltaText) {
+    if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
+    const conversationContext = generationContexts.get(context) ?? explanationContexts.get(context);
+    if (conversationContext === undefined) return;
+    try {
+      Reflect.apply(options.onProviderOutputDelta, undefined, [freezeDeep({
+        event_version: 'builder-provider-output-delta-observed.v1',
+        request_id: conversationContext.request_digest,
+        project_id: conversationContext.project.project_id,
+        conversation_id: conversationContext.conversation.conversation_id,
+        turn_id: conversationContext.ids.turn_id,
+        task_id: conversationContext.ids.task_id,
+        run_id: conversationContext.ids.run_id,
+        delta_text: deltaText,
+      })]);
+    } catch {
+      // Live output observation cannot alter durable Conversation, Git, or SQLite facts.
+    }
+  }
+
   function baseRevisionFromConversationContext(context) {
     const submitted = context.events.find((event) => (
       event.event_type === 'turn_submitted'
@@ -812,6 +835,13 @@ function createBuilderGenerationMainService(rawOptions) {
       }
       fail();
     },
+    ...(Object.hasOwn(options, 'onProviderOutputDelta')
+      ? {
+        onOutputDelta({ context, delta_text: deltaText }) {
+          notifyProviderOutputDelta(context, deltaText);
+        },
+      }
+      : {}),
     ...(Object.hasOwn(options, 'transport') ? { transport: options.transport } : {}),
   });
 
