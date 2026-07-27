@@ -431,7 +431,8 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    expect(container.textContent).toContain('Your result will appear here.');
+    expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Your result will appear here.');
     expect(container.textContent).not.toContain('Preview is isolated');
     click(container, '[data-builder-make-draft="true"]');
     expect(onGenerate).toHaveBeenCalledOnce();
@@ -1316,11 +1317,13 @@ describe('BuilderPage v2', () => {
     );
 
     expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
     expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
       .toBe('');
     expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
-    expect(container.textContent).toContain('This project has files, but no visual preview.');
+    expect(container.textContent).toContain('A visual preview is not available for this project.');
+    expect(container.textContent).not.toContain('This project has files, but no visual preview.');
     expect(container.textContent).not.toContain('static preview');
   });
 

@@ -828,6 +828,7 @@ export function BuilderPage({
   ), [draft, saved]);
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
   const sourceDisclosureOpen = selected !== null || preview === null;
+  const showResultFlow = preview !== null;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
   const pendingSourceFocusRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1253,29 +1254,23 @@ export function BuilderPage({
               />
               {draftReview}
 
-              <section
-                aria-label="Project result"
-                className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"
-                data-builder-preview-flow="true"
-                data-builder-result-flow="true"
-                id="builder-tool-preview"
-              >
-                <div className="cf-builder-result-toolbar">
-                  <Eye aria-hidden="true" className="size-4" />
-                  Result
-                </div>
-                <div className="cf-builder-flow-card-body">
-                  {preview === null ? (
-                    <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
-                      {hasContent
-                        ? 'This project has files, but no visual preview.'
-                        : 'Your result will appear here.'}
-                    </div>
-                  ) : (
+              {showResultFlow ? (
+                <section
+                  aria-label="Project result"
+                  className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"
+                  data-builder-preview-flow="true"
+                  data-builder-result-flow="true"
+                  id="builder-tool-preview"
+                >
+                  <div className="cf-builder-result-toolbar">
+                    <Eye aria-hidden="true" className="size-4" />
+                    Result
+                  </div>
+                  <div className="cf-builder-flow-card-body">
                     <BuilderStaticPreview projection={preview} />
-                  )}
-                </div>
-              </section>
+                  </div>
+                </section>
+              ) : null}
 
               {sourceFile === null ? null : (
                 <details
