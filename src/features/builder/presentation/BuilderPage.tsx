@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   AlertCircle,
   Bot,
@@ -69,11 +69,6 @@ export type BuilderPageProps = {
   onSelectFile?: (file: BuilderFileName) => void;
 };
 
-const TOOL_VIEWS = Object.freeze([
-  { id: 'preview', label: 'Preview', Icon: Eye },
-  { id: 'changes', label: 'Changes', Icon: GitCompareArrows },
-  { id: 'code', label: 'Code', Icon: FileCode2 },
-] as const);
 const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'new',
   'ready',
@@ -302,14 +297,8 @@ function activityBody(item: BuilderConversationItem): string {
 
 function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
   return hasUnsavedDraft
-    ? 'Review the draft files in Result before saving this version.'
+    ? 'Review the draft preview, files, and changes before saving this version.'
     : 'Activity keeps this draft summary only and cannot reopen unsaved files.';
-}
-
-function toolPanelId(id: (typeof TOOL_VIEWS)[number]['id']): string {
-  if (id === 'preview') return 'builder-tool-preview';
-  if (id === 'changes') return 'builder-tool-changes';
-  return 'builder-code-panel';
 }
 
 function changesSummary(changes: BuilderSourceTreeChanges): string {
@@ -365,11 +354,11 @@ function ChangesPanel({
 }>) {
   return (
     <section
-      aria-labelledby="builder-tool-tab-changes"
+      aria-label="Project changes"
       className="cf-builder-changes-panel"
       data-builder-changes-panel="true"
       id="builder-tool-changes"
-      role="tabpanel"
+      tabIndex={-1}
     >
       <div className="cf-builder-panel-toolbar">
         <GitCompareArrows aria-hidden="true" className="size-4" />
@@ -684,16 +673,17 @@ function ActivityPanel({
     && !snapshot.busy
     && typeof onRefresh === 'function';
   return (
-    <aside
-      aria-label="Project activity"
+    <section
+      aria-label="Project conversation"
       className="cf-builder-activity-panel"
       data-builder-activity="true"
       data-builder-activity-status={snapshot?.status ?? 'idle'}
+      data-builder-conversation-workspace="true"
     >
       <header className="cf-builder-side-header">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">Activity</p>
-          <h3 className="truncate text-sm font-semibold">Project work</h3>
+          <p className="text-xs font-medium text-muted-foreground">Conversation</p>
+          <h3 className="truncate text-sm font-semibold">Work stream</h3>
         </div>
         <button
           aria-label="Refresh activity"
@@ -735,7 +725,7 @@ function ActivityPanel({
           </p>
         ) : null}
       </div>
-    </aside>
+    </section>
   );
 }
 
@@ -811,7 +801,6 @@ export function BuilderPage({
     draft?.source_tree ?? null,
   ), [draft, saved]);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [toolView, setToolView] = useState<(typeof TOOL_VIEWS)[number]['id']>('preview');
 
   useEffect(() => {
     if (selected !== null && selected.path !== activeFile) onSelectFile?.(selected.path);
@@ -819,7 +808,6 @@ export function BuilderPage({
 
   function selectFile(path: string): void {
     if (typeof onSelectFile !== 'function') return;
-    setToolView('code');
     onSelectFile(path);
     tabRefs.current[path]?.focus();
   }
@@ -833,9 +821,185 @@ export function BuilderPage({
 
   function openChangedFile(change: BuilderSourceTreeChange): void {
     if (change.change_kind === 'deleted') return;
-    setToolView('code');
-    onSelectFile?.(change.path);
+    selectFile(change.path);
   }
+
+  const composer = (
+    <section aria-label="Conversation command" className="cf-builder-composer-card" data-builder-composer="true">
+      <div className="cf-builder-composer-shell">
+        <textarea
+          aria-label="What do you want to build?"
+          className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
+          disabled={busy}
+          id="builder-idea"
+          maxLength={4000}
+          onChange={(event) => onInstructionChange?.(event.currentTarget.value)}
+          placeholder="Describe what you want to build or change..."
+          readOnly={!canEditInstruction}
+          value={instruction}
+        />
+        <footer className="cf-builder-composer-footer">
+          <div className="cf-builder-composer-tools">
+            <span className="cf-builder-status-pill">
+              {viewingHistory
+                ? 'Viewing a saved version'
+                : hasUnsavedDraft
+                  ? 'Review draft before continuing'
+                  : saved
+                    ? 'Continue this project'
+                    : 'Start from an idea'}
+            </span>
+          </div>
+          <div className="cf-builder-composer-actions">
+            {hasUnsavedDraft ? (
+              <>
+                <button
+                  className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-discard-draft="true"
+                  disabled={!canReject}
+                  onClick={onRejectDraft}
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" className="size-4" />
+                  {status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
+                </button>
+                <button
+                  className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-save-version="true"
+                  disabled={!canSave}
+                  onClick={onSave}
+                  type="button"
+                >
+                  <Save aria-hidden="true" className="size-4" />
+                  {status === 'saving'
+                    ? 'Saving...'
+                    : status === 'save_unknown'
+                      ? 'Try Save again'
+                      : 'Save version'}
+                </button>
+              </>
+            ) : (
+              <>
+                {canCancel ? (
+                  <button
+                    className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium"
+                    data-builder-cancel-work="true"
+                    onClick={onCancel}
+                    type="button"
+                  >
+                    <StopCircle aria-hidden="true" className="size-4" />
+                    Stop
+                  </button>
+                ) : null}
+                <button
+                  className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-ask-question="true"
+                  disabled={!canAnswer}
+                  onClick={onAnswer}
+                  type="button"
+                >
+                  <Bot aria-hidden="true" className="size-4" />
+                  {status === 'answering' ? 'Asking...' : 'Ask'}
+                </button>
+                <button
+                  className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-make-draft="true"
+                  disabled={!canGenerate}
+                  onClick={onGenerate}
+                  type="button"
+                >
+                  <Sparkles aria-hidden="true" className="size-4" />
+                  {busy ? busyLabel(status) : saved ? 'Make change' : 'Make draft'}
+                </button>
+              </>
+            )}
+          </div>
+        </footer>
+      </div>
+
+      {status === 'opening' ? (
+        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Opening your project...</p>
+      ) : null}
+      {status === 'generating' ? (
+        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Making your draft...</p>
+      ) : null}
+      {status === 'answering' ? (
+        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Answering...</p>
+      ) : null}
+      {status === 'saving' ? (
+        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Saving this version...</p>
+      ) : null}
+      {status === 'rejecting' ? (
+        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Discarding this draft...</p>
+      ) : null}
+      {failed ? (
+        <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
+          <p>{status === 'answer_failed'
+            ? (current?.error === 'builder_generation_provider_unavailable'
+              ? 'AI is not configured yet.'
+              : current?.error === 'builder_generation_timeout'
+                ? 'Answering took too long. Try again.'
+                : current?.error === 'builder_generation_provider_http_error'
+                  ? 'The AI service could not answer. Try again.'
+                  : 'The answer could not be prepared. Try again.')
+            : current?.error === 'builder_generation_provider_unavailable'
+              ? 'AI generation is not configured yet.'
+              : current?.error === 'builder_generation_timeout'
+                ? 'Making this draft took too long. Try again.'
+                : current?.error === 'builder_generation_provider_http_error'
+                  ? 'The AI service could not make this draft. Try again.'
+                  : current?.error === 'builder_generation_structured_response_invalid'
+                    ? 'The draft could not be prepared. Try again.'
+                    : 'The draft could not be made. Try again.'}</p>
+          {canOpenSettings ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium"
+              onClick={onOpenSettings}
+              type="button"
+            >
+              Check AI settings
+            </button>
+          ) : null}
+          {canRetryGenerate ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium"
+              data-builder-retry-draft="true"
+              onClick={onRetryGenerate}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" className="size-4" />
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {status === 'save_unknown' ? (
+        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
+          The save result could not be confirmed. Your draft is still available; check the project and try again.
+        </p>
+      ) : null}
+      {status === 'reject_failed' ? (
+        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
+          The draft could not be discarded. Your draft is still available; try again.
+        </p>
+      ) : null}
+      {status === 'preview_unavailable' && hasContent ? (
+        <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">
+          A static preview is not available for this project. You can still review and save its files.
+        </p>
+      ) : null}
+      {status === 'conflict' ? (
+        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
+          This project changed before the saved version could be verified.
+        </p>
+      ) : null}
+      {status === 'unavailable' ? (
+        <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
+          This project is unavailable.
+        </p>
+      ) : null}
+    </section>
+  );
 
   return (
     <div
@@ -883,34 +1047,6 @@ export function BuilderPage({
               Back to current
             </button>
           ) : null}
-          {hasUnsavedDraft ? (
-            <button
-              className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              data-builder-discard-draft="true"
-              disabled={!canReject}
-              onClick={onRejectDraft}
-              type="button"
-            >
-              <Trash2 aria-hidden="true" className="size-4" />
-              {status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
-            </button>
-          ) : null}
-          {hasUnsavedDraft ? (
-            <button
-              className="cf-builder-primary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              data-builder-save-version="true"
-              disabled={!canSave}
-              onClick={onSave}
-              type="button"
-            >
-              <Save aria-hidden="true" className="size-4" />
-              {status === 'saving'
-                ? 'Saving...'
-                : status === 'save_unknown'
-                  ? 'Try Save again'
-                  : 'Save version'}
-            </button>
-          ) : null}
         </div>
       </header>
 
@@ -935,7 +1071,7 @@ export function BuilderPage({
           <button
             className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
             data-builder-review-open-changes="true"
-            onClick={() => setToolView('changes')}
+            onClick={() => document.getElementById('builder-tool-changes')?.focus()}
             type="button"
           >
             <GitCompareArrows aria-hidden="true" className="size-3.5" />
@@ -945,294 +1081,129 @@ export function BuilderPage({
       ) : null}
 
       <div className="cf-builder-surface-body">
-        <section aria-label="Project area" className="cf-builder-panel cf-builder-output-panel border">
-          <header className="cf-builder-output-toolbar">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">Result</p>
-              <h2 className="text-sm font-semibold">
-                {toolView === 'preview'
-                  ? 'Project preview'
-                  : toolView === 'changes'
-                    ? 'Project changes'
-                    : 'Project files'}
-              </h2>
-            </div>
-            <div className="cf-builder-tool-switch" role="tablist" aria-label="Project tools">
-              {TOOL_VIEWS.map(({ Icon, id, label }) => (
-                <button
-                  aria-controls={toolPanelId(id)}
-                  aria-selected={toolView === id}
-                  className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
-                  data-active={toolView === id}
-                  id={`builder-tool-tab-${id}`}
-                  key={id}
-                  onClick={() => setToolView(id)}
-                  role="tab"
-                  tabIndex={toolView === id ? 0 : -1}
-                  type="button"
-                >
-                  <Icon aria-hidden="true" className="size-3.5" />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </header>
+        <section
+          aria-label="Project conversation workspace"
+          className="cf-builder-chat-shell border"
+          data-builder-chat-workspace="true"
+        >
+          <div className="cf-builder-chat-main" data-builder-chat-main="true">
+            <div className="cf-builder-chat-scroll">
+              <ActivityPanel
+                canReviewPlan={canReviewPlan}
+                hasUnsavedDraft={hasUnsavedDraft}
+                onRefresh={onRefreshConversation}
+                onReviewPlan={onReviewPlan}
+                pendingPlanReview={planReviewTarget}
+                snapshot={activity}
+              />
 
-          <div className="cf-builder-stage-grid">
-            <div className="cf-builder-result-stage">
               <section
-                aria-labelledby="builder-tool-tab-preview"
-                className="cf-builder-preview-panel cf-builder-preview-primary"
-                hidden={toolView !== 'preview'}
+                aria-label="Project preview"
+                className="cf-builder-flow-card cf-builder-preview-panel cf-builder-preview-primary"
+                data-builder-preview-flow="true"
                 id="builder-tool-preview"
-                role="tabpanel"
               >
                 <div className="cf-builder-panel-toolbar">
                   <Eye aria-hidden="true" className="size-4" />
                   Preview
                 </div>
-                <p
-                  className="mb-3 text-xs leading-5 text-muted-foreground"
-                  data-builder-preview-safety-note="true"
-                >
-                  Preview is isolated for safety.
-                </p>
-                {preview === null ? (
-                  <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
-                    {hasContent
-                      ? 'This project can be viewed as code, but it does not have a static preview.'
-                      : 'Your preview will appear here.'}
-                  </div>
-                ) : (
-                  <BuilderStaticPreview projection={preview} />
-                )}
-              </section>
-
-              <section
-                aria-labelledby={selected === null ? undefined : tabId(selected.path)}
-                className="cf-builder-code-panel"
-                hidden={toolView !== 'code'}
-                id="builder-code-panel"
-                role="tabpanel"
-              >
-                <header className="cf-builder-code-header">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-muted-foreground">Code</p>
-                    <h3 className="truncate text-sm font-semibold">{selected?.path ?? 'No files yet'}</h3>
-                  </div>
-                  <div className="cf-builder-tab-strip" role="tablist">
-                    {files.map((file) => (
-                      <button
-                        aria-controls="builder-code-panel"
-                        aria-selected={selected?.path === file.path}
-                        className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
-                        data-active={selected?.path === file.path}
-                        id={tabId(file.path)}
-                        key={file.path}
-                        onClick={() => selectFile(file.path)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'ArrowRight') {
-                            event.preventDefault();
-                            selectRelativeFile(1);
-                          } else if (event.key === 'ArrowLeft') {
-                            event.preventDefault();
-                            selectRelativeFile(-1);
-                          } else if (event.key === 'Home' && files[0]) {
-                            event.preventDefault();
-                            selectFile(files[0].path);
-                          } else if (event.key === 'End' && files.at(-1)) {
-                            event.preventDefault();
-                            selectFile(files.at(-1)!.path);
-                          }
-                        }}
-                        ref={(element) => {
-                          tabRefs.current[file.path] = element;
-                        }}
-                        role="tab"
-                        tabIndex={selected?.path === file.path ? 0 : -1}
-                        type="button"
-                      >
-                        <FileCode2 aria-hidden="true" className="size-3.5" />
-                        {file.path}
-                      </button>
-                    ))}
-                  </div>
-                </header>
-                <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5">
-                  <code>{selected?.content ?? ''}</code>
-                </pre>
-              </section>
-
-              <div hidden={toolView !== 'changes'}>
-                <ChangesPanel
-                  changes={changes}
-                  onOpenFile={openChangedFile}
-                />
-              </div>
-            </div>
-            <div className="cf-builder-side-stack">
-              <VersionHistoryPanel
-                hasSavedProject={saved !== null}
-                inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
-                onInspectRevision={onInspectRevision}
-                onRefresh={onRefreshHistory}
-                onShowCurrentRevision={onShowCurrentRevision}
-                snapshot={history}
-              />
-            <ActivityPanel
-              canReviewPlan={canReviewPlan}
-              hasUnsavedDraft={hasUnsavedDraft}
-              onRefresh={onRefreshConversation}
-              onReviewPlan={onReviewPlan}
-              pendingPlanReview={planReviewTarget}
-              snapshot={activity}
-            />
-            </div>
-          </div>
-        </section>
-
-        <section aria-label="Build request" className="cf-builder-composer-card" data-builder-composer="true">
-          <div className="cf-builder-composer-shell">
-            <textarea
-              aria-label="What do you want to build?"
-              className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
-              disabled={busy}
-              id="builder-idea"
-              maxLength={4000}
-              onChange={(event) => onInstructionChange?.(event.currentTarget.value)}
-              placeholder="Describe what you want to build or change..."
-              readOnly={!canEditInstruction}
-              value={instruction}
-            />
-            <footer className="cf-builder-composer-footer">
-              <div className="cf-builder-composer-tools">
-                <span className="cf-builder-status-pill">
-                  {viewingHistory
-                    ? 'Viewing a saved version'
-                    : hasUnsavedDraft
-                      ? 'Save this draft before asking for another change'
-                      : saved
-                        ? 'Continue this project'
-                        : 'Start from an idea'}
-                </span>
-              </div>
-              <div className="cf-builder-composer-actions">
-                {canCancel ? (
-                  <button
-                    className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium"
-                    data-builder-cancel-work="true"
-                    onClick={onCancel}
-                    type="button"
+                <div className="cf-builder-flow-card-body">
+                  <p
+                    className="mb-3 text-xs leading-5 text-muted-foreground"
+                    data-builder-preview-safety-note="true"
                   >
-                    <StopCircle aria-hidden="true" className="size-4" />
-                    Stop
-                  </button>
-                ) : null}
-                <button
-                  className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-ask-question="true"
-                  disabled={!canAnswer}
-                  onClick={onAnswer}
-                  type="button"
-                >
-                  <Bot aria-hidden="true" className="size-4" />
-                  {status === 'answering' ? 'Asking...' : 'Ask'}
-                </button>
-                <button
-                  className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-make-draft="true"
-                  disabled={!canGenerate}
-                  onClick={onGenerate}
-                  type="button"
-                >
-                  <Sparkles aria-hidden="true" className="size-4" />
-                  {busy ? busyLabel(status) : saved ? 'Make change' : 'Make draft'}
-                </button>
-              </div>
-            </footer>
-          </div>
+                    Preview is isolated for safety.
+                  </p>
+                  {preview === null ? (
+                    <div className="cf-builder-empty flex min-h-72 items-center justify-center border border-dashed px-4 text-center text-sm">
+                      {hasContent
+                        ? 'This project can be viewed as code, but it does not have a static preview.'
+                        : 'Your preview will appear here.'}
+                    </div>
+                  ) : (
+                    <BuilderStaticPreview projection={preview} />
+                  )}
+                </div>
+              </section>
 
-          {status === 'opening' ? (
-            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Opening your project...</p>
-          ) : null}
-          {status === 'generating' ? (
-            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Making your draft...</p>
-          ) : null}
-          {status === 'answering' ? (
-            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Answering...</p>
-          ) : null}
-          {status === 'saving' ? (
-            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Saving this version...</p>
-          ) : null}
-          {status === 'rejecting' ? (
-            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">Discarding this draft...</p>
-          ) : null}
-          {failed ? (
-            <div className="cf-builder-alert cf-builder-alert-danger flex flex-col gap-2 text-sm" role="alert">
-              <p>{status === 'answer_failed'
-                ? (current?.error === 'builder_generation_provider_unavailable'
-                  ? 'AI is not configured yet.'
-                  : current?.error === 'builder_generation_timeout'
-                    ? 'Answering took too long. Try again.'
-                    : current?.error === 'builder_generation_provider_http_error'
-                      ? 'The AI service could not answer. Try again.'
-                      : 'The answer could not be prepared. Try again.')
-                : current?.error === 'builder_generation_provider_unavailable'
-                  ? 'AI generation is not configured yet.'
-                  : current?.error === 'builder_generation_timeout'
-                    ? 'Making this draft took too long. Try again.'
-                    : current?.error === 'builder_generation_provider_http_error'
-                      ? 'The AI service could not make this draft. Try again.'
-                      : current?.error === 'builder_generation_structured_response_invalid'
-                        ? 'The draft could not be prepared. Try again.'
-                        : 'The draft could not be made. Try again.'}</p>
-              {canOpenSettings ? (
-                <button
-                  className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium"
-                  onClick={onOpenSettings}
-                  type="button"
+              {files.length > 0 ? (
+                <section
+                  aria-labelledby={selected === null ? undefined : tabId(selected.path)}
+                  className="cf-builder-flow-card cf-builder-code-panel"
+                  data-builder-code-flow="true"
+                  id="builder-code-panel"
                 >
-                  Check AI settings
-                </button>
-              ) : null}
-              {canRetryGenerate ? (
-                <button
-                  className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium"
-                  data-builder-retry-draft="true"
-                  onClick={onRetryGenerate}
-                  type="button"
-                >
-                  <RefreshCw aria-hidden="true" className="size-4" />
-                  Retry
-                </button>
+                  <header className="cf-builder-code-header">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-muted-foreground">Files</p>
+                      <h3 className="truncate text-sm font-semibold">{selected?.path ?? 'No files yet'}</h3>
+                    </div>
+                    <div className="cf-builder-tab-strip" role="tablist" aria-label="Project files">
+                      {files.map((file) => (
+                        <button
+                          aria-controls="builder-code-panel"
+                          aria-selected={selected?.path === file.path}
+                          className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
+                          data-active={selected?.path === file.path}
+                          id={tabId(file.path)}
+                          key={file.path}
+                          onClick={() => selectFile(file.path)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'ArrowRight') {
+                              event.preventDefault();
+                              selectRelativeFile(1);
+                            } else if (event.key === 'ArrowLeft') {
+                              event.preventDefault();
+                              selectRelativeFile(-1);
+                            } else if (event.key === 'Home' && files[0]) {
+                              event.preventDefault();
+                              selectFile(files[0].path);
+                            } else if (event.key === 'End' && files.at(-1)) {
+                              event.preventDefault();
+                              selectFile(files.at(-1)!.path);
+                            }
+                          }}
+                          ref={(element) => {
+                            tabRefs.current[file.path] = element;
+                          }}
+                          role="tab"
+                          tabIndex={selected?.path === file.path ? 0 : -1}
+                          type="button"
+                        >
+                          <FileCode2 aria-hidden="true" className="size-3.5" />
+                          {file.path}
+                        </button>
+                      ))}
+                    </div>
+                  </header>
+                  <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5">
+                    <code>{selected?.content ?? ''}</code>
+                  </pre>
+                </section>
               ) : null}
             </div>
-          ) : null}
-          {status === 'save_unknown' ? (
-            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-              The save result could not be confirmed. Your draft is still available; check the project and try again.
-            </p>
-          ) : null}
-          {status === 'reject_failed' ? (
-            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-              The draft could not be discarded. Your draft is still available; try again.
-            </p>
-          ) : null}
-          {status === 'preview_unavailable' && hasContent ? (
-            <p className="cf-builder-alert cf-builder-alert-info text-sm" role="status">
-              A static preview is not available for this project. You can still review and save its files.
-            </p>
-          ) : null}
-          {status === 'conflict' ? (
-            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-              This project changed before the saved version could be verified.
-            </p>
-          ) : null}
-          {status === 'unavailable' ? (
-            <p className="cf-builder-alert cf-builder-alert-danger text-sm" role="alert">
-              This project is unavailable.
-            </p>
-          ) : null}
+
+            {composer}
+          </div>
+
+          <aside
+            aria-label="Project changes and versions"
+            className="cf-builder-review-sidebar"
+            data-builder-review-sidebar="true"
+          >
+            <ChangesPanel
+              changes={changes}
+              onOpenFile={openChangedFile}
+            />
+            <VersionHistoryPanel
+              hasSavedProject={saved !== null}
+              inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
+              onInspectRevision={onInspectRevision}
+              onRefresh={onRefreshHistory}
+              onShowCurrentRevision={onShowCurrentRevision}
+              snapshot={history}
+            />
+          </aside>
         </section>
       </div>
     </div>

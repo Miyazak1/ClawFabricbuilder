@@ -492,10 +492,10 @@ describe('BuilderPage v2', () => {
       .toContain('Unsaved draft');
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
-    expect(container.textContent).toContain('Save this draft before asking for another change');
-    expect(container.textContent).toContain('Review the draft files in Result before saving this version.');
+    expect(container.textContent).toContain('Review draft before continuing');
+    expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-ask-question="true"]')?.disabled)
-      .toBe(true);
+      .toBeUndefined();
     expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
       .toContain('Discard draft');
     click(container, '[data-builder-discard-draft="true"]');
@@ -503,6 +503,64 @@ describe('BuilderPage v2', () => {
     expect(onSave).not.toHaveBeenCalled();
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the composer in the main conversation and review details in the right sidebar', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const history = await savedHistory();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        historySnapshot={history}
+        instruction="Add a timer."
+        onRejectDraft={vi.fn()}
+        onSave={vi.fn()}
+        snapshot={draftReady}
+      />,
+    );
+
+    const chatMain = container.querySelector('[data-builder-chat-main="true"]');
+    const reviewSidebar = container.querySelector('[data-builder-review-sidebar="true"]');
+    const conversation = container.querySelector('[data-builder-conversation-workspace="true"]');
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    const preview = container.querySelector('[data-builder-preview-flow="true"]');
+    const code = container.querySelector('[data-builder-code-flow="true"]');
+    const changes = container.querySelector('[data-builder-changes-panel="true"]');
+    const versions = container.querySelector('[data-builder-version-history="true"]');
+    expect(chatMain).not.toBeNull();
+    expect(reviewSidebar).not.toBeNull();
+    expect(conversation).not.toBeNull();
+    expect(composer).not.toBeNull();
+    expect(preview).not.toBeNull();
+    expect(code).not.toBeNull();
+    expect(changes).not.toBeNull();
+    expect(versions).not.toBeNull();
+    expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(code?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(composer?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
+    expect(versions?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
+    expect(Boolean(conversation!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
+      .toBe(true);
+    expect(Boolean(preview!.compareDocumentPosition(code!) & Node.DOCUMENT_POSITION_FOLLOWING))
+      .toBe(true);
+    expect(Boolean(code!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
+      .toBe(true);
+    expect(composer?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(composer?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
+    expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
+    expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
+      .toContain('Review the draft preview, files, and changes before saving this version.');
+    expect(container.textContent).not.toMatch(
+      /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
   });
 
   it('shows draft file changes before Save without exposing source or Git evidence', async () => {
@@ -517,8 +575,6 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    click(container, '#builder-tool-tab-changes');
-
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(reviewStrip).not.toBeNull();
     expect(reviewStrip?.textContent).toContain('Review before saving');
@@ -529,6 +585,7 @@ describe('BuilderPage v2', () => {
     );
     const changesPanel = container.querySelector('[data-builder-changes-panel="true"]');
     expect(changesPanel).not.toBeNull();
+    expect(changesPanel?.closest('[data-builder-review-sidebar="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(container.querySelector('[data-builder-change-card="Changed index.html"]')?.textContent)
@@ -572,8 +629,6 @@ describe('BuilderPage v2', () => {
         snapshot={draftReady}
       />,
     );
-
-    click(container, '#builder-tool-tab-changes');
 
     const diffTexts = [...container.querySelectorAll(
       '[data-builder-change-diff="index.html"] .cf-builder-change-diff-text',
@@ -801,8 +856,9 @@ describe('BuilderPage v2', () => {
         snapshot={draftReady}
       />,
     );
-    click(container, '#builder-tool-tab-code');
     expect(container.textContent).toContain('src/tool.py');
+    expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
+    expect(container.querySelector('[data-builder-code-flow="true"]')).not.toBeNull();
     expect(container.querySelector('#builder-code-panel code')?.textContent)
       .toContain('print("hello")');
     expect(container.textContent).not.toContain('app.js');
