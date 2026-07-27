@@ -1073,6 +1073,8 @@ describe('BuilderPage v2', () => {
     expect(changesDisclosure).not.toBeNull();
     expect(versions).not.toBeNull();
     expect(draftActions).not.toBeNull();
+    expect(changesDisclosure?.querySelector('.cf-builder-changes-title')?.textContent).toBe('Changes');
+    expect(changesDisclosure?.querySelector('.cf-builder-changes-summary-main')).not.toBeNull();
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
@@ -1088,6 +1090,8 @@ describe('BuilderPage v2', () => {
     expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(changesDisclosure?.open).toBe(false);
     expect(changesDisclosure?.textContent).toContain('Changes');
+    expect(changesDisclosure?.querySelector('[data-builder-changes-summary="true"]')?.textContent)
+      .toContain('file');
     expect(versions?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(conversation?.querySelector('.cf-builder-side-header')).toBeNull();
     expect(conversation?.textContent).not.toContain('Work stream');

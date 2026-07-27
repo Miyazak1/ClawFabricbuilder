@@ -9,6 +9,20 @@ function styles(): string {
   return readFileSync(STYLES_PATH, 'utf8');
 }
 
+function styleBlock(source: string, selector: string): string {
+  const start = source.indexOf(`${selector} {`);
+  if (start < 0) {
+    return '';
+  }
+
+  const end = source.indexOf('\n}', start);
+  if (end < 0) {
+    return source.slice(start);
+  }
+
+  return source.slice(start, end + 2);
+}
+
 describe('Builder desktop layout styles', () => {
   it('keeps the review sidebar beside the conversation on desktop widths', () => {
     const source = styles();
@@ -33,5 +47,19 @@ describe('Builder desktop layout styles', () => {
     expect(source).toMatch(
       /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-review-sidebar \{[\s\S]*?border-top: 1px solid var\(--cf-border\)/u,
     );
+  });
+
+  it('keeps right-rail change summaries compact instead of wrapping into the main stage', () => {
+    const source = styles();
+    const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
+    const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
+    const summaryText = styleBlock(source, '.cf-builder-changes-summary');
+
+    expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
+    expect(summaryMain).toContain('display: grid;');
+    expect(summaryText).toContain('overflow: hidden;');
+    expect(summaryText).toContain('text-overflow: ellipsis;');
+    expect(summaryText).toContain('white-space: nowrap;');
+    expect(summaryText).not.toContain('overflow-wrap: anywhere;');
   });
 });

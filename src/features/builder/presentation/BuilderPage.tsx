@@ -582,9 +582,11 @@ function ChangesPanel({
       >
         <summary className="cf-builder-panel-toolbar cf-builder-changes-summary-row">
           <GitCompareArrows aria-hidden="true" className="size-4" />
-          <span>Changes</span>
-          <span className="cf-builder-changes-summary" data-builder-changes-summary="true">
-            {changesSummary(changes)}
+          <span className="cf-builder-changes-summary-main">
+            <span className="cf-builder-changes-title">Changes</span>
+            <span className="cf-builder-changes-summary" data-builder-changes-summary="true">
+              {changesSummary(changes)}
+            </span>
           </span>
         </summary>
         <div className="cf-builder-changes-body">
