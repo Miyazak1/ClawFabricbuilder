@@ -689,6 +689,7 @@ describe('BuilderApp v2', () => {
       expect(submit).toHaveBeenCalledOnce();
       expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
     });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(generate).not.toHaveBeenCalled();
     const expected = await createBuilderGenerationRequest('Make a timer.', null);
     click(container, 'Stop');
@@ -755,9 +756,11 @@ describe('BuilderApp v2', () => {
       expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Started"]')?.textContent)
-        .toContain('The assistant began working on this request.');
+      expect(container.querySelector('[data-builder-activity-card="Assistant working"]')?.textContent)
+        .toContain('Preparing this request.');
     });
+    expect(container.querySelector('[data-builder-work-status="true"]')?.getAttribute('data-builder-work-status-stage'))
+      .toBe('started');
     readTaskStream.mockClear();
     expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
     await waitFor(() => {
@@ -798,6 +801,7 @@ describe('BuilderApp v2', () => {
     const expected = await createBuilderGenerationRequest('Make a timer.', null);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     expect(emitGenerationOutput(expected.request_digest, 'Planning a quiet timer UI.', PROJECT_ID)).toBeGreaterThan(0);
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)

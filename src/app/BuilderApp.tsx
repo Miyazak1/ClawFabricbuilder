@@ -582,10 +582,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const submitInstruction = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
+    const submittedIdea = idea;
+    setIdea('');
     setLiveOutput(null);
-    const result = await project.submit(idea);
+    const result = await project.submit(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
-    if (shouldClearSubmittedIdea(result)) setIdea('');
+    if (!shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
     await readActivityAfterTerminal(result, commandEpoch);
     setLiveOutput(null);
   }, [idea, project, readActivityAfterTerminal]);

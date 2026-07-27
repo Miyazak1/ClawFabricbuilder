@@ -40,6 +40,10 @@ describe('BuilderStaticPreview', () => {
     const container = render(<BuilderStaticPreview projection={projection} />);
 
     expect(container.querySelector('h2')?.textContent).toBe('Color picker');
+    expect(container.textContent).toContain('Static preview');
+    expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
+      .toContain('static HTML and CSS only');
+    expect(container.textContent).not.toContain('Safe preview');
     const frame = container.querySelector<HTMLIFrameElement>('iframe');
     expect(frame?.getAttribute('sandbox')).toBe('');
     expect(frame?.getAttribute('referrerpolicy')).toBe('no-referrer');

@@ -900,6 +900,7 @@ describe('BuilderPage v2', () => {
     const code = container.querySelector('[data-builder-code-flow="true"]');
     const source = container.querySelector('[data-builder-source-flow="true"]');
     const changes = container.querySelector('[data-builder-changes-panel="true"]');
+    const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     const versions = container.querySelector('[data-builder-version-history="true"]');
     const draftActions = container.querySelector('[data-builder-draft-review-actions="true"]');
     expect(chatMain).not.toBeNull();
@@ -907,11 +908,13 @@ describe('BuilderPage v2', () => {
     expect(reviewSidebar).not.toBeNull();
     expect(conversation).not.toBeNull();
     expect(review).not.toBeNull();
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('stacked');
     expect(composer).not.toBeNull();
     expect(preview).not.toBeNull();
     expect(code).toBeNull();
     expect(source).toBeNull();
     expect(changes).not.toBeNull();
+    expect(changesDisclosure).not.toBeNull();
     expect(versions).not.toBeNull();
     expect(draftActions).not.toBeNull();
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
@@ -927,6 +930,8 @@ describe('BuilderPage v2', () => {
     expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(composer?.querySelector('.cf-builder-alert')).toBeNull();
     expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
+    expect(changesDisclosure?.open).toBe(false);
+    expect(changesDisclosure?.textContent).toContain('Changes');
     expect(versions?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
     expect(conversation?.querySelector('.cf-builder-side-header')).toBeNull();
     expect(conversation?.textContent).not.toContain('Work stream');
@@ -947,14 +952,17 @@ describe('BuilderPage v2', () => {
     expect(draftActions?.closest('[data-builder-review-checkpoint="true"]')).toBe(review);
     expect(draftActions?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     expect(draftActions?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    click(container, '[data-builder-review-open-changes="true"]');
+    expect(changesDisclosure?.open).toBe(true);
+    expect(document.activeElement).toBe(changesDisclosure);
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
     expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="You"]')?.getAttribute('data-builder-activity-role'))
       .toBe('user');
-    expect(container.querySelector('[data-builder-activity-card="Started"]')?.getAttribute('data-builder-activity-role'))
-      .toBe('status');
+    expect(container.querySelector('[data-builder-activity-card="Started"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Assistant working"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="Draft ready"]')?.getAttribute('data-builder-activity-role'))
       .toBe('status');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.getAttribute('data-builder-activity-role'))
@@ -1066,6 +1074,7 @@ describe('BuilderPage v2', () => {
 
     const userMessage = container.querySelector('[data-builder-activity-card="You"]');
     const started = container.querySelector('[data-builder-activity-card="Started"]');
+    const working = container.querySelector('[data-builder-activity-card="Assistant working"]');
     const assistant = container.querySelector('[data-builder-activity-card="Assistant"]');
     const answered = container.querySelector('[data-builder-activity-card="Answered"]');
     expect(userMessage?.getAttribute('data-builder-activity-role')).toBe('user');
@@ -1080,11 +1089,8 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(assistant?.textContent).toContain('This answer does not change files.');
-    expect(started?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(
-      started?.querySelector('[data-builder-message-surface]')
-        ?.getAttribute('data-builder-message-surface'),
-    ).toBe('status');
+    expect(started).toBeNull();
+    expect(working).toBeNull();
     expect(answered?.getAttribute('data-builder-activity-role')).toBe('status');
     expect(
       answered?.querySelector('[data-builder-message-surface]')
@@ -1109,20 +1115,20 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    const workStatus = container.querySelector('[data-builder-work-status="true"]');
     const contextReady = container.querySelector('[data-builder-activity-card="Context ready"]');
     const responseStarted = container.querySelector('[data-builder-activity-card="AI response started"]');
-    expect(contextReady?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(responseStarted?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(container.querySelectorAll('[data-builder-work-status="true"]')).toHaveLength(1);
+    expect(workStatus?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
     expect(
-      contextReady?.querySelector('[data-builder-message-surface]')
+      workStatus?.querySelector('[data-builder-message-surface]')
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('status');
-    expect(
-      responseStarted?.querySelector('[data-builder-message-surface]')
-        ?.getAttribute('data-builder-message-surface'),
-    ).toBe('status');
-    expect(contextReady?.textContent).toContain('The assistant prepared the current project context.');
-    expect(responseStarted?.textContent).toContain('The assistant started asking the AI service.');
+    expect(workStatus?.textContent).toContain('Assistant is working');
+    expect(workStatus?.textContent).toContain('Writing the response.');
+    expect(contextReady).toBeNull();
+    expect(responseStarted).toBeNull();
     expect(container.textContent).not.toMatch(
       /provider_request_started|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
@@ -1143,6 +1149,7 @@ describe('BuilderPage v2', () => {
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(reviewStrip).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('stacked');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(reviewStrip?.textContent).toContain('Preview and changes are ready.');
@@ -1150,10 +1157,16 @@ describe('BuilderPage v2', () => {
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
     );
     const changesPanel = container.querySelector('[data-builder-changes-panel="true"]');
+    const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     expect(changesPanel).not.toBeNull();
     expect(changesPanel?.closest('[data-builder-review-sidebar="true"]')).not.toBeNull();
+    expect(changesDisclosure).not.toBeNull();
+    expect(changesDisclosure?.open).toBe(false);
     expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('3 file changes: 1 added, 1 changed, 1 removed.');
+    click(container, '[data-builder-review-open-changes="true"]');
+    expect(changesDisclosure?.open).toBe(true);
+    expect(document.activeElement).toBe(changesDisclosure);
     expect(container.querySelector('[data-builder-change-card="Changed index.html"]')?.textContent)
       .toContain('1 line to 2 lines');
     expect(container.querySelector('[data-builder-change-card="Added src/add.ts"]')?.textContent)
@@ -1502,9 +1515,10 @@ describe('BuilderPage v2', () => {
       .toBe('');
     expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
-    expect(container.textContent).toContain('A visual preview is not available for this project.');
+    expect(container.textContent).toContain('Visual preview is not available for this project.');
+    expect(container.textContent).toContain('static HTML and CSS only');
+    expect(container.textContent).toContain('Three.js');
     expect(container.textContent).not.toContain('This project has files, but no visual preview.');
-    expect(container.textContent).not.toContain('static preview');
   });
 
   it('keeps the provider-settings recovery action limited to configuration failures', async () => {

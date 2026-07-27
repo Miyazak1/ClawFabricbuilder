@@ -20,8 +20,14 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
     >
       <header className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold">{projection.title}</h2>
-        <span className="text-xs text-muted-foreground">Safe preview</span>
+        <span className="text-xs text-muted-foreground">Static preview</span>
       </header>
+      {projection.preview_script_admission === 'not_authorized' ? (
+        <p className="cf-builder-preview-note" data-builder-preview-limitation="true">
+          This preview shows static HTML and CSS only. Projects that rely on JavaScript modules, Three.js,
+          canvas animation, or live network assets may appear blank here; review the source files before saving.
+        </p>
+      ) : null}
       <iframe
         className="cf-builder-preview-frame min-h-80 w-full"
         referrerPolicy="no-referrer"

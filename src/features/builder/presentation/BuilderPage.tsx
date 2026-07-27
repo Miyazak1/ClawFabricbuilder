@@ -35,7 +35,10 @@ import {
   type BuilderProjectHistorySnapshot,
 } from '../application/builderProjectHistoryController';
 import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
-import type { BuilderConversationItem } from '../domain/builderConversationSnapshot';
+import type {
+  BuilderConversationItem,
+  BuilderConversationRunProgressStage,
+} from '../domain/builderConversationSnapshot';
 import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 import {
@@ -132,6 +135,50 @@ function activityItems(
 ): readonly BuilderConversationItem[] {
   const conversation = snapshot?.conversation;
   return conversation?.state === 'ready' ? conversation.conversation.items : [];
+}
+
+function activityEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
+  const entries: ActivityEntry[] = [];
+  const workEntries = new Map<string, ActivityWorkStatusEntry>();
+  for (const item of activityItems(snapshot)) {
+    if (item.item_kind === 'run_started') {
+      const key = `${item.turn_id}:${item.run_id}`;
+      const entry: ActivityWorkStatusEntry = {
+        entry_kind: 'work_status',
+        key,
+        sequence: item.sequence,
+        status: 'started',
+        hidden: false,
+      };
+      workEntries.set(key, entry);
+      entries.push(entry);
+      continue;
+    }
+    if (item.item_kind === 'run_progress_recorded') {
+      const key = `${item.turn_id}:${item.run_id}`;
+      const existing = workEntries.get(key);
+      if (existing === undefined) {
+        const entry: ActivityWorkStatusEntry = {
+          entry_kind: 'work_status',
+          key,
+          sequence: item.sequence,
+          status: item.stage,
+          hidden: false,
+        };
+        workEntries.set(key, entry);
+        entries.push(entry);
+      } else {
+        existing.status = item.stage;
+      }
+      continue;
+    }
+    if (item.item_kind === 'run_completed') {
+      const workEntry = workEntries.get(`${item.turn_id}:${item.run_id}`);
+      if (workEntry !== undefined) workEntry.hidden = true;
+    }
+    entries.push({ entry_kind: 'item', item });
+  }
+  return entries.filter((entry) => entry.entry_kind === 'item' || !entry.hidden);
 }
 
 function isNearChatBottom(element: HTMLElement): boolean {
@@ -241,6 +288,28 @@ function progressBody(item: Extract<BuilderConversationItem, { item_kind: 'run_p
   if (item.stage === 'provider_request_started') return 'The assistant started asking the AI service.';
   if (item.stage === 'provider_response_received') return 'The assistant received a response and is checking it.';
   return 'The assistant is preparing the result for review.';
+}
+
+type ActivityWorkStatus = 'started' | BuilderConversationRunProgressStage;
+
+type ActivityWorkStatusEntry = {
+  entry_kind: 'work_status';
+  key: string;
+  sequence: number;
+  status: ActivityWorkStatus;
+  hidden: boolean;
+};
+
+type ActivityEntry =
+  | Readonly<{ entry_kind: 'item'; item: BuilderConversationItem }>
+  | ActivityWorkStatusEntry;
+
+function workStatusBody(status: ActivityWorkStatus): string {
+  if (status === 'started') return 'Preparing this request.';
+  if (status === 'context_ready') return 'Reading the current project context.';
+  if (status === 'provider_request_started') return 'Writing the response.';
+  if (status === 'provider_response_received') return 'Checking the response.';
+  return 'Preparing the result for review.';
 }
 
 function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
@@ -426,86 +495,92 @@ function ChangesPanel({
       id="builder-tool-changes"
       tabIndex={-1}
     >
-      <div className="cf-builder-panel-toolbar">
-        <GitCompareArrows aria-hidden="true" className="size-4" />
-        Changes
-      </div>
-      <div className="cf-builder-changes-body">
-        <p className="cf-builder-changes-summary" data-builder-changes-summary="true">
-          {changesSummary(changes)}
-        </p>
-        {changes.files.length === 0 ? (
-          <div className="cf-builder-empty flex min-h-56 items-center justify-center border border-dashed px-4 text-center text-sm">
-            {changes.comparison_kind === 'no_draft'
-              ? 'Make a draft to compare it with the current version.'
-              : 'No file changes were found in this draft.'}
-          </div>
-        ) : (
-          <ol className="cf-builder-changes-list">
-            {changes.files.map((change) => (
-              <li
-                className="cf-builder-change-item"
-                data-builder-change-card={`${changeLabel(change)} ${change.path}`}
-                data-builder-change-kind={change.change_kind}
-                key={`${change.change_kind}:${change.path}`}
-              >
-                <span className="cf-builder-change-kind">{changeLabel(change)}</span>
-                <div className="min-w-0">
-                  {change.change_kind === 'deleted' ? (
-                    <span className="cf-builder-change-path">{change.path}</span>
-                  ) : (
-                    <button
-                      className="cf-builder-change-path-button"
-                      onClick={() => onOpenFile(change)}
-                      type="button"
-                    >
-                      {change.path}
-                    </button>
-                  )}
-                  <p className="cf-builder-change-lines">{lineSummary(change)}</p>
-                  {change.diff_availability === 'too_large' ? (
-                    <p className="cf-builder-change-diff-note" data-builder-change-diff-note={change.path}>
-                      This change is too large for the inline comparison.
-                    </p>
-                  ) : (
-                    <div
-                      aria-label={`${change.path} comparison`}
-                      className="cf-builder-change-diff"
-                      data-builder-change-diff={change.path}
-                    >
-                      {change.diff_lines.map((line, index) => (
-                        <div
-                          className="cf-builder-change-diff-line"
-                          data-builder-change-diff-line-kind={line.line_kind}
-                          key={`${line.line_kind}:${line.before_line ?? ''}:${line.after_line ?? ''}:${index}`}
-                        >
-                          <span className="cf-builder-change-diff-number" aria-hidden="true">
-                            {lineNumberLabel(line.before_line)}
-                          </span>
-                          <span className="cf-builder-change-diff-number" aria-hidden="true">
-                            {lineNumberLabel(line.after_line)}
-                          </span>
-                          <span className="cf-builder-change-diff-marker" aria-hidden="true">
-                            {diffMarker(line.line_kind)}
-                          </span>
-                          <code className="cf-builder-change-diff-text">
-                            {line.text}
-                          </code>
-                        </div>
-                      ))}
-                      {change.omitted_line_count > 0 ? (
-                        <p className="cf-builder-change-diff-note">
-                          {change.omitted_line_count} {change.omitted_line_count === 1 ? 'line' : 'lines'} not shown.
-                        </p>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
+      <details
+        className="cf-builder-changes-disclosure"
+        data-builder-changes-disclosure="true"
+        tabIndex={-1}
+      >
+        <summary className="cf-builder-panel-toolbar cf-builder-changes-summary-row">
+          <GitCompareArrows aria-hidden="true" className="size-4" />
+          <span>Changes</span>
+          <span className="cf-builder-changes-summary" data-builder-changes-summary="true">
+            {changesSummary(changes)}
+          </span>
+        </summary>
+        <div className="cf-builder-changes-body">
+          {changes.files.length === 0 ? (
+            <div className="cf-builder-empty flex min-h-32 items-center justify-center border border-dashed px-4 text-center text-sm">
+              {changes.comparison_kind === 'no_draft'
+                ? 'Make a draft to compare it with the current version.'
+                : 'No file changes were found in this draft.'}
+            </div>
+          ) : (
+            <ol className="cf-builder-changes-list">
+              {changes.files.map((change) => (
+                <li
+                  className="cf-builder-change-item"
+                  data-builder-change-card={`${changeLabel(change)} ${change.path}`}
+                  data-builder-change-kind={change.change_kind}
+                  key={`${change.change_kind}:${change.path}`}
+                >
+                  <span className="cf-builder-change-kind">{changeLabel(change)}</span>
+                  <div className="min-w-0">
+                    {change.change_kind === 'deleted' ? (
+                      <span className="cf-builder-change-path">{change.path}</span>
+                    ) : (
+                      <button
+                        className="cf-builder-change-path-button"
+                        onClick={() => onOpenFile(change)}
+                        type="button"
+                      >
+                        {change.path}
+                      </button>
+                    )}
+                    <p className="cf-builder-change-lines">{lineSummary(change)}</p>
+                    {change.diff_availability === 'too_large' ? (
+                      <p className="cf-builder-change-diff-note" data-builder-change-diff-note={change.path}>
+                        This change is too large for the inline comparison.
+                      </p>
+                    ) : (
+                      <div
+                        aria-label={`${change.path} comparison`}
+                        className="cf-builder-change-diff"
+                        data-builder-change-diff={change.path}
+                      >
+                        {change.diff_lines.map((line, index) => (
+                          <div
+                            className="cf-builder-change-diff-line"
+                            data-builder-change-diff-line-kind={line.line_kind}
+                            key={`${line.line_kind}:${line.before_line ?? ''}:${line.after_line ?? ''}:${index}`}
+                          >
+                            <span className="cf-builder-change-diff-number" aria-hidden="true">
+                              {lineNumberLabel(line.before_line)}
+                            </span>
+                            <span className="cf-builder-change-diff-number" aria-hidden="true">
+                              {lineNumberLabel(line.after_line)}
+                            </span>
+                            <span className="cf-builder-change-diff-marker" aria-hidden="true">
+                              {diffMarker(line.line_kind)}
+                            </span>
+                            <code className="cf-builder-change-diff-text">
+                              {line.text}
+                            </code>
+                          </div>
+                        ))}
+                        {change.omitted_line_count > 0 ? (
+                          <p className="cf-builder-change-diff-note">
+                            {change.omitted_line_count} {change.omitted_line_count === 1 ? 'line' : 'lines'} not shown.
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </details>
     </section>
   );
 }
@@ -759,6 +834,33 @@ function ActivityLiveOutputItem({
   );
 }
 
+function ActivityWorkStatusItem({
+  entry,
+}: Readonly<{
+  entry: ActivityWorkStatusEntry;
+}>) {
+  return (
+    <li
+      className="cf-builder-activity-item"
+      data-builder-activity-card="Assistant working"
+      data-builder-activity-role="status"
+      data-builder-work-status="true"
+      data-builder-work-status-stage={entry.status}
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <RefreshCw className="size-3.5" />
+      </div>
+      <div
+        className="cf-builder-activity-content min-w-0"
+        data-builder-message-surface="status"
+      >
+        <div className="cf-builder-activity-title">Assistant is working</div>
+        <p className="cf-builder-activity-body">{workStatusBody(entry.status)}</p>
+      </div>
+    </li>
+  );
+}
+
 function ActivityPanel({
   hasUnsavedDraft,
   liveOutput,
@@ -776,7 +878,7 @@ function ActivityPanel({
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
-  const items = activityItems(snapshot);
+  const entries = activityEntries(snapshot);
   const message = activityMessage(snapshot);
   const canRefresh = snapshot !== null
     && snapshot.project_id !== null
@@ -808,28 +910,32 @@ function ActivityPanel({
         {snapshot?.status === 'refreshing' ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {items.length === 0 && liveOutput === null && message !== null ? (
+        {entries.length === 0 && liveOutput === null && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
             {message}
           </div>
         ) : (
           <ol className="cf-builder-activity-list">
-            {items.map((item) => (
-              <ActivityItem
-                canReviewPlan={canReviewPlan}
-                hasUnsavedDraft={hasUnsavedDraft}
-                item={item}
-                key={item.sequence}
-                onReviewPlan={onReviewPlan}
-                pendingPlanReview={pendingPlanReview}
-              />
+            {entries.map((entry) => (
+              entry.entry_kind === 'work_status' ? (
+                <ActivityWorkStatusItem entry={entry} key={entry.key} />
+              ) : (
+                <ActivityItem
+                  canReviewPlan={canReviewPlan}
+                  hasUnsavedDraft={hasUnsavedDraft}
+                  item={entry.item}
+                  key={entry.item.sequence}
+                  onReviewPlan={onReviewPlan}
+                  pendingPlanReview={pendingPlanReview}
+                />
+              )
             ))}
             {liveOutput !== null && liveOutput.text.length > 0 ? (
               <ActivityLiveOutputItem liveOutput={liveOutput} />
             ) : null}
           </ol>
         )}
-        {items.length > 0 && message !== null ? (
+        {entries.length > 0 && message !== null ? (
           <p className="cf-builder-activity-status" role={snapshot?.status === 'stale' ? 'alert' : 'status'}>
             {message}
           </p>
@@ -933,6 +1039,7 @@ export function BuilderPage({
   const showResultFlow = preview !== null;
   const showReviewSidebar = hasUnsavedDraft || saved !== null;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
+  const draftReviewRef = useRef<HTMLElement | null>(null);
   const pendingSourceFocusRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTailRef = useRef<HTMLDivElement | null>(null);
@@ -975,6 +1082,11 @@ export function BuilderPage({
     chatTailRef.current?.scrollIntoView?.({ block: 'end' });
   }, [chatFollowKey]);
 
+  useEffect(() => {
+    if (!hasUnsavedDraft) return;
+    draftReviewRef.current?.scrollIntoView?.({ block: 'start' });
+  }, [draft?.draft_id, hasUnsavedDraft]);
+
   function updateChatFollowState(): void {
     const scroll = chatScrollRef.current;
     if (scroll === null) return;
@@ -996,6 +1108,16 @@ export function BuilderPage({
       pendingSourceFocusRef.current = false;
       disclosure.focus();
     }
+  }
+
+  function openChangesPanel(): void {
+    const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
+    if (disclosure !== null) {
+      disclosure.open = true;
+      disclosure.focus();
+      return;
+    }
+    document.getElementById('builder-tool-changes')?.focus();
   }
 
   function submitPrimaryComposerCommand(event: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -1164,7 +1286,9 @@ export function BuilderPage({
           data-builder-conversation-notice="preview_unavailable"
           role="status"
         >
-          A visual preview is not available for this project. You can still review and save its files.
+          Visual preview is not available for this project. This first preview can show static HTML and CSS only;
+          projects that depend on JavaScript modules, Three.js, local servers, or backend code need a runtime
+          preview path. Review the source and changes before saving.
         </p>
       );
     }
@@ -1204,25 +1328,29 @@ export function BuilderPage({
     <section
       aria-label="Draft review"
       className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
+      data-builder-review-layout="stacked"
       data-builder-review-checkpoint="true"
+      ref={draftReviewRef}
     >
-      <div className="cf-builder-review-icon" aria-hidden="true">
-        <GitCompareArrows className="size-4" />
-      </div>
-      <div className="min-w-0">
-        <h2 className="cf-builder-review-title">Review before saving</h2>
-        <p className="cf-builder-review-summary" data-builder-review-summary="true">
-          {changesSummary(changes)}
-        </p>
-        <p className="cf-builder-review-note">
-          {reviewPreviewStatus(preview, hasContent)}
-        </p>
+      <div className="cf-builder-review-copy">
+        <div className="cf-builder-review-icon" aria-hidden="true">
+          <GitCompareArrows className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="cf-builder-review-title">Review before saving</h2>
+          <p className="cf-builder-review-summary" data-builder-review-summary="true">
+            {changesSummary(changes)}
+          </p>
+          <p className="cf-builder-review-note">
+            {reviewPreviewStatus(preview, hasContent)}
+          </p>
+        </div>
       </div>
       <div className="cf-builder-review-actions" data-builder-draft-review-actions="true">
         <button
           className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
           data-builder-review-open-changes="true"
-          onClick={() => document.getElementById('builder-tool-changes')?.focus()}
+          onClick={openChangesPanel}
           type="button"
         >
           <GitCompareArrows aria-hidden="true" className="size-3.5" />
@@ -1267,7 +1395,7 @@ export function BuilderPage({
           maxLength={4000}
           onChange={(event) => onInstructionChange?.(event.currentTarget.value)}
           onKeyDown={submitPrimaryComposerCommand}
-          placeholder="Describe what you want to build or change..."
+          placeholder={busy ? 'Working on your request...' : 'Describe what you want to build or change...'}
           readOnly={!canEditInstruction}
           aria-keyshortcuts={canSubmit ? 'Enter' : undefined}
           value={instruction}
