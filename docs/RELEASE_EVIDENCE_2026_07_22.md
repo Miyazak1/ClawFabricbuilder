@@ -99,6 +99,40 @@ mutation, Save, Project Revision, publication, or arbitrary tool authority.
   only finding was the packaged canary namespace evidence gap, which was fixed
   before the final full test and package verification reruns.
 
+## 2026-07-28 Desktop Conversation Workspace Package
+
+This addendum records the desktop-visible conversation workspace package at code
+checkpoint `acda864`. It is not a new real-provider canary and does not extend
+the earlier saved DeepSeek evidence. It verifies the renderer-visible
+conversation, review, static-preview explanation, live-output projection, and
+package content for the current desktop trial build.
+
+- The latest local package is
+  `release\acda864\win-unpacked\ClawFabric Builder.exe`.
+- Focused renderer tests for the Builder page passed: 39 tests.
+- Full unit tests passed: 333 Vitest tests.
+- `npm run lint` and `npm run build` passed.
+- Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 741 ASAR entries.
+- The desktop UI now keeps the composer in the main conversation bottom with one
+  primary action: Enter or the send button submits an idle turn, and active work
+  replaces that action with Stop. Submitted text is cleared on success and
+  restored only after a submit failure.
+- Assistant replies and live provider-output projection render as plain
+  conversation messages, while user-submitted messages render as the only bubble
+  surface. Durable Run progress rows are folded into one ordinary assistant work
+  status when no display-safe live text is available.
+- Generated draft review actions now appear in the main conversation flow before
+  the result preview. Draft Changes remain summarized until opened on demand, so
+  the right versions sidebar does not squeeze unsaved-draft review.
+- Static preview now explains when JavaScript, modules, Three.js/WebGL, canvas,
+  network assets, or backend/server requirements can make a safe preview look
+  blank. The explanation does not claim that generated files failed or that
+  generated runtime code was executed.
+- A screenshot was captured under the local temp evidence directory for the
+  desktop package view. It is local evidence only and was not committed.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
