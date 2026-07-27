@@ -87,6 +87,13 @@ mutation, Save, Project Revision, publication, or arbitrary tool authority.
   Node-test subtests passed.
 - `npm run pack` passed; package verification reported production
   network-denying CSP and 740 ASAR entries.
+- Local Chromium visual QA against the Vite renderer with an injected
+  renderer-safe bridge fixture passed at 1440x950, 900x800, and 390x844. The
+  run verified visible plan Approve/Reject controls, no Save Version control for
+  plan-only output, no visible internal authority/receipt/provider/credential
+  text, no button text overflow, nonblank screenshots, and no bottom-composer
+  cover after scrolling the plan action controls into view. Screenshots were
+  captured under the system temp evidence directory and were not committed.
 - An independent read-only review found no edit, generate, save, revision,
   source, provider, or credential authority leak in the plan-review path. Its
   only finding was the packaged canary namespace evidence gap, which was fixed
