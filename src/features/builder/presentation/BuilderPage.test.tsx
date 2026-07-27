@@ -741,6 +741,7 @@ describe('BuilderPage v2', () => {
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(conversation?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(review?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(preview?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(preview?.getAttribute('aria-label')).toBe('Project result');

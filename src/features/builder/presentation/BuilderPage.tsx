@@ -704,7 +704,7 @@ function ActivityPanel({
   return (
     <section
       aria-label="Project conversation"
-      className="cf-builder-activity-panel"
+      className="cf-builder-activity-panel cf-builder-chat-flow-surface"
       data-builder-activity="true"
       data-builder-activity-status={snapshot?.status ?? 'idle'}
       data-builder-conversation-workspace="true"
