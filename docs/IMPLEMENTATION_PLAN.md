@@ -431,6 +431,14 @@ Evidence requirements:
   head and appear in the read-only Task Stream as lightweight status rows, but
   they carry no provider envelope, prompt, token delta, credential, source,
   Git, Save, or Project Revision authority;
+- the current main-only steering fact checkpoint records a bounded user
+  steering message against the currently trusted active Run context, advances the
+  SQLite Conversation event head, and exposes only the renderer-safe
+  `turn_steered` projection through the existing read-only Task Stream. It does
+  not mutate an already-issued provider request, dispatch a tool, read source,
+  create a Git candidate, create or accept a Review, save a Project Revision, or
+  add any IPC/preload/renderer command. The visible composer can use this only
+  after a later controlled bridge and generation-consumption gate are added;
 - the current provider-output streaming checkpoint lets the main-only
   OpenAI-compatible transport request bounded `text/event-stream` responses only
   when the Generation host supplies an internal observer. The transport assembles

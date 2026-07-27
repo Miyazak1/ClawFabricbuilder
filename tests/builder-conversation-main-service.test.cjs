@@ -467,6 +467,104 @@ test('records fixed run progress while advancing the trusted context head', () =
   }
 });
 
+test('records bounded steering on the active run without provider or source authority', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    const contextReady = item.service.record_run_progress({
+      context: first,
+      stage: 'context_ready',
+    });
+    const steered = item.service.record_steering({
+      context: contextReady,
+      message: 'Use a calmer layout before you finish.',
+    });
+    const steeredEvent = steered.events.at(-1);
+    assert.equal(steered.start_head.sequence, 4);
+    assert.equal(steeredEvent.event_type, 'turn_steered');
+    assert.equal(steeredEvent.payload.turn_id, first.ids.turn_id);
+    assert.equal(steeredEvent.payload.run_id, first.ids.run_id);
+    assert.match(steeredEvent.payload.message.message_id, /^builder-message:/u);
+    assert.equal(steeredEvent.payload.message.text, 'Use a calmer layout before you finish.');
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 4);
+    assert.equal(stream.conversation.recorded_active_turn_id, first.ids.turn_id);
+    assert.deepEqual(stream.conversation.items[3], {
+      item_kind: 'user_message',
+      sequence: 4,
+      turn_id: first.ids.turn_id,
+      message: {
+        message_id: steeredEvent.payload.message.message_id,
+        text: 'Use a calmer layout before you finish.',
+      },
+      message_kind: 'steering',
+      mode: null,
+      task: null,
+    });
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /provider|credential|git_candidate_receipt|commit_oid|tree_oid|source_tree|save_admission|running|live/iu,
+    );
+
+    const terminal = item.service.complete_candidate({
+      context: steered,
+      candidate_result: candidateResult(steered),
+      assistant_text: 'A calmer timer draft is ready to review.',
+    });
+    assert.equal(terminal.head.sequence, 6);
+    assert.equal(terminal.snapshot.active_turn_id, null);
+    assert.deepEqual(terminal.snapshot.turns[0].messages.map((message) => message.kind), [
+      'submitted',
+      'steering',
+      'run_result',
+    ]);
+    assert.equal(terminal.snapshot.turns[0].messages[2].role, 'assistant');
+    assert.equal(terminal.snapshot.turns[0].outcome, 'candidate_ready');
+  } finally {
+    item.close();
+  }
+});
+
+test('rejects steering after control or failure and rejects forged steering payloads', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    assert.throws(() => item.service.record_steering({
+      context: Object.freeze({}),
+      message: 'Use a calmer layout.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.throws(() => item.service.record_steering({
+      context: first,
+      message: 'Use a calmer layout.',
+      provider_config: 'forged',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+
+    const failed = item.service.record_retryable_failure({
+      context: first,
+      failure_code: 'builder_generation_failed',
+    });
+    assert.throws(() => item.service.record_steering({
+      context: failed,
+      message: 'Try again with less motion.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+  } finally {
+    item.close();
+  }
+
+  const cancelledItem = fixture();
+  try {
+    const first = begin(cancelledItem.service);
+    const cancelled = cancelledItem.service.request_cancel({ context: first });
+    assert.throws(() => cancelledItem.service.record_steering({
+      context: cancelled,
+      message: 'Actually keep going.',
+    }), { code: 'builder_conversation_main_service_unavailable' });
+  } finally {
+    cancelledItem.close();
+  }
+});
+
 test('notifies task stream readers after durable conversation appends', () => {
   const notifications = [];
   const item = fixture(1, 1_000, {

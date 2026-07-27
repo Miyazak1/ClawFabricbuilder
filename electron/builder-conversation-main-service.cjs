@@ -435,6 +435,14 @@ function sanitizeQuestionRequest(value) {
   });
 }
 
+function sanitizeSteeringRequest(value) {
+  exactObject(value, ['context', 'message']);
+  return freezeDeep({
+    context: trustedContext(valueAt(value, 'context')),
+    message: safeText(valueAt(value, 'message'), 12_000, 48_000),
+  });
+}
+
 function sanitizePlanRunReference(value) {
   exactObject(value, ['project_id', 'conversation_id', 'turn_id', 'run_id']);
   const projectId = safeProjectId(valueAt(value, 'project_id'));
@@ -1723,6 +1731,43 @@ function createBuilderConversationMainService(rawOptions) {
     return cancelledContext;
   }
 
+  function recordSteering(rawRequest) {
+    const request = sanitizeSteeringRequest(rawRequest);
+    const context = request.context;
+    if (context.run_terminal_failure_code !== null || context.cancel_requested) fail();
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const steered = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'turn_steered',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        message: {
+          message_id: newId(options.createUuid, 'builder-message'),
+          text: request.message,
+        },
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [steered],
+      recordedAtMs,
+    });
+    const steeredContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(steeredContext);
+    return steeredContext;
+  }
+
   function completeFailure(rawRequest) {
     exactObject(rawRequest, ['context', 'failure_code']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
@@ -2179,6 +2224,7 @@ function createBuilderConversationMainService(rawOptions) {
     admit_tool_dispatch: admitToolDispatch,
     select_tool_adapter: selectToolAdapter,
     admit_tool_runtime_invocation: admitToolRuntimeInvocation,
+    record_steering: recordSteering,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
@@ -2196,6 +2242,7 @@ function createBuilderConversationMainService(rawOptions) {
       candidate_draft_restore: 'sqlite_index_replay_verified',
       question_explanation: 'sqlite_event_chain_without_git_revision',
       run_progress_recording: 'main_only_fixed_stage_event',
+      run_steering_recording: 'main_only_active_run_message_no_provider_mutation',
       tool_call_recording: 'main_only_pre_dispatch_event',
       tool_result_recording: 'main_only_fixed_code_event',
       tool_dispatch_admission: 'main_only_open_call_no_dispatch',
