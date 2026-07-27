@@ -558,14 +558,13 @@ Current checkpoint:
   exposes no IPC/preload, shows no Agents UI, dispatches no providers or tools,
   grants no permissions, reads no credentials or source, mutates no Git or
   Project Revision facts, and creates no Review/Artifact authority.
-- the current Agent supervision lease contract adds pure main-side records for
-  leasing one active Agent assignment to one supervisor holder with bounded TTL,
-  lease epoch, no-duplicate-redispatch policy, active-assignment-only
-  supervision state, main-only authority boundary, and explicit release outcome.
-  It persists no rows, opens no IPC/preload path, starts no provider/tool
-  execution, reads no credentials or source, grants no permissions, and mutates
-  no Git, Project Revision, Review, or Artifact authority. A later store must
-  enforce one unexpired lease per assignment before any visible Agent activation.
+- the current Agent supervision lease store persists those lease and release
+  records in a strict main-only SQLite store with restart restore, idempotent
+  replay, owner-scoped reads, one unreleased and unexpired lease per assignment,
+  monotonic lease epochs, schema fingerprint verification, and fixed redacted
+  failures. It opens no IPC/preload path, shows no Agents UI, starts no
+  provider/tool execution, reads no credentials or source, grants no permissions,
+  and mutates no Git, Project Revision, Review, or Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
