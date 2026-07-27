@@ -95,7 +95,7 @@ function removeRoot(root) {
   throw new Error('Temporary test directory could not be removed.');
 }
 
-function fixture(uuidStart = 1, nowStart = 1_000) {
+function fixture(uuidStart = 1, nowStart = 1_000, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-cms-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
   let now = nowStart;
@@ -103,6 +103,7 @@ function fixture(uuidStart = 1, nowStart = 1_000) {
     metadataAuthority: database,
     createUuid: uuidFactory(uuidStart),
     nowMs: () => now++,
+    ...overrides,
   });
   return {
     root,
@@ -399,6 +400,37 @@ test('records start and terminal events before allowing a later turn to continue
       'turn_submitted',
       'run_started',
     ]);
+  } finally {
+    item.close();
+  }
+});
+
+test('notifies task stream readers after durable conversation appends', () => {
+  const notifications = [];
+  const item = fixture(1, 1_000, {
+    onTaskStreamChanged(event) {
+      notifications.push(event);
+    },
+  });
+  try {
+    const first = begin(item.service);
+    item.service.complete_candidate({
+      context: first,
+      candidate_result: candidateResult(first),
+      assistant_text: 'A timer draft is ready to review.',
+    });
+
+    assert.deepEqual(notifications, [
+      {
+        event_version: 'builder-task-stream-changed.v1',
+        project_id: PROJECT_ID,
+      },
+      {
+        event_version: 'builder-task-stream-changed.v1',
+        project_id: PROJECT_ID,
+      },
+    ]);
+    assert.equal(Object.isFrozen(notifications[0]), true);
   } finally {
     item.close();
   }

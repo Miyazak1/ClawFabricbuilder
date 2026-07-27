@@ -19,6 +19,7 @@ export type UseBuilderProjectControllerOptions = Readonly<
 
 export type UseBuilderProjectControllerResult = Readonly<{
   snapshot: BuilderProjectControllerSnapshot;
+  submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
   generate: BuilderProjectController['generate'];
   retryGenerate: BuilderProjectController['retryGenerate'];
@@ -84,6 +85,10 @@ export function useBuilderProjectController(
     (instruction) => controller.generate(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
+  const submit = useCallback<BuilderProjectController['submit']>(
+    (instruction) => controller.submit(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
+    [controller],
+  );
   const answer = useCallback<BuilderProjectController['answer']>(
     (instruction) => controller.answer(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
@@ -121,6 +126,7 @@ export function useBuilderProjectController(
   return useMemo(
     () => Object.freeze({
       snapshot,
+      submit,
       answer,
       generate,
       retryGenerate,
@@ -133,6 +139,7 @@ export function useBuilderProjectController(
     }),
     [
       snapshot,
+      submit,
       answer,
       generate,
       retryGenerate,

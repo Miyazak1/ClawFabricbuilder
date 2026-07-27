@@ -72,6 +72,8 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /listHistory/u);
   assert.doesNotMatch(preload, /projectRevisions|projectCatalog/u);
   assert.match(preload, /providerSettings/u);
+  assert.match(preload, /\bsubmit\b/u);
+  assert.match(preload, /clawfabric-builder:code-generator:submit/u);
   assert.match(preload, /\bretry\b/u);
   assert.match(preload, /clawfabric-builder:code-generator:retry/u);
   assert.match(preload, /\banswer\b/u);
@@ -82,13 +84,15 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:code-generator:reject-draft/u);
   assert.match(preload, /taskStream/u);
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
+  assert.match(preload, /clawfabric-builder:task-stream:changed/u);
+  assert.match(preload, /subscribeChanged/u);
   assert.match(preload, /planReview/u);
   assert.match(preload, /clawfabric-builder:plan-review:review/u);
   assert.match(preload, /permissions/u);
   assert.match(preload, /clawfabric-builder:permissions:evaluate/u);
   assert.match(preload, /windowControls/u);
   assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 23);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 24);
 });
 
 test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {
@@ -145,8 +149,10 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(generationRuntime, /createBuilderConversationMainService/u);
   assert.match(generationRuntime, /createBuilderTaskStreamIpcAdapter/u);
   assert.match(generationRuntime, /READ_TASK_STREAM_CHANNEL/u);
+  assert.match(generationRuntime, /TASK_STREAM_CHANGED_CHANNEL/u);
   assert.match(taskStreamAdapter, /renderer_authority:\s*'project_id_only'/u);
   assert.match(taskStreamAdapter, /read_only:\s*true/u);
+  assert.match(taskStreamAdapter, /change_notification:\s*'project_id_only'/u);
   assert.match(taskStreamAdapter, /active_renderer_required:\s*true/u);
   assert.match(taskStreamAdapter, /direct_electron_registration:\s*false/u);
   assert.match(taskStreamAdapter, /direct_preload_exposure:\s*false/u);

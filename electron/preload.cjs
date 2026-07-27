@@ -9,6 +9,7 @@ const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revisio
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
@@ -19,6 +20,7 @@ const READ_PROVIDER_SETTINGS_CHANNEL = 'clawfabric-builder:provider-settings:rea
 const REPLACE_PROVIDER_SETTINGS_CHANNEL = 'clawfabric-builder:provider-settings:replace-current';
 const PROVIDER_SETTINGS_STATUS_CHANNEL = 'clawfabric-builder:provider-settings:status';
 const READ_TASK_STREAM_CHANNEL = 'clawfabric-builder:task-stream:read';
+const TASK_STREAM_CHANGED_CHANNEL = 'clawfabric-builder:task-stream:changed';
 const REVIEW_PLAN_CHANNEL = 'clawfabric-builder:plan-review:review';
 const EVALUATE_PERMISSION_CHANNEL = 'clawfabric-builder:permissions:evaluate';
 const MINIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:minimize';
@@ -27,7 +29,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v5',
+  bridgeVersion: 'builder-preload.v6',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -49,6 +51,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
   }),
   codeGenerator: Object.freeze({
+    submit(request) {
+      return ipcRenderer.invoke(SUBMIT_CHANNEL, request);
+    },
     generate(request) {
       return ipcRenderer.invoke(GENERATE_CHANNEL, request);
     },
@@ -85,6 +90,16 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
   taskStream: Object.freeze({
     read(request) {
       return ipcRenderer.invoke(READ_TASK_STREAM_CHANNEL, request);
+    },
+    subscribeChanged(listener) {
+      if (typeof listener !== 'function') return () => undefined;
+      const handler = (_event, payload) => {
+        listener(payload);
+      };
+      ipcRenderer.on(TASK_STREAM_CHANGED_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(TASK_STREAM_CHANGED_CHANNEL, handler);
+      };
     },
   }),
   planReview: Object.freeze({

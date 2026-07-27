@@ -61,6 +61,7 @@ export function trustedBuilderGenerationDiagnosticCode(
 }
 
 export interface BuilderCodeGeneratorPort {
+  submit(request: BuilderGenerationRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
@@ -80,7 +81,13 @@ export interface BuilderProjectWorkspacePort {
 
 export interface BuilderTaskStreamPort {
   read(request: Readonly<{ project_id: string }>): Promise<unknown>;
+  subscribeChanged(listener: (event: BuilderTaskStreamChangedEvent) => void): () => void;
 }
+
+export type BuilderTaskStreamChangedEvent = Readonly<{
+  event_version: 'builder-task-stream-changed.v1';
+  project_id: string;
+}>;
 
 export type BuilderPlanReviewDecision = 'approved' | 'rejected';
 

@@ -272,6 +272,7 @@ const channels = [
 ];
 const generationChannels = [
   'clawfabric-builder:code-generator:generate',
+  'clawfabric-builder:code-generator:submit',
   'clawfabric-builder:code-generator:retry',
   'clawfabric-builder:code-generator:answer',
   'clawfabric-builder:code-generator:restore-draft',
@@ -286,6 +287,7 @@ const providerSettingsChannels = [
 ];
 const taskStreamChannels = [
   'clawfabric-builder:task-stream:read',
+  'clawfabric-builder:task-stream:changed',
 ];
 const planReviewChannels = [
   'clawfabric-builder:plan-review:review',
@@ -400,7 +402,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v5');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v6');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -409,9 +411,9 @@ const planReviewBridge = frozenObjectLiteral(planReviewProperty.initializer);
 const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
-exactObjectKeys(generationBridge, ['generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
+exactObjectKeys(generationBridge, ['submit', 'generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
-exactObjectKeys(taskStreamBridge, ['read']);
+exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
@@ -433,6 +435,9 @@ assert.deepEqual(rendererPropertyAccesses, [
   'invoke',
   'invoke',
   'invoke',
+  'invoke',
+  'on',
+  'removeListener',
   'invoke',
   'invoke',
   'invoke',
@@ -471,16 +476,18 @@ assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[3]);
 assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[4]);
 assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[5]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
-assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[1]);
-assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[2]);
-assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[3]);
-assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[4]);
-assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[5]);
-assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[6]);
+assert.equal(preloadConstants.get('SUBMIT_CHANNEL'), generationChannels[1]);
+assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[2]);
+assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[3]);
+assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[4]);
+assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[5]);
+assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[6]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[7]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
 assert.equal(preloadConstants.get('READ_TASK_STREAM_CHANNEL'), taskStreamChannels[0]);
+assert.equal(preloadConstants.get('TASK_STREAM_CHANGED_CHANNEL'), taskStreamChannels[1]);
 assert.equal(preloadConstants.get('REVIEW_PLAN_CHANNEL'), planReviewChannels[0]);
 assert.equal(preloadConstants.get('EVALUATE_PERMISSION_CHANNEL'), permissionChannels[0]);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
@@ -493,6 +500,7 @@ exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['requ
 exactInvokeMethod(workspaceBridge, 'loadRevision', 'LOAD_REVISION_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
 exactInvokeMethod(workspaceBridge, 'listHistory', 'LIST_HISTORY_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'submit', 'SUBMIT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'retry', 'RETRY_GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answer', 'ANSWER_CHANNEL', ['request']);
@@ -504,6 +512,12 @@ exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
 exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['request']);
+const subscribeChanged = taskStreamBridge.properties.find((property) => property.name.text === 'subscribeChanged');
+assert.equal(ts.isMethodDeclaration(subscribeChanged), true);
+assert.deepEqual(subscribeChanged.parameters.map((parameter) => parameter.name.text), ['listener']);
+assert.match(subscribeChanged.getText(preloadAst), /typeof listener !== 'function'/u);
+assert.match(subscribeChanged.getText(preloadAst), /ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
+assert.match(subscribeChanged.getText(preloadAst), /ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
 exactInvokeMethod(planReviewBridge, 'review', 'REVIEW_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(permissionsBridge, 'evaluate', 'EVALUATE_PERMISSION_CHANNEL', ['request']);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
@@ -934,7 +948,7 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 23);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 24);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

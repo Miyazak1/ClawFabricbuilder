@@ -256,10 +256,12 @@ class FakeRole {
     this.page.events.push(['roleClick', this.role, this.name]);
     if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
-    if (this.name === 'Make draft') this.page.recordCandidateAttempt(1);
-    if (this.name === 'Make change') this.page.recordCandidateAttempt(this.page.savedRevision + 1);
+    if (this.name === 'Send') {
+      const instruction = this.page.values.get(SELECTORS.idea) ?? '';
+      if (/[?\uFF1F]\s*$/u.test(instruction)) this.page.recordQuestion();
+      else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
+    }
     if (this.name === 'Retry') this.page.retryCandidateAttempt();
-    if (this.name === 'Ask') this.page.recordQuestion();
     if (this.name === 'Back to current') {
       this.page.historyViewingRevision = null;
       this.page.versionLabel = `Version ${Math.max(1, this.page.savedRevision)}`;
@@ -793,7 +795,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v5',
+      bridge_version: 'builder-preload.v6',
       legacy_namespaces_absent: true,
       plan_review_namespace: 'review_method_only',
     },
@@ -835,8 +837,9 @@ function bridgeEvidence(
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v5',
+    bridgeVersion: 'builder-preload.v6',
     codeGenerator: {
+      submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
       retry() { throw new Error('must not write through bridge'); },
       answer() { throw new Error('must not write through bridge'); },
@@ -948,6 +951,9 @@ function installBridge(page) {
           page.questionTurns,
         )
           .task_stream;
+      },
+      subscribeChanged() {
+        return () => undefined;
       },
     },
     planReview: {
@@ -1364,19 +1370,19 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     unsaved_draft_observed: true,
   });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Make draft', 'Save version']);
+  assert.deepEqual(roleClicks, ['New project', 'Send', 'Save version']);
   assert.equal(page.events.some((event) => event[0] === 'roleFirst'), false);
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v5');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v6');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
   assert.match(source, /projectWorkspace\.listCurrent/u);
   assert.match(source, /projectWorkspace\.loadCurrent/u);
   assert.match(source, /taskStream\.read/u);
-  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|cancel/u);
+  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:submit|generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|cancel/u);
   const unsavedWait = page.events.findIndex(
     (event) => event[0] === 'scopedText' && event[2] === 'Unsaved draft',
   );
@@ -1438,7 +1444,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(page.candidateTurns, 1);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Make draft', 'Retry'],
+    ['New project', 'Send', 'Retry'],
   );
   assert.equal(
     page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
@@ -1452,7 +1458,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(evaluateEvents.length, 1);
   assert.doesNotMatch(
     evaluateEvents[0][1],
-    /codeGenerator\.(?:generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent/u,
+    /codeGenerator\.(?:submit|generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent/u,
   );
 });
 
@@ -1518,7 +1524,7 @@ test('answers a saved-project question without creating a draft or revision', as
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Make draft', 'Save version', 'Ask'],
+    ['New project', 'Send', 'Save version', 'Send'],
   );
 });
 
@@ -1588,7 +1594,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Make draft', 'Save version', 'Make change', 'Save version'],
+    ['New project', 'Send', 'Save version', 'Send', 'Save version'],
   );
 });
 
@@ -1615,7 +1621,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Make draft', 'Save version', 'Make change', 'Save version'],
+    ['New project', 'Send', 'Save version', 'Send', 'Save version'],
   );
 });
 
@@ -1836,7 +1842,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       run: async () => {
         const page = new FakePage();
         installBridge(page);
-        page.failRoleClicks.add('button:Ask');
+        page.failRoleClicks.add('button:Send');
         const first = bridgeEvidence(
           'builder-project:11111111-1111-4111-8111-111111111111',
           true,
@@ -2642,13 +2648,13 @@ test('copies only saved provider profile files and runs without provider input o
     .map((event) => event[2]);
   assert.deepEqual(roleClicks, [
     'New project',
-    'Make draft',
+    'Send',
     'Save version',
-    'Ask',
-    'Make change',
+    'Send',
+    'Send',
     'Save version',
     'Back to current',
-    'Make change',
+    'Send',
   ]);
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
@@ -3214,12 +3220,11 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
-  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft/u);
+  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|retry|answer|rejectDraft)|projectWorkspace\.saveDraft/u);
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);
-  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Make draft['"]\)/u);
-  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Ask['"]\)/u);
+  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Send['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
@@ -3232,7 +3237,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v5['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v6['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /planReview:\s*Object\.freeze/u);
   assert.match(source, /plan_review_namespace/u);

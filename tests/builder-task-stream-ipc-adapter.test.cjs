@@ -7,6 +7,7 @@ const test = require('node:test');
 
 const {
   READ_TASK_STREAM_CHANNEL,
+  TASK_STREAM_CHANGED_CHANNEL,
   BuilderTaskStreamIpcError,
   createBuilderTaskStreamIpcAdapter,
 } = require('../electron/builder-task-stream-ipc-adapter.cjs');
@@ -77,15 +78,17 @@ function adapter(overrides = {}) {
   return { authority, calls, value };
 }
 
-test('task stream adapter exposes only the read-only project activity channel', async () => {
+test('task stream adapter exposes only read plus project-id change notification', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.adapter_id, 'builder_task_stream.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'builderTaskStream');
   assert.equal(value.preload_namespace, 'window.clawfabricBuilder.taskStream');
-  assert.deepEqual(value.exposed_methods, ['read']);
+  assert.deepEqual(value.exposed_methods, ['read', 'subscribeChanged']);
   assert.deepEqual(Object.keys(value.channels), ['read']);
   assert.equal(value.channels.read.channel, READ_TASK_STREAM_CHANNEL);
+  assert.equal(TASK_STREAM_CHANGED_CHANNEL, 'clawfabric-builder:task-stream:changed');
   assert.equal(value.authority.read_only, true);
+  assert.equal(value.authority.change_notification, 'project_id_only');
   assert.equal(value.authority.active_renderer_required, true);
   assert.equal(value.authority.direct_electron_registration, false);
   assert.equal(value.authority.direct_preload_exposure, false);

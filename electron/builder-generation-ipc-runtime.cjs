@@ -12,6 +12,7 @@ const {
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  SUBMIT_CHANNEL,
   createBuilderGenerationIpcAdapter,
 } = require('./builder-generation-ipc-adapter.cjs');
 const {
@@ -34,6 +35,7 @@ const {
 } = require('./builder-project-workspace-ipc-adapter.cjs');
 const {
   READ_TASK_STREAM_CHANNEL,
+  TASK_STREAM_CHANGED_CHANNEL,
   createBuilderTaskStreamIpcAdapter,
 } = require('./builder-task-stream-ipc-adapter.cjs');
 const {
@@ -155,6 +157,48 @@ function readResultProjectId(value) {
   return projectId.value;
 }
 
+function activeWebContents(mainWindowRef) {
+  try {
+    const windowRef = Reflect.apply(mainWindowRef, undefined, []);
+    if (!windowRef || (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed())) {
+      return null;
+    }
+    const webContents = windowRef.webContents;
+    if (!webContents || (typeof webContents.isDestroyed === 'function' && webContents.isDestroyed())) {
+      return null;
+    }
+    return webContents;
+  } catch {
+    return null;
+  }
+}
+
+function taskStreamChangedEvent(rawEvent) {
+  if (!isPlainObject(rawEvent)) fail();
+  const keys = Reflect.ownKeys(rawEvent);
+  if (
+    keys.length !== 2
+    || keys.some((key) => typeof key !== 'string' || !['event_version', 'project_id'].includes(key))
+  ) fail();
+  const version = Object.getOwnPropertyDescriptor(rawEvent, 'event_version');
+  const projectId = Object.getOwnPropertyDescriptor(rawEvent, 'project_id');
+  if (
+    !version
+    || version.enumerable !== true
+    || !Object.hasOwn(version, 'value')
+    || version.value !== 'builder-task-stream-changed.v1'
+    || !projectId
+    || projectId.enumerable !== true
+    || !Object.hasOwn(projectId, 'value')
+    || typeof projectId.value !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId.value)
+  ) fail();
+  return Object.freeze({
+    event_version: 'builder-task-stream-changed.v1',
+    project_id: projectId.value,
+  });
+}
+
 function saveResultProjectId(value) {
   if (!isPlainObject(value)) fail();
   const projectId = Object.getOwnPropertyDescriptor(value, 'project_id');
@@ -237,10 +281,21 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return providerConfigRepository.bind_current_authority();
       },
     });
+    function publishTaskStreamChanged(rawEvent) {
+      const event = taskStreamChangedEvent(rawEvent);
+      const webContents = activeWebContents(options.mainWindowRef);
+      if (webContents === null || typeof webContents.send !== 'function') return;
+      try {
+        webContents.send(TASK_STREAM_CHANGED_CHANNEL, event);
+      } catch {
+        // Activity notifications are opportunistic; the read IPC remains authoritative.
+      }
+    }
     const conversationService = createBuilderConversationMainService({
       metadataAuthority: projectMainAuthority.metadata_authority,
       createUuid: randomUUID,
       nowMs: () => Date.now(),
+      onTaskStreamChanged: publishTaskStreamChanged,
     });
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
@@ -289,6 +344,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.generate);
     }
 
+    function trackedSubmit(rawRequest) {
+      return trackedGenerationOperation(rawRequest, service.submit);
+    }
+
     function trackedRetryGenerate(rawRequest) {
       return trackedGenerationOperation(rawRequest, service.retry_generate);
     }
@@ -299,6 +358,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
+      submit: trackedSubmit,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
       restoreDraft: service.restore_draft,
@@ -372,6 +432,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
   const handlers = Object.freeze([
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
+    Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
     Object.freeze({ channel: RESTORE_DRAFT_CHANNEL, invoke: adapter.channels.restoreDraft.invoke }),

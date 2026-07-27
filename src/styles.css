@@ -409,6 +409,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 112px;
 }
 
+.cf-builder-send-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
 .cf-builder-chat-shell {
   display: grid;
   height: 100%;
@@ -1615,13 +1621,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   }
 
   .cf-builder-composer-actions {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
-  }
-
-  .cf-builder-composer-actions .cf-builder-command-button {
-    width: 100%;
-    min-width: 0;
+    display: flex;
   }
 
   .cf-builder-toolbar-actions {

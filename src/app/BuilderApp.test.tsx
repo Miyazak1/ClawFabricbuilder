@@ -10,6 +10,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import {
   PROJECT_ID,
+  TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
   createCatalogWire,
@@ -61,6 +62,7 @@ async function setup(options: Readonly<{
   answerActivity?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
+  failSubmitOnce?: boolean;
   initiallySaved?: boolean;
   pendingActivity?: boolean;
   pendingPlanActivity?: boolean;
@@ -69,6 +71,7 @@ async function setup(options: Readonly<{
   rejectActivityAfterDiscard?: boolean;
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
+  runningActivity?: boolean;
   validHistoryPreview?: boolean;
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
@@ -142,6 +145,57 @@ async function setup(options: Readonly<{
       result: await createGenerationAnswer(hostRequest),
     };
   });
+  let submitAttempts = 0;
+  const submit = vi.fn(async (request: unknown) => {
+    submitAttempts += 1;
+    const instruction = (request as { instruction: string }).instruction;
+    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    if (/[?\uFF1F]\s*$/u.test(instruction)) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: await createGenerationAnswer(hostRequest),
+      };
+    }
+    if (options.failSubmitOnce === true && submitAttempts === 1) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_provider_http_error',
+          retryable: true,
+        },
+      };
+    }
+    if (options.failGenerate === true) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_provider_http_error',
+          retryable: true,
+        },
+      };
+    }
+    if (options.deferredGenerate === true) {
+      return new Promise<unknown>((resolve) => {
+        resolveGenerate = async () => {
+          latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
+          resolve({
+            version: 'builder-generation-ipc-result.v1',
+            ok: true,
+            result: latestDraft,
+          });
+        };
+      });
+    }
+    latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: latestDraft,
+    };
+  });
   const saveDraft = vi.fn(async (request: unknown) => {
     expect(request).toEqual({ draft_id: latestDraft.draft_id });
     saved = true;
@@ -192,6 +246,7 @@ async function setup(options: Readonly<{
   }));
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
+  const taskStreamChangedListeners = new Set<(event: unknown) => void>();
   const readTaskStream = vi.fn(async () => (
     options.pendingPlanActivity === true && reviewPlan.mock.calls.length > 0
       ? createPlanReviewTaskStreamWire('approved')
@@ -207,6 +262,8 @@ async function setup(options: Readonly<{
       ? pendingCandidateTaskStreamWire('rejected')
     : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
         ? pendingCandidateTaskStreamWire('proposed')
+        : options.runningActivity === true
+          ? runningTaskStreamWire()
         : options.pendingActivity === true
           ? pendingCandidateTaskStreamWire('proposed')
         : createTaskStreamWire()
@@ -250,6 +307,7 @@ async function setup(options: Readonly<{
   const bridge: BuilderDesktopBridgeRoot = {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
+      submit,
       generate,
       retry,
       answer,
@@ -273,6 +331,12 @@ async function setup(options: Readonly<{
     },
     taskStream: {
       read: readTaskStream,
+      subscribeChanged(listener: (event: unknown) => void) {
+        taskStreamChangedListeners.add(listener);
+        return () => {
+          taskStreamChangedListeners.delete(listener);
+        };
+      },
     },
     windowControls: {
       close: async () => ({ result_version: 'builder-window-control-result.v1', ok: true }),
@@ -296,6 +360,7 @@ async function setup(options: Readonly<{
     answer,
     cancel,
     generate,
+    submit,
     retry,
     listHistory,
     loadRevision,
@@ -303,6 +368,18 @@ async function setup(options: Readonly<{
     loadCurrent,
     open,
     readTaskStream,
+    emitTaskStreamChanged(projectId = PROJECT_ID) {
+      const listenerCount = taskStreamChangedListeners.size;
+      act(() => {
+        for (const listener of [...taskStreamChangedListeners]) {
+          listener({
+            event_version: 'builder-task-stream-changed.v1',
+            project_id: projectId,
+          });
+        }
+      });
+      return listenerCount;
+    },
     reviewPlan,
     rejectDraft,
     restoreDraft,
@@ -383,8 +460,10 @@ function createValidHistoryWire(projectId: string, currentWire: ReadWire, histor
 }
 
 function click(container: HTMLElement, label: string): void {
-  const button = [...container.querySelectorAll<HTMLButtonElement>('button')]
-    .find((candidate) => candidate.textContent?.includes(label));
+  const button = label.startsWith('[')
+    ? container.querySelector<HTMLButtonElement>(label)
+    : [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((candidate) => candidate.textContent?.includes(label));
   expect(button, label).not.toBeUndefined();
   act(() => button?.click());
 }
@@ -451,6 +530,23 @@ function pendingCandidateTaskStreamWire(state: 'accepted' | 'proposed' | 'reject
   };
 }
 
+function runningTaskStreamWire() {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 2,
+      recorded_active_turn_id: TURN_ID,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 2,
+      },
+      items: wire.conversation.items.slice(0, 2),
+    },
+  };
+}
+
 describe('BuilderApp v2', () => {
   it('renders one integrated desktop workbench with Projects and Settings only', async () => {
     const { container } = await setup();
@@ -463,7 +559,7 @@ describe('BuilderApp v2', () => {
   });
 
   it('generates an unsaved draft without touching the workspace save authority', async () => {
-    const { container, generate, listCurrent, saveDraft } = await setup();
+    const { container, generate, listCurrent, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
     act(() => {
@@ -477,21 +573,22 @@ describe('BuilderApp v2', () => {
         textarea.dispatchEvent(new Event('change', { bubbles: true }));
       }
     });
-    click(container, 'Make draft');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
-    expect(generate).toHaveBeenCalledOnce();
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
-  it('retries a failed draft through the retry bridge and refreshes activity', async () => {
-    const { container, generate, readTaskStream, retry, saveDraft } = await setup({
-      failGenerate: true,
+  it('keeps one composer turn editable after submit failure without draft retry', async () => {
+    const { container, generate, readTaskStream, retry, saveDraft, submit } = await setup({
+      failSubmitOnce: true,
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
@@ -500,11 +597,13 @@ describe('BuilderApp v2', () => {
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    click(container, 'Make draft');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
+        .toContain('The AI service could not complete this request.');
     });
+    expect(container.querySelector('[data-builder-retry-draft="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
       .toBe('Make a timer.');
     act(() => {
@@ -513,13 +612,16 @@ describe('BuilderApp v2', () => {
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    click(container, 'Retry');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
-    expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
-    expect(retry).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls[0][0]).toEqual({ instruction: 'Make a timer.' });
+    expect(submit.mock.calls[1][0]).toEqual({ instruction: 'Make a different timer.' });
+    expect(generate).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
@@ -527,7 +629,7 @@ describe('BuilderApp v2', () => {
   });
 
   it('cancels active draft generation through request-id-only control', async () => {
-    const { cancel, container, generate, resolveGenerate, saveDraft } = await setup({
+    const { cancel, container, generate, resolveGenerate, saveDraft, submit } = await setup({
       deferredGenerate: true,
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -536,12 +638,13 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, 'Make a timer.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    click(container, 'Make draft');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(generate).toHaveBeenCalledOnce();
+      expect(submit).toHaveBeenCalledOnce();
       expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
     });
+    expect(generate).not.toHaveBeenCalled();
     const expected = await createBuilderGenerationRequest('Make a timer.', null);
     click(container, 'Stop');
 
@@ -569,7 +672,7 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, 'Make a timer.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    click(container, 'Make draft');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
@@ -578,6 +681,41 @@ describe('BuilderApp v2', () => {
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('sqlite');
+  });
+
+  it('ignores task-stream change notifications while a new draft has no visible project id', async () => {
+    const {
+      container,
+      emitTaskStreamChanged,
+      readTaskStream,
+      resolveGenerate,
+      submit,
+    } = await setup({ deferredGenerate: true, runningActivity: true });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
+    expect(readTaskStream).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/request_id|provider|credential|commit_oid|tree_oid/iu);
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
   });
 
   it('records plan approval through the plan-review bridge and only refreshes activity', async () => {
@@ -635,7 +773,7 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, 'Make a timer.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    click(container, 'Make draft');
+    click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
       expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
     });
@@ -660,8 +798,8 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toMatch(/builder-generation-draft:|sha256:|provider|credential/iu);
   });
 
-  it('asks a question through the answer bridge without draft, save, or revision UI', async () => {
-    const { answer, container, generate, readTaskStream, saveDraft } = await setup({
+  it('asks a question through the submit bridge without draft, save, or revision UI', async () => {
+    const { answer, container, generate, readTaskStream, saveDraft, submit } = await setup({
       answerActivity: true,
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -670,14 +808,15 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, 'What does this project do?');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    click(container, 'Ask');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
         .toContain('This answer does not change files.');
     });
 
-    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'What does this project do?' });
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'What does this project do?' });
+    expect(answer).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
@@ -832,7 +971,7 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, 'Make a timer.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    click(container, 'Make draft');
+    click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });

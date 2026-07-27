@@ -382,6 +382,13 @@ Evidence requirements:
   command, does not add a dedicated code workbench, and still uses only the
   existing read-only task stream, plan review, generation, draft reject, cancel,
   and explicit Save bridges;
+- the current live activity notification checkpoint emits a project-id-only
+  Task Stream change hint from main after a Conversation append has been
+  durably recorded and replay-verified. The renderer can subscribe through the
+  exact preload task-stream namespace and then re-read the existing read-only
+  Task Stream; the notification carries no source, receipt, provider,
+  credential, tool output, save, Git, or revision authority and cannot create or
+  accept work;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

@@ -44,7 +44,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v5/u);
+  assert.match(preload, /builder-preload\.v6/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /saveDraft/u);
@@ -53,6 +53,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /listCurrent/u);
   assert.match(preload, /listHistory/u);
   assert.match(preload, /codeGenerator/u);
+  assert.match(preload, /\bsubmit\b/u);
+  assert.match(preload, /clawfabric-builder:code-generator:submit/u);
   assert.match(preload, /\bretry\b/u);
   assert.match(preload, /clawfabric-builder:code-generator:retry/u);
   assert.match(preload, /\banswer\b/u);
@@ -64,6 +66,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /taskStream/u);
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
+  assert.match(preload, /clawfabric-builder:task-stream:changed/u);
+  assert.match(preload, /subscribeChanged/u);
+  assert.match(preload, /ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
   assert.match(preload, /planReview/u);
   assert.match(preload, /clawfabric-builder:plan-review:review/u);
   assert.match(preload, /permissions/u);
@@ -73,11 +79,14 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 23);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 24);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
+  const preloadWithoutTaskStreamListener = preload
+    .replace(/ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '');
   assert.doesNotMatch(
-    preload,
-    /ipcRenderer\.(?:send|on|once)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,
+    preloadWithoutTaskStreamListener,
+    /ipcRenderer\.(?:send|on|once|removeListener)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,
   );
 });
 

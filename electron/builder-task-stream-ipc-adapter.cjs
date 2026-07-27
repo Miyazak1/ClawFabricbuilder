@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const READ_TASK_STREAM_CHANNEL = 'clawfabric-builder:task-stream:read';
+const TASK_STREAM_CHANGED_CHANNEL = 'clawfabric-builder:task-stream:changed';
 const OPTION_KEYS = Object.freeze(['readStream', 'mainWindowRef']);
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -235,13 +236,14 @@ function createBuilderTaskStreamIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['read']),
+    exposed_methods: Object.freeze(['read', 'subscribeChanged']),
     authority: Object.freeze({
       renderer_authority: 'project_id_only',
       main_owned_sqlite_authority: true,
       main_owned_git_authority: false,
       active_renderer_required: true,
       read_only: true,
+      change_notification: 'project_id_only',
       provider_dispatch: false,
       credential_readback: false,
       direct_electron_registration: false,
@@ -252,6 +254,7 @@ function createBuilderTaskStreamIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   READ_TASK_STREAM_CHANNEL,
+  TASK_STREAM_CHANGED_CHANNEL,
   BuilderTaskStreamIpcError,
   createBuilderTaskStreamIpcAdapter,
 });

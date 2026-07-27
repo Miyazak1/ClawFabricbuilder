@@ -29,12 +29,14 @@ export type BuilderProjectControllerStatus =
   | 'new'
   | 'opening'
   | 'ready'
+  | 'submitting'
   | 'answering'
   | 'generating'
   | 'draft_ready'
   | 'saving'
   | 'rejecting'
   | 'answer_failed'
+  | 'submit_failed'
   | 'generation_failed'
   | 'reject_failed'
   | 'save_unknown'
@@ -73,6 +75,7 @@ export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
+  submit(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   retryGenerate(): Promise<BuilderProjectControllerSnapshot>;
@@ -132,6 +135,7 @@ function snapshot(
   const result = Object.freeze({
     status,
     busy: status === 'opening'
+      || status === 'submitting'
       || status === 'answering'
       || status === 'generating'
       || status === 'saving'
@@ -288,6 +292,15 @@ function sanitizeRejectResult(value: unknown, draft: BuilderGenerationDraft): vo
     || source.pending_draft_released !== true
     || source.conversation_event_admission !== 'sqlite_recorded'
   ) throw new Error();
+}
+
+function isExplanationResult(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(value, 'result_kind');
+  return descriptor !== undefined
+    && descriptor.enumerable === true
+    && Object.hasOwn(descriptor, 'value')
+    && descriptor.value === 'explanation';
 }
 
 function savedContainsDraft(
@@ -481,7 +494,7 @@ export function createBuilderProjectController(
       || current.busy
       || current.draft !== null
       || current.inspectedRevision !== null
-      || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
+      || !['new', 'ready', 'answer_failed', 'submit_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
     const retainedPreview = current.preview;
@@ -525,13 +538,72 @@ export function createBuilderProjectController(
     });
   }
 
+  async function submit(instruction: string): Promise<BuilderProjectControllerSnapshot> {
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || current.inspectedRevision !== null
+      || !['new', 'ready', 'answer_failed', 'submit_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
+    ) return current;
+    const retained = current.savedProject;
+    const retainedPreview = current.preview;
+    retryableGeneration = null;
+    const before = withoutRetryableGeneration(current);
+    return run(async (operationEpoch) => {
+      publish(snapshot('submitting', retained, null, retainedPreview, null));
+      let requestId: string | null = null;
+      let request: BuilderGenerationRequest | null = null;
+      try {
+        request = await createBuilderGenerationRequest(
+          instruction,
+          retained?.target.project_id ?? null,
+        );
+        requestId = request.request_digest;
+        activeGeneration = Object.freeze({ before, requestId });
+        const result = await dependencies.generator.submit(request);
+        if (isExplanationResult(result)) {
+          const answered = await sanitizeBuilderGenerationAnswer(result, request);
+          clearActiveGeneration(request.request_digest, operationEpoch);
+          if (disposed || operationEpoch !== epoch) return current;
+          return publish(snapshot(
+            settledStatus(retained, retainedPreview),
+            retained,
+            null,
+            retainedPreview,
+            null,
+            answered,
+          ));
+        }
+        const draft = await sanitizeBuilderGenerationDraft(result, request);
+        clearActiveGeneration(request.request_digest, operationEpoch);
+        if (!draftMatchesSavedBase(draft, retained)) throw new Error();
+        if (disposed || operationEpoch !== epoch) return current;
+        return withPreview('draft_ready', retained, draft, operationEpoch);
+      } catch (error) {
+        if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot(
+          'submit_failed',
+          retained,
+          null,
+          retainedPreview,
+          sanitizeTrustedBuilderGenerationDiagnostic(error),
+          null,
+          null,
+          false,
+        ));
+      }
+    });
+  }
+
   async function generate(instruction: string): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
       || current.busy
       || current.draft !== null
       || current.inspectedRevision !== null
-      || !['new', 'ready', 'answer_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
+      || !['new', 'ready', 'answer_failed', 'submit_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
     retryableGeneration = null;
@@ -704,7 +776,7 @@ export function createBuilderProjectController(
     if (
       disposed
       || target === null
-      || !['answering', 'generating'].includes(current.status)
+      || !['answering', 'generating', 'submitting'].includes(current.status)
     ) return current;
     try {
       const cancelled = sanitizeCancelResult(
@@ -794,6 +866,7 @@ export function createBuilderProjectController(
       return () => listeners.delete(listener);
     },
     open,
+    submit,
     answer,
     generate,
     retryGenerate,

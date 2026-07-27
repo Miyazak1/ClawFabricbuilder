@@ -51,6 +51,10 @@ async function snapshots() {
   let draft = await createGenerationDraft();
   const controller = createBuilderProjectController({
     generator: {
+      async submit(request) {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
       async generate(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
@@ -112,16 +116,23 @@ async function snapshots() {
   return { draftReady, fresh, saved };
 }
 
+function taskStreamPort(read: Parameters<typeof createBuilderConversationController>[0]['read']) {
+  return {
+    read,
+    subscribeChanged: () => () => undefined,
+  };
+}
+
 async function candidateActivity(rejected = false) {
-  const controller = createBuilderConversationController({
-    read: async () => (rejected ? createRejectedTaskStreamWire() : createTaskStreamWire()),
-  });
+  const controller = createBuilderConversationController(taskStreamPort(
+    async () => (rejected ? createRejectedTaskStreamWire() : createTaskStreamWire()),
+  ));
   return controller.load(PROJECT_ID);
 }
 
 async function absentActivity() {
-  const controller = createBuilderConversationController({
-    read: async () => ({
+  const controller = createBuilderConversationController(taskStreamPort(
+    async () => ({
       stream_version: 'builder-task-stream-read-result.v1',
       project_id: PROJECT_ID,
       conversation: null,
@@ -132,31 +143,31 @@ async function absentActivity() {
         project_revision: 'not_inferred',
       },
     }),
-  });
+  ));
   return controller.load(PROJECT_ID);
 }
 
 function loadingActivity() {
-  const controller = createBuilderConversationController({
-    read: async () => new Promise(() => undefined),
-  });
+  const controller = createBuilderConversationController(taskStreamPort(
+    async () => new Promise(() => undefined),
+  ));
   void controller.load(PROJECT_ID);
   return controller.getSnapshot();
 }
 
 async function unavailableActivity() {
-  const controller = createBuilderConversationController({
-    read: async () => {
+  const controller = createBuilderConversationController(taskStreamPort(
+    async () => {
       throw new Error('private');
     },
-  });
+  ));
   return controller.load(PROJECT_ID);
 }
 
 async function staleActivity() {
   let fail = false;
-  const controller = createBuilderConversationController({
-    read: async () => {
+  const controller = createBuilderConversationController(taskStreamPort(
+    async () => {
       if (fail) throw new Error('private');
       return {
         stream_version: 'builder-task-stream-read-result.v1',
@@ -170,37 +181,31 @@ async function staleActivity() {
         },
       };
     },
-  });
+  ));
   await controller.load(PROJECT_ID);
   fail = true;
   return controller.refresh();
 }
 
 async function answerActivity() {
-  const controller = createBuilderConversationController({
-    read: async () => createAnswerTaskStreamWire(),
-  });
+  const controller = createBuilderConversationController(taskStreamPort(async () => createAnswerTaskStreamWire()));
   return controller.load(PROJECT_ID);
 }
 
 async function acceptedCandidateActivity() {
-  const controller = createBuilderConversationController({
-    read: async () => createAcceptedTaskStreamWire(1),
-  });
+  const controller = createBuilderConversationController(taskStreamPort(async () => createAcceptedTaskStreamWire(1)));
   return controller.load(PROJECT_ID);
 }
 
 async function planReviewActivity(decision: 'approved' | 'rejected' = 'approved') {
-  const controller = createBuilderConversationController({
-    read: async () => createPlanReviewTaskStreamWire(decision),
-  });
+  const controller = createBuilderConversationController(taskStreamPort(
+    async () => createPlanReviewTaskStreamWire(decision),
+  ));
   return controller.load(PROJECT_ID);
 }
 
 async function pendingPlanActivity() {
-  const controller = createBuilderConversationController({
-    read: async () => createPlanTaskStreamWire(),
-  });
+  const controller = createBuilderConversationController(taskStreamPort(async () => createPlanTaskStreamWire()));
   return controller.load(PROJECT_ID);
 }
 
@@ -270,6 +275,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
   };
   const controller = createBuilderProjectController({
     generator: {
+      async submit() {
+        return draft;
+      },
       async generate() {
         return draft;
       },
@@ -336,6 +344,9 @@ async function inspectedHistorySnapshot() {
   );
   const controller = createBuilderProjectController({
     generator: {
+      async submit(request) {
+        return createGenerationDraft(request, currentTree);
+      },
       async generate(request) {
         return createGenerationDraft(request, currentTree);
       },
@@ -470,17 +481,15 @@ describe('BuilderPage v2', () => {
   it('renders a continuous composer without pretending a new project is saved', async () => {
     const { fresh } = await snapshots();
     const activity = await absentActivity();
-    const onAnswer = vi.fn();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const onInstructionChange = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         conversationSnapshot={activity}
         instruction="Make a timer."
-        onAnswer={onAnswer}
-        onGenerate={onGenerate}
         onInstructionChange={onInstructionChange}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={fresh}
       />,
     );
@@ -514,9 +523,10 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toContain('No unsaved changes to review.');
     expect(container.textContent).not.toContain('Make a draft to compare it with the current version.');
     expect(container.textContent).not.toContain('Save a version to see history.');
-    click(container, '[data-builder-make-draft="true"]');
-    expect(onGenerate).toHaveBeenCalledOnce();
-    expect(onAnswer).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-ask-question="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-make-draft="true"]')).toBeNull();
+    click(container, '[data-builder-submit-turn="true"]');
+    expect(onSubmitInstruction).toHaveBeenCalledOnce();
   });
 
   it('keeps explicit activity loading and failure states visible without empty placeholders', async () => {
@@ -558,16 +568,14 @@ describe('BuilderPage v2', () => {
     expect(stale.textContent).not.toContain('No activity yet.');
   });
 
-  it('submits the primary composer command with Enter without using Ask', async () => {
+  it('submits the primary composer command with Enter through the single submit action', async () => {
     const { fresh } = await snapshots();
-    const onAnswer = vi.fn();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onAnswer={onAnswer}
-        onGenerate={onGenerate}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={fresh}
       />,
     );
@@ -577,20 +585,17 @@ describe('BuilderPage v2', () => {
     expect(event.defaultPrevented).toBe(true);
     expect(container.querySelector('#builder-idea')?.getAttribute('aria-keyshortcuts'))
       .toBe('Enter');
-    expect(onGenerate).toHaveBeenCalledOnce();
-    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).toHaveBeenCalledOnce();
   });
 
   it('keeps Shift+Enter available for multiline composer input', async () => {
     const { fresh } = await snapshots();
-    const onAnswer = vi.fn();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onAnswer={onAnswer}
-        onGenerate={onGenerate}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={fresh}
       />,
     );
@@ -598,24 +603,21 @@ describe('BuilderPage v2', () => {
     const event = keyDown(container, '#builder-idea', { key: 'Enter', shiftKey: true });
 
     expect(event.defaultPrevented).toBe(false);
-    expect(onGenerate).not.toHaveBeenCalled();
-    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
   });
 
   it('does not submit while IME composition is active', async () => {
     const { fresh } = await snapshots();
-    const onAnswer = vi.fn();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="做一个计时器。"
-        onAnswer={onAnswer}
-        onGenerate={onGenerate}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={fresh}
       />,
     );
@@ -623,35 +625,36 @@ describe('BuilderPage v2', () => {
     const event = keyDown(container, '#builder-idea', { key: 'Enter', isComposing: true });
 
     expect(event.defaultPrevented).toBe(false);
-    expect(onGenerate).not.toHaveBeenCalled();
-    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
-  it('offers a separate Ask command without using the draft generator', async () => {
+  it('offers one submit command for questions and project changes', async () => {
     const { fresh } = await snapshots();
-    const onAnswer = vi.fn();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="What does this project do?"
-        onAnswer={onAnswer}
-        onGenerate={onGenerate}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={fresh}
       />,
     );
 
-    click(container, '[data-builder-ask-question="true"]');
+    expect(container.querySelector('[data-builder-ask-question="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-make-draft="true"]')).toBeNull();
+    click(container, '[data-builder-submit-turn="true"]');
 
-    expect(onAnswer).toHaveBeenCalledOnce();
-    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).toHaveBeenCalledOnce();
   });
 
-  it('offers Retry for a retryable draft failure without using Make draft', async () => {
+  it('offers Retry for a retryable draft failure without submitting a new turn', async () => {
     const controller = createBuilderProjectController({
       generator: {
+        submit: async () => {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        },
         generate: async () => {
           throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
         },
@@ -671,14 +674,14 @@ describe('BuilderPage v2', () => {
       },
     });
     const failed = await controller.generate('Make a timer.');
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const onRetryGenerate = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a different timer."
-        onGenerate={onGenerate}
         onRetryGenerate={onRetryGenerate}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={failed}
       />,
     );
@@ -690,13 +693,14 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-retry-draft="true"]');
 
     expect(onRetryGenerate).toHaveBeenCalledOnce();
-    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
   });
 
   it('shows Stop only while AI work is active', async () => {
     const { fresh } = await snapshots();
     const controller = createBuilderProjectController({
       generator: {
+        submit: async () => null,
         generate: async () => new Promise(() => undefined),
         retry: async () => null,
         answer: async () => null,
@@ -739,6 +743,7 @@ describe('BuilderPage v2', () => {
 
     const answerController = createBuilderProjectController({
       generator: {
+        submit: async () => null,
         generate: async () => null,
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
@@ -810,7 +815,7 @@ describe('BuilderPage v2', () => {
       .toContain('Version 1');
     expect(container.textContent).toContain('Review draft before continuing');
     expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
-    expect(container.querySelector<HTMLButtonElement>('[data-builder-ask-question="true"]')?.disabled)
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBeUndefined();
     expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
       .not.toBeNull();
@@ -832,7 +837,7 @@ describe('BuilderPage v2', () => {
   it('does not bind Enter to saving or discarding an unsaved draft', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const onSave = vi.fn();
     const onRejectDraft = vi.fn();
     const container = render(
@@ -840,9 +845,9 @@ describe('BuilderPage v2', () => {
         activeFile={null}
         conversationSnapshot={activity}
         instruction="Add a timer."
-        onGenerate={onGenerate}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={draftReady}
       />,
     );
@@ -852,7 +857,7 @@ describe('BuilderPage v2', () => {
     expect(event.defaultPrevented).toBe(false);
     expect(container.querySelector('#builder-idea')?.getAttribute('aria-keyshortcuts'))
       .toBeNull();
-    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
   });
@@ -861,8 +866,7 @@ describe('BuilderPage v2', () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
     const history = await savedHistory();
-    const onAnswer = vi.fn();
-    const onGenerate = vi.fn();
+    const onSubmitInstruction = vi.fn();
     const onRefreshConversation = vi.fn();
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
@@ -872,11 +876,10 @@ describe('BuilderPage v2', () => {
         conversationSnapshot={activity}
         historySnapshot={history}
         instruction="Add a timer."
-        onAnswer={onAnswer}
-        onGenerate={onGenerate}
         onRefreshConversation={onRefreshConversation}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onSubmitInstruction={onSubmitInstruction}
         snapshot={draftReady}
       />,
     );
@@ -954,8 +957,7 @@ describe('BuilderPage v2', () => {
       .toContain('Review the draft preview, files, and changes before saving this version.');
     click(container, '[data-builder-refresh-activity="true"]');
     expect(onRefreshConversation).toHaveBeenCalledOnce();
-    expect(onAnswer).not.toHaveBeenCalled();
-    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(
@@ -1268,8 +1270,8 @@ describe('BuilderPage v2', () => {
         activeFile={null}
         historySnapshot={history}
         instruction="Change it."
-        onGenerate={vi.fn()}
         onInspectRevision={onInspectRevision}
+        onSubmitInstruction={vi.fn()}
         onShowCurrentRevision={onShowCurrentRevision}
         snapshot={inspected}
       />,
@@ -1277,7 +1279,7 @@ describe('BuilderPage v2', () => {
     expect(inspectedContainer.querySelector('[data-builder-history-preview="true"]')?.textContent)
       .toContain('Viewing Version 1');
     expect(inspectedContainer.textContent).toContain('Viewing a saved version');
-    expect(inspectedContainer.querySelector<HTMLButtonElement>('[data-builder-make-draft="true"]')?.disabled)
+    expect(inspectedContainer.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBe(true);
     expect(inspected.preview?.src_doc).toContain('<main>Earlier</main>');
     const previewFrame = inspectedContainer.querySelector('iframe');
@@ -1472,6 +1474,12 @@ describe('BuilderPage v2', () => {
     const { fresh } = await snapshots();
     const controller = createBuilderProjectController({
       generator: {
+        submit: async () => {
+          const error = Object.assign(new Error(), {
+            code: 'builder_generation_provider_unavailable',
+          });
+          throw error;
+        },
         generate: async () => {
           const error = Object.assign(new Error(), {
             code: 'builder_generation_provider_unavailable',
@@ -1510,6 +1518,7 @@ describe('BuilderPage v2', () => {
   it('labels an unknown Save outcome without claiming the draft is lost', async () => {
     const controller = createBuilderProjectController({
       generator: {
+        submit: async (request) => createGenerationDraft(request),
         generate: async (request) => createGenerationDraft(request),
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,

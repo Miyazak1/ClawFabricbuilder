@@ -1360,7 +1360,7 @@ async function generateProjectViaUi(page, idea) {
     fail('canary_new_project_failed');
   }
   try {
-    await clickByRole(page, 'button', 'Make draft');
+    await clickByRole(page, 'button', 'Send');
     await waitForGenerationTerminal(page);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
@@ -1456,7 +1456,7 @@ async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.idea).fill(idea);
-    await clickByRole(page, 'button', 'Make draft');
+    await clickByRole(page, 'button', 'Send');
     await page.getByRole('alert').waitFor({ state: 'visible' });
     await page.locator(SELECTORS.retryDraft).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
@@ -1503,7 +1503,7 @@ async function askProjectQuestionViaUi(
 ) {
   try {
     await page.locator(SELECTORS.idea).fill(question);
-    await clickByRole(page, 'button', 'Ask');
+    await clickByRole(page, 'button', 'Send');
     const answer = page.locator(SELECTORS.questionAnswer).waitFor({ state: 'visible' })
       .then(() => 'answer', () => 'answer_timeout');
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
@@ -1546,7 +1546,7 @@ async function createUpdateDraftViaUi(
   let draftReviewDiff = null;
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
-    await clickByRole(page, 'button', 'Make change');
+    await clickByRole(page, 'button', 'Send');
     await waitForGenerationTerminal(page);
   } catch {
     fail('canary_update_generation_terminal_failed');
@@ -1841,12 +1841,12 @@ function assertReadEvidence(value) {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v5'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v6'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.plan_review_namespace.value !== 'review_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v5',
+    bridge_version: 'builder-preload.v6',
     legacy_namespaces_absent: true,
     plan_review_namespace: 'review_method_only',
   });

@@ -22,6 +22,7 @@ import {
 } from '../../../test/builderV2Fixtures';
 
 function setup(options: {
+  submit?: BuilderCodeGeneratorPort['submit'];
   generate?: BuilderCodeGeneratorPort['generate'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
@@ -33,6 +34,7 @@ function setup(options: {
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
   loadRevision?: BuilderProjectWorkspacePort['loadRevision'];
 } = {}) {
+  const submit = vi.fn(options.submit ?? (async (request) => createGenerationDraft(request)));
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
@@ -75,7 +77,7 @@ function setup(options: {
     listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
-    generator: { generate, retry, answer, restoreDraft, rejectDraft, cancel },
+    generator: { submit, generate, retry, answer, restoreDraft, rejectDraft, cancel },
     workspace,
   });
   return {
@@ -83,6 +85,7 @@ function setup(options: {
     cancel,
     controller,
     generate,
+    submit,
     retry,
     loadCurrent,
     loadRevision,
@@ -214,6 +217,100 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
     expect(result.savedProject).toBeNull();
     expect(JSON.stringify(result)).not.toContain('request_id');
+  });
+
+  it('submits one composer turn that can produce an unsaved draft', async () => {
+    const { controller, generate, saveDraft, submit } = setup();
+    const result = await controller.submit('Make a timer.');
+
+    expect(submit).toHaveBeenCalledOnce();
+    expect(submit.mock.calls[0][0]).toMatchObject({
+      version: 'builder-generation-request.v2',
+      instruction: 'Make a timer.',
+      existing_project_id: null,
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
+    expect(result.answer).toBeNull();
+  });
+
+  it('submits one composer turn that can produce an answer without saving', async () => {
+    const { answer, controller, generate, saveDraft, submit } = setup({
+      submit: async (request) => createGenerationAnswer(request),
+    });
+    const result = await controller.submit('What does this project do?');
+
+    expect(submit).toHaveBeenCalledOnce();
+    expect(answer).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('new');
+    expect(result.answer).toMatchObject({
+      result_kind: 'explanation',
+      admissions: {
+        draft: 'not_created',
+        save: 'not_performed',
+      },
+    });
+    expect(result.draft).toBeNull();
+  });
+
+  it('uses neutral submit states before the main router decides answer or draft', async () => {
+    let resolveSubmit!: (value: unknown) => void;
+    let resolveSubmitStart!: () => void;
+    const submitStarted = new Promise<void>((resolve) => {
+      resolveSubmitStart = resolve;
+    });
+    const { controller, submit } = setup({
+      submit: async (request) => {
+        resolveSubmitStart();
+        return new Promise((resolve) => {
+          resolveSubmit = resolve;
+        }).then(() => createGenerationDraft(request));
+      },
+    });
+
+    const operation = controller.submit('Make a timer.');
+    await submitStarted;
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'submitting',
+      busy: true,
+      retryableGeneration: false,
+    });
+
+    resolveSubmit(null);
+    const result = await operation;
+
+    expect(submit).toHaveBeenCalledOnce();
+    expect(result.status).toBe('draft_ready');
+  });
+
+  it('keeps submit failures neutral and allows the next composer turn', async () => {
+    let attempts = 0;
+    const { controller, retry, submit } = setup({
+      submit: async (request) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        }
+        return createGenerationDraft(request);
+      },
+    });
+
+    const failed = await controller.submit('What should happen?');
+    expect(failed).toMatchObject({
+      status: 'submit_failed',
+      error: 'builder_generation_provider_http_error',
+      retryableGeneration: false,
+    });
+    expect(await controller.retryGenerate()).toBe(failed);
+    const result = await controller.submit('Make a timer.');
+
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(retry).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
   });
 
   it('answers against the selected saved project without saving or replacing the preview', async () => {

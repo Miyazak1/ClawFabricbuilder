@@ -51,6 +51,10 @@ async function renderHook(
   let latest: UseBuilderProjectControllerResult | null = null;
   let draft = await createGenerationDraft();
   let resolveGenerate: (() => Promise<void>) | null = null;
+  const submit = vi.fn(async (request) => {
+    draft = await createGenerationDraft(request, readWire.source_tree);
+    return draft;
+  });
   const generate = vi.fn(async (request) => {
     if (options.failGenerate === true) {
       throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
@@ -96,7 +100,7 @@ async function renderHook(
       }
       : readWire
   ));
-  const generator = { generate, retry, answer, restoreDraft, rejectDraft, cancel };
+  const generator = { submit, generate, retry, answer, restoreDraft, rejectDraft, cancel };
   const workspace = {
     open,
     saveDraft,
@@ -132,6 +136,7 @@ async function renderHook(
     answer,
     cancel,
     generate,
+    submit,
     retry,
     loadCurrent,
     open,
@@ -192,6 +197,24 @@ describe('useBuilderProjectController', () => {
       savedProject: {
         target: { project_id: PROJECT_ID, revision_number: 1 },
       },
+    });
+  });
+
+  it('exposes one submit command for the composer without saving', async () => {
+    const hook = await renderHook();
+    await act(async () => {
+      await hook.current().submit('Make a timer.');
+    });
+
+    expect(hook.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      instruction: 'Make a timer.',
+      existing_project_id: null,
+    }));
+    expect(hook.generate).not.toHaveBeenCalled();
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'draft_ready',
+      draft: { draft_id: DRAFT_ID },
     });
   });
 

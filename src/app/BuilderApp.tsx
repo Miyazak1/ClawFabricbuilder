@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   Code2,
@@ -27,6 +27,7 @@ import type {
   BuilderCodeGeneratorPort,
   BuilderPlanReviewPort,
   BuilderPlanReviewRequest,
+  BuilderTaskStreamChangedEvent,
   BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
 } from '../features/builder/application/builderPorts';
@@ -193,6 +194,10 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
 });
 
 const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
+  submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -223,6 +228,10 @@ const UNAVAILABLE_TASK_STREAM: BuilderTaskStreamPort = Object.freeze({
   read(request: Parameters<BuilderTaskStreamPort['read']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopTaskStreamPortError());
+  },
+  subscribeChanged(listener: (event: BuilderTaskStreamChangedEvent) => void) {
+    void listener;
+    return () => undefined;
   },
 });
 
@@ -346,6 +355,14 @@ function shouldClearSubmittedIdea(snapshot: BuilderVisibleProjectSnapshot): bool
   );
 }
 
+function shouldReadChangedTaskStream(
+  eventProjectId: string,
+  snapshot: BuilderVisibleProjectSnapshot,
+): boolean {
+  const visibleProjectId = visibleConversationProjectId(snapshot);
+  return visibleProjectId !== null && eventProjectId === visibleProjectId;
+}
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
@@ -363,6 +380,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const workspacePorts = useMemo(() => {
     void workspaceEpoch;
     const generator: BuilderCodeGeneratorPort = Object.freeze({
+      submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
+        return ports.generator.submit(request);
+      },
       generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
         return ports.generator.generate(request);
       },
@@ -415,6 +435,24 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.workspace,
     visibleHistoryProjectId(project.snapshot),
   );
+  const projectSnapshotRef = useRef(project.snapshot);
+  const conversationRef = useRef(conversation);
+
+  useLayoutEffect(() => {
+    projectSnapshotRef.current = project.snapshot;
+  }, [project.snapshot]);
+
+  useLayoutEffect(() => {
+    conversationRef.current = conversation;
+  }, [conversation]);
+
+  useEffect(() => (
+    ports.taskStream.subscribeChanged((event) => {
+      const currentSnapshot = projectSnapshotRef.current;
+      if (!shouldReadChangedTaskStream(event.project_id, currentSnapshot)) return;
+      void conversationRef.current.load(event.project_id).catch(() => undefined);
+    })
+  ), [ports.taskStream]);
 
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
@@ -472,9 +510,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     });
   }, [conversation.snapshot, project, project.snapshot, readActivityAfterTerminal]);
 
-  const generate = useCallback(async () => {
+  const submitInstruction = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
-    const result = await project.generate(idea);
+    const result = await project.submit(idea);
     if (workspaceEpochRef.current !== commandEpoch) return;
     if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
@@ -487,14 +525,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
   }, [project, readActivityAfterTerminal]);
-
-  const answer = useCallback(async () => {
-    const commandEpoch = workspaceEpochRef.current;
-    const result = await project.answer(idea);
-    if (workspaceEpochRef.current !== commandEpoch) return;
-    if (shouldClearSubmittedIdea(result)) setIdea('');
-    await readActivityAfterTerminal(result, commandEpoch);
-  }, [idea, project, readActivityAfterTerminal]);
 
   const cancel = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -720,8 +750,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             <BuilderPage
               activeFile={activeFile}
               instruction={idea}
-              onAnswer={answer}
-              onGenerate={generate}
+              onSubmitInstruction={submitInstruction}
               onInstructionChange={setIdea}
               onInspectRevision={inspectRevision}
               onOpenSettings={() => setView('settings')}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import {
   AlertCircle,
+  ArrowUp,
   Bot,
   CheckCircle2,
   Eye,
@@ -10,7 +11,6 @@ import {
   Play,
   RefreshCw,
   Save,
-  Sparkles,
   StopCircle,
   Trash2,
   UserRound,
@@ -50,9 +50,8 @@ export type BuilderFileName = string;
 export type BuilderPageProps = {
   instruction: string;
   onInstructionChange?: (value: string) => void;
-  onAnswer?: () => void;
   onCancel?: () => void;
-  onGenerate?: () => void;
+  onSubmitInstruction?: () => void;
   onRetryGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
@@ -73,6 +72,7 @@ const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'new',
   'ready',
   'answer_failed',
+  'submit_failed',
   'generation_failed',
   'preview_unavailable',
 ]);
@@ -90,6 +90,7 @@ function isRetryableGenerationError(value: BuilderProjectControllerSnapshot['err
 
 function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'opening') return 'Opening...';
+  if (status === 'submitting') return 'Working...';
   if (status === 'answering') return 'Answering...';
   if (status === 'generating') return 'Making...';
   if (status === 'rejecting') return 'Discarding...';
@@ -344,6 +345,12 @@ function failedStatusMessage(
     if (error === 'builder_generation_timeout') return 'Answering took too long. Try again.';
     if (error === 'builder_generation_provider_http_error') return 'The AI service could not answer. Try again.';
     return 'The answer could not be prepared. Try again.';
+  }
+  if (status === 'submit_failed') {
+    if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
+    if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
+    if (error === 'builder_generation_provider_http_error') return 'The AI service could not complete this request. Try again.';
+    return 'This request could not be completed. Try again.';
   }
   if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
   if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
@@ -795,10 +802,9 @@ function StarterPrompt() {
 
 export function BuilderPage({
   instruction,
-  onAnswer,
   onCancel,
   onInstructionChange,
-  onGenerate,
+  onSubmitInstruction,
   onRetryGenerate,
   onRefreshConversation,
   onRefreshHistory,
@@ -829,12 +835,7 @@ export function BuilderPage({
   const hasContent = files.length > 0;
   const title = draft?.title ?? inspected?.target.title ?? saved?.target.title ?? 'New project';
   const version = saved?.target.revision_number ?? null;
-  const canGenerate = typeof onGenerate === 'function'
-    && GENERATABLE_STATUSES.has(status)
-    && !hasUnsavedDraft
-    && !viewingHistory
-    && instruction.trim().length > 0;
-  const canAnswer = typeof onAnswer === 'function'
+  const canSubmit = typeof onSubmitInstruction === 'function'
     && GENERATABLE_STATUSES.has(status)
     && !hasUnsavedDraft
     && !viewingHistory
@@ -842,9 +843,9 @@ export function BuilderPage({
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
   const canReject = typeof onRejectDraft === 'function' && hasUnsavedDraft && !busy;
   const canCancel = typeof onCancel === 'function'
-    && (status === 'answering' || status === 'generating');
+    && (status === 'answering' || status === 'generating' || status === 'submitting');
   const canEditInstruction = typeof onInstructionChange === 'function' && !busy && !hasUnsavedDraft && !viewingHistory;
-  const failed = status === 'generation_failed' || status === 'answer_failed';
+  const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
   const canRetryGenerate = typeof onRetryGenerate === 'function'
     && status === 'generation_failed'
     && current?.retryableGeneration === true
@@ -939,15 +940,16 @@ export function BuilderPage({
       || event.ctrlKey
       || event.metaKey
       || event.nativeEvent.isComposing
-      || !canGenerate
+      || !canSubmit
     ) {
       return;
     }
     event.preventDefault();
-    onGenerate?.();
+    onSubmitInstruction?.();
   }
 
   const composerStatusLabel = (() => {
+    if (status === 'submitting') return 'Working';
     if (status === 'generating') return 'Making your draft';
     if (status === 'answering') return 'Answering';
     if (viewingHistory) return 'Viewing a saved version';
@@ -986,6 +988,18 @@ export function BuilderPage({
           role="status"
         >
           <p>Making your draft...</p>
+          {cancelWorkButton}
+        </div>
+      );
+    }
+    if (status === 'submitting') {
+      return (
+        <div
+          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice flex flex-col gap-2 text-sm"
+          data-builder-conversation-notice="submitting"
+          role="status"
+        >
+          <p>Working on your request...</p>
           {cancelWorkButton}
         </div>
       );
@@ -1189,7 +1203,7 @@ export function BuilderPage({
           onKeyDown={submitPrimaryComposerCommand}
           placeholder="Describe what you want to build or change..."
           readOnly={!canEditInstruction}
-          aria-keyshortcuts={canGenerate ? 'Enter' : undefined}
+          aria-keyshortcuts={canSubmit ? 'Enter' : undefined}
           value={instruction}
         />
         <footer className="cf-builder-composer-footer">
@@ -1200,28 +1214,17 @@ export function BuilderPage({
           </div>
           <div className="cf-builder-composer-actions">
             {hasUnsavedDraft || canCancel ? null : (
-              <>
-                <button
-                  className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-ask-question="true"
-                  disabled={!canAnswer}
-                  onClick={onAnswer}
-                  type="button"
-                >
-                  <Bot aria-hidden="true" className="size-4" />
-                  {status === 'answering' ? 'Asking...' : 'Ask'}
-                </button>
-                <button
-                  className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-make-draft="true"
-                  disabled={!canGenerate}
-                  onClick={onGenerate}
-                  type="button"
-                >
-                  <Sparkles aria-hidden="true" className="size-4" />
-                  {busy ? busyLabel(status) : saved ? 'Make change' : 'Make draft'}
-                </button>
-              </>
+              <button
+                aria-label={busy ? busyLabel(status) : 'Send'}
+                className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+                data-builder-submit-turn="true"
+                disabled={!canSubmit}
+                onClick={onSubmitInstruction}
+                title={busy ? busyLabel(status) : 'Send'}
+                type="button"
+              >
+                <ArrowUp aria-hidden="true" className="size-4" />
+              </button>
             )}
           </div>
         </footer>

@@ -7,6 +7,7 @@ const test = require('node:test');
 
 const {
   GENERATE_CHANNEL,
+  SUBMIT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
   CANCEL_CHANNEL,
@@ -30,6 +31,10 @@ function adapter(overrides = {}) {
     generate: async (request) => {
       calls.push(['generate', request]);
       return { result: 'generated' };
+    },
+    submit: async (request) => {
+      calls.push(['submit', request]);
+      return { result: 'submitted' };
     },
     retry: async (request) => {
       calls.push(['retry', request]);
@@ -71,6 +76,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   assert.equal(value.preload_namespace, 'window.clawfabricBuilder.codeGenerator');
   assert.deepEqual(value.exposed_methods, [
     'generate',
+    'submit',
     'retry',
     'answer',
     'restoreDraft',
@@ -82,6 +88,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     Object.values(value.channels).map(({ channel }) => channel),
     [
       GENERATE_CHANNEL,
+      SUBMIT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
       RESTORE_DRAFT_CHANNEL,
@@ -96,6 +103,14 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       version: GENERATE_RESULT_VERSION,
       ok: true,
       result: { result: 'generated' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.submit.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'submitted' },
     },
   );
   assert.deepEqual(
@@ -144,6 +159,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   );
   assert.deepEqual(calls, [
     ['generate', request],
+    ['submit', request],
     ['retry', request],
     ['answer', request],
     ['restoreDraft', { draft_id: `builder-generation-draft:${'b'.repeat(64)}` }],
@@ -240,6 +256,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     modified.stack = 'modified-private-stack';
     const known = createBuilderGenerationIpcAdapter({
       generate: () => { throw modified; },
+      submit: () => { throw modified; },
       retry: () => { throw modified; },
       answer: () => { throw modified; },
       restoreDraft: () => { throw modified; },
@@ -288,6 +305,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       const error = new Error('unknown-private-marker');
       error.code = 'unknown_private_code';
       error.raw_body = 'raw-private-body';
+      throw error;
+    },
+    submit: () => {
+      const error = new Error('submit-private-marker');
+      error.code = 'builder_generation_timeout';
       throw error;
     },
     retry: () => {
@@ -374,6 +396,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
 
   const generateOnlyCode = createBuilderGenerationIpcAdapter({
     generate: async () => ({}),
+    submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
     restoreDraft: async () => ({}),
@@ -408,6 +431,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
   });
   const paired = createBuilderGenerationIpcAdapter({
     generate: () => pending,
+    submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
     restoreDraft: async () => ({}),
@@ -442,6 +466,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
         error.code = code;
         throw error;
       },
+      submit: async () => ({}),
       retry: async () => ({}),
       answer: async () => ({}),
       restoreDraft: async () => ({}),
@@ -473,6 +498,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
   for (const result of [new Proxy({ result: 'proxy-private-marker' }, {}), accessor, symbolic, polluted]) {
     const value = createBuilderGenerationIpcAdapter({
       generate: async () => result,
+      submit: async () => result,
       retry: async () => result,
       answer: async () => result,
       restoreDraft: async () => result,
@@ -515,6 +541,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
   for (const result of [sparse, cyclic, deep, nodeHeavy, entryHeavy, byteHeavy]) {
     const value = createBuilderGenerationIpcAdapter({
       generate: async () => result,
+      submit: async () => result,
       retry: async () => result,
       answer: async () => result,
       restoreDraft: async () => result,
@@ -538,6 +565,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
   let trapCalls = 0;
   const valid = {
     generate: async () => ({}),
+    submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
     restoreDraft: async () => ({}),

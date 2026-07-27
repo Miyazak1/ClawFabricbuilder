@@ -68,7 +68,7 @@ function renderHook(port: BuilderTaskStreamPort, projectId: string | null = PROJ
 describe('useBuilderConversationController', () => {
   it('loads the selected project stream on mount', async () => {
     const read = vi.fn(async () => absentWire());
-    const latest = renderHook({ read });
+    const latest = renderHook({ read, subscribeChanged: () => () => undefined });
 
     await waitFor(() => {
       expect(latest().snapshot.status).toBe('absent');
@@ -79,7 +79,7 @@ describe('useBuilderConversationController', () => {
 
   it('supports explicit terminal loads without an automatic project selection', async () => {
     const read = vi.fn(async () => absentWire());
-    const latest = renderHook({ read }, null);
+    const latest = renderHook({ read, subscribeChanged: () => () => undefined }, null);
 
     expect(latest().snapshot.status).toBe('idle');
     expect(read).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe('useBuilderConversationController', () => {
     const read = vi.fn(() => new Promise<unknown>((next) => {
       resolvers.push(next);
     }));
-    const latest = renderHook({ read });
+    const latest = renderHook({ read, subscribeChanged: () => () => undefined });
 
     await waitFor(() => {
       expect(latest().snapshot.status).toBe('loading');

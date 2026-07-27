@@ -16,6 +16,7 @@ const {
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  SUBMIT_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
 const {
   OPEN_PROJECT_CHANNEL,
@@ -27,6 +28,7 @@ const {
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
 const {
   READ_TASK_STREAM_CHANNEL,
+  TASK_STREAM_CHANGED_CHANNEL,
 } = require('../electron/builder-task-stream-ipc-adapter.cjs');
 const {
   REVIEW_PLAN_CHANNEL,
@@ -64,7 +66,13 @@ function hostRequestDigest(instruction = 'Make a timer.', existingProjectId = nu
 }
 
 function activeWindow() {
-  const webContents = { isDestroyed: () => false };
+  const webContents = {
+    sent: [],
+    isDestroyed: () => false,
+    send(channel, payload) {
+      webContents.sent.push({ channel, payload });
+    },
+  };
   return { webContents, isDestroyed: () => false };
 }
 
@@ -115,6 +123,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           ANSWER_CHANNEL,
           GENERATE_CHANNEL,
+          SUBMIT_CHANNEL,
           CANCEL_CHANNEL,
           AVAILABILITY_CHANNEL,
           RESTORE_DRAFT_CHANNEL,
@@ -123,6 +132,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
+              submit: { invoke: (_event, body) => options.submit(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
@@ -153,6 +163,7 @@ function runtimeWithService(service, probes = {}) {
               options.metadataAuthority,
               context.__projectMainAuthority.metadata_authority,
             );
+            assert.equal(typeof options.onTaskStreamChanged, 'function');
             context.__conversationService = {
               begin_work() {},
               complete_candidate() {},
@@ -234,6 +245,7 @@ function runtimeWithService(service, probes = {}) {
       if (specifier === './builder-task-stream-ipc-adapter.cjs') {
         return {
           READ_TASK_STREAM_CHANNEL,
+          TASK_STREAM_CHANGED_CHANNEL,
           createBuilderTaskStreamIpcAdapter: (options) => ({
             channels: {
               read: { invoke: (_event, body) => options.readStream(body) },
@@ -393,6 +405,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v2');
   assert.deepEqual(runtime.channels, [
     GENERATE_CHANNEL,
+    SUBMIT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
@@ -453,6 +466,16 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
+    (error) => error.code === 'builder_generation_request_invalid'
+      && !`${error.message}:${error.stack}`.includes('marker'),
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(SUBMIT_CHANNEL)({ sender: {} }, { instruction: 'Continue.' }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(SUBMIT_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
     (error) => error.code === 'builder_generation_request_invalid'
       && !`${error.message}:${error.stack}`.includes('marker'),
   );
@@ -546,6 +569,61 @@ test('keeps active-renderer and request validation inside the controlled adapter
   runtime.dispose();
 });
 
+test('publishes project-id-only task stream change events to the active renderer', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    async submit() {
+      probes.conversationOptions.onTaskStreamChanged(Object.assign(Object.create(null), {
+        event_version: 'builder-task-stream-changed.v1',
+        project_id: PROJECT_ID,
+      }));
+      return { ok: true };
+    },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: true }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: false,
+        reason: 'not_configured',
+        supports_cancel: true,
+      };
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Make a timer." })', harness.context),
+  );
+
+  assert.equal(mainWindow.webContents.sent.length, 1);
+  assert.equal(mainWindow.webContents.sent[0].channel, TASK_STREAM_CHANGED_CHANNEL);
+  assert.deepEqual(Reflect.ownKeys(mainWindow.webContents.sent[0].payload), [
+    'event_version',
+    'project_id',
+  ]);
+  assert.equal(
+    mainWindow.webContents.sent[0].payload.event_version,
+    'builder-task-stream-changed.v1',
+  );
+  assert.equal(mainWindow.webContents.sent[0].payload.project_id, PROJECT_ID);
+  runtime.dispose();
+});
+
 test('rolls back partial registration and rejects malformed runtime authority', (t) => {
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain(CANCEL_CHANNEL);
@@ -566,6 +644,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     RESTORE_DRAFT_CHANNEL,
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
+    SUBMIT_CHANNEL,
     GENERATE_CHANNEL,
   ]);
   assert.equal(runtime.dispose(), false);
@@ -581,6 +660,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.equal(removalFailure.handlers.has(GENERATE_CHANNEL), true);
+  assert.equal(removalFailure.handlers.has(SUBMIT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RETRY_GENERATE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_DRAFT_CHANNEL), false);
@@ -933,12 +1013,17 @@ test('registers a draft rejection channel backed by generation service', async (
 
 test('keeps selected project identity in main and accepts only instruction over generation IPC', async (t) => {
   const generated = [];
+  const submitted = [];
   const retried = [];
   const answered = [];
   const probes = {};
   const service = {
     generate(body) {
       generated.push(body);
+      return Promise.resolve({ request_id: body.request_digest });
+    },
+    submit(body) {
+      submitted.push(body);
       return Promise.resolve({ request_id: body.request_digest });
     },
     retry_generate(body) {
@@ -985,6 +1070,13 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(generated[0].instruction, 'Revise the timer.');
   assert.equal(generated[0].request_digest, hostRequestDigest('Revise the timer.', PROJECT_ID));
   assert.deepEqual(probes.loadCurrentRequests, [{ project_id: PROJECT_ID }]);
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Continue selected project." })', runtimeModule.context),
+  );
+  assert.equal(submitted[0].existing_project_id, PROJECT_ID);
+  assert.equal(submitted[0].instruction, 'Continue selected project.');
+  assert.equal(submitted[0].request_digest, hostRequestDigest('Continue selected project.', PROJECT_ID));
   await ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Revise the timer." })', runtimeModule.context),
@@ -1022,6 +1114,16 @@ test('keeps selected project identity in main and accepts only instruction over 
       { sender: mainWindow.webContents },
       vm.runInContext(`({
         instruction: "forged",
+        existing_project_id: ${JSON.stringify(PROJECT_ID)}
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_request_invalid' },
+  );
+  await assert.rejects(
+    async () => ipcMain.handlers.get(SUBMIT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        instruction: "forged submit",
         existing_project_id: ${JSON.stringify(PROJECT_ID)}
       })`, runtimeModule.context),
     ),
@@ -1103,6 +1205,13 @@ test('ignores stale Open and Save completions when a newer project selection win
   );
   await assert.rejects(
     async () => invoke(
+      SUBMIT_CHANNEL,
+      body('({ instruction: "Must not submit with the previous selection." })'),
+    ),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
+  await assert.rejects(
+    async () => invoke(
       RETRY_GENERATE_CHANNEL,
       body('({ instruction: "Must not retry with the previous selection." })'),
     ),
@@ -1149,14 +1258,18 @@ test('ignores stale Open and Save completions when a newer project selection win
   runtime.dispose();
 });
 
-test('cancels every accepted generation, retry, or answer before removing its cancel channel', async (t) => {
+test('cancels every accepted generation, submit, retry, or answer before removing its cancel channel', async (t) => {
   let rejectGeneration;
+  let rejectSubmit;
   let rejectRetry;
   let rejectAnswer;
   const cancelRequests = [];
   const service = {
     generate() {
       return new Promise((_resolve, reject) => { rejectGeneration = reject; });
+    },
+    submit() {
+      return new Promise((_resolve, reject) => { rejectSubmit = reject; });
     },
     retry_generate() {
       return new Promise((_resolve, reject) => { rejectRetry = reject; });
@@ -1169,6 +1282,7 @@ test('cancels every accepted generation, retry, or answer before removing its ca
       const error = new Error('private provider request');
       error.code = 'builder_generation_cancelled';
       if (body.request_id === hostRequestDigest('Make a timer.')) rejectGeneration(error);
+      if (body.request_id === hostRequestDigest('Continue the timer.')) rejectSubmit(error);
       if (body.request_id === hostRequestDigest('Retry the timer.')) rejectRetry(error);
       if (body.request_id === hostRequestDigest('Explain the timer.')) rejectAnswer(error);
       return { request_id: body.request_id, cancelled: true };
@@ -1188,22 +1302,27 @@ test('cancels every accepted generation, retry, or answer before removing its ca
   });
   runtime.register();
   const generateBody = vm.runInContext('({ instruction: "Make a timer." })', runtimeModule.context);
+  const submitBody = vm.runInContext('({ instruction: "Continue the timer." })', runtimeModule.context);
   const retryBody = vm.runInContext('({ instruction: "Retry the timer." })', runtimeModule.context);
   const answerBody = vm.runInContext('({ instruction: "Explain the timer." })', runtimeModule.context);
   const generation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, generateBody);
+  const submission = ipcMain.handlers.get(SUBMIT_CHANNEL)({ sender: mainWindow.webContents }, submitBody);
   const retry = ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)({ sender: mainWindow.webContents }, retryBody);
   const answer = ipcMain.handlers.get(ANSWER_CHANNEL)({ sender: mainWindow.webContents }, answerBody);
   const cancelledGeneration = assert.rejects(generation, { code: 'builder_generation_cancelled' });
+  const cancelledSubmission = assert.rejects(submission, { code: 'builder_generation_cancelled' });
   const cancelledRetry = assert.rejects(retry, { code: 'builder_generation_cancelled' });
   const cancelledAnswer = assert.rejects(answer, { code: 'builder_generation_cancelled' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.dispose(), true);
   assert.deepEqual(cancelRequests.map((request) => request.request_id), [
     hostRequestDigest('Make a timer.'),
+    hostRequestDigest('Continue the timer.'),
     hostRequestDigest('Retry the timer.'),
     hostRequestDigest('Explain the timer.'),
   ]);
   await cancelledGeneration;
+  await cancelledSubmission;
   await cancelledRetry;
   await cancelledAnswer;
   assert.deepEqual([...ipcMain.handlers.keys()], []);

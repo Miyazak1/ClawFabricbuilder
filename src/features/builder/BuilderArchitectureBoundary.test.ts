@@ -147,6 +147,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>)');
     expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
+    expect(ports).toContain('submit(request: BuilderGenerationRequest)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
     expect(ports).toContain('retry(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
@@ -168,13 +169,15 @@ describe('Builder v2 architecture boundary', () => {
     expect(workspacePort).toContain("const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory'])");
     expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
+    expect(generationPort).toContain('submit: methods.submit');
     expect(generationPort).toContain('retry: methods.retry');
     expect(generationPort).toContain('answer: methods.answer');
     expect(generationPort).toContain('rejectDraft: methods.rejectDraft');
     expect(generationPort).toContain('draft_id: request.draft_id');
     expect(generationPort).toContain('request_id: request.request_id');
     expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request/u);
-    expect(taskStreamPort).toContain("const BRIDGE_KEYS = Object.freeze(['read'])");
+    expect(taskStreamPort).toContain("const BRIDGE_KEYS = Object.freeze(['read', 'subscribeChanged'])");
+    expect(taskStreamPort).toContain("event_version: 'builder-task-stream-changed.v1'");
     expect(taskStreamPort).not.toMatch(/saveDraft|generate|projectWorkspace|providerSettings/u);
     expect(permissionPort).toContain("const BRIDGE_KEYS = Object.freeze(['evaluate'])");
     expect(permissionPort).toContain('ACTOR_ID_PATTERN');

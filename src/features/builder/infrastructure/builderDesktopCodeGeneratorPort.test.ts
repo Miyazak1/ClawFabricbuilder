@@ -20,6 +20,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       };
     });
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate,
       retry: async () => null,
       answer: async () => null,
@@ -39,6 +40,38 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('forwards one submit request without renderer-owned authority', async () => {
+    const request = await createBuilderGenerationRequest('Make a timer.');
+    const draft = await createGenerationDraft(request);
+    const submit = vi.fn(async (request: unknown) => {
+      void request;
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: draft,
+      };
+    });
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      availability: async () => null,
+    });
+
+    const result = await port.submit(request);
+
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: request.instruction });
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('existing_project_id');
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('request_digest');
+    expect(result).toEqual(draft);
+    expect(result).not.toBe(draft);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('forwards one retry request without renderer-owned authority', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const draft = await createGenerationDraft(request);
@@ -51,6 +84,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       };
     });
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry,
       answer: async () => null,
@@ -73,6 +107,14 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
   it('maps fixed diagnostic envelopes without raw provider details', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_provider_http_error',
+          retryable: true,
+        },
+      }),
       generate: async () => ({
         version: 'builder-generation-ipc-result.v1',
         ok: false,
@@ -124,6 +166,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       };
     });
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer,
@@ -151,6 +194,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       result: restoredDraft,
     }));
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -183,6 +227,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       },
     }));
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -206,6 +251,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       cancelled: true,
     }));
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -226,6 +272,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
 
   it('maps restored draft parent drift to a fixed diagnostic', async () => {
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
@@ -256,6 +303,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     {},
     {
       generate: async (): Promise<unknown> => null,
+      submit: async (): Promise<unknown> => null,
       retry: async (): Promise<unknown> => null,
       answer: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
@@ -264,6 +312,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     },
     {
       generate: async (): Promise<unknown> => null,
+      submit: async (): Promise<unknown> => null,
       retry: async (): Promise<unknown> => null,
       answer: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
@@ -289,6 +338,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       },
     ]) {
       const port = createBuilderDesktopCodeGeneratorPort({
+        submit: async (): Promise<unknown> => response,
         generate: async (): Promise<unknown> => response,
         retry: async (): Promise<unknown> => response,
         answer: async (): Promise<unknown> => response,
@@ -306,6 +356,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
   it('rejects malformed cancel results without exposing bridge details', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,

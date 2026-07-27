@@ -24,9 +24,10 @@ export function useBuilderConversationController(
   projectId?: string | null,
 ): UseBuilderConversationControllerResult {
   const read = port.read;
+  const subscribeChanged = port.subscribeChanged;
   const controller = useMemo(
-    () => createBuilderConversationController({ read }),
-    [read],
+    () => createBuilderConversationController({ read, subscribeChanged }),
+    [read, subscribeChanged],
   );
   const disposalTokens = useRef(new WeakMap<BuilderConversationController, object>());
   const snapshot = useSyncExternalStore(

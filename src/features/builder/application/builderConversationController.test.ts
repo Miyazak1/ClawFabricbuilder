@@ -102,7 +102,10 @@ function readyWire(projectId = PROJECT_ID, uuid = UUID): unknown {
 
 function setup(read: BuilderTaskStreamPort['read'] = async () => readyWire()) {
   const readMock = vi.fn(read);
-  const controller = createBuilderConversationController({ read: readMock });
+  const controller = createBuilderConversationController({
+    read: readMock,
+    subscribeChanged: () => () => undefined,
+  });
   return { controller, read: readMock };
 }
 

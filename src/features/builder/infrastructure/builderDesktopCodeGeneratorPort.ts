@@ -9,6 +9,7 @@ export const BuilderDesktopCodeGeneratorPortError = BuilderGenerationDiagnosticE
 export type BuilderGenerationDiagnosticCode = ApplicationBuilderGenerationDiagnosticCode;
 
 type BuilderCodeGeneratorBridge = Readonly<{
+  submit(request: unknown): Promise<unknown>;
   generate(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
@@ -18,7 +19,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
   availability(): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = new Set(['generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
+const BRIDGE_KEYS = new Set(['submit', 'generate', 'retry', 'answer', 'restoreDraft', 'rejectDraft', 'cancel', 'availability']);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
 const MAX_DATA_GRAPH_UTF8_BYTES = 1024 * 1024;
@@ -151,6 +152,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       methods[key] = descriptor.value as (...args: unknown[]) => Promise<unknown>;
     }
     return Object.freeze({
+      submit: methods.submit,
       generate: methods.generate,
       retry: methods.retry,
       answer: methods.answer,
@@ -236,6 +238,11 @@ export function createBuilderDesktopCodeGeneratorPort(
   return Object.freeze({
     generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
       return callBridge(bridge, bridge.generate, [{
+        instruction: request.instruction,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
+      return callBridge(bridge, bridge.submit, [{
         instruction: request.instruction,
       }]).then(unwrapGenerationEnvelope);
     },

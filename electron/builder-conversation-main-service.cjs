@@ -53,7 +53,9 @@ const {
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
 const APPROVED_PLAN_READ_RESULT_VERSION = 'builder-conversation-approved-plan-read-result.v1';
-const OPTION_KEYS = Object.freeze(['metadataAuthority', 'createUuid', 'nowMs']);
+const REQUIRED_OPTION_KEYS = Object.freeze(['metadataAuthority', 'createUuid', 'nowMs']);
+const OPTION_KEYS = Object.freeze([...REQUIRED_OPTION_KEYS, 'onTaskStreamChanged']);
+const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
@@ -344,15 +346,34 @@ function ownCode(error) {
 }
 
 function sanitizeOptions(value) {
-  exactObject(value, OPTION_KEYS);
+  if (!isPlainObject(value)) fail();
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length < REQUIRED_OPTION_KEYS.length
+    || keys.length > OPTION_KEYS.length
+    || keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.includes(key))
+    || REQUIRED_OPTION_KEYS.some((key) => !keys.includes(key))
+  ) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
   const metadataAuthority = valueAt(value, 'metadataAuthority');
   const createUuid = valueAt(value, 'createUuid');
   const nowMs = valueAt(value, 'nowMs');
+  const onTaskStreamChanged = keys.includes('onTaskStreamChanged')
+    ? valueAt(value, 'onTaskStreamChanged')
+    : null;
   if (
     typeof createUuid !== 'function'
     || utilTypes.isProxy(createUuid)
     || typeof nowMs !== 'function'
     || utilTypes.isProxy(nowMs)
+    || (
+      onTaskStreamChanged !== null
+      && (typeof onTaskStreamChanged !== 'function' || utilTypes.isProxy(onTaskStreamChanged))
+    )
   ) fail();
   return Object.freeze({
     metadataAuthority,
@@ -362,6 +383,7 @@ function sanitizeOptions(value) {
     loadProjectIdentity: ownMethod(metadataAuthority, 'load_project_identity'),
     createUuid,
     nowMs,
+    onTaskStreamChanged,
   });
 }
 
@@ -457,6 +479,18 @@ function compactToolSessionCalls(toolCalls) {
 function createBuilderConversationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
 
+  function notifyTaskStreamChanged(projectId) {
+    if (options.onTaskStreamChanged === null) return;
+    try {
+      Reflect.apply(options.onTaskStreamChanged, undefined, [freezeDeep({
+        event_version: TASK_STREAM_CHANGED_EVENT_VERSION,
+        project_id: projectId,
+      })]);
+    } catch {
+      // Activity notifications are a renderer refresh hint, not Conversation authority.
+    }
+  }
+
   function load(projectId, conversationId) {
     try {
       const result = Reflect.apply(options.loadConversation, options.metadataAuthority, [{
@@ -510,7 +544,9 @@ function createBuilderConversationMainService(rawOptions) {
         events,
         recorded_at_ms: recordedAtMs,
       }]);
-      return sanitizeAuthorityResult(result, project.project_id, conversation.conversation_id);
+      const appended = sanitizeAuthorityResult(result, project.project_id, conversation.conversation_id);
+      notifyTaskStreamChanged(project.project_id);
+      return appended;
     } catch {
       fail();
     }
@@ -1956,6 +1992,7 @@ function createBuilderConversationMainService(rawOptions) {
       plan_review_recording: 'main_only_review_fact_no_execution',
       approved_plan_read: 'main_only_current_head_approval_gate',
       approved_plan_continuation_admission: 'main_only_fresh_approved_plan_no_execution',
+      task_stream_change_notification: 'project_id_only_after_append',
     }),
   });
 }
@@ -1963,6 +2000,7 @@ function createBuilderConversationMainService(rawOptions) {
 module.exports = Object.freeze({
   APPROVED_PLAN_READ_RESULT_VERSION,
   BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
+  TASK_STREAM_CHANGED_EVENT_VERSION,
   BuilderConversationMainServiceError,
   createBuilderConversationMainService,
 });
