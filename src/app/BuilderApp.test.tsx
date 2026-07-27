@@ -1236,6 +1236,38 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('returns from saved history to the current desktop preview with one Back action', async () => {
+    const { container, loadRevision } = await setup({
+      initiallySaved: true,
+      validHistoryPreview: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Current</main>');
+      expect(container.querySelector('[data-builder-view-version="Version 1"]')).not.toBeNull();
+    });
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-builder-view-version="Version 1"]')?.click();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-history-preview="true"]')?.textContent)
+        .toContain('Viewing Version 1');
+      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
+    });
+    expect(loadRevision).toHaveBeenCalledOnce();
+    expect(container.querySelectorAll('[data-builder-show-current-version="true"]')).toHaveLength(1);
+
+    click(container, 'Back to current');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-history-preview="true"]')).toBeNull();
+      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Current</main>');
+    });
+  });
+
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {
     const {
       container,

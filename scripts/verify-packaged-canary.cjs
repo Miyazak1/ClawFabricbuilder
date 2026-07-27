@@ -3412,10 +3412,11 @@ async function capturePreviewEvidence(page, gate) {
     const limitationText = await limitation.textContent();
     if (
       typeof limitationText !== 'string'
-      || !limitationText.includes('Static preview only')
+      || !limitationText.includes('Preview may look blank')
       || !limitationText.includes('Interactive code is not running here')
       || !limitationText.includes('JavaScript modules')
       || !limitationText.includes('Three.js')
+      || !limitationText.includes('blank even when the files were generated')
       || !limitationText.includes('Review Changes or Source before saving')
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
     ) fail('canary_preview_failed');

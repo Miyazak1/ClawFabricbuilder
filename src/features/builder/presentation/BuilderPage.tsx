@@ -717,21 +717,17 @@ function ChangesPanel({
 function VersionItem({
   inspectedRevisionReceiptDigest,
   onInspectRevision,
-  onShowCurrentRevision,
   revision,
 }: Readonly<{
   inspectedRevisionReceiptDigest: string | null;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
-  onShowCurrentRevision?: () => Promise<unknown> | void;
   revision: BuilderProjectHistoryRevision;
 }>) {
   const isInspected = inspectedRevisionReceiptDigest === revision.revision_receipt_digest;
-  const isViewingSavedVersion = inspectedRevisionReceiptDigest !== null;
-  const showAction = isInspected || !revision.is_current || isViewingSavedVersion;
+  const showAction = isInspected || !revision.is_current;
   const canInspect = !isInspected
-    && (revision.is_current
-      ? isViewingSavedVersion && typeof onShowCurrentRevision === 'function'
-      : typeof onInspectRevision === 'function');
+    && !revision.is_current
+    && typeof onInspectRevision === 'function';
   return (
     <li
       className="cf-builder-version-item"
@@ -758,15 +754,11 @@ function VersionItem({
           data-builder-view-version={revision.is_current ? undefined : `Version ${revision.revision_number}`}
           disabled={!canInspect}
           onClick={() => {
-            if (revision.is_current) {
-              void onShowCurrentRevision?.();
-            } else {
-              void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
-            }
+            void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
           }}
           type="button"
         >
-          {isInspected ? 'Viewing' : revision.is_current ? 'Back to current' : 'View'}
+          {isInspected ? 'Viewing' : 'View'}
         </button>
       ) : null}
     </li>
@@ -778,14 +770,12 @@ function VersionHistoryPanel({
   inspectedRevisionReceiptDigest,
   onInspectRevision,
   onRefresh,
-  onShowCurrentRevision,
   snapshot,
 }: Readonly<{
   hasSavedProject: boolean;
   inspectedRevisionReceiptDigest: string | null;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onRefresh?: () => Promise<unknown> | void;
-  onShowCurrentRevision?: () => Promise<unknown> | void;
   snapshot: BuilderProjectHistorySnapshot | null;
 }>) {
   const revisions = snapshot?.history?.revisions ?? [];
@@ -834,7 +824,6 @@ function VersionHistoryPanel({
                 inspectedRevisionReceiptDigest={inspectedRevisionReceiptDigest}
                 key={revision.revision_receipt_digest}
                 onInspectRevision={onInspectRevision}
-                onShowCurrentRevision={onShowCurrentRevision}
                 revision={revision}
               />
             ))}
@@ -1810,7 +1799,6 @@ export function BuilderPage({
                 inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
                 onInspectRevision={onInspectRevision}
                 onRefresh={onRefreshHistory}
-                onShowCurrentRevision={onShowCurrentRevision}
                 snapshot={history}
               />
             </aside>

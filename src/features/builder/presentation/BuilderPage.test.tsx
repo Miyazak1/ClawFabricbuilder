@@ -2002,8 +2002,12 @@ describe('BuilderPage v2', () => {
     const previewFrame = inspectedContainer.querySelector('iframe');
     expect(previewFrame).not.toBeNull();
     expect(previewFrame?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
-    expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"] [data-builder-show-current-version="true"]')?.textContent)
-      .toContain('Back to current');
+    expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"]')?.textContent)
+      .toContain('Current');
+    expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"] [data-builder-show-current-version="true"]'))
+      .toBeNull();
+    expect(inspectedContainer.querySelectorAll('[data-builder-show-current-version="true"]'))
+      .toHaveLength(1);
     click(inspectedContainer, 'header [data-builder-show-current-version="true"]');
     expect(onShowCurrentRevision).toHaveBeenCalledOnce();
     expect(inspectedContainer.textContent).not.toMatch(
