@@ -493,6 +493,11 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
+    expect(container.querySelector('[data-builder-chat-workspace="true"]')?.getAttribute('data-builder-review-sidebar-visible'))
+      .toBe('false');
+    expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-version-history="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
@@ -500,6 +505,9 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toContain('No activity yet.');
     expect(container.textContent).not.toContain('Your result will appear here.');
     expect(container.textContent).not.toContain('Preview is isolated');
+    expect(container.textContent).not.toContain('No unsaved changes to review.');
+    expect(container.textContent).not.toContain('Make a draft to compare it with the current version.');
+    expect(container.textContent).not.toContain('Save a version to see history.');
     click(container, '[data-builder-make-draft="true"]');
     expect(onGenerate).toHaveBeenCalledOnce();
     expect(onAnswer).not.toHaveBeenCalled();
@@ -868,6 +876,7 @@ describe('BuilderPage v2', () => {
     );
 
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
+    const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
     const reviewSidebar = container.querySelector('[data-builder-review-sidebar="true"]');
     const conversation = container.querySelector('[data-builder-conversation-workspace="true"]');
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
@@ -879,6 +888,7 @@ describe('BuilderPage v2', () => {
     const versions = container.querySelector('[data-builder-version-history="true"]');
     const draftActions = container.querySelector('[data-builder-draft-review-actions="true"]');
     expect(chatMain).not.toBeNull();
+    expect(workspace?.getAttribute('data-builder-review-sidebar-visible')).toBe('true');
     expect(reviewSidebar).not.toBeNull();
     expect(conversation).not.toBeNull();
     expect(review).not.toBeNull();

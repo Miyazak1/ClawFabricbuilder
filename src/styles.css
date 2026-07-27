@@ -422,6 +422,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   box-shadow: var(--cf-shadow-sm);
 }
 
+.cf-builder-chat-shell[data-builder-review-sidebar-visible="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .cf-builder-chat-main {
   display: grid;
   min-height: 0;

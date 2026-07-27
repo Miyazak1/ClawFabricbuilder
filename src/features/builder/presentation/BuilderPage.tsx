@@ -857,6 +857,7 @@ export function BuilderPage({
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
   const sourceDisclosureOpen = selected !== null || preview === null;
   const showResultFlow = preview !== null;
+  const showReviewSidebar = hasUnsavedDraft || saved !== null;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
   const pendingSourceFocusRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1271,6 +1272,7 @@ export function BuilderPage({
           aria-label="Project conversation workspace"
           className="cf-builder-chat-shell border"
           data-builder-chat-workspace="true"
+          data-builder-review-sidebar-visible={showReviewSidebar ? 'true' : 'false'}
         >
           <div className="cf-builder-chat-main" data-builder-chat-main="true">
             <div
@@ -1371,24 +1373,26 @@ export function BuilderPage({
             {composer}
           </div>
 
-          <aside
-            aria-label="Project changes and versions"
-            className="cf-builder-review-sidebar"
-            data-builder-review-sidebar="true"
-          >
-            <ChangesPanel
-              changes={changes}
-              onOpenFile={openChangedFile}
-            />
-            <VersionHistoryPanel
-              hasSavedProject={saved !== null}
-              inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
-              onInspectRevision={onInspectRevision}
-              onRefresh={onRefreshHistory}
-              onShowCurrentRevision={onShowCurrentRevision}
-              snapshot={history}
-            />
-          </aside>
+          {showReviewSidebar ? (
+            <aside
+              aria-label="Project changes and versions"
+              className="cf-builder-review-sidebar"
+              data-builder-review-sidebar="true"
+            >
+              <ChangesPanel
+                changes={changes}
+                onOpenFile={openChangedFile}
+              />
+              <VersionHistoryPanel
+                hasSavedProject={saved !== null}
+                inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
+                onInspectRevision={onInspectRevision}
+                onRefresh={onRefreshHistory}
+                onShowCurrentRevision={onShowCurrentRevision}
+                snapshot={history}
+              />
+            </aside>
+          ) : null}
         </section>
       </div>
     </div>
