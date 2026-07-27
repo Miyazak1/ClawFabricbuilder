@@ -312,6 +312,31 @@ status, public release readiness, or mobile visual evidence.
   generation attempts; the main Plan Review bridge remains the Review fact
   authority.
 
+## 2026-07-28 Desktop Plan Review Failure Package
+
+This addendum records the desktop package refresh for code checkpoint `cb31533`,
+after making Plan Review bridge failures visible and retryable in the desktop
+conversation flow. It is not a new real-provider canary and does not extend
+installer evidence, code-signing status, public release readiness, or mobile
+visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused desktop renderer tests for BuilderPage and BuilderApp passed:
+  68 tests.
+- Full renderer unit tests passed: 358 Vitest tests.
+- `npm exec tsc -b --pretty false`, `npm run lint`, `git diff --check`,
+  and `npm run build` passed during this desktop failure-state checkpoint.
+- `npm run pack` passed for checkpoint `cb31533`; package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- If the main-owned Plan Review bridge cannot record a decision, the same Plan
+  card now shows a retryable user-facing failure state. It does not claim that
+  the plan was approved or rejected, does not continue generation, and does not
+  expose provider, credential, source, Git, receipt, or internal bridge
+  evidence.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
