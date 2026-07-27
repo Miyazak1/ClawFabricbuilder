@@ -526,6 +526,19 @@ Required before visible activation:
 - human confirmation for publication, permission changes, destructive actions,
   and external side effects.
 
+Current checkpoint:
+
+- the local Agent definition contract introduces pure main-side records for
+  owner-bound Agent identity, Agent version, and lifecycle status decisions. It
+  deterministically binds the owner, Agent id, version instructions, explicit
+  permission-required boundary, and archive/revoke/reactivate-style lifecycle
+  facts through canonical digests. It does not create a repository, expose
+  IPC/preload, show an Agents UI, supervise Tasks/Runs, dispatch providers or
+  tools, read credentials or source, mutate Git/SQLite project facts, grant
+  permissions, or create Review/Revision/Artifact authority. A visible or
+  persistent Agent must build on this contract instead of introducing an
+  incompatible identity shape.
+
 #### Gate A2 - Agent-to-Agent Delegation
 
 Add scoped delegation only after A1 is reliable.
