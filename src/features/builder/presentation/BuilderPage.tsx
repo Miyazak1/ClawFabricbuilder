@@ -140,6 +140,7 @@ function activityItems(
 function activityEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
   const entries: ActivityEntry[] = [];
   const workEntries = new Map<string, ActivityWorkStatusEntry>();
+  const toolRequestEntries = new Map<string, ActivityItemEntry>();
   for (const item of activityItems(snapshot)) {
     if (item.item_kind === 'run_started') {
       const key = `${item.turn_id}:${item.run_id}`;
@@ -172,13 +173,29 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       }
       continue;
     }
+    if (item.item_kind === 'tool_call_requested') {
+      const entry: ActivityItemEntry = {
+        entry_kind: 'item',
+        item,
+        hidden: false,
+      };
+      toolRequestEntries.set(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`, entry);
+      entries.push(entry);
+      continue;
+    }
+    if (item.item_kind === 'tool_call_result_recorded') {
+      const toolRequestEntry = toolRequestEntries.get(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`);
+      if (toolRequestEntry !== undefined) toolRequestEntry.hidden = true;
+      entries.push({ entry_kind: 'item', item, hidden: false });
+      continue;
+    }
     if (item.item_kind === 'run_completed') {
       const workEntry = workEntries.get(`${item.turn_id}:${item.run_id}`);
       if (workEntry !== undefined) workEntry.hidden = true;
     }
-    entries.push({ entry_kind: 'item', item });
+    entries.push({ entry_kind: 'item', item, hidden: false });
   }
-  return entries.filter((entry) => entry.entry_kind === 'item' || !entry.hidden);
+  return entries.filter((entry) => !entry.hidden);
 }
 
 function isNearChatBottom(element: HTMLElement): boolean {
@@ -300,8 +317,14 @@ type ActivityWorkStatusEntry = {
   hidden: boolean;
 };
 
+type ActivityItemEntry = {
+  entry_kind: 'item';
+  item: BuilderConversationItem;
+  hidden: boolean;
+};
+
 type ActivityEntry =
-  | Readonly<{ entry_kind: 'item'; item: BuilderConversationItem }>
+  | ActivityItemEntry
   | ActivityWorkStatusEntry;
 
 function workStatusBody(status: ActivityWorkStatus): string {

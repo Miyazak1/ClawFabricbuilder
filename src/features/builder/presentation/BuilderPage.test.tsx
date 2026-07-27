@@ -337,6 +337,78 @@ async function toolActivity(
   return controller.load(PROJECT_ID);
 }
 
+async function pendingToolActivity() {
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1234,
+      head_sequence: 3,
+      recorded_active_turn_id: TURN_ID,
+      window: {
+        first_sequence: 1,
+        last_sequence: 3,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:323e4567-e89b-42d3-a456-426614174000',
+            text: 'Read the current project before planning a change.',
+          },
+          message_kind: 'submitted',
+          mode: 'work',
+          task: {
+            task_id: TASK_ID,
+            title: 'Read project context',
+          },
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'tool_call_requested',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
+          tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
+          tool_label: 'Read project context',
+          action: 'project.read',
+          resource: {
+            resource_kind: 'project',
+          },
+          lifecycle: {
+            permission_admission: 'verified_allowed',
+            dispatch_admission: 'not_started',
+            execution_admission: 'not_performed',
+            result_admission: 'not_recorded',
+          },
+          recorded_state: 'requested',
+        },
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function acceptedCandidateActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createAcceptedTaskStreamWire(1)));
   return controller.load(PROJECT_ID);
@@ -1370,7 +1442,30 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('renders tool activity as visible project steps without exposing internal evidence', async () => {
+  it('keeps pending tool requests visible without exposing internal evidence', async () => {
+    const { saved } = await snapshots();
+    const activity = await pendingToolActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const requested = container.querySelector('[data-builder-tool-activity="requested"]');
+    expect(requested).not.toBeNull();
+    expect(requested?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(requested?.textContent).toContain('Looking over the project');
+    expect(requested?.textContent).toContain('checking the current project context');
+    expect(requested?.textContent).not.toContain('Read project context');
+    expect(container.textContent).not.toMatch(
+      /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
+  it('folds completed tool requests into one visible project step without exposing internal evidence', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity();
     const container = render(
@@ -1384,11 +1479,7 @@ describe('BuilderPage v2', () => {
 
     const requested = container.querySelector('[data-builder-tool-activity="requested"]');
     const completed = container.querySelector('[data-builder-tool-activity="succeeded"]');
-    expect(requested).not.toBeNull();
-    expect(requested?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(requested?.textContent).toContain('Looking over the project');
-    expect(requested?.textContent).toContain('checking the current project context');
-    expect(requested?.textContent).not.toContain('Read project context');
+    expect(requested).toBeNull();
     expect(completed).not.toBeNull();
     expect(completed?.getAttribute('data-builder-activity-role')).toBe('status');
     expect(completed?.textContent).toContain('Project check finished');
