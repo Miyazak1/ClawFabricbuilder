@@ -647,6 +647,14 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-ask-question="true"]')?.disabled)
       .toBeUndefined();
+    expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-builder-discard-draft="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-composer="true"]'))
+      .toBeNull();
+    expect(container.querySelector('[data-builder-discard-draft="true"]')?.closest('[data-builder-composer="true"]'))
+      .toBeNull();
     expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
       .toContain('Discard draft');
     click(container, '[data-builder-discard-draft="true"]');
@@ -718,6 +726,7 @@ describe('BuilderPage v2', () => {
     const source = container.querySelector('[data-builder-source-flow="true"]');
     const changes = container.querySelector('[data-builder-changes-panel="true"]');
     const versions = container.querySelector('[data-builder-version-history="true"]');
+    const draftActions = container.querySelector('[data-builder-draft-review-actions="true"]');
     expect(chatMain).not.toBeNull();
     expect(reviewSidebar).not.toBeNull();
     expect(conversation).not.toBeNull();
@@ -728,6 +737,7 @@ describe('BuilderPage v2', () => {
     expect(source).toBeNull();
     expect(changes).not.toBeNull();
     expect(versions).not.toBeNull();
+    expect(draftActions).not.toBeNull();
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
@@ -753,8 +763,11 @@ describe('BuilderPage v2', () => {
       .toBe(true);
     expect(Boolean(preview!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(composer?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
-    expect(composer?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    expect(composer?.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(composer?.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
+    expect(draftActions?.closest('[data-builder-review-checkpoint="true"]')).toBe(review);
+    expect(draftActions?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(draftActions?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();

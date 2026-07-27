@@ -523,6 +523,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.45;
 }
 
+.cf-builder-review-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .cf-builder-tab-strip {
   display: flex;
   min-width: 0;
@@ -1583,9 +1591,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
     height: 28px;
   }
 
-  .cf-builder-review-checkpoint > button {
+  .cf-builder-review-actions {
     grid-column: 2;
     justify-self: start;
+    justify-content: flex-start;
   }
 
   .cf-builder-empty {

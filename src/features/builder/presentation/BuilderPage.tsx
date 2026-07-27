@@ -1069,15 +1069,41 @@ export function BuilderPage({
           {reviewPreviewStatus(preview, hasContent)}
         </p>
       </div>
-      <button
-        className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-        data-builder-review-open-changes="true"
-        onClick={() => document.getElementById('builder-tool-changes')?.focus()}
-        type="button"
-      >
-        <GitCompareArrows aria-hidden="true" className="size-3.5" />
-        Changes
-      </button>
+      <div className="cf-builder-review-actions" data-builder-draft-review-actions="true">
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+          data-builder-review-open-changes="true"
+          onClick={() => document.getElementById('builder-tool-changes')?.focus()}
+          type="button"
+        >
+          <GitCompareArrows aria-hidden="true" className="size-3.5" />
+          Changes
+        </button>
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-discard-draft="true"
+          disabled={!canReject}
+          onClick={onRejectDraft}
+          type="button"
+        >
+          <Trash2 aria-hidden="true" className="size-3.5" />
+          {status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
+        </button>
+        <button
+          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-save-version="true"
+          disabled={!canSave}
+          onClick={onSave}
+          type="button"
+        >
+          <Save aria-hidden="true" className="size-3.5" />
+          {status === 'saving'
+            ? 'Saving...'
+            : status === 'save_unknown'
+              ? 'Try Save again'
+              : 'Save version'}
+        </button>
+      </div>
     </section>
   ) : null;
 
@@ -1110,34 +1136,7 @@ export function BuilderPage({
             </span>
           </div>
           <div className="cf-builder-composer-actions">
-            {hasUnsavedDraft ? (
-              <>
-                <button
-                  className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-discard-draft="true"
-                  disabled={!canReject}
-                  onClick={onRejectDraft}
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" className="size-4" />
-                  {status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
-                </button>
-                <button
-                  className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-save-version="true"
-                  disabled={!canSave}
-                  onClick={onSave}
-                  type="button"
-                >
-                  <Save aria-hidden="true" className="size-4" />
-                  {status === 'saving'
-                    ? 'Saving...'
-                    : status === 'save_unknown'
-                      ? 'Try Save again'
-                      : 'Save version'}
-                </button>
-              </>
-            ) : (
+            {hasUnsavedDraft ? null : (
               <>
                 {canCancel ? (
                   <button
