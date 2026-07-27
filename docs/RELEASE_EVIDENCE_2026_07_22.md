@@ -363,6 +363,38 @@ code-signing status, public release readiness, or mobile visual evidence.
   temporary desktop projection does not expose provider, credential, source,
   Git, receipt, or internal bridge evidence.
 
+## 2026-07-28 Desktop Draft Review Surface Package
+
+This addendum records the desktop package refresh for code checkpoint `456a7f5`,
+after stabilizing the generated-draft Review surface and making preview
+limitations clearer in the conversation-first workspace. It is not a new
+real-provider canary and does not extend installer evidence, code-signing
+status, public release readiness, or mobile visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused desktop UI tests for BuilderPage, BuilderStaticPreview, and desktop
+  layout styles passed: 58 tests.
+- Full renderer unit tests passed: 362 Vitest tests.
+- `npm exec tsc -b --pretty false`, `npm run lint`, `git diff --check`,
+  and `npm run build` passed during this desktop Review surface checkpoint.
+- `npm run pack` passed for checkpoint `456a7f5`; package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- Generated-draft Review actions now sit on their own desktop row and can wrap
+  without squeezing "Review before saving" or the file-change summary into a
+  narrow column.
+- Preview limitation copy now tells users that the files were generated but
+  this preview cannot run 3D/WebGL, JavaScript modules, canvas animation,
+  network assets, local servers, or backend code yet. The warning is rendered
+  as a lightweight explanation, not as another nested card.
+- A desktop fixture screenshot of the generated-draft Review/Preview state was
+  captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-draft-review-456a7f5.png`.
+  It renders real React/CSS with test fixtures and is local evidence only; it
+  is not a real-provider canary artifact and was not committed.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
