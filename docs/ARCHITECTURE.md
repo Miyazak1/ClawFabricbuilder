@@ -55,6 +55,15 @@ mutating no source/Git state, and creating no Save or Project Revision. A
 future executor must use this main-service gate instead of caching an older
 approved-plan fact.
 
+The Generation main service can prepare a main-only approved-plan edit context
+by binding a fresh continuation admission to the current saved project source
+through the Git/SQLite project read authority. The context is private main-side
+input for a later executor: it includes verified base revision evidence and the
+current source tree, but it does not read provider config or credentials,
+dispatch provider/tool work, mutate source, create Git candidate evidence,
+append Conversation events, create Save/Project Revision facts, or expose any
+IPC/preload/renderer projection.
+
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
 Builder Project Revision is a SQLite product receipt that binds a Project,

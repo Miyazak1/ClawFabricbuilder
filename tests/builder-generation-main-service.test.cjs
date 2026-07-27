@@ -37,6 +37,9 @@ const {
 const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
+const {
+  createBuilderApprovedPlanContinuationAdmission,
+} = require('../electron/builder-approved-plan-continuation-admission.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -51,6 +54,10 @@ const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174009',
 ]);
 const PROJECT_ID = `builder-project:${UUIDS[0]}`;
+const CONVERSATION_ID = `builder-conversation:${UUIDS[0]}`;
+const APPROVED_PLAN_TURN_ID = `builder-turn:${UUIDS[2]}`;
+const APPROVED_PLAN_TASK_ID = `builder-task:${UUIDS[3]}`;
+const APPROVED_PLAN_RUN_ID = `builder-run:${UUIDS[4]}`;
 const PRIVATE_MARKER = 'private-main-service-marker';
 
 function canonicalJson(value) {
@@ -71,6 +78,16 @@ function request({ instruction = 'Make a focus timer.', existingProjectId = null
     existing_project_id: existingProjectId,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
+}
+
+function approvedPlanEditRequest(overrides = {}) {
+  return {
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: APPROVED_PLAN_TURN_ID,
+    run_id: APPROVED_PLAN_RUN_ID,
+    ...overrides,
+  };
 }
 
 function createUuidFactory(seed = 0) {
@@ -152,6 +169,7 @@ function conversationService() {
     cancel: [],
     readCandidate: [],
     rejectCandidate: [],
+    approvedPlanContinuation: [],
   };
   const service = {
     calls,
@@ -432,6 +450,38 @@ function conversationService() {
         rejection_admission: 'sqlite_recorded',
       };
     },
+    admit_approved_plan_continuation(input) {
+      calls.approvedPlanContinuation.push(input);
+      return createBuilderApprovedPlanContinuationAdmission({
+        approved_plan: {
+          result_version: 'builder-conversation-approved-plan-read-result.v1',
+          project_id: input.project_id,
+          conversation_id: input.conversation_id,
+          turn_id: input.turn_id,
+          task_id: APPROVED_PLAN_TASK_ID,
+          run_id: input.run_id,
+          decision: 'approved',
+          plan_result_digest: `sha256:${'a'.repeat(64)}`,
+          conversation_head: {
+            sequence: 7,
+            event_id: `builder-conversation-event:${'b'.repeat(64)}`,
+            event_digest: `sha256:${'c'.repeat(64)}`,
+          },
+          authority: {
+            conversation: 'sqlite_replay_current_head_verified',
+            plan_review: 'approved_current_head',
+            renderer_authority: 'not_present',
+            provider_dispatch: false,
+            tool_dispatch: 'not_performed',
+            source_mutation: 'not_performed',
+            git_authority: 'not_present',
+            revision_admission: 'not_created',
+          },
+        },
+        continuation_id: `builder-approved-plan-continuation:${UUIDS[5]}`,
+        admitted_at_ms: 8_000,
+      });
+    },
   };
   return service;
 }
@@ -581,10 +631,239 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     project_read_authority_verified_source: true,
     pending_draft_restart_restore: 'git_sqlite_verified',
     conversation_event_admission: 'sqlite_recorded',
+    approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
   });
+});
+
+test('prepares an approved-plan edit context from fresh conversation proof and current source without dispatch', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const reads = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let transportCalled = false;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(input) {
+          reads.push(input);
+          return readResult(sourceTree);
+        },
+      },
+      providerConfigRepository: {
+        bind_current_authority() {
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+    }),
+    transport: async () => {
+      transportCalled = true;
+      throw new Error(PRIVATE_MARKER);
+    },
+  });
+
+  const context = await service.prepare_approved_plan_edit_context(approvedPlanEditRequest());
+
+  assert.equal(context.context_version, 'builder-approved-plan-edit-context.v1');
+  assert.equal(context.project_id, PROJECT_ID);
+  assert.equal(context.conversation_id, CONVERSATION_ID);
+  assert.equal(context.turn_id, APPROVED_PLAN_TURN_ID);
+  assert.equal(context.task_id, APPROVED_PLAN_TASK_ID);
+  assert.equal(context.run_id, APPROVED_PLAN_RUN_ID);
+  assert.equal(context.plan_result_digest, `sha256:${'a'.repeat(64)}`);
+  assert.deepEqual(context.conversation_head, {
+    sequence: 7,
+    event_id: `builder-conversation-event:${'b'.repeat(64)}`,
+    event_digest: `sha256:${'c'.repeat(64)}`,
+  });
+  assert.match(context.continuation_id, /^builder-approved-plan-continuation:[0-9a-f-]{36}$/u);
+  assert.match(context.continuation_admission_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(context.base_revision, {
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
+  });
+  assert.deepEqual(context.base_revision_evidence, {
+    evidence_version: 'builder-project-base-revision-evidence.v2',
+    project_id: PROJECT_ID,
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
+    source_tree_digest: sourceTree.source_tree_digest,
+    verification_admission: 'git_sqlite_read_authority_verified',
+  });
+  assert.equal(context.base_source_tree.source_tree_digest, sourceTree.source_tree_digest);
+  assert.deepEqual(context.lifecycle, {
+    approved_plan_continuation: 'fresh_current_head_verified',
+    source_read: 'git_sqlite_current_verified',
+    provider_dispatch: 'not_started',
+    tool_dispatch: 'not_started',
+    source_mutation: 'not_performed',
+    git_candidate: 'not_created',
+    revision_admission: 'not_created',
+  });
+  assert.deepEqual(context.authority, {
+    context_authority: 'main_generation_approved_plan_edit_context_v1',
+    conversation_binding: 'fresh_approved_plan_continuation_required',
+    project_read_authority: 'git_sqlite_current_source_verified',
+    renderer_authority: 'not_present',
+    provider_dispatch: false,
+    credential_readback: false,
+    tool_dispatch: 'not_performed',
+    source_mutation: 'not_performed',
+    git_authority: 'not_present',
+    revision_authority: 'not_present',
+  });
+  assert.deepEqual(lifecycle.calls.approvedPlanContinuation, [approvedPlanEditRequest()]);
+  assert.deepEqual(reads, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.begin, []);
+  assert.deepEqual(lifecycle.calls.question, []);
+  assert.deepEqual(lifecycle.calls.candidate, []);
+  assert.deepEqual(lifecycle.calls.explanation, []);
+  assert.deepEqual(lifecycle.calls.failure, []);
+  assert.deepEqual(lifecycle.calls.completeFailure, []);
+  assert.deepEqual(lifecycle.calls.cancel, []);
+  assert.deepEqual(lifecycle.calls.readCandidate, []);
+  assert.deepEqual(lifecycle.calls.rejectCandidate, []);
+  assert.equal(git.receipts.length, 0);
+  assert.equal(transportCalled, false);
+  assert.equal(Object.isFrozen(context), true);
+  assert.equal(Object.isFrozen(context.conversation_head), true);
+  assert.equal(Object.isFrozen(context.base_revision), true);
+  assert.equal(Object.isFrozen(context.base_revision_evidence), true);
+  assert.equal(Object.isFrozen(context.base_source_tree.files[0]), true);
+  assert.doesNotMatch(
+    JSON.stringify(context),
+    /provider_config|provider_secret|credential_secret|credential_value|secret_ref|git_candidate_receipt|candidate_digest|save_admission|transport_version|builder-model|provider\.example/iu,
+  );
+});
+
+test('fails approved-plan edit context closed on malformed request, stale continuation, or source drift', async () => {
+  const malformedLifecycle = conversationService();
+  const malformedReads = [];
+  const malformedService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: malformedLifecycle,
+      projectReadAuthority: {
+        load_current(input) {
+          malformedReads.push(input);
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+      providerConfigRepository: {
+        bind_current_authority() {
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+    }),
+    transport: async () => {
+      throw new Error(PRIVATE_MARKER);
+    },
+  });
+
+  await assert.rejects(
+    malformedService.prepare_approved_plan_edit_context(approvedPlanEditRequest({ unexpected: true })),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.deepEqual(malformedLifecycle.calls.approvedPlanContinuation, []);
+  assert.deepEqual(malformedReads, []);
+
+  const staleLifecycle = conversationService();
+  const staleReads = [];
+  staleLifecycle.admit_approved_plan_continuation = function admitStaleContinuation(input) {
+    staleLifecycle.calls.approvedPlanContinuation.push(input);
+    return createBuilderApprovedPlanContinuationAdmission({
+      approved_plan: {
+        result_version: 'builder-conversation-approved-plan-read-result.v1',
+        project_id: input.project_id,
+        conversation_id: input.conversation_id,
+        turn_id: `builder-turn:${UUIDS[6]}`,
+        task_id: APPROVED_PLAN_TASK_ID,
+        run_id: input.run_id,
+        decision: 'approved',
+        plan_result_digest: `sha256:${'a'.repeat(64)}`,
+        conversation_head: {
+          sequence: 7,
+          event_id: `builder-conversation-event:${'b'.repeat(64)}`,
+          event_digest: `sha256:${'c'.repeat(64)}`,
+        },
+        authority: {
+          conversation: 'sqlite_replay_current_head_verified',
+          plan_review: 'approved_current_head',
+          renderer_authority: 'not_present',
+          provider_dispatch: false,
+          tool_dispatch: 'not_performed',
+          source_mutation: 'not_performed',
+          git_authority: 'not_present',
+          revision_admission: 'not_created',
+        },
+      },
+      continuation_id: `builder-approved-plan-continuation:${UUIDS[7]}`,
+      admitted_at_ms: 9_000,
+    });
+  };
+  const staleService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: staleLifecycle,
+      projectReadAuthority: {
+        load_current(input) {
+          staleReads.push(input);
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+    }),
+    transport: async () => {
+      throw new Error(PRIVATE_MARKER);
+    },
+  });
+
+  await assert.rejects(
+    staleService.prepare_approved_plan_edit_context(approvedPlanEditRequest()),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.deepEqual(staleLifecycle.calls.approvedPlanContinuation, [approvedPlanEditRequest()]);
+  assert.deepEqual(staleReads, []);
+
+  const driftLifecycle = conversationService();
+  const driftReads = [];
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const drift = true;\n' }],
+  });
+  const driftResult = readResult(sourceTree);
+  const driftService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: driftLifecycle,
+      projectReadAuthority: {
+        load_current(input) {
+          driftReads.push(input);
+          return {
+            ...driftResult,
+            product_revision_receipt: {
+              ...driftResult.product_revision_receipt,
+              resulting_tree_digest: `sha256:${'f'.repeat(64)}`,
+            },
+          };
+        },
+      },
+    }),
+    transport: async () => {
+      throw new Error(PRIVATE_MARKER);
+    },
+  });
+
+  await assert.rejects(
+    driftService.prepare_approved_plan_edit_context(approvedPlanEditRequest()),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.deepEqual(driftLifecycle.calls.approvedPlanContinuation, [approvedPlanEditRequest()]);
+  assert.deepEqual(driftReads, [{ project_id: PROJECT_ID }]);
 });
 
 test('revalidates cached pending drafts against durable conversation rejection', async () => {
@@ -1385,6 +1664,9 @@ test('fails closed for malformed repositories, read authority, authority pairs, 
 
 test('does not register Electron, save, old revision, or expose provider credential authority', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'builder-generation-main-service.cjs'), 'utf8');
+  assert.match(source, /prepare_approved_plan_edit_context/u);
+  assert.match(source, /main_generation_approved_plan_edit_context_v1/u);
+  assert.match(source, /main_only_fresh_continuation_current_source_no_dispatch/u);
   for (const forbidden of [
     /require\(['"]electron['"]\)/u,
     /ipcMain|ipcRenderer|contextBridge|BrowserWindow/u,

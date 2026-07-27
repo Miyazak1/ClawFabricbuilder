@@ -366,6 +366,14 @@ Evidence requirements:
   reads no credential/source, dispatches no provider or tool, mutates no
   source/Git state, and creates no Save or Project Revision. Future executors
   must use this main-service gate instead of caching older approved-plan facts;
+- the current approved-plan edit-context checkpoint lets the Generation main
+  service bind that fresh continuation admission to the current saved project
+  source through Git/SQLite project read authority. It prepares private
+  main-side executor input with verified base revision evidence and the current
+  source tree, but reads no provider config/credential, dispatches no
+  provider/tool work, mutates no source, creates no Git candidate, appends no
+  Conversation event, creates no Save or Project Revision, and exposes no
+  IPC/preload or renderer projection;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

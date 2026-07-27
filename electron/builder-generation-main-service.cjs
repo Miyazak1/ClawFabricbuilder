@@ -21,6 +21,9 @@ const {
 const {
   sanitizeBuilderProviderConfig,
 } = require('./builder-provider-config.cjs');
+const {
+  sanitizeBuilderApprovedPlanContinuationAdmission,
+} = require('./builder-approved-plan-continuation-admission.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
@@ -38,6 +41,8 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
+const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
@@ -141,6 +146,12 @@ function safeProjectId(value) {
   return value;
 }
 
+function safeConversationId(value, projectId) {
+  if (typeof value !== 'string' || !CONVERSATION_ID_PATTERN.test(value)) fail();
+  if (value.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) fail();
+  return value;
+}
+
 function safeDigest(value) {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) fail();
   return value;
@@ -160,6 +171,17 @@ function safeOid(value, nullable = false) {
 function safeDraftId(value) {
   if (typeof value !== 'string' || !DRAFT_ID_PATTERN.test(value)) fail();
   return value;
+}
+
+function sanitizeApprovedPlanEditRequest(value) {
+  exactObject(value, ['project_id', 'conversation_id', 'turn_id', 'run_id']);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
+  return freezeDeep({
+    project_id: projectId,
+    conversation_id: safeConversationId(valueAt(value, 'conversation_id'), projectId),
+    turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN, 80),
+    run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN, 80),
+  });
 }
 
 function sanitizeOptions(value) {
@@ -485,6 +507,10 @@ function createBuilderGenerationMainService(rawOptions) {
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
+  const admitApprovedPlanContinuation = ownMethod(
+    options.conversationService,
+    'admit_approved_plan_continuation',
+  );
   const persistCandidateCommit = ownMethod(options.gitAuthority, 'persist_candidate_commit');
   const verifyCandidateReceipt = ownMethod(options.gitAuthority, 'verify_candidate_receipt');
   const readVerifiedCandidate = ownMethod(options.gitAuthority, 'read_verified_candidate');
@@ -750,6 +776,64 @@ function createBuilderGenerationMainService(rawOptions) {
       retryableContexts.set(key, failedContext);
     } catch {
       throw new BuilderGenerationMainServiceError();
+    }
+  }
+
+  async function prepareApprovedPlanEditContext(rawRequest) {
+    try {
+      const request = sanitizeApprovedPlanEditRequest(rawRequest);
+      const continuationAdmission = sanitizeBuilderApprovedPlanContinuationAdmission(
+        Reflect.apply(admitApprovedPlanContinuation, options.conversationService, [request]),
+      );
+      if (
+        continuationAdmission.project_id !== request.project_id
+        || continuationAdmission.conversation_id !== request.conversation_id
+        || continuationAdmission.turn_id !== request.turn_id
+        || continuationAdmission.run_id !== request.run_id
+      ) fail();
+      const base = sanitizeReadResult(
+        await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: request.project_id }]),
+        request.project_id,
+      );
+      return freezeDeep({
+        context_version: 'builder-approved-plan-edit-context.v1',
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        turn_id: request.turn_id,
+        task_id: continuationAdmission.task_id,
+        run_id: request.run_id,
+        plan_result_digest: continuationAdmission.plan_result_digest,
+        conversation_head: { ...continuationAdmission.conversation_head },
+        continuation_id: continuationAdmission.continuation_id,
+        continuation_admission_digest: continuationAdmission.admission_digest,
+        base_revision: { ...base.base_revision },
+        base_revision_evidence: { ...base.base_revision_evidence },
+        base_source_tree: base.source_tree,
+        lifecycle: {
+          approved_plan_continuation: 'fresh_current_head_verified',
+          source_read: 'git_sqlite_current_verified',
+          provider_dispatch: 'not_started',
+          tool_dispatch: 'not_started',
+          source_mutation: 'not_performed',
+          git_candidate: 'not_created',
+          revision_admission: 'not_created',
+        },
+        authority: {
+          context_authority: 'main_generation_approved_plan_edit_context_v1',
+          conversation_binding: 'fresh_approved_plan_continuation_required',
+          project_read_authority: 'git_sqlite_current_source_verified',
+          renderer_authority: 'not_present',
+          provider_dispatch: false,
+          credential_readback: false,
+          tool_dispatch: 'not_performed',
+          source_mutation: 'not_performed',
+          git_authority: 'not_present',
+          revision_authority: 'not_present',
+        },
+      });
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
     }
   }
 
@@ -1099,6 +1183,7 @@ function createBuilderGenerationMainService(rawOptions) {
     answer,
     generate,
     retry_generate: retryGenerate,
+    prepare_approved_plan_edit_context: prepareApprovedPlanEditContext,
     cancel,
     availability: host.availability,
     restore_draft: restoreDraft,
@@ -1110,6 +1195,7 @@ function createBuilderGenerationMainService(rawOptions) {
       project_read_authority_verified_source: true,
       pending_draft_restart_restore: 'git_sqlite_verified',
       conversation_event_admission: 'sqlite_recorded',
+      approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,
