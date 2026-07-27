@@ -171,6 +171,7 @@ function conversationService() {
     readCandidate: [],
     rejectCandidate: [],
     readApprovedPlan: [],
+    approvedPlanWork: [],
     approvedPlanContinuation: [],
   };
   let progressCommand = 10_000;
@@ -548,6 +549,15 @@ function conversationService() {
         admitted_at_ms: 8_000,
       });
     },
+    begin_approved_plan_work(input) {
+      calls.approvedPlanWork.push(input);
+      return service.begin_work({
+        project_id: input.project_id,
+        instruction: input.instruction,
+        request_digest: input.request_digest,
+        base_revision: input.base_revision,
+      });
+    },
   };
   return service;
 }
@@ -711,6 +721,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     pending_draft_restart_restore: 'git_sqlite_verified',
     conversation_event_admission: 'sqlite_recorded',
     approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
+    approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
@@ -870,6 +881,7 @@ test('prepares an approved-plan edit context from fresh conversation proof and c
   assert.deepEqual(lifecycle.calls.cancel, []);
   assert.deepEqual(lifecycle.calls.readCandidate, []);
   assert.deepEqual(lifecycle.calls.rejectCandidate, []);
+  assert.deepEqual(lifecycle.calls.approvedPlanWork, []);
   assert.equal(git.receipts.length, 0);
   assert.equal(transportCalled, false);
   assert.equal(Object.isFrozen(context), true);
@@ -880,6 +892,67 @@ test('prepares an approved-plan edit context from fresh conversation proof and c
   assert.doesNotMatch(
     JSON.stringify(context),
     /provider_config|provider_secret|credential_secret|credential_value|secret_ref|git_candidate_receipt|candidate_digest|save_admission|transport_version|builder-model|provider\.example/iu,
+  );
+});
+
+test('generates an unsaved candidate from the current approved plan through main-only work start', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const transportInputs = [];
+  const started = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(input) {
+          assert.deepEqual(input, { project_id: PROJECT_ID });
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    onGenerationStarted(event) {
+      started.push(event);
+    },
+    transport: async (input) => {
+      transportInputs.push(input);
+      assert.match(input.messages[1].content, /Review the approved plan/u);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          summary: 'Applied the approved plan.',
+        })),
+      };
+    },
+  });
+
+  const result = await service.generate_approved_plan(approvedPlanEditRequest());
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.match(result.draft_id, /^builder-generation-draft:[0-9a-f]{64}$/u);
+  assert.equal(result.title, 'Focus timer');
+  assert.equal(result.summary, 'Applied the approved plan.');
+  assert.equal(result.admissions.conversation, 'sqlite_recorded');
+  assert.equal(result.restart_restore, 'not_persisted');
+  assert.equal(lifecycle.calls.readApprovedPlan.length, 1);
+  assert.equal(lifecycle.calls.approvedPlanContinuation.length, 1);
+  assert.equal(lifecycle.calls.approvedPlanWork.length, 1);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.begin[0].instruction, 'Review the approved plan.\n\nPlan:\n1. Build the approved change.');
+  assert.equal(lifecycle.calls.begin[0].base_revision.commit_oid, '2'.repeat(40));
+  assert.equal(lifecycle.calls.progress.length, 4);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(transportInputs.length, 1);
+  assert.equal(started.length, 1);
+  assert.equal(started[0].project_id, PROJECT_ID);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /provider_config|provider_secret|credential_secret|credential_value|secret_ref|provider\.example|builder-model|git_candidate_receipt|operations|conversation_events/iu,
   );
 });
 
@@ -1905,8 +1978,10 @@ test('fails closed for malformed repositories, read authority, authority pairs, 
 test('does not register Electron, save, old revision, or expose provider credential authority', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'builder-generation-main-service.cjs'), 'utf8');
   assert.match(source, /prepare_approved_plan_edit_context/u);
+  assert.match(source, /generate_approved_plan/u);
   assert.match(source, /main_generation_approved_plan_edit_context_v1/u);
   assert.match(source, /main_only_fresh_continuation_current_source_no_dispatch/u);
+  assert.match(source, /main_only_approved_plan_starts_work_run_before_provider/u);
   for (const forbidden of [
     /require\(['"]electron['"]\)/u,
     /ipcMain|ipcRenderer|contextBridge|BrowserWindow/u,

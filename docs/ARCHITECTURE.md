@@ -66,6 +66,15 @@ provider config or credentials, dispatch provider/tool work, mutate source,
 create Git candidate evidence, append Conversation events, create Save/Project
 Revision facts, or expose any IPC/preload/renderer projection.
 
+The Generation main service can also consume that approved-plan edit context as
+an internal generation request. Before provider dispatch, Conversation main
+service performs a fresh current-head approved-plan read and appends a new
+main-only work Turn/Run whose user message is exactly the already-public
+approved plan text. Generation then uses the verified base revision evidence and
+source tree from the private edit context to produce an unsaved candidate. This
+path has no IPC/preload command, renderer-created provider envelope, source
+receipt authority, Save authority, or Project Revision authority.
+
 The Generation main service can also record fixed Run progress stages through
 the Conversation main service while a provider generation or explanation is in
 flight. The only current stages are `context_ready`,

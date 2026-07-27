@@ -377,6 +377,14 @@ Evidence requirements:
   provider/tool work, mutates no source, creates no Git candidate, appends no
   Conversation event, creates no Save or Project Revision, and exposes no
   IPC/preload or renderer projection;
+- the current approved-plan generation checkpoint lets the Generation main
+  service turn that private edit context into an internal generation request.
+  Conversation main service first re-reads the current-head approved plan and
+  appends a new main-only work Turn/Run whose message is exactly the
+  already-public approved plan text; only after that does provider generation
+  produce an unsaved candidate from the verified base revision evidence and
+  source tree. This exposes no IPC/preload command, renderer-created provider
+  envelope, source receipt authority, Save authority, or Project Revision;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
   main content bottom. Assistant activity, draft review summary, preview, and

@@ -843,16 +843,29 @@ test('reads only the current approved plan and rejects stale or rejected plan fa
       run_id: approvedContext.ids.run_id,
       decision: 'approved',
     });
-    assert.equal(
-      approvedItem.service.read_approved_plan({
+    const approvedPlan = approvedItem.service.read_approved_plan({
         project_id: PROJECT_ID,
         conversation_id: approvedContext.conversation.conversation_id,
         turn_id: approvedContext.ids.turn_id,
         run_id: approvedContext.ids.run_id,
-      }).decision,
-      'approved',
-    );
-    begin(approvedItem.service, BASE_REVISION, 'Start a newer turn after approving the plan');
+      });
+    assert.equal(approvedPlan.decision, 'approved');
+    const approvedWork = approvedItem.service.begin_approved_plan_work({
+      project_id: PROJECT_ID,
+      conversation_id: approvedContext.conversation.conversation_id,
+      turn_id: approvedContext.ids.turn_id,
+      run_id: approvedContext.ids.run_id,
+      instruction: approvedPlan.approved_plan_public_text,
+      request_digest: CANDIDATE_DIGEST,
+      base_revision: BASE_REVISION,
+    });
+    assert.equal(approvedWork.mode, 'work');
+    assert.equal(approvedWork.request_digest, CANDIDATE_DIGEST);
+    assert.equal(approvedWork.start_head.sequence, 9);
+    assert.equal(approvedWork.events.at(-2).event_type, 'turn_submitted');
+    assert.equal(approvedWork.events.at(-2).previous_event.sequence, 7);
+    assert.equal(approvedWork.events.at(-1).event_type, 'run_started');
+    assert.equal(approvedWork.events.at(-1).payload.input_digest, CANDIDATE_DIGEST);
     assert.throws(
       () => approvedItem.service.read_approved_plan({
         project_id: PROJECT_ID,
@@ -2224,8 +2237,10 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
   );
   assert.match(source, /read_approved_plan/u);
   assert.match(source, /admit_approved_plan_continuation/u);
+  assert.match(source, /begin_approved_plan_work/u);
   assert.match(source, /main_only_current_head_approval_gate/u);
   assert.match(source, /main_only_fresh_approved_plan_no_execution/u);
+  assert.match(source, /main_only_current_head_approved_plan_starts_new_work_run/u);
   assert.doesNotMatch(
     source,
     /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit|builder-git-project-repository/iu,

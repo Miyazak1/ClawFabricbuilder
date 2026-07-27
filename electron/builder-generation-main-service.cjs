@@ -764,6 +764,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
   const recordConversationRunProgress = ownMethod(options.conversationService, 'record_run_progress');
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
+  const beginApprovedPlanWork = ownMethod(options.conversationService, 'begin_approved_plan_work');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
@@ -784,6 +785,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const explanationContexts = new WeakMap();
   const providerOutputStates = new WeakMap();
   const liveOutputContextsByRunId = new Map();
+  const pendingApprovedPlanEditContexts = new Map();
   let pendingAuthority = null;
   let bindingAuthority = false;
 
@@ -952,9 +954,54 @@ function createBuilderGenerationMainService(rawOptions) {
     return generationContext;
   }
 
+  function generationRequestFromApprovedPlan(editContext) {
+    const unsigned = freezeDeep({
+      version: 'builder-generation-request.v2',
+      instruction: editContext.approved_plan_public_text,
+      existing_project_id: editContext.project_id,
+    });
+    return freezeDeep({
+      ...unsigned,
+      request_digest: sha256Canonical(unsigned),
+    });
+  }
+
   async function buildGenerationContext(request) {
     try {
       const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
+      const approvedPlanEditContext = pendingApprovedPlanEditContexts.get(key);
+      if (approvedPlanEditContext !== undefined) {
+        pendingApprovedPlanEditContexts.delete(key);
+        if (
+          request.existing_project_id !== approvedPlanEditContext.project_id
+          || request.instruction !== approvedPlanEditContext.approved_plan_public_text
+        ) fail();
+        const conversationContext = Reflect.apply(
+          beginApprovedPlanWork,
+          options.conversationService,
+          [{
+            project_id: approvedPlanEditContext.project_id,
+            conversation_id: approvedPlanEditContext.conversation_id,
+            turn_id: approvedPlanEditContext.turn_id,
+            run_id: approvedPlanEditContext.run_id,
+            instruction: request.instruction,
+            request_digest: request.request_digest,
+            base_revision: approvedPlanEditContext.base_revision,
+          }],
+        );
+        activeContexts.set(key, conversationContext);
+        retryableContexts.delete(key);
+        notifyGenerationStarted(request, approvedPlanEditContext.project_id);
+        return generationContextFromConversation(
+          request,
+          {
+            base_revision: approvedPlanEditContext.base_revision,
+            base_revision_evidence: approvedPlanEditContext.base_revision_evidence,
+            source_tree: approvedPlanEditContext.base_source_tree,
+          },
+          conversationContext,
+        );
+      }
       const retryableContext = pendingRetryContexts.get(key);
       if (retryableContext !== undefined) {
         pendingRetryContexts.delete(key);
@@ -1331,6 +1378,26 @@ function createBuilderGenerationMainService(rawOptions) {
     return startGenerate(request, null);
   }
 
+  async function generateApprovedPlan(rawRequest) {
+    let request = null;
+    try {
+      const editContext = await prepareApprovedPlanEditContext(rawRequest);
+      request = generationRequestFromApprovedPlan(editContext);
+      const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
+      if (inFlight.has(key) || pendingApprovedPlanEditContexts.has(key)) fail();
+      pendingApprovedPlanEditContexts.set(key, editContext);
+      return await startGenerate(request, null);
+    } catch (error) {
+      if (request !== null) {
+        pendingApprovedPlanEditContexts.delete(
+          operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
+        );
+      }
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
+  }
+
   async function submit(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -1592,6 +1659,7 @@ function createBuilderGenerationMainService(rawOptions) {
     submit,
     answer,
     generate,
+    generate_approved_plan: generateApprovedPlan,
     retry_generate: retryGenerate,
     prepare_approved_plan_edit_context: prepareApprovedPlanEditContext,
     cancel,
@@ -1606,6 +1674,7 @@ function createBuilderGenerationMainService(rawOptions) {
       pending_draft_restart_restore: 'git_sqlite_verified',
       conversation_event_admission: 'sqlite_recorded',
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
+      approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,

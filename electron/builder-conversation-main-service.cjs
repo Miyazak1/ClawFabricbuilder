@@ -448,6 +448,30 @@ function sanitizePlanRunReference(value) {
   });
 }
 
+function sanitizeApprovedPlanWorkRequest(value) {
+  exactObject(value, [
+    'project_id',
+    'conversation_id',
+    'turn_id',
+    'run_id',
+    'instruction',
+    'request_digest',
+    'base_revision',
+  ]);
+  const reference = sanitizePlanRunReference({
+    project_id: valueAt(value, 'project_id'),
+    conversation_id: valueAt(value, 'conversation_id'),
+    turn_id: valueAt(value, 'turn_id'),
+    run_id: valueAt(value, 'run_id'),
+  });
+  return freezeDeep({
+    ...reference,
+    instruction: safeText(valueAt(value, 'instruction'), 12_000, 48_000),
+    request_digest: safeDigest(valueAt(value, 'request_digest')),
+    base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+  });
+}
+
 function sanitizeAcceptCandidateRequest(value) {
   exactObject(value, ['draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'revision']);
   return freezeDeep({
@@ -847,6 +871,122 @@ function createBuilderConversationMainService(rawOptions) {
 
   function beginQuestion(rawRequest) {
     return beginTurn(sanitizeQuestionRequest(rawRequest), 'question');
+  }
+
+  function sameConversationHead(left, right) {
+    return left.sequence === right.sequence
+      && left.event_id === right.event_id
+      && left.event_digest === right.event_digest;
+  }
+
+  function approvedPlanWorkIds() {
+    const taskId = newId(options.createUuid, 'builder-task');
+    return freezeDeep({
+      turn_command_id: newId(options.createUuid, 'builder-command'),
+      run_command_id: newId(options.createUuid, 'builder-command'),
+      terminal_command_id: newId(options.createUuid, 'builder-command'),
+      turn_terminal_command_id: newId(options.createUuid, 'builder-command'),
+      cancel_command_id: newId(options.createUuid, 'builder-command'),
+      cancel_request_id: newId(options.createUuid, 'builder-cancel-request'),
+      interrupt_command_id: newId(options.createUuid, 'builder-command'),
+      interrupt_request_id: newId(options.createUuid, 'builder-interrupt-request'),
+      message_id: newId(options.createUuid, 'builder-message'),
+      assistant_message_id: newId(options.createUuid, 'builder-message'),
+      turn_id: newId(options.createUuid, 'builder-turn'),
+      task_id: taskId,
+      run_id: newId(options.createUuid, 'builder-run'),
+    });
+  }
+
+  function beginApprovedPlanWork(rawRequest) {
+    try {
+      const request = sanitizeApprovedPlanWorkRequest(rawRequest);
+      const approvedPlan = readApprovedPlan({
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        turn_id: request.turn_id,
+        run_id: request.run_id,
+      });
+      if (request.instruction !== approvedPlan.approved_plan_public_text) fail();
+      const state = load(request.project_id, request.conversation_id);
+      if (
+        state === null
+        || state.snapshot.active_turn_id !== null
+        || !sameConversationHead(state.head, approvedPlan.conversation_head)
+      ) fail();
+      const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+      const project = freezeDeep({
+        project_id: request.project_id,
+        created_at_ms: projectCreatedAt(request.project_id, request.base_revision, recordedAtMs, state),
+      });
+      const conversation = freezeDeep({
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        created_at_ms: state.conversation.created_at_ms,
+      });
+      const ids = approvedPlanWorkIds();
+      const first = eventAt({
+        projectId: request.project_id,
+        conversationId: request.conversation_id,
+        sequence: state.head.sequence + 1,
+        commandId: ids.turn_command_id,
+        eventType: 'turn_submitted',
+        previous: state.head,
+        payload: {
+          message: {
+            message_id: ids.message_id,
+            text: request.instruction,
+          },
+          turn_id: ids.turn_id,
+          mode: 'work',
+          task: {
+            task_id: ids.task_id,
+            title: 'Apply approved plan',
+          },
+          base_revision: request.base_revision,
+        },
+      });
+      const second = eventAt({
+        projectId: request.project_id,
+        conversationId: request.conversation_id,
+        sequence: first.sequence + 1,
+        commandId: ids.run_command_id,
+        eventType: 'run_started',
+        previous: eventHead(first),
+        payload: {
+          turn_id: ids.turn_id,
+          run_id: ids.run_id,
+          task_id: ids.task_id,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          input_digest: request.request_digest,
+        },
+      });
+      const appended = append({
+        project,
+        conversation,
+        expectedHead: state.head,
+        events: [first, second],
+        recordedAtMs,
+      });
+      const context = freezeDeep({
+        context_version: 'builder-conversation-run-context.v1',
+        mode: 'work',
+        project,
+        conversation,
+        request_digest: request.request_digest,
+        start_head: { ...appended.head },
+        attempt_number: 1,
+        events: appended.events,
+        run_terminal_failure_code: null,
+        ids,
+        cancel_requested: false,
+      });
+      TRUSTED_CONTEXTS.add(context);
+      return context;
+    } catch {
+      fail();
+    }
   }
 
   function failureEvents(context, failureCode, completeTurn) {
@@ -2029,6 +2169,7 @@ function createBuilderConversationMainService(rawOptions) {
     record_retryable_failure: recordRetryableFailure,
     record_run_progress: recordRunProgress,
     retry_after_failure: retryAfterFailure,
+    begin_approved_plan_work: beginApprovedPlanWork,
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,
     complete_plan: completePlan,
@@ -2064,6 +2205,7 @@ function createBuilderConversationMainService(rawOptions) {
       plan_review_recording: 'main_only_review_fact_no_execution',
       approved_plan_read: 'main_only_current_head_approval_gate',
       approved_plan_continuation_admission: 'main_only_fresh_approved_plan_no_execution',
+      approved_plan_work_start: 'main_only_current_head_approved_plan_starts_new_work_run',
       task_stream_change_notification: 'project_id_only_after_append',
     }),
   });
