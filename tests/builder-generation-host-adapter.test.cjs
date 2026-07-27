@@ -220,6 +220,33 @@ test('generates an unsaved code-change candidate from verified base context', as
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
 });
 
+test('reports fixed generation progress stages around provider transport', async () => {
+  const stages = [];
+  const rawRequest = request();
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    onProgress: ({ context, stage }) => {
+      stages.push({
+        stage,
+        eventCount: context.conversation_events.length,
+      });
+      return context;
+    },
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  }));
+
+  await adapter.generate(rawRequest);
+
+  assert.deepEqual(stages, [
+    { stage: 'context_ready', eventCount: 2 },
+    { stage: 'provider_request_started', eventCount: 2 },
+    { stage: 'provider_response_received', eventCount: 2 },
+    { stage: 'result_preparing', eventCount: 2 },
+  ]);
+});
+
 test('generates a bounded explanation without candidate or Git context', async () => {
   const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
   const base = sourceTree([{ path: 'src/app.js', content: 'export const saved = true;\n' }]);

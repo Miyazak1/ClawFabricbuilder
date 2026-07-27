@@ -18,6 +18,7 @@ import {
   createHistoryWire,
   createPlanTaskStreamWire,
   createPlanReviewTaskStreamWire,
+  createProgressTaskStreamWire,
   createReadWire,
   createRejectedTaskStreamWire,
   createSaveResult,
@@ -189,6 +190,11 @@ async function staleActivity() {
 
 async function answerActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createAnswerTaskStreamWire()));
+  return controller.load(PROJECT_ID);
+}
+
+async function progressActivity() {
+  const controller = createBuilderConversationController(taskStreamPort(async () => createProgressTaskStreamWire()));
   return controller.load(PROJECT_ID);
 }
 
@@ -1088,6 +1094,37 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('renders durable AI work progress as lightweight status rows in the chat flow', async () => {
+    const { saved } = await snapshots();
+    const activity = await progressActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const contextReady = container.querySelector('[data-builder-activity-card="Context ready"]');
+    const responseStarted = container.querySelector('[data-builder-activity-card="AI response started"]');
+    expect(contextReady?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(responseStarted?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(
+      contextReady?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('status');
+    expect(
+      responseStarted?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('status');
+    expect(contextReady?.textContent).toContain('The assistant prepared the current project context.');
+    expect(responseStarted?.textContent).toContain('The assistant started asking the AI service.');
+    expect(container.textContent).not.toMatch(
+      /provider_request_started|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 

@@ -405,6 +405,68 @@ test('records start and terminal events before allowing a later turn to continue
   }
 });
 
+test('records fixed run progress while advancing the trusted context head', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    const contextReady = item.service.record_run_progress({
+      context: first,
+      stage: 'context_ready',
+    });
+    assert.equal(contextReady.start_head.sequence, 3);
+    assert.equal(contextReady.events.at(-1).event_type, 'run_progress_recorded');
+    assert.equal(contextReady.events.at(-1).payload.stage, 'context_ready');
+
+    const requestStarted = item.service.record_run_progress({
+      context: contextReady,
+      stage: 'provider_request_started',
+    });
+    assert.equal(requestStarted.start_head.sequence, 4);
+    assert.throws(() => item.service.record_run_progress({
+      context: requestStarted,
+      stage: 'provider_request_started',
+    }));
+    assert.throws(() => item.service.complete_candidate({
+      context: first,
+      candidate_result: candidateResult(first),
+      assistant_text: 'A stale draft should not complete.',
+    }));
+
+    const terminal = item.service.complete_candidate({
+      context: requestStarted,
+      candidate_result: candidateResult(requestStarted),
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    assert.equal(terminal.head.sequence, 6);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(stream.conversation.items.slice(2, 4), [
+      {
+        item_kind: 'run_progress_recorded',
+        sequence: 3,
+        turn_id: first.ids.turn_id,
+        run_id: first.ids.run_id,
+        stage: 'context_ready',
+        recorded_state: 'recorded',
+      },
+      {
+        item_kind: 'run_progress_recorded',
+        sequence: 4,
+        turn_id: first.ids.turn_id,
+        run_id: first.ids.run_id,
+        stage: 'provider_request_started',
+        recorded_state: 'recorded',
+      },
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /credential|source_tree|git_candidate_receipt|commit_oid|tree_oid|input_digest|prompt|token/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
 test('notifies task stream readers after durable conversation appends', () => {
   const notifications = [];
   const item = fixture(1, 1_000, {

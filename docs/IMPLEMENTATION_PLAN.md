@@ -396,6 +396,14 @@ Evidence requirements:
   read-only Task Stream for first-turn unsaved projects; the hint carries no
   source, receipt, provider, credential, tool output, save, Git, revision, or
   project-save authority and does not mark the project saved;
+- the current durable run-progress checkpoint records fixed main-owned Run
+  progress stages (`context_ready`, `provider_request_started`,
+  `provider_response_received`, `result_preparing`) before terminal generation
+  or explanation results. These stages advance the trusted Conversation context
+  head and appear in the read-only Task Stream as lightweight status rows, but
+  they carry no provider envelope, prompt, token delta, credential, source,
+  Git, Save, or Project Revision authority. Token streaming, tool streaming,
+  and arbitrary execution remain later independent protocols;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

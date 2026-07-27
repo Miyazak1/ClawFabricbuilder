@@ -64,6 +64,17 @@ dispatch provider/tool work, mutate source, create Git candidate evidence,
 append Conversation events, create Save/Project Revision facts, or expose any
 IPC/preload/renderer projection.
 
+The Generation main service can also record fixed Run progress stages through
+the Conversation main service while a provider generation or explanation is in
+flight. The only current stages are `context_ready`,
+`provider_request_started`, `provider_response_received`, and
+`result_preparing`. Each stage advances the trusted Conversation head and is
+replayed before the renderer-safe Task Stream exposes it as a status item. The
+projection contains no provider envelope, prompt, token delta, credential,
+source content, Git evidence, Save authority, or Project Revision authority.
+This is durable work visibility, not a token-streaming or tool-execution
+protocol.
+
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
 Builder Project Revision is a SQLite product receipt that binds a Project,

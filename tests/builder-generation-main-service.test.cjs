@@ -165,12 +165,37 @@ function conversationService() {
     explanation: [],
     failure: [],
     completeFailure: [],
+    progress: [],
     retry: [],
     cancel: [],
     readCandidate: [],
     rejectCandidate: [],
     approvedPlanContinuation: [],
   };
+  let progressCommand = 10_000;
+  function nextProgressCommandId() {
+    const suffix = progressCommand.toString(16).padStart(12, '0');
+    progressCommand += 1;
+    return `builder-command:00000000-0000-4000-8000-${suffix}`;
+  }
+  function progressEvent(context, stage) {
+    return createBuilderConversationEvent({
+      record_version: CONVERSATION_EVENT_VERSION,
+      record_kind: CONVERSATION_EVENT_KIND,
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      command_id: nextProgressCommandId(),
+      event_type: 'run_progress_recorded',
+      previous_event: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        stage,
+      },
+      authority: { ...CONVERSATION_AUTHORITY },
+    });
+  }
   const service = {
     calls,
     reject_draft_for_test(draftId) {
@@ -370,6 +395,15 @@ function conversationService() {
         },
       };
     },
+    record_run_progress(input) {
+      calls.progress.push(input);
+      const event = progressEvent(input.context, input.stage);
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
+      };
+    },
     record_retryable_failure(input) {
       calls.failure.push(input);
       return {
@@ -381,8 +415,28 @@ function conversationService() {
       calls.retry.push(input);
       generation += 1;
       const suffix = UUIDS[(generation + 4) % UUIDS.length];
+      const started = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.context.project.project_id,
+        conversation_id: input.context.conversation.conversation_id,
+        sequence: input.context.start_head.sequence + 1,
+        command_id: `builder-command:${UUIDS[(generation + 7) % UUIDS.length]}`,
+        event_type: 'run_started',
+        previous_event: input.context.start_head,
+        payload: {
+          turn_id: input.context.ids.turn_id,
+          run_id: `builder-run:${suffix}`,
+          task_id: input.context.ids.task_id,
+          attempt_number: input.context.attempt_number + 1,
+          retry_of_run_id: input.context.ids.run_id,
+          input_digest: input.context.request_digest,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
       return {
         ...input.context,
+        start_head: eventHead(started),
         attempt_number: input.context.attempt_number + 1,
         ids: {
           ...input.context.ids,
@@ -390,25 +444,7 @@ function conversationService() {
         },
         events: [
           ...input.context.events,
-          createBuilderConversationEvent({
-            record_version: CONVERSATION_EVENT_VERSION,
-            record_kind: CONVERSATION_EVENT_KIND,
-            project_id: input.context.project.project_id,
-            conversation_id: input.context.conversation.conversation_id,
-            sequence: input.context.start_head.sequence + 1,
-            command_id: `builder-command:${UUIDS[(generation + 7) % UUIDS.length]}`,
-            event_type: 'run_started',
-            previous_event: input.context.start_head,
-            payload: {
-              turn_id: input.context.ids.turn_id,
-              run_id: `builder-run:${suffix}`,
-              task_id: input.context.ids.task_id,
-              attempt_number: input.context.attempt_number + 1,
-              retry_of_run_id: input.context.ids.run_id,
-              input_digest: input.context.request_digest,
-            },
-            authority: { ...CONVERSATION_AUTHORITY },
-          }),
+          started,
         ],
         run_terminal_failure_code: null,
       };
@@ -622,6 +658,19 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   assert.equal(transportInputs[0].credential, 'credential-2');
   assert.equal(lifecycle.calls.begin.length, 1);
   assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ]);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 6);
+  assert.deepEqual(lifecycle.calls.candidate[0].context.events.slice(-4).map((event) => event.event_type), [
+    'run_progress_recorded',
+    'run_progress_recorded',
+    'run_progress_recorded',
+    'run_progress_recorded',
+  ]);
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(lifecycle.calls.completeFailure.length, 0);
   assert.doesNotMatch(JSON.stringify(result), /credential|provider\.example|builder-model|operations|conversation_events|git_request_id/iu);
@@ -976,6 +1025,13 @@ test('records a provider explanation without creating Git candidate, draft, or s
   assert.equal(lifecycle.calls.question[0].base_revision.revision_receipt_digest, `sha256:${'1'.repeat(64)}`);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ]);
+  assert.equal(lifecycle.calls.explanation[0].context.start_head.sequence, 6);
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(git.receipts.length, 0);
   assert.equal(transportInputs.length, 1);
@@ -1134,7 +1190,7 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
   const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(failedStream.conversation.head_sequence, 3);
+  assert.equal(failedStream.conversation.head_sequence, 5);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
   await assert.rejects(
     service.retry_generate(request({ instruction: 'Different retry should not bind.' })),
@@ -1146,24 +1202,30 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
   assert.equal(result.project_id, PROJECT_ID);
   assert.equal(result.request_id, rawRequest.request_digest);
   const stream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(stream.conversation.head_sequence, 6);
+  assert.equal(stream.conversation.head_sequence, 12);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
-  assert.equal(stream.conversation.items[0].turn_id, stream.conversation.items[3].turn_id);
-  assert.deepEqual(stream.conversation.items[3], {
+  assert.equal(stream.conversation.items[0].turn_id, stream.conversation.items[5].turn_id);
+  assert.deepEqual(stream.conversation.items[5], {
     item_kind: 'run_started',
-    sequence: 4,
+    sequence: 6,
     turn_id: stream.conversation.items[0].turn_id,
-    run_id: stream.conversation.items[3].run_id,
+    run_id: stream.conversation.items[5].run_id,
     task_id: stream.conversation.items[0].task.task_id,
     attempt_number: 2,
     retry_of_run_id: stream.conversation.items[1].run_id,
     recorded_state: 'started',
   });
-  assert.equal(stream.conversation.items[4].item_kind, 'run_completed');
-  assert.equal(stream.conversation.items[4].run_id, stream.conversation.items[3].run_id);
-  assert.equal(stream.conversation.items[4].result_kind, 'candidate');
-  assert.equal(stream.conversation.items[5].outcome, 'candidate_ready');
-  assert.doesNotMatch(JSON.stringify(stream), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+  assert.deepEqual(stream.conversation.items.slice(6, 10).map((item) => item.item_kind), [
+    'run_progress_recorded',
+    'run_progress_recorded',
+    'run_progress_recorded',
+    'run_progress_recorded',
+  ]);
+  assert.equal(stream.conversation.items[10].item_kind, 'run_completed');
+  assert.equal(stream.conversation.items[10].run_id, stream.conversation.items[5].run_id);
+  assert.equal(stream.conversation.items[10].result_kind, 'candidate');
+  assert.equal(stream.conversation.items[11].outcome, 'candidate_ready');
+  assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
 });
 
 test('records real provider failures as retryable activity and closes them before distinct new work', async (t) => {
@@ -1211,28 +1273,34 @@ test('records real provider failures as retryable activity and closes them befor
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
   const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(failedStream.conversation.head_sequence, 3);
+  assert.equal(failedStream.conversation.head_sequence, 5);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
-  assert.equal(failedStream.conversation.items[2].item_kind, 'run_completed');
-  assert.equal(failedStream.conversation.items[2].terminal_status, 'failed');
-  assert.equal(failedStream.conversation.items[2].result_kind, 'failure');
-  assert.equal(failedStream.conversation.items[2].candidate, null);
+  assert.equal(failedStream.conversation.items[4].item_kind, 'run_completed');
+  assert.equal(failedStream.conversation.items[4].terminal_status, 'failed');
+  assert.equal(failedStream.conversation.items[4].result_kind, 'failure');
+  assert.equal(failedStream.conversation.items[4].candidate, null);
 
   const result = await service.generate(request({ instruction: 'Try a different timer layout.' }));
   assert.equal(result.project_id, PROJECT_ID);
   const stream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(stream.conversation.head_sequence, 8);
+  assert.equal(stream.conversation.head_sequence, 14);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
-  assert.deepEqual(stream.conversation.items.slice(3, 6).map((item) => item.item_kind), [
+  assert.deepEqual(stream.conversation.items.slice(5, 8).map((item) => item.item_kind), [
     'turn_completed',
     'user_message',
     'run_started',
   ]);
-  assert.equal(stream.conversation.items[3].outcome, 'failed');
-  assert.equal(stream.conversation.items[4].message.text, 'Try a different timer layout.');
-  assert.equal(stream.conversation.items[6].result_kind, 'candidate');
-  assert.equal(stream.conversation.items[7].outcome, 'candidate_ready');
-  assert.doesNotMatch(JSON.stringify(stream), /provider|credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+  assert.equal(stream.conversation.items[5].outcome, 'failed');
+  assert.equal(stream.conversation.items[6].message.text, 'Try a different timer layout.');
+  assert.deepEqual(stream.conversation.items.slice(8, 12).map((item) => item.item_kind), [
+    'run_progress_recorded',
+    'run_progress_recorded',
+    'run_progress_recorded',
+    'run_progress_recorded',
+  ]);
+  assert.equal(stream.conversation.items[12].result_kind, 'candidate');
+  assert.equal(stream.conversation.items[13].outcome, 'candidate_ready');
+  assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
 });
 
 test('records cancellation intent before aborting provider work and fails closed if recording fails', async () => {
@@ -1514,7 +1582,7 @@ test('uses read authority for existing projects and stores a main-only pending d
   assert.match(pending.git_request_id, /^builder-git-request:/u);
   assert.equal(pending.candidate_proof.candidate_digest, result.candidate.candidate_digest);
   assert.equal(pending.candidate_proof.resulting_tree_digest, result.candidate.resulting_tree_digest);
-  assert.equal(pending.conversation_head.sequence, 4);
+  assert.equal(pending.conversation_head.sequence, 8);
   assert.equal(pending.conversation_event_admission, 'sqlite_recorded');
   assert.equal(pending.restart_restore, 'not_persisted');
 

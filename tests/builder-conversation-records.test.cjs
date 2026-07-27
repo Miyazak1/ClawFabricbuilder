@@ -300,6 +300,41 @@ test('supports command payloads with exact run attempt and terminal result evide
   assert.deepEqual(Object.keys(terminal.payload).sort(), ['outcome', 'run_id', 'turn_id']);
 });
 
+test('supports fixed run progress payloads without provider or source authority', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a quiet timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create focus timer' },
+    base_revision: null,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const progress = create('run_progress_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    stage: 'context_ready',
+  }, started, 3);
+
+  assert.deepEqual(Object.keys(progress.payload).sort(), ['run_id', 'stage', 'turn_id']);
+  assert.equal(progress.payload.stage, 'context_ready');
+  assert.doesNotMatch(
+    JSON.stringify(progress),
+    /provider|credential|secret|source_tree|git_|receipt|prompt|token|Authorization|Bearer/iu,
+  );
+  assert.throws(() => create('run_progress_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    stage: 'token_delta',
+  }, started, 4), assertRecordError());
+});
+
 test('supports pre-dispatch tool call request payloads without execution result authority', async () => {
   const submitted = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Read the project files.' },
@@ -664,7 +699,7 @@ test('keeps fixed errors free of rejected material and imports no product author
   const source = require('node:fs').readFileSync(
     require.resolve('../electron/builder-conversation-records.cjs'), 'utf8',
   );
-  assert.doesNotMatch(source, /builder-project-revision-repository|main\.cjs|preload\.cjs|provider|safeStorage/iu);
+  assert.doesNotMatch(source, /builder-project-revision-repository|main\.cjs|preload\.cjs|safeStorage/iu);
   assert.match(source, /permission_admission:\s*'not_granted'/u);
   assert.match(source, /revision_admission:\s*'not_created'/u);
 });

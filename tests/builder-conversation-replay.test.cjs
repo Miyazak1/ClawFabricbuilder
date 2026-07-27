@@ -379,6 +379,62 @@ test('keeps an active turn reconstructible before terminal events arrive', () =>
   assert.equal(replay.turns[0].messages.at(-1).kind, 'steering');
 });
 
+test('replays fixed run progress only in order while the run is active', () => {
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 10), text: 'Build a small timer.' },
+    turn_id: id('turn', 10),
+    mode: 'work',
+    task: { task_id: id('task', 10), title: 'Build timer' },
+    base_revision: null,
+  }, 10);
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    task_id: id('task', 10),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_A,
+  }, 11);
+  events = append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'context_ready',
+  }, 12);
+  events = append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'provider_request_started',
+  }, 13);
+
+  const replay = replayBuilderConversation(events);
+  assert.deepEqual(replay.turns[0].runs[0].progress_stages, [
+    'context_ready',
+    'provider_request_started',
+  ]);
+  assert.equal(Object.isFrozen(replay.turns[0].runs[0].progress_stages), true);
+  assert.throws(() => replayBuilderConversation(append(events.slice(0, 2), 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'provider_request_started',
+  }, 14)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append([...events], 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'provider_request_started',
+  }, 15)), assertReplayError);
+  const controlled = append([...events], 'run_cancel_requested', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    request_id: id('cancel-request', 10),
+  }, 16);
+  assert.throws(() => replayBuilderConversation(append(controlled, 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'provider_response_received',
+  }, 17)), assertReplayError);
+});
+
 test('replays tool call requests and fixed-code results only inside an active work run', async () => {
   let events = [];
   events = append(events, 'turn_submitted', {

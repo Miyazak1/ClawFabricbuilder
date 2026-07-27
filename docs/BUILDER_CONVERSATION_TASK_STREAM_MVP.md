@@ -165,7 +165,7 @@ The Task Stream is an ordered projection of append-only facts such as:
 turn.submitted
 plan.proposed | plan.revised | plan.approved
 task.created | task.updated
-run.started | run.steered | run.interrupted | run.completed
+run.started | run.progress.recorded | run.steered | run.interrupted | run.completed
 tool.call.requested
 candidate.created | candidate.accepted | candidate.rejected
 verification.started | verification.completed

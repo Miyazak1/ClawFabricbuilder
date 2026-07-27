@@ -220,9 +220,24 @@ function completionLabel(item: Extract<BuilderConversationItem, { item_kind: 'ru
   return 'Assistant';
 }
 
+function progressLabel(item: Extract<BuilderConversationItem, { item_kind: 'run_progress_recorded' }>): string {
+  if (item.stage === 'context_ready') return 'Context ready';
+  if (item.stage === 'provider_request_started') return 'AI response started';
+  if (item.stage === 'provider_response_received') return 'AI response received';
+  return 'Preparing result';
+}
+
+function progressBody(item: Extract<BuilderConversationItem, { item_kind: 'run_progress_recorded' }>): string {
+  if (item.stage === 'context_ready') return 'The assistant prepared the current project context.';
+  if (item.stage === 'provider_request_started') return 'The assistant started asking the AI service.';
+  if (item.stage === 'provider_response_received') return 'The assistant received a response and is checking it.';
+  return 'The assistant is preparing the result for review.';
+}
+
 function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
+  if (item.item_kind === 'run_progress_recorded') return <RefreshCw className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
   if (item.item_kind === 'tool_call_requested') return <Play className="size-3.5" />;
   if (item.item_kind === 'tool_call_result_recorded') {
@@ -252,6 +267,7 @@ function activityTitle(item: BuilderConversationItem): string {
     return item.message_kind === 'steering' ? 'You added context' : 'You';
   }
   if (item.item_kind === 'run_started') return 'Started';
+  if (item.item_kind === 'run_progress_recorded') return progressLabel(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
@@ -274,6 +290,7 @@ function activityTitle(item: BuilderConversationItem): string {
 function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') return item.message.text;
   if (item.item_kind === 'run_started') return 'The assistant began working on this request.';
+  if (item.item_kind === 'run_progress_recorded') return progressBody(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt'
       ? 'You asked to steer the current work.'

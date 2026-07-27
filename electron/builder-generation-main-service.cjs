@@ -533,6 +533,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
   const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
+  const recordConversationRunProgress = ownMethod(options.conversationService, 'record_run_progress');
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
@@ -772,6 +773,45 @@ function createBuilderGenerationMainService(rawOptions) {
     resolveSecret,
     buildGenerationContext,
     buildExplanationContext,
+    onProgress({ context, stage }) {
+      const generationContext = generationContexts.get(context);
+      if (generationContext !== undefined) {
+        const progressed = Reflect.apply(
+          recordConversationRunProgress,
+          options.conversationService,
+          [{ context: generationContext, stage }],
+        );
+        const updated = freezeDeep({
+          ...context,
+          conversation_events: progressed.events,
+        });
+        generationContexts.set(updated, progressed);
+        activeContexts.set(
+          operationKey(GENERATE_OPERATION_PREFIX, generationContext.request_digest),
+          progressed,
+        );
+        return updated;
+      }
+      const explanationContext = explanationContexts.get(context);
+      if (explanationContext !== undefined) {
+        const progressed = Reflect.apply(
+          recordConversationRunProgress,
+          options.conversationService,
+          [{ context: explanationContext, stage }],
+        );
+        const updated = freezeDeep({
+          ...context,
+          conversation_events: progressed.events,
+        });
+        explanationContexts.set(updated, progressed);
+        activeContexts.set(
+          operationKey(ANSWER_OPERATION_PREFIX, explanationContext.request_digest),
+          progressed,
+        );
+        return updated;
+      }
+      fail();
+    },
     ...(Object.hasOwn(options, 'transport') ? { transport: options.transport } : {}),
   });
 

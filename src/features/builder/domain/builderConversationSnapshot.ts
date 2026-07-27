@@ -88,6 +88,12 @@ export type BuilderConversationToolResultLifecycle = Readonly<{
   revision_admission: 'not_created';
 }>;
 
+export type BuilderConversationRunProgressStage =
+  | 'context_ready'
+  | 'provider_request_started'
+  | 'provider_response_received'
+  | 'result_preparing';
+
 export type BuilderConversationItem =
   | Readonly<{
     item_kind: 'user_message';
@@ -107,6 +113,14 @@ export type BuilderConversationItem =
     attempt_number: number;
     retry_of_run_id: string | null;
     recorded_state: 'started';
+  }>
+  | Readonly<{
+    item_kind: 'run_progress_recorded';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    stage: BuilderConversationRunProgressStage;
+    recorded_state: 'recorded';
   }>
   | Readonly<{
     item_kind: 'run_control_requested';
@@ -295,6 +309,14 @@ const RUN_CONTROL_KEYS = Object.freeze([
   'run_id',
   'action',
 ]);
+const RUN_PROGRESS_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'stage',
+  'recorded_state',
+]);
 const TOOL_CALL_REQUESTED_KEYS = Object.freeze([
   'item_kind',
   'sequence',
@@ -351,6 +373,12 @@ const TOOL_LABEL_BY_ACTION: Readonly<Record<BuilderConversationToolAction, strin
   'publication.create': 'Prepare publish',
   'permission.grant': 'Change access',
 });
+const RUN_PROGRESS_STAGES: readonly BuilderConversationRunProgressStage[] = Object.freeze([
+  'context_ready',
+  'provider_request_started',
+  'provider_response_received',
+  'result_preparing',
+]);
 const TOOL_RESULT_SUMMARY_BY_CODE: Readonly<Record<BuilderConversationToolResultSummaryCode, string>> = Object.freeze({
   completed_without_raw_output: 'This step completed. Details were not kept.',
   failed_without_raw_output: 'This step could not finish. Details were not kept.',
@@ -726,6 +754,25 @@ function sanitizeRunControl(
   };
 }
 
+function sanitizeRunProgress(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'run_progress_recorded' }> {
+  if (
+    source.recorded_state !== 'recorded'
+    || typeof source.stage !== 'string'
+    || !RUN_PROGRESS_STAGES.includes(source.stage as BuilderConversationRunProgressStage)
+  ) throw unavailable();
+  return {
+    item_kind: 'run_progress_recorded' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    stage: source.stage as BuilderConversationRunProgressStage,
+    recorded_state: 'recorded' as const,
+  };
+}
+
 function sanitizeToolAction(value: unknown): BuilderConversationToolAction {
   if (
     typeof value !== 'string'
@@ -1001,6 +1048,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_STARTED_KEYS);
   } else if (itemKind === 'run_control_requested') {
     source = exactRecord(value, RUN_CONTROL_KEYS);
+  } else if (itemKind === 'run_progress_recorded') {
+    source = exactRecord(value, RUN_PROGRESS_KEYS);
   } else if (itemKind === 'tool_call_result_recorded') {
     source = exactRecord(value, TOOL_CALL_RESULT_RECORDED_KEYS);
   } else if (itemKind === 'tool_call_requested') {
@@ -1020,6 +1069,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'user_message') return sanitizeUserMessage(source, sequence);
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
+  if (itemKind === 'run_progress_recorded') return sanitizeRunProgress(source, sequence);
   if (itemKind === 'tool_call_result_recorded') {
     return sanitizeToolCallResultRecorded(source, sequence);
   }
@@ -1045,6 +1095,7 @@ type ReplayTurn = {
     candidate_review: 'accepted' | 'rejected' | null;
     pending_tool_calls: number;
     control: 'cancel' | 'interrupt' | null;
+    progress_stages: BuilderConversationRunProgressStage[];
   }>;
 };
 
@@ -1186,10 +1237,24 @@ function validateCompleteWindow(
         candidate_review: null,
         pending_tool_calls: 0,
         control: null,
+        progress_stages: [],
       });
       continue;
     }
     if (currentRun === null || currentRun.run_id !== item.run_id) throw unavailable();
+    if (item.item_kind === 'run_progress_recorded') {
+      const previousStage = currentRun.progress_stages.at(-1) ?? null;
+      const previousIndex = previousStage === null ? -1 : RUN_PROGRESS_STAGES.indexOf(previousStage);
+      const stageIndex = RUN_PROGRESS_STAGES.indexOf(item.stage);
+      const expectedIndex = previousStage === null ? 0 : previousIndex + 1;
+      if (
+        currentRun.status !== 'running'
+        || currentRun.control !== null
+        || stageIndex !== expectedIndex
+      ) throw unavailable();
+      currentRun.progress_stages.push(item.stage);
+      continue;
+    }
     if (item.item_kind === 'tool_call_requested') {
       if (
         activeTurn.mode !== 'work'
@@ -1286,6 +1351,7 @@ type SuffixRun = {
   candidate_review: 'accepted' | 'rejected' | null;
   pending_tool_calls: number;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
+  progress_stages: BuilderConversationRunProgressStage[];
 };
 
 type SuffixTurn = {
@@ -1518,7 +1584,46 @@ function validateTruncatedWindow(
         candidate_review: null,
         pending_tool_calls: 0,
         control: null,
+        progress_stages: [],
       };
+      continue;
+    }
+
+    if (item.item_kind === 'run_progress_recorded') {
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix') throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'running',
+          terminal_status: null,
+          result_kind: null,
+          candidate_draft_id: null,
+          plan_review: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+          progress_stages: [],
+        };
+      }
+      const currentRun = activeTurn.current_run;
+      const previousStage = currentRun.progress_stages.at(-1) ?? null;
+      const previousIndex = previousStage === null ? -1 : RUN_PROGRESS_STAGES.indexOf(previousStage);
+      const stageIndex = RUN_PROGRESS_STAGES.indexOf(item.stage);
+      const expectedIndex = previousStage === null
+        ? currentRun.attempt_number === null ? stageIndex : 0
+        : previousIndex + 1;
+      if (
+        currentRun.run_id !== item.run_id
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || (!mayUsePrefixState && stageIndex !== expectedIndex)
+      ) throw unavailable();
+      if (previousStage === null || stageIndex === expectedIndex) {
+        currentRun.progress_stages.push(item.stage);
+      }
       continue;
     }
 
@@ -1538,6 +1643,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          progress_stages: [],
         };
       }
       if (activeTurn.mode === 'unknown') activeTurn.mode = 'work';
@@ -1579,6 +1685,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          progress_stages: [],
         };
       }
       if (activeTurn.mode === 'unknown') activeTurn.mode = 'work';
@@ -1635,6 +1742,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          progress_stages: [],
         };
       }
       const currentRun = activeTurn.current_run;
@@ -1663,6 +1771,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: mayUsePrefixState ? 'unknown' : null,
+          progress_stages: [],
         };
       }
       const currentRun = activeTurn.current_run;

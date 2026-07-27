@@ -39,6 +39,7 @@ type MutableConversationItem = {
   attempt_number?: number;
   retry_of_run_id?: string | null;
   recorded_state?: string;
+  stage?: string;
   action?: string;
   step_id?: string;
   tool_call_id?: string;
@@ -204,6 +205,41 @@ function rejectedCandidateWire(): MutableWire {
     candidate_state: 'rejected',
     saved_revision: null,
   });
+  return wire;
+}
+
+function progressWire(): MutableWire {
+  const wire = candidateWire();
+  wire.conversation.head_sequence = 6;
+  wire.conversation.window.last_sequence = 6;
+  wire.conversation.items = [
+    wire.conversation.items[0]!,
+    wire.conversation.items[1]!,
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 3,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      stage: 'context_ready',
+      recorded_state: 'recorded',
+    },
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      stage: 'provider_request_started',
+      recorded_state: 'recorded',
+    },
+    {
+      ...wire.conversation.items[2]!,
+      sequence: 5,
+    },
+    {
+      ...wire.conversation.items[3]!,
+      sequence: 6,
+    },
+  ];
   return wire;
 }
 
@@ -467,6 +503,75 @@ describe('Builder conversation snapshot', () => {
     expect(serialized).not.toMatch(
       /"running"|live_run|saved|save_admission|git_|receipt|digest|provider|credential|secret|source_tree/iu,
     );
+  });
+
+  it('accepts fixed run progress facts without exposing provider or source evidence', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(progressWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[2]).toEqual({
+      item_kind: 'run_progress_recorded',
+      sequence: 3,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      stage: 'context_ready',
+      recorded_state: 'recorded',
+    });
+    expect(snapshot.conversation.items[3]).toEqual({
+      item_kind: 'run_progress_recorded',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      stage: 'provider_request_started',
+      recorded_state: 'recorded',
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /credential|source_tree|git_|receipt|digest|prompt|token|secret/iu,
+    );
+  });
+
+  it('rejects forged, skipped, or duplicate run progress facts', () => {
+    const leaked = progressWire();
+    (leaked.conversation.items[2] as Record<string, unknown>).provider = 'private-model';
+
+    const skipped = progressWire();
+    skipped.conversation.items[2]!.stage = 'provider_request_started';
+
+    const duplicate = progressWire();
+    duplicate.conversation.items[3]!.stage = 'context_ready';
+
+    const afterControl = progressWire();
+    afterControl.conversation.head_sequence = 7;
+    afterControl.conversation.window.last_sequence = 7;
+    afterControl.conversation.items = [
+      afterControl.conversation.items[0]!,
+      afterControl.conversation.items[1]!,
+      afterControl.conversation.items[2]!,
+      {
+        item_kind: 'run_control_requested',
+        sequence: 4,
+        turn_id: id('turn', 1),
+        run_id: id('run', 3),
+        action: 'cancel',
+      },
+      {
+        ...afterControl.conversation.items[3]!,
+        sequence: 5,
+      },
+      {
+        ...afterControl.conversation.items[4]!,
+        sequence: 6,
+      },
+      {
+        ...afterControl.conversation.items[5]!,
+        sequence: 7,
+      },
+    ];
+
+    for (const value of [leaked, skipped, duplicate, afterControl]) {
+      expectUnavailable(value);
+    }
   });
 
   it('accepts pre-dispatch tool call facts without exposing permission or resource evidence', () => {

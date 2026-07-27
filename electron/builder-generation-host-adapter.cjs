@@ -38,6 +38,12 @@ const EXPLANATION_CONTEXT_KEYS = Object.freeze([
   'task_id',
   'run_id',
 ]);
+const RUN_PROGRESS_STAGES = Object.freeze([
+  'context_ready',
+  'provider_request_started',
+  'provider_response_received',
+  'result_preparing',
+]);
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_base_unavailable: 'The current project source is unavailable.',
@@ -209,6 +215,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const transport = options.transport === undefined
     ? createBuilderOpenAICompatibleTransport()
     : requiredMethod(options.transport);
+  const onProgress = options.onProgress === undefined ? null : requiredMethod(options.onProgress);
   const inFlight = new Map();
   const explanationInFlight = new Map();
 
@@ -248,8 +255,24 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  async function progressContext(context, stage, keys, signal) {
+    if (signal.aborted) fail('builder_generation_cancelled');
+    if (onProgress === null) return context;
+    if (!RUN_PROGRESS_STAGES.includes(stage)) fail('builder_generation_failed');
+    try {
+      return exactObject(
+        await Reflect.apply(onProgress, undefined, [{ context, stage }]),
+        keys,
+        'builder_generation_base_unavailable',
+      );
+    } catch {
+      if (signal.aborted) fail('builder_generation_cancelled');
+      fail('builder_generation_failed');
+    }
+  }
+
   async function run(request, controller) {
-    const context = await boundedContext(
+    let context = await boundedContext(
       request,
       controller.signal,
       buildGenerationContext,
@@ -264,8 +287,15 @@ function createBuilderGenerationHostAdapter(options = {}) {
     } catch (error) {
       mapKernelError(error);
     }
+    context = await progressContext(context, 'context_ready', GENERATION_CONTEXT_KEYS, controller.signal);
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
+    context = await progressContext(
+      context,
+      'provider_request_started',
+      GENERATION_CONTEXT_KEYS,
+      controller.signal,
+    );
     let transportResult;
     try {
       transportResult = await Reflect.apply(transport, undefined, [{
@@ -284,7 +314,14 @@ function createBuilderGenerationHostAdapter(options = {}) {
       mapTransportError(error, controller.signal);
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
+    context = await progressContext(
+      context,
+      'provider_response_received',
+      GENERATION_CONTEXT_KEYS,
+      controller.signal,
+    );
     const generatedText = sanitizeTransportResult(transportResult);
+    context = await progressContext(context, 'result_preparing', GENERATION_CONTEXT_KEYS, controller.signal);
     try {
       const draft = projectBuilderGenerationResult({
         request,
@@ -303,7 +340,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
 
   async function runExplanation(request, controller) {
     if (buildExplanationContext === null) fail('builder_generation_base_unavailable');
-    const context = await boundedContext(
+    let context = await boundedContext(
       request,
       controller.signal,
       buildExplanationContext,
@@ -318,8 +355,15 @@ function createBuilderGenerationHostAdapter(options = {}) {
     } catch (error) {
       mapKernelError(error);
     }
+    context = await progressContext(context, 'context_ready', EXPLANATION_CONTEXT_KEYS, controller.signal);
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
+    context = await progressContext(
+      context,
+      'provider_request_started',
+      EXPLANATION_CONTEXT_KEYS,
+      controller.signal,
+    );
     let transportResult;
     try {
       transportResult = await Reflect.apply(transport, undefined, [{
@@ -338,7 +382,14 @@ function createBuilderGenerationHostAdapter(options = {}) {
       mapTransportError(error, controller.signal);
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
+    context = await progressContext(
+      context,
+      'provider_response_received',
+      EXPLANATION_CONTEXT_KEYS,
+      controller.signal,
+    );
     const generatedText = sanitizeTransportResult(transportResult);
+    context = await progressContext(context, 'result_preparing', EXPLANATION_CONTEXT_KEYS, controller.signal);
     try {
       const answer = projectBuilderExplanationResult({
         request,

@@ -99,6 +99,7 @@ const PAYLOAD_KEYS = Object.freeze({
   run_started: Object.freeze([
     'turn_id', 'run_id', 'task_id', 'attempt_number', 'retry_of_run_id', 'input_digest',
   ]),
+  run_progress_recorded: Object.freeze(['turn_id', 'run_id', 'stage']),
   run_interrupt_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   run_cancel_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   tool_call_requested: Object.freeze(['tool_call_record']),
@@ -111,6 +112,12 @@ const PAYLOAD_KEYS = Object.freeze({
 });
 const EVENT_TYPES = Object.freeze(Object.keys(PAYLOAD_KEYS));
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
+const RUN_PROGRESS_STAGES = Object.freeze([
+  'context_ready',
+  'provider_request_started',
+  'provider_response_received',
+  'result_preparing',
+]);
 const PLAN_ADMISSION_VERSION = 'builder-conversation-plan-admission.v1';
 const PLAN_ADMISSION_KIND = 'builder_conversation_plan_admission';
 const PLAN_ADMISSION_AUTHORITY = 'trusted_conversation_main_service_complete_plan_v1';
@@ -529,6 +536,15 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         retry_of_run_id: nullable(valueAt(value, 'retry_of_run_id'), safeRunId),
         input_digest: safeDigest(valueAt(value, 'input_digest')),
       };
+    case 'run_progress_recorded': {
+      const stage = valueAt(value, 'stage');
+      if (!RUN_PROGRESS_STAGES.includes(stage)) fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        stage,
+      };
+    }
     case 'run_interrupt_requested':
       return {
         turn_id: safeTurnId(valueAt(value, 'turn_id')),

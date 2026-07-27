@@ -502,6 +502,42 @@ export function createTaskStreamWire() {
   };
 }
 
+export function createProgressTaskStreamWire() {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 4,
+      recorded_active_turn_id: TURN_ID,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 4,
+      },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        {
+          item_kind: 'run_progress_recorded',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          stage: 'context_ready',
+          recorded_state: 'recorded',
+        },
+        {
+          item_kind: 'run_progress_recorded',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          stage: 'provider_request_started',
+          recorded_state: 'recorded',
+        },
+      ],
+    },
+  };
+}
+
 export function createRejectedTaskStreamWire() {
   const wire = createTaskStreamWire();
   return {

@@ -172,6 +172,7 @@ function runtimeWithService(service, probes = {}) {
               complete_candidate() {},
               complete_failure() {},
               record_retryable_failure() {},
+              record_run_progress() {},
               retry_after_failure() {},
               request_cancel() {},
               accept_candidate() {},

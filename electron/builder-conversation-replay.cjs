@@ -15,6 +15,12 @@ const {
 } = require('./builder-tool-session-state-gate.cjs');
 
 const CONVERSATION_REPLAY_VERSION = 'builder-conversation-replay.v2';
+const RUN_PROGRESS_ORDER = Object.freeze([
+  'context_ready',
+  'provider_request_started',
+  'provider_response_received',
+  'result_preparing',
+]);
 
 class BuilderConversationReplayError extends Error {
   constructor() {
@@ -175,9 +181,29 @@ function applyRunStarted(state, payload) {
     candidate_result: null,
     candidate_review: null,
     tool_calls: [],
+    progress_stages: [],
     interrupt_request_id: null,
     cancel_request_id: null,
   });
+}
+
+function applyRunProgressRecorded(state, payload) {
+  const turn = requireActiveTurn(state, payload.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  const stageIndex = RUN_PROGRESS_ORDER.indexOf(payload.stage);
+  const previousStage = run?.progress_stages.at(-1) ?? null;
+  const previousIndex = previousStage === null ? -1 : RUN_PROGRESS_ORDER.indexOf(previousStage);
+  const expectedIndex = previousStage === null ? 0 : previousIndex + 1;
+  if (
+    run === null
+    || run.run_id !== payload.run_id
+    || run.status !== 'running'
+    || run.interrupt_request_id !== null
+    || run.cancel_request_id !== null
+    || stageIndex < 0
+    || stageIndex !== expectedIndex
+  ) fail();
+  run.progress_stages.push(payload.stage);
 }
 
 function applyToolCallRequested(state, payload) {
@@ -438,6 +464,7 @@ const TRANSITIONS = Object.freeze({
   candidate_accepted: applyCandidateReviewed,
   plan_reviewed: applyPlanReviewed,
   run_started: applyRunStarted,
+  run_progress_recorded: applyRunProgressRecorded,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
   tool_call_requested: applyToolCallRequested,
@@ -455,6 +482,7 @@ function publicTurn(turn) {
     base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
     runs: turn.runs.map((run) => ({
       ...run,
+      progress_stages: [...run.progress_stages],
       tool_calls: run.tool_calls.map((toolCall) => ({
         ...toolCall,
         resource: { ...toolCall.resource },

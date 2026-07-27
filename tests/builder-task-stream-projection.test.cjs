@@ -576,6 +576,60 @@ test('represents a missing conversation as a legal empty result', () => {
   });
 });
 
+test('projects fixed run progress as renderer-safe status items', () => {
+  const events = [];
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 80), text: 'Build a focused timer.' },
+    turn_id: id('turn', 80),
+    mode: 'work',
+    task: { task_id: id('task', 81), title: 'Create Builder project' },
+    base_revision: null,
+  }, 82);
+  append(events, 'run_started', {
+    turn_id: id('turn', 80),
+    run_id: id('run', 83),
+    task_id: id('task', 81),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 83);
+  append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 80),
+    run_id: id('run', 83),
+    stage: 'context_ready',
+  }, 84);
+  append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 80),
+    run_id: id('run', 83),
+    stage: 'provider_request_started',
+  }, 85);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.deepEqual(stream.conversation.items.slice(2), [
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 3,
+      turn_id: id('turn', 80),
+      run_id: id('run', 83),
+      stage: 'context_ready',
+      recorded_state: 'recorded',
+    },
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 4,
+      turn_id: id('turn', 80),
+      run_id: id('run', 83),
+      stage: 'provider_request_started',
+      recorded_state: 'recorded',
+    },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /provider_secret|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid|input_digest|prompt|token/iu,
+  );
+});
+
 test('projects rejected candidates without exposing review identity or Git evidence', () => {
   const stream = projectBuilderTaskStream(input(rejectedCandidateEvents()));
   assert.deepEqual(stream.conversation.items.at(-1), {
