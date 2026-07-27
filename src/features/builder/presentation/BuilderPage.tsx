@@ -501,7 +501,7 @@ function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null,
     return 'Static preview is ready. JavaScript, Three.js, canvas animation, servers, and network assets do not run here.';
   }
   return hasContent
-    ? 'No safe preview is available yet. Review the source files and changes before saving.'
+    ? 'Preview unavailable. Runtime preview support is needed for JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code.'
     : 'Review this draft before saving.';
 }
 

@@ -1836,6 +1836,10 @@ describe('BuilderPage v2', () => {
       .toContain('Preview unavailable');
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('runtime preview support');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
+      .toContain('Preview unavailable');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
+      .toContain('Runtime preview support is needed');
     const source = container.querySelector<HTMLDetailsElement>('details[data-builder-source-flow="true"]');
     expect(source).not.toBeNull();
     expect(source?.closest('[data-builder-chat-main="true"]')).not.toBeNull();

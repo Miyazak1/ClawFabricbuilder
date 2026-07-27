@@ -24,15 +24,15 @@ function styleBlock(source: string, selector: string): string {
 }
 
 describe('Builder desktop layout styles', () => {
-  it('keeps the review sidebar beside the conversation on desktop widths', () => {
+  it('keeps a compact review summary rail beside the conversation on desktop widths', () => {
     const source = styles();
 
     expect(source).toContain('.cf-builder-chat-shell {');
-    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(210px, 236px);');
+    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(176px, 196px);');
     expect(source).toContain(
       '.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"]',
     );
-    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, 42vw);');
+    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, min(42vw, 520px));');
     expect(source).not.toMatch(
       /@media \(max-width: 1280px\)[\s\S]*?\.cf-builder-chat-shell[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/u,
     );
@@ -61,5 +61,23 @@ describe('Builder desktop layout styles', () => {
     expect(summaryText).toContain('text-overflow: ellipsis;');
     expect(summaryText).toContain('white-space: nowrap;');
     expect(summaryText).not.toContain('overflow-wrap: anywhere;');
+  });
+
+  it('keeps draft review actions from forcing a narrow two-column card', () => {
+    const source = styles();
+    const review = styleBlock(source, '.cf-builder-review-checkpoint');
+    const actions = styleBlock(source, '.cf-builder-review-actions');
+    const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
+    const versionAction = styleBlock(source, '.cf-builder-version-item > button');
+
+    expect(review).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(review).not.toContain('minmax(320px, 360px)');
+    expect(actions).toContain('display: flex;');
+    expect(actions).toContain('flex-wrap: wrap;');
+    expect(actions).toContain('justify-content: flex-end;');
+    expect(actions).not.toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
+    expect(actionButtons).toContain('width: auto;');
+    expect(actionButtons).toContain('min-width: 112px;');
+    expect(versionAction).toContain('grid-column: 2;');
   });
 });
