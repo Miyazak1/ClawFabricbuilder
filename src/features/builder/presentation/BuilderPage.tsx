@@ -95,10 +95,6 @@ function busyLabel(status: BuilderProjectControllerStatus): string {
   return 'Saving...';
 }
 
-function tabId(file: string): string {
-  return `builder-file-tab-${file.replace(/[^a-zA-Z0-9_-]/gu, '-')}`;
-}
-
 function selectedFiles(snapshot: BuilderProjectControllerSnapshot): readonly BuilderProjectSourceFile[] {
   return snapshot.draft?.source_tree.files
     ?? snapshot.inspectedRevision?.source_tree.files
@@ -763,7 +759,7 @@ export function BuilderPage({
   const inspected = current?.inspectedRevision ?? null;
   const preview = current?.preview ?? null;
   const files = current === null ? [] : selectedFiles(current);
-  const selected = files.find((file) => file.path === activeFile) ?? files[0] ?? null;
+  const selected = files.find((file) => file.path === activeFile) ?? null;
   const busy = current?.busy ?? false;
   const hasUnsavedDraft = draft !== null;
   const viewingHistory = inspected !== null;
@@ -805,28 +801,34 @@ export function BuilderPage({
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,
   ), [draft, saved]);
-  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
+  const sourceDisclosureOpen = selected !== null || preview === null;
+  const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
+  const pendingSourceFocusRef = useRef(false);
 
   useEffect(() => {
-    if (selected !== null && selected.path !== activeFile) onSelectFile?.(selected.path);
-  }, [activeFile, onSelectFile, selected]);
+    if (!pendingSourceFocusRef.current || !sourceDisclosureOpen) return;
+    const disclosure = sourceDisclosureRef.current;
+    if (disclosure === null) return;
+    pendingSourceFocusRef.current = false;
+    disclosure.focus();
+  }, [sourceDisclosureOpen, sourceFile?.path]);
 
-  function selectFile(path: string): void {
-    if (typeof onSelectFile !== 'function') return;
+  function selectFile(path: string): boolean {
+    if (typeof onSelectFile !== 'function') return false;
     onSelectFile(path);
-    tabRefs.current[path]?.focus();
-  }
-
-  function selectRelativeFile(offset: number): void {
-    if (selected === null || typeof onSelectFile !== 'function') return;
-    const index = files.findIndex((file) => file.path === selected.path);
-    const next = files[(index + offset + files.length) % files.length];
-    selectFile(next.path);
+    return true;
   }
 
   function openChangedFile(change: BuilderSourceTreeChange): void {
     if (change.change_kind === 'deleted') return;
-    selectFile(change.path);
+    if (!selectFile(change.path)) return;
+    pendingSourceFocusRef.current = true;
+    const disclosure = sourceDisclosureRef.current;
+    if (disclosure !== null) {
+      pendingSourceFocusRef.current = false;
+      disclosure.focus();
+    }
   }
 
   function submitPrimaryComposerCommand(event: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -1150,61 +1152,54 @@ export function BuilderPage({
                 </div>
               </section>
 
-              {files.length > 0 ? (
-                <section
-                  aria-labelledby={selected === null ? undefined : tabId(selected.path)}
-                  className="cf-builder-flow-card cf-builder-code-panel"
-                  data-builder-code-flow="true"
-                  id="builder-code-panel"
+              {sourceFile === null ? null : (
+                <details
+                  aria-label="Project source"
+                  className="cf-builder-source-disclosure"
+                  data-builder-source-flow="true"
+                  id="builder-source-disclosure"
+                  open={sourceDisclosureOpen}
+                  ref={sourceDisclosureRef}
+                  tabIndex={-1}
                 >
-                  <header className="cf-builder-code-header">
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-muted-foreground">Files</p>
-                      <h3 className="truncate text-sm font-semibold">{selected?.path ?? 'No files yet'}</h3>
+                  <summary className="cf-builder-source-summary" data-builder-source-summary="true">
+                    <span className="cf-builder-source-title">
+                      <FileCode2 aria-hidden="true" className="size-3.5" />
+                      Source files
+                    </span>
+                    <span className="cf-builder-source-meta">
+                      {files.length} {files.length === 1 ? 'file' : 'files'} - {sourceFile.path}
+                    </span>
+                  </summary>
+                  <div className="cf-builder-source-body">
+                    <div className="cf-builder-source-files" aria-label="Project source files">
+                      {files.map((file) => {
+                        const active = sourceFile.path === file.path;
+                        return (
+                          <button
+                            className="cf-builder-source-file"
+                            data-active={active ? 'true' : undefined}
+                            data-builder-source-file={file.path}
+                            disabled={typeof onSelectFile !== 'function' || active}
+                            key={file.path}
+                            onClick={() => selectFile(file.path)}
+                            type="button"
+                          >
+                            <FileCode2 aria-hidden="true" className="size-3.5" />
+                            {file.path}
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div className="cf-builder-tab-strip" role="tablist" aria-label="Project files">
-                      {files.map((file) => (
-                        <button
-                          aria-controls="builder-code-panel"
-                          aria-selected={selected?.path === file.path}
-                          className="cf-builder-tab inline-flex min-h-8 shrink-0 items-center gap-2 px-2.5 text-xs"
-                          data-active={selected?.path === file.path}
-                          id={tabId(file.path)}
-                          key={file.path}
-                          onClick={() => selectFile(file.path)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'ArrowRight') {
-                              event.preventDefault();
-                              selectRelativeFile(1);
-                            } else if (event.key === 'ArrowLeft') {
-                              event.preventDefault();
-                              selectRelativeFile(-1);
-                            } else if (event.key === 'Home' && files[0]) {
-                              event.preventDefault();
-                              selectFile(files[0].path);
-                            } else if (event.key === 'End' && files.at(-1)) {
-                              event.preventDefault();
-                              selectFile(files.at(-1)!.path);
-                            }
-                          }}
-                          ref={(element) => {
-                            tabRefs.current[file.path] = element;
-                          }}
-                          role="tab"
-                          tabIndex={selected?.path === file.path ? 0 : -1}
-                          type="button"
-                        >
-                          <FileCode2 aria-hidden="true" className="size-3.5" />
-                          {file.path}
-                        </button>
-                      ))}
-                    </div>
-                  </header>
-                  <pre className="cf-builder-code min-h-72 overflow-auto p-4 text-xs leading-5">
-                    <code>{selected?.content ?? ''}</code>
+                  <pre
+                    className="cf-builder-source-code"
+                    data-builder-source-code={sourceFile.path}
+                  >
+                    <code>{sourceFile.content}</code>
                   </pre>
-                </section>
-              ) : null}
+                  </div>
+                </details>
+              )}
             </div>
 
             {composer}

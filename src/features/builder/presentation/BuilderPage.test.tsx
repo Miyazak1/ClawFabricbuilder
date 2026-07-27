@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -661,6 +661,7 @@ describe('BuilderPage v2', () => {
     const composer = container.querySelector('[data-builder-composer="true"]');
     const preview = container.querySelector('[data-builder-preview-flow="true"]');
     const code = container.querySelector('[data-builder-code-flow="true"]');
+    const source = container.querySelector('[data-builder-source-flow="true"]');
     const changes = container.querySelector('[data-builder-changes-panel="true"]');
     const versions = container.querySelector('[data-builder-version-history="true"]');
     expect(chatMain).not.toBeNull();
@@ -669,13 +670,13 @@ describe('BuilderPage v2', () => {
     expect(review).not.toBeNull();
     expect(composer).not.toBeNull();
     expect(preview).not.toBeNull();
-    expect(code).not.toBeNull();
+    expect(code).toBeNull();
+    expect(source).toBeNull();
     expect(changes).not.toBeNull();
     expect(versions).not.toBeNull();
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(code?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(composer?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBe(reviewSidebar);
@@ -692,9 +693,7 @@ describe('BuilderPage v2', () => {
       .toBe(true);
     expect(Boolean(review!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(Boolean(preview!.compareDocumentPosition(code!) & Node.DOCUMENT_POSITION_FOLLOWING))
-      .toBe(true);
-    expect(Boolean(code!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(preview!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
     expect(composer?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     expect(composer?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
@@ -803,6 +802,39 @@ describe('BuilderPage v2', () => {
     onSelectFile.mockClear();
     click(container, '[data-builder-change-card="Added src/add.ts"] button');
     expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
+  });
+
+  it('opens and focuses inline source after choosing a changed file from the sidebar', async () => {
+    const draftReady = await changedDraftSnapshot();
+    const onSelectFile = vi.fn();
+
+    function ControlledBuilderPage() {
+      const [activeFile, setActiveFile] = useState<string | null>(null);
+      return (
+        <BuilderPage
+          activeFile={activeFile}
+          instruction="Update the saved project."
+          onSelectFile={(file) => {
+            onSelectFile(file);
+            setActiveFile(file);
+          }}
+          snapshot={draftReady}
+        />
+      );
+    }
+
+    const container = render(<ControlledBuilderPage />);
+    expect(container.querySelector('[data-builder-source-flow="true"]')).toBeNull();
+
+    click(container, '[data-builder-change-card="Added src/add.ts"] button');
+
+    const source = container.querySelector('[data-builder-source-flow="true"]');
+    expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
+    expect(source).not.toBeNull();
+    expect(source?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(document.activeElement).toBe(source);
+    expect(container.querySelector('[data-builder-source-code="src/add.ts"] code')?.textContent)
+      .toContain('const added = true;');
   });
 
   it('shows truncated diff lines with a single omission marker', async () => {
@@ -1035,7 +1067,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('lists arbitrary source-tree paths and reveals their code without assuming three web files', async () => {
+  it('shows a selected source file as an inline conversation disclosure', async () => {
     const { draftReady } = await snapshots();
     const onSelectFile = vi.fn();
     const container = render(
@@ -1048,10 +1080,38 @@ describe('BuilderPage v2', () => {
     );
     expect(container.textContent).toContain('src/tool.py');
     expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
-    expect(container.querySelector('[data-builder-code-flow="true"]')).not.toBeNull();
-    expect(container.querySelector('#builder-code-panel code')?.textContent)
+    expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-source-flow="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-source-flow="true"]')?.closest('[data-builder-chat-main="true"]'))
+      .not.toBeNull();
+    expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
+      .toBe('');
+    expect(container.querySelector('[data-builder-source-file="src/tool.py"]')?.getAttribute('data-active'))
+      .toBe('true');
+    expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
       .toContain('print("hello")');
     expect(container.textContent).not.toContain('app.js');
+  });
+
+  it('opens source inline when a project has files but no static preview', async () => {
+    const draftReady = await draftSnapshotFromSourceTrees(
+      await createSourceTree([{ path: 'src/tool.py', content: 'print("old")\n' }]),
+      await createSourceTree([{ path: 'src/tool.py', content: 'print("new")\n' }]),
+    );
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Update the script."
+        snapshot={draftReady}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
+    expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
+      .toBe('');
+    expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
+      .toContain('print("new")');
+    expect(container.textContent).toContain('This project can be viewed as code');
   });
 
   it('keeps the provider-settings recovery action limited to configuration failures', async () => {
