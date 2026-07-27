@@ -41,13 +41,18 @@ describe('BuilderStaticPreview', () => {
 
     expect(container.querySelector('h2')?.textContent).toBe('Color picker');
     expect(container.textContent).toContain('Static preview');
-    expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
-      .toContain('does not run JavaScript modules');
-    expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
+    const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
+    expect(limitation?.getAttribute('role')).toBe('status');
+    expect(limitation?.textContent).toContain('Static preview only');
+    expect(limitation?.textContent).toContain('Interactive code is not running here');
+    expect(limitation?.textContent)
       .toContain('Three.js');
-    expect(container.querySelector('[data-builder-preview-limitation="true"]')?.textContent)
-      .toContain('runtime preview support is needed');
+    expect(limitation?.textContent)
+      .toContain('the preview can look blank even when the files were generated');
+    expect(limitation?.textContent)
+      .toContain('Review Changes or Source before saving');
     expect(container.textContent).not.toContain('Safe preview');
+    expect(container.textContent).not.toContain('runtime preview is ready');
     const frame = container.querySelector<HTMLIFrameElement>('iframe');
     expect(frame?.getAttribute('sandbox')).toBe('');
     expect(frame?.getAttribute('referrerpolicy')).toBe('no-referrer');

@@ -394,7 +394,10 @@ Evidence requirements:
   source-file cards appear in that same flow. Draft changes stay summarized in
   the review card and open an on-demand right sidebar only when the user asks
   to inspect them, so an unsaved result does not squeeze the primary preview
-  and Save actions. Saved Versions can remain in the secondary right review
+  and Save actions. The preview surface explicitly marks the first-release
+  static-only runtime boundary, so JavaScript, Three.js, canvas, server, network,
+  or backend-dependent drafts can explain a blank preview without claiming the
+  generated files failed. Saved Versions can remain in the secondary right review
   sidebar outside the unsaved-draft landing state. This adds no fake edit
   command, does not add a dedicated code workbench, and still uses only the
   existing read-only task stream, plan review, generation, draft reject, cancel,

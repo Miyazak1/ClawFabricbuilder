@@ -40,11 +40,19 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
         <span className="text-xs text-muted-foreground">Static preview</span>
       </header>
       {projection.preview_script_admission === 'not_authorized' ? (
-        <p className="cf-builder-preview-note" data-builder-preview-limitation="true">
-          This safe preview does not run JavaScript modules, Three.js, canvas animation, network
-          assets, local servers, or backend code. If the preview looks blank, review the files and
-          changes; runtime preview support is needed to run it.
-        </p>
+        <section
+          aria-label="Static preview limitation"
+          className="cf-builder-preview-runtime-notice"
+          data-builder-preview-limitation="true"
+          role="status"
+        >
+          <h3 className="cf-builder-preview-runtime-title">Static preview only</h3>
+          <p className="cf-builder-preview-note">
+            Interactive code is not running here. If this draft uses JavaScript modules, Three.js,
+            canvas animation, network assets, local servers, or backend code, the preview can look
+            blank even when the files were generated. Review Changes or Source before saving.
+          </p>
+        </section>
       ) : null}
       <iframe
         className="cf-builder-preview-frame min-h-80 w-full"
