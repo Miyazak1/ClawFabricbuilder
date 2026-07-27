@@ -605,12 +605,57 @@ describe('BuilderPage v2', () => {
     );
 
     const notice = container.querySelector('[data-builder-conversation-notice="generating"]');
+    const composer = container.querySelector('[data-builder-composer="true"]');
     expect(notice?.textContent).toContain('Making your draft...');
     expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
     expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(notice?.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(composer?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(composer?.querySelector('[data-builder-ask-question="true"]')).toBeNull();
+    expect(composer?.querySelector('[data-builder-make-draft="true"]')).toBeNull();
+    expect(composer?.textContent).toContain('Making your draft');
     click(container, '[data-builder-cancel-work="true"]');
     expect(onCancel).toHaveBeenCalledOnce();
+
+    const answerController = createBuilderProjectController({
+      generator: {
+        generate: async () => null,
+        retry: async () => null,
+        answer: async () => new Promise(() => undefined),
+        restoreDraft: async () => null,
+        rejectDraft: async () => null,
+        cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
+      },
+      workspace: {
+        open: async () => null,
+        saveDraft: async () => null,
+        loadCurrent: async () => null,
+        loadRevision: async () => null,
+        listCurrent: async () => ({ projects: [] }),
+        listHistory: async () => ({ revisions: [] }),
+      },
+    });
+    void answerController.answer('What does this project do?');
+    const onCancelAnswer = vi.fn();
+    const answering = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="What does this project do?"
+        onCancel={onCancelAnswer}
+        snapshot={answerController.getSnapshot()}
+      />,
+    );
+    const answeringNotice = answering.querySelector('[data-builder-conversation-notice="answering"]');
+    const answeringComposer = answering.querySelector('[data-builder-composer="true"]');
+    expect(answeringNotice?.textContent).toContain('Answering...');
+    expect(answeringNotice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(answeringNotice?.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(answeringComposer?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(answeringComposer?.querySelector('[data-builder-ask-question="true"]')).toBeNull();
+    expect(answeringComposer?.querySelector('[data-builder-make-draft="true"]')).toBeNull();
+    expect(answeringComposer?.textContent).toContain('Answering');
+    click(answering, '[data-builder-cancel-work="true"]');
+    expect(onCancelAnswer).toHaveBeenCalledOnce();
 
     const idle = render(
       <BuilderPage
