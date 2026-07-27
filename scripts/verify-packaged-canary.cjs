@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v9';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v10';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'After reopening, add a compact completed-state summary below the timer.';
@@ -61,6 +61,7 @@ const SELECTORS = Object.freeze({
   previewTab: '#builder-tool-tab-preview',
   retryDraft: '[data-builder-retry-draft="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
+  discardDraft: '[data-builder-discard-draft="true"]',
   reviewOpenChanges: '[data-builder-review-open-changes="true"]',
   saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
@@ -1408,6 +1409,63 @@ async function generateProjectViaUi(page, idea) {
   });
 }
 
+async function boundedBox(locator) {
+  const box = await locator.boundingBox();
+  if (
+    box === null
+    || typeof box !== 'object'
+    || !Number.isFinite(box.x)
+    || !Number.isFinite(box.y)
+    || !Number.isFinite(box.width)
+    || !Number.isFinite(box.height)
+    || box.width <= 0
+    || box.height <= 0
+  ) fail('canary_review_diff_failed');
+  return box;
+}
+
+function boxRight(box) {
+  return box.x + box.width;
+}
+
+function boxBottom(box) {
+  return box.y + box.height;
+}
+
+function boxesOverlap(left, right) {
+  return left.x < boxRight(right)
+    && boxRight(left) > right.x
+    && left.y < boxBottom(right)
+    && boxBottom(left) > right.y;
+}
+
+async function assertDraftReviewLayoutViaUi(page) {
+  const review = await boundedBox(page.locator(SELECTORS.reviewCheckpoint));
+  const actions = [
+    await boundedBox(page.locator(SELECTORS.reviewOpenChanges)),
+    await boundedBox(page.locator(SELECTORS.discardDraft)),
+    await boundedBox(page.locator(SELECTORS.saveVersion)),
+  ];
+  if (review.width < 560 || review.height > 240) fail('canary_review_diff_failed');
+  for (const action of actions) {
+    if (
+      action.width < 88
+      || action.height < 28
+      || action.height > 48
+      || action.width / action.height < 2
+      || action.x < review.x - 1
+      || action.y < review.y - 1
+      || boxRight(action) > boxRight(review) + 1
+      || boxBottom(action) > boxBottom(review) + 1
+    ) fail('canary_review_diff_failed');
+  }
+  for (let outer = 0; outer < actions.length; outer += 1) {
+    for (let inner = outer + 1; inner < actions.length; inner += 1) {
+      if (boxesOverlap(actions[outer], actions[inner])) fail('canary_review_diff_failed');
+    }
+  }
+}
+
 async function inspectDraftReviewDiffViaUi(page) {
   try {
     const review = page.locator(SELECTORS.reviewCheckpoint);
@@ -1422,6 +1480,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(reviewText)
     ) fail('canary_review_diff_failed');
 
+    await assertDraftReviewLayoutViaUi(page);
     await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.reviewOpenChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
@@ -1442,6 +1501,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       changes_panel_visible: true,
       inline_diff_visible: true,
       internal_evidence_hidden: true,
+      review_actions_layout_stable: true,
       review_checkpoint_visible: true,
     });
   } catch (error) {

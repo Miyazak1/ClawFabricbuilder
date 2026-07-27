@@ -57,6 +57,7 @@ function reviewDiffEvidence() {
     changes_panel_visible: true,
     inline_diff_visible: true,
     internal_evidence_hidden: true,
+    review_actions_layout_stable: true,
     review_checkpoint_visible: true,
   };
 }
@@ -201,6 +202,14 @@ class FakeLocator {
     return pngFixture();
   }
 
+  async boundingBox() {
+    this.page.events.push(['boundingBox', this.selector]);
+    if (this.page.reviewLayoutBoxes.has(this.selector)) {
+      return this.page.reviewLayoutBoxes.get(this.selector);
+    }
+    return { x: 0, y: 0, width: 120, height: 32 };
+  }
+
   async waitFor(options) {
     this.page.events.push(['waitFor', this.selector, options?.state ?? null]);
     if (this.page.failWaitFor.has(this.selector)) throw new Error('secret-marker');
@@ -338,6 +347,12 @@ class FakePage {
     this.questionTurns = 0;
     this.retryDraftVisible = false;
     this.reviewTextOverride = null;
+    this.reviewLayoutBoxes = new Map([
+      [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 116 }],
+      [SELECTORS.reviewOpenChanges, { x: 760, y: 286, width: 112, height: 32 }],
+      [SELECTORS.discardDraft, { x: 880, y: 286, width: 128, height: 32 }],
+      [SELECTORS.saveVersion, { x: 1016, y: 286, width: 120, height: 32 }],
+    ]);
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
     this.savedRevision = 0;
@@ -1416,11 +1431,35 @@ test('observes draft review diff before Save without leaking internal evidence',
     page.events.filter((event) => event[0] === 'first').map((event) => event[1]),
     [SELECTORS.changeCard, SELECTORS.changeDiff, SELECTORS.changeDiffLine],
   );
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'boundingBox').map((event) => event[1]),
+    [
+      SELECTORS.reviewCheckpoint,
+      SELECTORS.reviewOpenChanges,
+      SELECTORS.discardDraft,
+      SELECTORS.saveVersion,
+    ],
+  );
   page.reviewTextOverride = 'Review before saving sha256:secret';
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
     (error) => error.code === 'canary_review_diff_failed',
   );
+});
+
+test('rejects squeezed draft review actions before Save', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 1016, y: 286, width: 24, height: 96 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
 });
 
 test('retries a failed draft through visible UI without saving or leaking write authority', async (t) => {
@@ -3232,7 +3271,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v9/u);
+  assert.match(source, /builder-packaged-canary-result\.v10/u);
   assert.match(source, /inspectDraftReviewDiffViaUi/u);
   assert.match(source, /data-builder-change-diff-line-kind/u);
   assert.match(source, /canary_review_diff_failed/u);
