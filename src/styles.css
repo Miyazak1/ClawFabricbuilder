@@ -513,13 +513,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-checkpoint {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
   align-items: start;
   gap: 12px;
   border: 1px solid var(--cf-border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--cf-surface-muted) 78%, white);
   padding: 12px;
+  scroll-margin-block-start: 12px;
 }
 
 .cf-builder-review-copy {
@@ -566,6 +567,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: grid;
   min-width: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-self: center;
   gap: 8px;
 }
 
@@ -1534,6 +1536,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .cf-builder-review-sidebar {
     border-left: 0;
     border-top: 1px solid var(--cf-border);
+  }
+
+  .cf-builder-review-checkpoint {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cf-builder-version-panel {

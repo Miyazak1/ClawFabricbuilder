@@ -1213,6 +1213,43 @@ describe('BuilderPage v2', () => {
     }
   });
 
+  it('lands on the draft review checkpoint when generation finishes', async () => {
+    const { saved } = await snapshots();
+    const draftReady = await changedDraftSnapshot();
+    const activity = await candidateActivity();
+    const { restore, spy } = installScrollIntoViewSpy();
+    let setSnapshot!: (value: typeof saved) => void;
+
+    function DraftLandingBuilderPage() {
+      const [snapshot, updateSnapshot] = useState(saved);
+      setSnapshot = updateSnapshot;
+      return (
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          snapshot={snapshot}
+        />
+      );
+    }
+
+    try {
+      const container = render(<DraftLandingBuilderPage />);
+      spy.mockClear();
+      act(() => setSnapshot(draftReady));
+
+      const review = container.querySelector('[data-builder-review-checkpoint="true"]');
+      expect(review).not.toBeNull();
+      expect(spy).toHaveBeenCalled();
+      expect(spy.mock.contexts.at(-1)).toBe(review);
+      expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-result-flow="true"]')).not.toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
   it('renders questions and AI answers as chat messages while keeping run events as status', async () => {
     const { saved } = await snapshots();
     const activity = await answerActivity();
