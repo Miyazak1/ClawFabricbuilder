@@ -338,6 +338,24 @@ function click(container: HTMLElement, selector: string): void {
   act(() => button?.click());
 }
 
+function keyDown(
+  container: HTMLElement,
+  selector: string,
+  init: KeyboardEventInit,
+): KeyboardEvent {
+  const target = container.querySelector<HTMLElement>(selector);
+  expect(target).not.toBeNull();
+  const event = new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  act(() => {
+    target?.dispatchEvent(event);
+  });
+  return event;
+}
+
 describe('BuilderPage v2', () => {
   it('renders a continuous composer without pretending a new project is saved', async () => {
     const { fresh } = await snapshots();
@@ -364,6 +382,77 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-make-draft="true"]');
     expect(onGenerate).toHaveBeenCalledOnce();
     expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it('submits the primary composer command with Enter without using Ask', async () => {
+    const { fresh } = await snapshots();
+    const onAnswer = vi.fn();
+    const onGenerate = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onAnswer={onAnswer}
+        onGenerate={onGenerate}
+        snapshot={fresh}
+      />,
+    );
+
+    const event = keyDown(container, '#builder-idea', { key: 'Enter' });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(container.querySelector('#builder-idea')?.getAttribute('aria-keyshortcuts'))
+      .toBe('Enter');
+    expect(onGenerate).toHaveBeenCalledOnce();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it('keeps Shift+Enter available for multiline composer input', async () => {
+    const { fresh } = await snapshots();
+    const onAnswer = vi.fn();
+    const onGenerate = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onAnswer={onAnswer}
+        onGenerate={onGenerate}
+        snapshot={fresh}
+      />,
+    );
+
+    const event = keyDown(container, '#builder-idea', { key: 'Enter', shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it('does not submit while IME composition is active', async () => {
+    const { fresh } = await snapshots();
+    const onAnswer = vi.fn();
+    const onGenerate = vi.fn();
+    const onRejectDraft = vi.fn();
+    const onSave = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="做一个计时器。"
+        onAnswer={onAnswer}
+        onGenerate={onGenerate}
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
+        snapshot={fresh}
+      />,
+    );
+
+    const event = keyDown(container, '#builder-idea', { key: 'Enter', isComposing: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
   it('offers a separate Ask command without using the draft generator', async () => {
@@ -503,6 +592,34 @@ describe('BuilderPage v2', () => {
     expect(onSave).not.toHaveBeenCalled();
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('does not bind Enter to saving or discarding an unsaved draft', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const onGenerate = vi.fn();
+    const onSave = vi.fn();
+    const onRejectDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        onGenerate={onGenerate}
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
+        snapshot={draftReady}
+      />,
+    );
+
+    const event = keyDown(container, '#builder-idea', { key: 'Enter' });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(container.querySelector('#builder-idea')?.getAttribute('aria-keyshortcuts'))
+      .toBeNull();
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
   it('keeps the composer in the main conversation and review details in the right sidebar', async () => {

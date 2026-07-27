@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import {
   AlertCircle,
   Bot,
@@ -824,6 +824,22 @@ export function BuilderPage({
     selectFile(change.path);
   }
 
+  function submitPrimaryComposerCommand(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (
+      event.key !== 'Enter'
+      || event.shiftKey
+      || event.altKey
+      || event.ctrlKey
+      || event.metaKey
+      || event.nativeEvent.isComposing
+      || !canGenerate
+    ) {
+      return;
+    }
+    event.preventDefault();
+    onGenerate?.();
+  }
+
   const draftReview = hasUnsavedDraft ? (
     <section
       aria-label="Draft review"
@@ -864,8 +880,10 @@ export function BuilderPage({
           id="builder-idea"
           maxLength={4000}
           onChange={(event) => onInstructionChange?.(event.currentTarget.value)}
+          onKeyDown={submitPrimaryComposerCommand}
           placeholder="Describe what you want to build or change..."
           readOnly={!canEditInstruction}
+          aria-keyshortcuts={canGenerate ? 'Enter' : undefined}
           value={instruction}
         />
         <footer className="cf-builder-composer-footer">
