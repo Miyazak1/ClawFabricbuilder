@@ -1125,7 +1125,7 @@ export function BuilderPage({
     draft?.source_tree ?? null,
   ), [draft, saved]);
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
-  const sourceDisclosureOpen = selected !== null || preview === null;
+  const sourceDisclosureOpen = selected !== null;
   const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
   const showResultFlow = preview !== null || showPreviewUnavailableResult;
   const showReviewSidebar = hasUnsavedDraft || saved !== null;

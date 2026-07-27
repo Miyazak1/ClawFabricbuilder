@@ -1811,7 +1811,7 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toContain('app.js');
   });
 
-  it('opens source inline when a project has files but no static preview', async () => {
+  it('keeps source files accessible but collapsed when a project has no static preview', async () => {
     const draftReady = await draftSnapshotFromSourceTrees(
       await createSourceTree([{ path: 'src/tool.py', content: 'print("old")\n' }]),
       await createSourceTree([{ path: 'src/tool.py', content: 'print("new")\n' }]),
@@ -1830,8 +1830,12 @@ describe('BuilderPage v2', () => {
       .toContain('Preview unavailable');
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('runtime preview support');
-    expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
-      .toBe('');
+    const source = container.querySelector<HTMLDetailsElement>('details[data-builder-source-flow="true"]');
+    expect(source).not.toBeNull();
+    expect(source?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(source?.getAttribute('open')).toBeNull();
+    expect(source?.querySelector('[data-builder-source-summary="true"]')?.textContent)
+      .toContain('1 file - src/tool.py');
     expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
     expect(container.textContent).toContain('Visual preview is not available for this project.');
