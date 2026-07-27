@@ -162,7 +162,8 @@ describe('Builder project controller v2', () => {
       source_read_admission: 'verified',
       current_selection: 'sqlite_current_project_revision',
     });
-    expect(result.preview?.version).toBe('builder-source-tree-static-preview.v2');
+    expect(result.preview?.version).toBe('builder-source-tree-static-preview.v3');
+    expect(result.preview?.preview_runtime_limitations).toEqual([]);
     expect(isTrustedBuilderProjectControllerSnapshot(result)).toBe(true);
   });
 

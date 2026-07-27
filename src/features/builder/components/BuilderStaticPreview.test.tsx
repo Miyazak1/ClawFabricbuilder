@@ -51,6 +51,8 @@ describe('BuilderStaticPreview', () => {
       .toContain('the preview can look blank even when the files were generated');
     expect(limitation?.textContent)
       .toContain('Review Changes or Source before saving');
+    expect(limitation?.textContent)
+      .toContain('This draft includes JavaScript that the safe preview does not run.');
     expect(container.textContent).not.toContain('Safe preview');
     expect(container.textContent).not.toContain('runtime preview is ready');
     const frame = container.querySelector<HTMLIFrameElement>('iframe');
@@ -61,9 +63,31 @@ describe('BuilderStaticPreview', () => {
     expect(frame?.getAttribute('srcdoc')).not.toContain('<script>bad()');
   });
 
+  it('explains detected runtime-only reasons when the static preview may look blank', async () => {
+    const projection = await createBuilderSourceTreePreview({
+      project_id: PROJECT_ID,
+      title: '3D scene',
+      source_tree: await createSourceTree([
+        { path: 'index.html', content: '<main><canvas id="scene"></canvas><script type="module" src="./src/app.js"></script></main>\n' },
+        { path: 'src/app.js', content: 'import * as THREE from "three";\nfetch("https://example.com/model.glb");\nrequestAnimationFrame(() => undefined);\n' },
+        { path: 'server/app.js', content: 'import express from "express";\nexpress().listen(3000);\n' },
+      ]),
+    });
+    const container = render(<BuilderStaticPreview projection={projection} />);
+    const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
+
+    expect(limitation?.textContent).toContain('JavaScript modules');
+    expect(limitation?.textContent).toContain('Three.js or WebGL');
+    expect(limitation?.textContent).toContain('canvas or animation');
+    expect(limitation?.textContent).toContain('external assets or requests');
+    expect(limitation?.textContent).toContain('local runtime preview');
+    expect(limitation?.textContent).not.toContain('model.glb');
+    expect(limitation?.textContent).not.toContain('express().listen');
+  });
+
   it('fails closed for typed projection forgeries', () => {
     const container = render(<BuilderStaticPreview projection={{
-      version: 'builder-source-tree-static-preview.v2',
+      version: 'builder-source-tree-static-preview.v3',
       title: 'Forged',
       src_doc: '<script>alert(1)</script>',
     }} />);

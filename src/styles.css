@@ -1481,6 +1481,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.5;
 }
 
+.cf-builder-preview-limitation-list {
+  display: grid;
+  gap: 3px;
+  margin: 2px 0 0;
+  padding-left: 18px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .cf-builder-preview-runtime-notice {
   display: grid;
   gap: 4px;

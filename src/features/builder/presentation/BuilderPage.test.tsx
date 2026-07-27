@@ -1103,7 +1103,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Static preview is ready');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('Three.js');
+      .toContain('Static HTML and CSS are shown here');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBeUndefined();
     expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
@@ -1660,8 +1660,8 @@ describe('BuilderPage v2', () => {
     expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('action-row');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
-    expect(reviewStrip?.textContent).toContain('Static preview is ready.');
-    expect(reviewStrip?.textContent).toContain('Three.js');
+    expect(reviewStrip?.textContent).toContain('Static preview is ready, but interactive parts do not run here');
+    expect(reviewStrip?.textContent).toContain('JavaScript');
     expect(reviewStrip?.textContent).not.toMatch(
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
     );
@@ -1707,6 +1707,39 @@ describe('BuilderPage v2', () => {
     onSelectFile.mockClear();
     click(container, '[data-builder-change-card="Added src/add.ts"] button');
     expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
+  });
+
+  it('explains runtime-only 3D drafts when the static preview may look blank', async () => {
+    const baseTree = await createSourceTree([
+      { path: 'index.html', content: '<main>Old scene</main>\n' },
+      { path: 'styles.css', content: 'main { color: black; }\n' },
+    ]);
+    const draftTree = await createSourceTree([
+      { path: 'index.html', content: '<main><canvas id="stage"></canvas><script type="module" src="./src/scene.js"></script></main>\n' },
+      { path: 'styles.css', content: 'canvas { inline-size: 100%; block-size: 420px; }\n' },
+      { path: 'src/scene.js', content: 'import * as THREE from "three";\nfetch("https://example.com/model.glb");\nrequestAnimationFrame(() => undefined);\n' },
+    ]);
+    const draftReady = await draftSnapshotFromSourceTrees(baseTree, draftTree);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a 3D page."
+        snapshot={draftReady}
+      />,
+    );
+
+    const review = container.querySelector('[data-builder-review-checkpoint="true"]');
+    const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
+    expect(review?.textContent).toContain('preview looks blank');
+    expect(review?.textContent).toContain('Three.js/WebGL');
+    expect(review?.textContent).toContain('canvas animation');
+    expect(limitation?.textContent).toContain('JavaScript modules');
+    expect(limitation?.textContent).toContain('Three.js or WebGL');
+    expect(limitation?.textContent).toContain('canvas or animation');
+    expect(limitation?.textContent).toContain('external assets or requests');
+    expect(container.textContent).not.toContain('model.glb');
+    expect(container.textContent).not.toContain('src/scene.js');
+    expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|receipt/iu);
   });
 
   it('opens and focuses inline source after choosing a changed file from the sidebar', async () => {

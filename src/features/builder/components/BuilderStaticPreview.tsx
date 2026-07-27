@@ -1,11 +1,31 @@
 import {
   isTrustedBuilderSourceTreePreviewProjection,
   type BuilderSourceTreePreviewProjection,
+  type BuilderSourceTreePreviewRuntimeLimitation,
 } from '../preview/builderSourceTreePreview';
 
 export type BuilderStaticPreviewProps = {
   projection: BuilderSourceTreePreviewProjection | unknown;
 };
+
+function limitationText(limitation: BuilderSourceTreePreviewRuntimeLimitation): string {
+  if (limitation === 'javascript_removed') {
+    return 'This draft includes JavaScript that the safe preview does not run.';
+  }
+  if (limitation === 'javascript_module') {
+    return 'It uses JavaScript modules, so the visible result may be incomplete here.';
+  }
+  if (limitation === 'three_js') {
+    return 'It appears to use Three.js or WebGL, which can make the static preview look blank.';
+  }
+  if (limitation === 'canvas_animation') {
+    return 'It uses canvas or animation work that needs runtime preview support.';
+  }
+  if (limitation === 'network_or_external_asset') {
+    return 'It references external assets or requests that are blocked in this preview.';
+  }
+  return 'It includes app or server code that needs a local runtime preview.';
+}
 
 export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
   if (!isTrustedBuilderSourceTreePreviewProjection(projection)) {
@@ -52,6 +72,13 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
             canvas animation, network assets, local servers, or backend code, the preview can look
             blank even when the files were generated. Review Changes or Source before saving.
           </p>
+          {projection.preview_runtime_limitations.length > 0 ? (
+            <ul className="cf-builder-preview-limitation-list">
+              {projection.preview_runtime_limitations.map((limitation) => (
+                <li key={limitation}>{limitationText(limitation)}</li>
+              ))}
+            </ul>
+          ) : null}
         </section>
       ) : null}
       <iframe

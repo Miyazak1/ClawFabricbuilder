@@ -4,8 +4,19 @@ import {
   type BuilderProjectSourceTree,
 } from '../domain/builderProjectSnapshot';
 
-export const BUILDER_SOURCE_TREE_PREVIEW_VERSION = 'builder-source-tree-static-preview.v2' as const;
+export const BUILDER_SOURCE_TREE_PREVIEW_VERSION = 'builder-source-tree-static-preview.v3' as const;
 export const BUILDER_SOURCE_TREE_PREVIEW_MAX_UTF8_BYTES = 520 * 1024;
+export const BUILDER_SOURCE_TREE_PREVIEW_RUNTIME_LIMITATIONS = Object.freeze([
+  'javascript_removed',
+  'javascript_module',
+  'three_js',
+  'canvas_animation',
+  'network_or_external_asset',
+  'backend_or_local_server',
+] as const);
+
+export type BuilderSourceTreePreviewRuntimeLimitation =
+  typeof BUILDER_SOURCE_TREE_PREVIEW_RUNTIME_LIMITATIONS[number];
 
 export type BuilderSourceTreePreviewProjection = Readonly<{
   version: typeof BUILDER_SOURCE_TREE_PREVIEW_VERSION;
@@ -16,6 +27,7 @@ export type BuilderSourceTreePreviewProjection = Readonly<{
   src_doc: string;
   preview_script_admission: 'not_authorized';
   preview_style_admission: 'inline_best_effort';
+  preview_runtime_limitations: readonly BuilderSourceTreePreviewRuntimeLimitation[];
 }>;
 
 export class BuilderSourceTreePreviewError extends Error {
@@ -51,6 +63,17 @@ const URL_ATTRIBUTE_NAMES = new Set([
   'src',
   'srcset',
 ]);
+const HTML_PATH_PATTERN = /\.html?$/iu;
+const CSS_PATH_PATTERN = /\.css$/iu;
+const JAVASCRIPT_PATH_PATTERN = /\.(?:[cm]?js|jsx|tsx?|ts)$/iu;
+const SCRIPT_TAG_PATTERN = /<script\b/iu;
+const MODULE_SCRIPT_PATTERN = /<script\b[^>]*\btype\s*=\s*["']?module\b/iu;
+const JAVASCRIPT_MODULE_PATTERN = /\bimport\s*(?:[\w*{(]|["'])|\bexport\s+(?:default|const|let|var|function|class|\{)/iu;
+const THREE_JS_PATTERN = /\b(?:three(?:\.module)?|THREE|WebGLRenderer|webgl2?)\b/iu;
+const CANVAS_PATTERN = /<canvas\b|\.getContext\(\s*["'](?:2d|webgl2?|bitmaprenderer)["']|requestAnimationFrame\s*\(/iu;
+const NETWORK_PATTERN = /https?:\/\/|\/\/[a-z0-9.-]|fetch\s*\(|XMLHttpRequest|WebSocket\s*\(|new\s+URL\s*\(/iu;
+const BACKEND_PATH_PATTERN = /^(?:server|api)\//iu;
+const BACKEND_CONTENT_PATTERN = /\b(?:express\s*\(|createServer\s*\(|FastAPI\s*\(|uvicorn|flask|listen\s*\()\b/iu;
 
 function previewError(): BuilderSourceTreePreviewError {
   return new BuilderSourceTreePreviewError();
@@ -75,7 +98,37 @@ function selectHtmlFile(files: readonly BuilderProjectSourceFile[]): BuilderProj
 }
 
 function cssFiles(files: readonly BuilderProjectSourceFile[]): readonly BuilderProjectSourceFile[] {
-  return files.filter((file) => file.path.endsWith('.css'));
+  return files.filter((file) => CSS_PATH_PATTERN.test(file.path));
+}
+
+function hasFile(files: readonly BuilderProjectSourceFile[], predicate: (file: BuilderProjectSourceFile) => boolean): boolean {
+  return files.some((file) => predicate(file));
+}
+
+function detectRuntimeLimitations(
+  files: readonly BuilderProjectSourceFile[],
+): readonly BuilderSourceTreePreviewRuntimeLimitation[] {
+  const limitations: BuilderSourceTreePreviewRuntimeLimitation[] = [];
+  const htmlFiles = files.filter((file) => HTML_PATH_PATTERN.test(file.path));
+  const javascriptFiles = files.filter((file) => JAVASCRIPT_PATH_PATTERN.test(file.path));
+  const hasJavaScript = javascriptFiles.length > 0
+    || hasFile(htmlFiles, (file) => SCRIPT_TAG_PATTERN.test(file.content));
+  if (hasJavaScript) limitations.push('javascript_removed');
+  if (
+    hasFile(htmlFiles, (file) => MODULE_SCRIPT_PATTERN.test(file.content))
+    || hasFile(javascriptFiles, (file) => file.path.endsWith('.mjs') || JAVASCRIPT_MODULE_PATTERN.test(file.content))
+  ) limitations.push('javascript_module');
+  if (hasFile(files, (file) => THREE_JS_PATTERN.test(file.path) || THREE_JS_PATTERN.test(file.content))) {
+    limitations.push('three_js');
+  }
+  if (hasFile(files, (file) => CANVAS_PATTERN.test(file.content))) limitations.push('canvas_animation');
+  if (hasFile(files, (file) => NETWORK_PATTERN.test(file.content))) limitations.push('network_or_external_asset');
+  if (
+    hasFile(files, (file) => BACKEND_PATH_PATTERN.test(file.path) || BACKEND_CONTENT_PATTERN.test(file.content))
+  ) {
+    limitations.push('backend_or_local_server');
+  }
+  return Object.freeze(limitations);
 }
 
 function safeInlineStyleText(value: string): string {
@@ -168,6 +221,7 @@ export async function createBuilderSourceTreePreview(input: Readonly<{
       src_doc: buildPreviewDocument(htmlFile, sourceTree.files),
       preview_script_admission: 'not_authorized',
       preview_style_admission: 'inline_best_effort',
+      preview_runtime_limitations: detectRuntimeLimitations(sourceTree.files),
     });
     TRUSTED_PROJECTIONS.add(projection);
     return projection;

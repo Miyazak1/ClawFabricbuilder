@@ -46,7 +46,10 @@ import {
   type BuilderSourceTreeChange,
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
-import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourceTreePreview';
+import type {
+  BuilderSourceTreePreviewProjection,
+  BuilderSourceTreePreviewRuntimeLimitation,
+} from '../preview/builderSourceTreePreview';
 
 export type BuilderFileName = string;
 
@@ -520,11 +523,32 @@ function changesSummary(changes: BuilderSourceTreeChanges): string {
 
 function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null, hasContent: boolean): string {
   if (preview !== null) {
-    return 'Static preview is ready. JavaScript, Three.js, canvas animation, servers, and network assets do not run here.';
+    const labels = previewLimitationLabels(preview.preview_runtime_limitations);
+    if (labels.length > 0) {
+      return `Static preview is ready, but interactive parts do not run here (${labels.join(', ')}). If the preview looks blank, review Changes or Source before saving.`;
+    }
+    return 'Static preview is ready. Static HTML and CSS are shown here; interactive runtime code does not run here.';
   }
   return hasContent
     ? 'Preview unavailable. Runtime preview support is needed for JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code.'
     : 'Review this draft before saving.';
+}
+
+function previewLimitationLabels(
+  limitations: readonly BuilderSourceTreePreviewRuntimeLimitation[],
+): readonly string[] {
+  const labels: string[] = [];
+  for (const limitation of limitations) {
+    if (limitation === 'javascript_module') labels.push('JavaScript modules');
+    else if (limitation === 'three_js') labels.push('Three.js/WebGL');
+    else if (limitation === 'canvas_animation') labels.push('canvas animation');
+    else if (limitation === 'network_or_external_asset') labels.push('external assets');
+    else if (limitation === 'backend_or_local_server') labels.push('local app runtime');
+    else if (limitation === 'javascript_removed' && !limitations.includes('javascript_module')) {
+      labels.push('JavaScript');
+    }
+  }
+  return labels.slice(0, 4);
 }
 
 function failedStatusMessage(

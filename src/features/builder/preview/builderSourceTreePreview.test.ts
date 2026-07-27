@@ -33,6 +33,11 @@ describe('createBuilderSourceTreePreview', () => {
     expect(result.src_doc).not.toContain('<script>bad()');
     expect(result.src_doc).not.toContain('onclick=');
     expect(result.src_doc).not.toContain('https://example.com');
+    expect(result.preview_runtime_limitations).toEqual([
+      'javascript_removed',
+      'network_or_external_asset',
+    ]);
+    expect(Object.isFrozen(result.preview_runtime_limitations)).toBe(true);
     expect(isTrustedBuilderSourceTreePreviewProjection(result)).toBe(true);
   });
 
@@ -46,6 +51,30 @@ describe('createBuilderSourceTreePreview', () => {
       ]),
     });
     expect(result.selected_html_path).toBe('docs/start.html');
+    expect(result.preview_runtime_limitations).toEqual([]);
+  });
+
+  it('summarizes runtime-only preview limits without exposing source text', async () => {
+    const result = await createBuilderSourceTreePreview({
+      project_id: PROJECT_ID,
+      title: '3D canvas',
+      source_tree: await createSourceTree([
+        { path: 'index.html', content: '<main><canvas id="stage"></canvas><script type="module" src="./src/app.js"></script></main>\n' },
+        { path: 'src/app.js', content: 'import { WebGLRenderer } from "three";\nfetch("https://example.com/asset.glb");\nrequestAnimationFrame(() => undefined);\n' },
+        { path: 'server/app.ts', content: 'import express from "express";\nexpress().listen(3000);\n' },
+      ]),
+    });
+
+    expect(result.preview_runtime_limitations).toEqual([
+      'javascript_removed',
+      'javascript_module',
+      'three_js',
+      'canvas_animation',
+      'network_or_external_asset',
+      'backend_or_local_server',
+    ]);
+    expect(JSON.stringify(result.preview_runtime_limitations)).not.toContain('asset.glb');
+    expect(JSON.stringify(result.preview_runtime_limitations)).not.toContain('express');
   });
 
   it('honestly rejects source trees without a static HTML entry while preserving general code support', async () => {
