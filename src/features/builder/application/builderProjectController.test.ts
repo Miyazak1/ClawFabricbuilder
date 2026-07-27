@@ -11,8 +11,11 @@ import type {
 } from './builderPorts';
 import { BuilderGenerationDiagnosticError } from './builderPorts';
 import {
+  CONVERSATION_ID,
   DRAFT_ID,
   PROJECT_ID,
+  RUN_ID,
+  TURN_ID,
   createGenerationAnswer,
   createGenerationDraft,
   createReadWire,
@@ -25,6 +28,7 @@ import {
 function setup(options: {
   submit?: BuilderCodeGeneratorPort['submit'];
   generate?: BuilderCodeGeneratorPort['generate'];
+  generateApprovedPlan?: BuilderCodeGeneratorPort['generateApprovedPlan'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
@@ -38,6 +42,9 @@ function setup(options: {
 } = {}) {
   const submit = vi.fn(options.submit ?? (async (request) => createGenerationDraft(request)));
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
+  const generateApprovedPlan = vi.fn(options.generateApprovedPlan ?? (async () => (
+    createGenerationDraft(await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID))
+  )));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
@@ -82,6 +89,7 @@ function setup(options: {
     generator: {
       submit,
       generate,
+      generateApprovedPlan,
       retry,
       answer,
       restoreDraft,
@@ -98,6 +106,7 @@ function setup(options: {
     cancel,
     controller,
     generate,
+    generateApprovedPlan,
     submit,
     retry,
     loadCurrent,
@@ -173,6 +182,31 @@ describe('Builder project controller v2', () => {
     expect(result.draft?.draft_id).toBe(DRAFT_ID);
     expect(result.savedProject).toBeNull();
     expect(result.draft?.admissions.save).toBe('not_performed');
+  });
+
+  it('continues an approved plan into an unsaved draft through the approved-plan generator', async () => {
+    const { controller, generate, generateApprovedPlan, saveDraft } = setup();
+    await controller.open(PROJECT_ID);
+
+    const result = await controller.generateApprovedPlan({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.project_id).toBe(PROJECT_ID);
+    expect(result.draft?.existing_project_id).toBe(PROJECT_ID);
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+    expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
   });
 
   it('discards an unsaved draft by draft_id without saving it', async () => {

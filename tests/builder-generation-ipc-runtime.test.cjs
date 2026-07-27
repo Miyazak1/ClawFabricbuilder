@@ -12,6 +12,7 @@ const {
   ANSWER_CHANNEL,
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
+  GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
@@ -125,6 +126,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           ANSWER_CHANNEL,
           GENERATE_CHANNEL,
+          GENERATE_APPROVED_PLAN_CHANNEL,
           GENERATION_OUTPUT_CHANNEL,
           GENERATION_STARTED_CHANNEL,
           SUBMIT_CHANNEL,
@@ -136,6 +138,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
+              generateApprovedPlan: { invoke: (_event, body) => options.generateApprovedPlan(body) },
               submit: { invoke: (_event, body) => options.submit(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
@@ -412,6 +415,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v2');
   assert.deepEqual(runtime.channels, [
     GENERATE_CHANNEL,
+    GENERATE_APPROVED_PLAN_CHANNEL,
     SUBMIT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
@@ -781,6 +785,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     SUBMIT_CHANNEL,
+    GENERATE_APPROVED_PLAN_CHANNEL,
     GENERATE_CHANNEL,
   ]);
   assert.equal(runtime.dispose(), false);
@@ -796,6 +801,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.equal(removalFailure.handlers.has(GENERATE_CHANNEL), true);
+  assert.equal(removalFailure.handlers.has(GENERATE_APPROVED_PLAN_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(SUBMIT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RETRY_GENERATE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
@@ -1149,6 +1155,7 @@ test('registers a draft rejection channel backed by generation service', async (
 
 test('keeps selected project identity in main and accepts only instruction over generation IPC', async (t) => {
   const generated = [];
+  const approvedPlanGenerated = [];
   const submitted = [];
   const retried = [];
   const answered = [];
@@ -1157,6 +1164,10 @@ test('keeps selected project identity in main and accepts only instruction over 
     generate(body) {
       generated.push(body);
       return Promise.resolve({ request_id: body.request_digest });
+    },
+    generate_approved_plan(body) {
+      approvedPlanGenerated.push(body);
+      return Promise.resolve({ request_id: `sha256:${'d'.repeat(64)}` });
     },
     submit(body) {
       submitted.push(body);
@@ -1227,7 +1238,32 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(answered[0].existing_project_id, PROJECT_ID);
   assert.equal(answered[0].instruction, 'What does this project do?');
   assert.equal(answered[0].request_digest, hostRequestDigest('What does this project do?', PROJECT_ID));
-
+  await ipcMain.handlers.get(GENERATE_APPROVED_PLAN_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      project_id: ${JSON.stringify(PROJECT_ID)},
+      conversation_id: "builder-conversation:123e4567-e89b-42d3-a456-426614174000",
+      turn_id: "builder-turn:123e4567-e89b-42d3-a456-426614174001",
+      run_id: "builder-run:123e4567-e89b-42d3-a456-426614174002"
+    })`, runtimeModule.context),
+  );
+  assert.equal(approvedPlanGenerated.length, 1);
+  assert.equal(approvedPlanGenerated[0].project_id, PROJECT_ID);
+  assert.equal(
+    approvedPlanGenerated[0].conversation_id,
+    'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+  );
+  assert.equal(
+    approvedPlanGenerated[0].turn_id,
+    'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+  );
+  assert.equal(
+    approvedPlanGenerated[0].run_id,
+    'builder-run:123e4567-e89b-42d3-a456-426614174002',
+  );
+  assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'instruction'), false);
+  assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'request_digest'), false);
+  assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'source_tree'), false);
   await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ project_id: null })', runtimeModule.context),
@@ -1244,6 +1280,18 @@ test('keeps selected project identity in main and accepts only instruction over 
   );
   assert.equal(answered[1].existing_project_id, null);
   assert.equal(answered[1].request_digest, hostRequestDigest('Explain the fresh project.', null));
+  await assert.rejects(
+    async () => ipcMain.handlers.get(GENERATE_APPROVED_PLAN_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        project_id: ${JSON.stringify(PROJECT_ID)},
+        conversation_id: "builder-conversation:123e4567-e89b-42d3-a456-426614174000",
+        turn_id: "builder-turn:123e4567-e89b-42d3-a456-426614174001",
+        run_id: "builder-run:123e4567-e89b-42d3-a456-426614174002"
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
 
   await assert.rejects(
     async () => ipcMain.handlers.get(GENERATE_CHANNEL)(

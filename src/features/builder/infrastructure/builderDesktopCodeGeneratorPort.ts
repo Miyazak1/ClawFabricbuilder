@@ -13,6 +13,7 @@ export type BuilderGenerationDiagnosticCode = ApplicationBuilderGenerationDiagno
 type BuilderCodeGeneratorBridge = Readonly<{
   submit(request: unknown): Promise<unknown>;
   generate(request: unknown): Promise<unknown>;
+  generateApprovedPlan(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   restoreDraft(request: unknown): Promise<unknown>;
@@ -26,6 +27,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
 const BRIDGE_KEYS = new Set([
   'submit',
   'generate',
+  'generateApprovedPlan',
   'retry',
   'answer',
   'restoreDraft',
@@ -182,6 +184,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
     return Object.freeze({
       submit: methods.submit as BuilderCodeGeneratorBridge['submit'],
       generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
+      generateApprovedPlan: methods.generateApprovedPlan as BuilderCodeGeneratorBridge['generateApprovedPlan'],
       retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
       answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
       restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
@@ -334,6 +337,14 @@ export function createBuilderDesktopCodeGeneratorPort(
     generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
       return callBridge(bridge, bridge.generate, [{
         instruction: request.instruction,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    generateApprovedPlan(request: Parameters<BuilderCodeGeneratorPort['generateApprovedPlan']>[0]) {
+      return callBridge(bridge, bridge.generateApprovedPlan, [{
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        turn_id: request.turn_id,
+        run_id: request.run_id,
       }]).then(unwrapGenerationEnvelope);
     },
     submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {

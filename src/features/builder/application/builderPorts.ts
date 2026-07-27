@@ -1,4 +1,7 @@
-import type { BuilderGenerationRequest } from './builderGeneration';
+import type {
+  BuilderApprovedPlanGenerationRequest,
+  BuilderGenerationRequest,
+} from './builderGeneration';
 
 export type BuilderGenerationStartedEvent = Readonly<{
   event_version: 'builder-generation-started.v1';
@@ -80,6 +83,7 @@ export function trustedBuilderGenerationDiagnosticCode(
 export interface BuilderCodeGeneratorPort {
   submit(request: BuilderGenerationRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
+  generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<unknown>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;

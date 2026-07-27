@@ -403,7 +403,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v8');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v9');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -415,6 +415,7 @@ exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevis
 exactObjectKeys(generationBridge, [
   'submit',
   'generate',
+  'generateApprovedPlan',
   'retry',
   'answer',
   'restoreDraft',
@@ -430,6 +431,7 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -949,6 +951,7 @@ assert.doesNotMatch(
 assert.doesNotMatch(packagedToolResultRecords, /builder-tool-runtime-invocation-admission\.cjs/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*GENERATE_APPROVED_PLAN_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RESTORE_DRAFT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*SAVE_DRAFT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LOAD_CURRENT_CHANNEL/u);
@@ -962,6 +965,8 @@ assert.match(packagedPreload, /projectWorkspace/u);
 assert.match(packagedPreload, /loadRevision/u);
 assert.doesNotMatch(packagedPreload, /projectRevisions|projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
+assert.match(packagedPreload, /generateApprovedPlan/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:generate-approved-plan/u);
 assert.match(packagedPreload, /\bretry\b/u);
 assert.match(packagedPreload, /\banswer\b/u);
 assert.match(packagedPreload, /restoreDraft/u);
@@ -973,7 +978,7 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 24);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 25);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

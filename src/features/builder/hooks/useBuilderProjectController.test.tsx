@@ -5,10 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { UseBuilderProjectControllerResult } from './useBuilderProjectController';
 import { useBuilderProjectController } from './useBuilderProjectController';
+import { createBuilderGenerationRequest } from '../application/builderGeneration';
 import { BuilderGenerationDiagnosticError } from '../application/builderPorts';
 import {
+  CONVERSATION_ID,
   DRAFT_ID,
   PROJECT_ID,
+  RUN_ID,
+  TURN_ID,
   createGenerationAnswer,
   createGenerationDraft,
   createReadWire,
@@ -70,6 +74,11 @@ async function renderHook(
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
   });
+  const generateApprovedPlan = vi.fn(async () => {
+    const request = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
+    draft = await createGenerationDraft(request, readWire.source_tree);
+    return draft;
+  });
   const retry = vi.fn(async (request) => {
     draft = await createGenerationDraft(request, readWire.source_tree);
     return draft;
@@ -100,7 +109,16 @@ async function renderHook(
       }
       : readWire
   ));
-  const generator = { submit, generate, retry, answer, restoreDraft, rejectDraft, cancel };
+  const generator = {
+    submit,
+    generateApprovedPlan,
+    generate,
+    retry,
+    answer,
+    restoreDraft,
+    rejectDraft,
+    cancel,
+  };
   const workspace = {
     open,
     saveDraft,
@@ -136,6 +154,7 @@ async function renderHook(
     answer,
     cancel,
     generate,
+    generateApprovedPlan,
     submit,
     retry,
     loadCurrent,
@@ -211,6 +230,34 @@ describe('useBuilderProjectController', () => {
       existing_project_id: null,
     }));
     expect(hook.generate).not.toHaveBeenCalled();
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'draft_ready',
+      draft: { draft_id: DRAFT_ID },
+    });
+  });
+
+  it('continues an approved plan into an unsaved draft without saving', async () => {
+    const hook = await renderHook(PROJECT_ID);
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
+
+    await act(async () => {
+      await hook.current().generateApprovedPlan({
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+      });
+    });
+
+    expect(hook.generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
     expect(hook.saveDraft).not.toHaveBeenCalled();
     expect(hook.current().snapshot).toMatchObject({
       status: 'draft_ready',

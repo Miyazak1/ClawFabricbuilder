@@ -8,6 +8,7 @@ const {
   ANSWER_CHANNEL,
   AVAILABILITY_CHANNEL,
   CANCEL_CHANNEL,
+  GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
@@ -149,6 +150,41 @@ function openProjectId(rawRequest) {
   const projectId = exactDataValue(rawRequest, ['project_id'], 'project_id');
   if (projectId !== null && (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId))) fail();
   return projectId;
+}
+
+function approvedPlanGenerationRequest(rawRequest) {
+  if (!isPlainObject(rawRequest)) fail();
+  const keys = Reflect.ownKeys(rawRequest);
+  const expectedKeys = ['project_id', 'conversation_id', 'turn_id', 'run_id'];
+  if (
+    keys.length !== expectedKeys.length
+    || keys.some((key) => typeof key !== 'string' || !expectedKeys.includes(key))
+  ) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(rawRequest);
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  const projectId = descriptors.project_id.value;
+  const conversationId = descriptors.conversation_id.value;
+  if (
+    typeof projectId !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId)
+    || typeof conversationId !== 'string'
+    || !CONVERSATION_ID_PATTERN.test(conversationId)
+    || conversationId.slice('builder-conversation:'.length)
+      !== projectId.slice('builder-project:'.length)
+    || typeof descriptors.turn_id.value !== 'string'
+    || !TURN_ID_PATTERN.test(descriptors.turn_id.value)
+    || typeof descriptors.run_id.value !== 'string'
+    || !RUN_ID_PATTERN.test(descriptors.run_id.value)
+  ) fail();
+  return Object.freeze({
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: descriptors.turn_id.value,
+    run_id: descriptors.run_id.value,
+  });
 }
 
 function readResultProjectId(value) {
@@ -456,6 +492,13 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.generate);
     }
 
+    function trackedGenerateApprovedPlan(rawRequest) {
+      if (selectionPending) fail();
+      const request = approvedPlanGenerationRequest(rawRequest);
+      if (selectedProjectId !== request.project_id) fail();
+      return service.generate_approved_plan(request);
+    }
+
     function trackedSubmit(rawRequest) {
       return trackedGenerationOperation(rawRequest, service.submit);
     }
@@ -470,6 +513,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
+      generateApprovedPlan: trackedGenerateApprovedPlan,
       submit: trackedSubmit,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
@@ -544,6 +588,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
   const handlers = Object.freeze([
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
+    Object.freeze({ channel: GENERATE_APPROVED_PLAN_CHANNEL, invoke: adapter.channels.generateApprovedPlan.invoke }),
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),

@@ -22,6 +22,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
   generate: BuilderProjectController['generate'];
+  generateApprovedPlan: BuilderProjectController['generateApprovedPlan'];
   retryGenerate: BuilderProjectController['retryGenerate'];
   restoreDraft: BuilderProjectController['restoreDraft'];
   inspectRevision: BuilderProjectController['inspectRevision'];
@@ -94,6 +95,10 @@ export function useBuilderProjectController(
     (instruction) => controller.answer(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
+  const generateApprovedPlan = useCallback<BuilderProjectController['generateApprovedPlan']>(
+    (request) => controller.generateApprovedPlan(request).catch(() => UNAVAILABLE_SNAPSHOT),
+    [controller],
+  );
   const retryGenerate = useCallback<BuilderProjectController['retryGenerate']>(
     () => controller.retryGenerate().catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
@@ -130,6 +135,7 @@ export function useBuilderProjectController(
       submit,
       answer,
       generate,
+      generateApprovedPlan,
       retryGenerate,
       restoreDraft,
       inspectRevision,
@@ -143,6 +149,7 @@ export function useBuilderProjectController(
       submit,
       answer,
       generate,
+      generateApprovedPlan,
       retryGenerate,
       restoreDraft,
       inspectRevision,

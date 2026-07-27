@@ -4,14 +4,19 @@ import {
   BUILDER_GENERATION_REQUEST_PROTOCOL,
   BuilderGenerationError,
   createBuilderGenerationRequest,
+  sanitizeBuilderApprovedPlanGenerationDraft,
+  sanitizeBuilderApprovedPlanGenerationRequest,
   sanitizeBuilderGenerationAnswer,
   sanitizeBuilderGenerationDraft,
   sanitizeBuilderGenerationRequest,
   sanitizeRestoredBuilderGenerationDraft,
 } from './builderGeneration';
 import {
+  CONVERSATION_ID,
   DRAFT_ID,
   PROJECT_ID,
+  RUN_ID,
+  TURN_ID,
   createGenerationAnswer,
   createGenerationDraft,
   createRestoredGenerationDraft,
@@ -40,6 +45,54 @@ describe('Builder generation v2', () => {
     const request = await createBuilderGenerationRequest('Add a pause button.', PROJECT_ID);
     expect(await sanitizeBuilderGenerationRequest(structuredClone(request))).toEqual(request);
     expect(request.existing_project_id).toBe(PROJECT_ID);
+  });
+
+  it('accepts an approved-plan generation request without renderer-owned text or source authority', () => {
+    const request = sanitizeBuilderApprovedPlanGenerationRequest({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+
+    expect(request).toEqual({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    expect(request).not.toHaveProperty('instruction');
+    expect(request).not.toHaveProperty('request_digest');
+    expect(request).not.toHaveProperty('source_tree');
+    expect(Object.isFrozen(request)).toBe(true);
+  });
+
+  it('rejects approved-plan generation request authority drift', () => {
+    for (const forged of [
+      {
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+        instruction: 'renderer text',
+      },
+      {
+        project_id: PROJECT_ID,
+        conversation_id: 'builder-conversation:223e4567-e89b-42d3-a456-426614174000',
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+      },
+      {
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        turn_id: 'builder-turn:not-a-uuid',
+        run_id: RUN_ID,
+      },
+    ]) {
+      expect(() => sanitizeBuilderApprovedPlanGenerationRequest(forged)).toThrow(
+        BuilderGenerationError,
+      );
+    }
   });
 
   it.each([
@@ -89,6 +142,55 @@ describe('Builder generation v2', () => {
     });
     expect(result.restart_restore).toBe('not_persisted');
     expect(Object.isFrozen(result.source_tree.files)).toBe(true);
+  });
+
+  it('accepts an approved-plan draft only for the saved project base', async () => {
+    const hostRequest = await createBuilderGenerationRequest(
+      'Review the approved plan.',
+      PROJECT_ID,
+    );
+    const wire = await createGenerationDraft(hostRequest);
+    const request = {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    };
+    const result = await sanitizeBuilderApprovedPlanGenerationDraft(structuredClone(wire), request);
+
+    expect(result.project_id).toBe(PROJECT_ID);
+    expect(result.existing_project_id).toBe(PROJECT_ID);
+    expect(result.request_id).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(result.base_revision_evidence?.project_id).toBe(PROJECT_ID);
+    expect(result.restart_restore).toBe('not_persisted');
+    expect(result.admissions.save).toBe('not_performed');
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('rejects approved-plan drafts without saved-base evidence or with hidden authority fields', async () => {
+    const hostRequest = await createBuilderGenerationRequest(
+      'Review the approved plan.',
+      PROJECT_ID,
+    );
+    const draft = await createGenerationDraft(hostRequest);
+    const request = {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    };
+    for (const forged of [
+      { ...draft, existing_project_id: null },
+      { ...draft, base_revision_evidence: null },
+      { ...draft, source_receipt: 'renderer-owned' },
+      { ...draft, project_id: 'builder-project:223e4567-e89b-42d3-a456-426614174000' },
+    ]) {
+      await expect(
+        sanitizeBuilderApprovedPlanGenerationDraft(forged, request),
+      ).rejects.toMatchObject({
+        code: 'invalid_generated_draft',
+      });
+    }
   });
 
   it('rejects draft identity drift, source digest drift, and hidden fields', async () => {

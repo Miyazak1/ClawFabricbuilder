@@ -383,8 +383,11 @@ Evidence requirements:
   appends a new main-only work Turn/Run whose message is exactly the
   already-public approved plan text; only after that does provider generation
   produce an unsaved candidate from the verified base revision evidence and
-  source tree. This exposes no IPC/preload command, renderer-created provider
-  envelope, source receipt authority, Save authority, or Project Revision;
+  source tree. The visible desktop workspace can request this continuation
+  through one controlled preload/IPC command, but the renderer sends only
+  Project/Conversation/Turn/Run IDs and cannot send plan text, provider config,
+  source content, source receipt authority, Save authority, or Project
+  Revision;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
   main content bottom. Assistant activity, draft review summary, preview, and

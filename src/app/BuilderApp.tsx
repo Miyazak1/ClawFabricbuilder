@@ -214,6 +214,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  generateApprovedPlan(request: Parameters<BuilderCodeGeneratorPort['generateApprovedPlan']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -414,6 +418,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
         return ports.generator.generate(request);
+      },
+      generateApprovedPlan(request: Parameters<BuilderCodeGeneratorPort['generateApprovedPlan']>[0]) {
+        return ports.generator.generateApprovedPlan(request);
       },
       retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
         return ports.generator.retry(request);
@@ -648,10 +655,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [catalog, history, project, readActivityAfterTerminal]);
   const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
     const commandEpoch = workspaceEpochRef.current;
-    await ports.planReview.review(request).catch(() => undefined);
+    let reviewed = false;
+    try {
+      await ports.planReview.review(request);
+      reviewed = true;
+    } catch {
+      reviewed = false;
+    }
     if (workspaceEpochRef.current !== commandEpoch) return;
     await conversation.load(request.project_id).catch(() => undefined);
-  }, [conversation, ports.planReview]);
+    if (!reviewed || request.decision !== 'approved') return;
+    setLiveOutput(null);
+    const result = await project.generateApprovedPlan({
+      project_id: request.project_id,
+      conversation_id: request.conversation_id,
+      turn_id: request.turn_id,
+      run_id: request.run_id,
+    });
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch, request.project_id);
+    setLiveOutput(null);
+  }, [conversation, ports.planReview, project, readActivityAfterTerminal]);
   const inspectRevision = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
     setActiveFile(null);
     await project.inspectRevision(targetProjectId, revisionReceiptDigest);

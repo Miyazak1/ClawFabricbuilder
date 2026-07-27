@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const GENERATE_APPROVED_PLAN_CHANNEL = 'clawfabric-builder:code-generator:generate-approved-plan';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
@@ -19,6 +20,7 @@ const MAX_PLAIN_DATA_UTF8_BYTES = 1024 * 1024;
 const MAX_PLAIN_DATA_DEPTH = 64;
 const OPTION_KEYS = Object.freeze([
   'generate',
+  'generateApprovedPlan',
   'submit',
   'retry',
   'answer',
@@ -281,6 +283,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.generate);
         },
       }),
+      generateApprovedPlan: Object.freeze({
+        channel: GENERATE_APPROVED_PLAN_CHANNEL,
+        method: 'generateApprovedPlan',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.generateApprovedPlan);
+        },
+      }),
       submit: Object.freeze({
         channel: SUBMIT_CHANNEL,
         method: 'submit',
@@ -333,6 +342,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
     }),
     exposed_methods: Object.freeze([
       'generate',
+      'generateApprovedPlan',
       'submit',
       'retry',
       'answer',
@@ -355,6 +365,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   GENERATE_CHANNEL,
+  GENERATE_APPROVED_PLAN_CHANNEL,
   SUBMIT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,

@@ -72,8 +72,12 @@ service performs a fresh current-head approved-plan read and appends a new
 main-only work Turn/Run whose user message is exactly the already-public
 approved plan text. Generation then uses the verified base revision evidence and
 source tree from the private edit context to produce an unsaved candidate. This
-path has no IPC/preload command, renderer-created provider envelope, source
-receipt authority, Save authority, or Project Revision authority.
+path now has one controlled preload/IPC entry so the visible desktop workspace
+can continue immediately after the user approves a plan, but the renderer sends
+only Project, Conversation, Turn, and Run IDs. Main still re-reads the current
+approved-plan fact and prepares the private edit context; the renderer cannot
+send plan text, provider config, source content, source receipt authority, Save
+authority, or Project Revision authority.
 
 The Generation main service can also record fixed Run progress stages through
 the Conversation main service while a provider generation or explanation is in

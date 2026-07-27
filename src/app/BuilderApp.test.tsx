@@ -9,7 +9,9 @@ import {
   type BuilderDesktopBridgeRoot,
 } from './builderDesktopBridgeRoot';
 import {
+  CONVERSATION_ID,
   PROJECT_ID,
+  RUN_ID,
   TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
@@ -244,6 +246,21 @@ async function setup(options: Readonly<{
     ...(request as object),
     review_admission: 'sqlite_recorded_no_execution',
   }));
+  const generateApprovedPlan = vi.fn(async (request: unknown) => {
+    expect(request).toEqual({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    const hostRequest = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
+    latestDraft = await createGenerationDraft(hostRequest, readWire.source_tree);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: latestDraft,
+    };
+  });
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
@@ -311,6 +328,7 @@ async function setup(options: Readonly<{
     codeGenerator: {
       submit,
       generate,
+      generateApprovedPlan,
       retry,
       answer,
       restoreDraft,
@@ -374,6 +392,7 @@ async function setup(options: Readonly<{
     answer,
     cancel,
     generate,
+    generateApprovedPlan,
     submit,
     retry,
     listHistory,
@@ -854,10 +873,11 @@ describe('BuilderApp v2', () => {
     });
   });
 
-  it('records plan approval through the plan-review bridge and only refreshes activity', async () => {
+  it('records plan approval then continues into an unsaved draft without saving', async () => {
     const {
       container,
       generate,
+      generateApprovedPlan,
       readTaskStream,
       reviewPlan,
       saveDraft,
@@ -876,6 +896,7 @@ describe('BuilderApp v2', () => {
       expect(reviewPlan).toHaveBeenCalledOnce();
       expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
         .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
     expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
@@ -884,10 +905,16 @@ describe('BuilderApp v2', () => {
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
       decision: 'approved',
     });
-    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+    });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     expect(saveDraft).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
     );

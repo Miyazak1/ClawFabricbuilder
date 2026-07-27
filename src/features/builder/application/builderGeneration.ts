@@ -13,6 +13,13 @@ export type BuilderGenerationRequest = Readonly<{
   request_digest: string;
 }>;
 
+export type BuilderApprovedPlanGenerationRequest = Readonly<{
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  run_id: string;
+}>;
+
 export type BuilderGenerationDraft = Readonly<{
   version: typeof BUILDER_GENERATION_RESULT_PROTOCOL;
   request_id: string | null;
@@ -93,6 +100,12 @@ const REQUEST_KEYS = Object.freeze([
   'existing_project_id',
   'request_digest',
 ]);
+const APPROVED_PLAN_GENERATION_REQUEST_KEYS = Object.freeze([
+  'project_id',
+  'conversation_id',
+  'turn_id',
+  'run_id',
+]);
 const DRAFT_KEYS = Object.freeze([
   'version',
   'request_id',
@@ -141,6 +154,12 @@ const ADMISSION_KEYS = Object.freeze([
 ]);
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const CONVERSATION_ID_PATTERN =
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TURN_ID_PATTERN =
+  /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RUN_ID_PATTERN =
+  /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -248,6 +267,27 @@ function safeProjectId(value: unknown, code: BuilderGenerationErrorCode): string
   return value;
 }
 
+function safeConversationId(value: unknown): string {
+  if (typeof value !== 'string' || !CONVERSATION_ID_PATTERN.test(value)) {
+    throw invalid('invalid_generation_request');
+  }
+  return value;
+}
+
+function safeTurnId(value: unknown): string {
+  if (typeof value !== 'string' || !TURN_ID_PATTERN.test(value)) {
+    throw invalid('invalid_generation_request');
+  }
+  return value;
+}
+
+function safeRunId(value: unknown): string {
+  if (typeof value !== 'string' || !RUN_ID_PATTERN.test(value)) {
+    throw invalid('invalid_generation_request');
+  }
+  return value;
+}
+
 function safeDraftId(value: unknown): string {
   if (typeof value !== 'string' || !DRAFT_ID_PATTERN.test(value)) {
     throw invalid('invalid_generated_draft');
@@ -342,6 +382,28 @@ export async function sanitizeBuilderGenerationRequest(
   return deepFreeze({ ...unsigned, request_digest: requestDigest });
 }
 
+export function sanitizeBuilderApprovedPlanGenerationRequest(
+  value: unknown,
+): BuilderApprovedPlanGenerationRequest {
+  const source = exactRecord(
+    value,
+    APPROVED_PLAN_GENERATION_REQUEST_KEYS,
+    'invalid_generation_request',
+  );
+  const projectId = safeProjectId(source.project_id, 'invalid_generation_request');
+  const conversationId = safeConversationId(source.conversation_id);
+  if (
+    conversationId.slice('builder-conversation:'.length)
+      !== projectId.slice('builder-project:'.length)
+  ) throw invalid('invalid_generation_request');
+  return deepFreeze({
+    project_id: projectId,
+    conversation_id: conversationId,
+    turn_id: safeTurnId(source.turn_id),
+    run_id: safeRunId(source.run_id),
+  });
+}
+
 function sanitizeBaseEvidence(
   value: unknown,
   expectedProjectId: string,
@@ -430,6 +492,76 @@ export async function sanitizeBuilderGenerationDraft(
         source.base_revision_evidence,
         projectId,
         request.existing_project_id !== null,
+      ),
+      source_tree: sourceTree,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'candidate_not_saved',
+        save: 'not_performed',
+        preview: 'not_evaluated',
+        execution: 'not_evaluated',
+      },
+      restart_restore: 'not_persisted',
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationError) throw error;
+    throw invalid('invalid_generated_draft');
+  }
+}
+
+export async function sanitizeBuilderApprovedPlanGenerationDraft(
+  value: unknown,
+  expectedRequest: BuilderApprovedPlanGenerationRequest,
+): Promise<BuilderGenerationDraft> {
+  try {
+    const request = sanitizeBuilderApprovedPlanGenerationRequest(expectedRequest);
+    const source = exactRecord(value, DRAFT_KEYS, 'invalid_generated_draft');
+    if (
+      source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
+      || typeof source.request_id !== 'string'
+      || !DIGEST_PATTERN.test(source.request_id)
+      || source.project_id !== request.project_id
+      || source.existing_project_id !== request.project_id
+      || source.restart_restore !== 'not_persisted'
+    ) throw invalid('invalid_generated_draft');
+    const candidate = exactRecord(source.candidate, CANDIDATE_KEYS, 'invalid_generated_draft');
+    if (
+      candidate.candidate_version !== 'builder-code-change-candidate.v2'
+      || typeof candidate.candidate_id !== 'string'
+      || !CANDIDATE_ID_PATTERN.test(candidate.candidate_id)
+    ) throw invalid('invalid_generated_draft');
+    const candidateDigest = safeDigest(candidate.candidate_digest);
+    const resultingTreeDigest = safeDigest(candidate.resulting_tree_digest);
+    const sourceTree = await sanitizeBuilderProjectSourceTree(source.source_tree);
+    if (sourceTree.source_tree_digest !== resultingTreeDigest) {
+      throw invalid('invalid_generated_draft');
+    }
+    const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_draft');
+    if (
+      admissions.conversation !== 'sqlite_recorded'
+      || admissions.draft !== 'candidate_not_saved'
+      || admissions.save !== 'not_performed'
+      || admissions.preview !== 'not_evaluated'
+      || admissions.execution !== 'not_evaluated'
+    ) throw invalid('invalid_generated_draft');
+    return deepFreeze({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      request_id: source.request_id,
+      draft_id: safeDraftId(source.draft_id),
+      title: safeDisplayText(source.title, 80),
+      summary: safeDisplayText(source.summary, 400),
+      project_id: request.project_id,
+      existing_project_id: request.project_id,
+      candidate: {
+        candidate_version: 'builder-code-change-candidate.v2',
+        candidate_id: candidate.candidate_id,
+        candidate_digest: candidateDigest,
+        resulting_tree_digest: resultingTreeDigest,
+      },
+      base_revision_evidence: sanitizeBaseEvidence(
+        source.base_revision_evidence,
+        request.project_id,
+        true,
       ),
       source_tree: sourceTree,
       admissions: {

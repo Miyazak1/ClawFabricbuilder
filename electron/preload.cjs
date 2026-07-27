@@ -9,6 +9,7 @@ const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revisio
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const GENERATE_APPROVED_PLAN_CHANNEL = 'clawfabric-builder:code-generator:generate-approved-plan';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
@@ -31,7 +32,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v8',
+  bridgeVersion: 'builder-preload.v9',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -58,6 +59,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     generate(request) {
       return ipcRenderer.invoke(GENERATE_CHANNEL, request);
+    },
+    generateApprovedPlan(request) {
+      return ipcRenderer.invoke(GENERATE_APPROVED_PLAN_CHANNEL, request);
     },
     retry(request) {
       return ipcRenderer.invoke(RETRY_GENERATE_CHANNEL, request);

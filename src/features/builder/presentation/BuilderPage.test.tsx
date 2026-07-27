@@ -64,6 +64,9 @@ async function snapshots() {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
       },
+      async generateApprovedPlan() {
+        return draft;
+      },
       async retry(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
@@ -423,6 +426,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async generate() {
         return draft;
       },
+      async generateApprovedPlan() {
+        return draft;
+      },
       async retry() {
         return draft;
       },
@@ -491,6 +497,12 @@ async function inspectedHistorySnapshot() {
       },
       async generate(request) {
         return createGenerationDraft(request, currentTree);
+      },
+      async generateApprovedPlan() {
+        return createGenerationDraft(
+          await createBuilderGenerationRequest('Continue approved plan.', PROJECT_ID),
+          currentTree,
+        );
       },
       async retry(request) {
         return createGenerationDraft(request, currentTree);
@@ -800,6 +812,7 @@ describe('BuilderPage v2', () => {
         generate: async () => {
           throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
         },
+        generateApprovedPlan: async () => null,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
@@ -844,6 +857,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
+        generateApprovedPlan: async () => null,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -887,6 +901,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async () => null,
         generate: async () => null,
+        generateApprovedPlan: async () => null,
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
         restoreDraft: async () => null,
@@ -1755,6 +1770,7 @@ describe('BuilderPage v2', () => {
           });
           throw error;
         },
+        generateApprovedPlan: async () => null,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1789,6 +1805,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async (request) => createGenerationDraft(request),
         generate: async (request) => createGenerationDraft(request),
+        generateApprovedPlan: async () => null,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
