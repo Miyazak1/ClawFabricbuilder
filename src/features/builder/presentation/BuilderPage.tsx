@@ -76,6 +76,7 @@ const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'generation_failed',
   'preview_unavailable',
 ]);
+const CHAT_FOLLOW_BOTTOM_THRESHOLD_PX = 96;
 
 function isBuilderGenerationDiagnosticCode(
   value: BuilderProjectControllerSnapshot['error'],
@@ -121,6 +122,10 @@ function activityItems(
 ): readonly BuilderConversationItem[] {
   const conversation = snapshot?.conversation;
   return conversation?.state === 'ready' ? conversation.conversation.items : [];
+}
+
+function isNearChatBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_FOLLOW_BOTTOM_THRESHOLD_PX;
 }
 
 function planReviewKey(turnId: string, runId: string): string {
@@ -822,6 +827,29 @@ export function BuilderPage({
   const sourceDisclosureOpen = selected !== null || preview === null;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
   const pendingSourceFocusRef = useRef(false);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatTailRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowChatRef = useRef(true);
+  const activityFollowCursor = (() => {
+    const conversation = activity?.conversation;
+    if (conversation?.state !== 'ready') return activity?.status ?? 'no-activity';
+    const items = conversation.conversation.items;
+    const tail = items.at(-1);
+    return [
+      conversation.conversation.head_sequence,
+      items.length,
+      tail === undefined ? 'empty' : `${tail.sequence}:${tail.item_kind}:${activityTitle(tail)}:${activityBody(tail)}`,
+    ].join(':');
+  })();
+  const chatFollowKey = [
+    status,
+    draft?.draft_id ?? 'no-draft',
+    saved?.target.revision_number ?? 'no-saved',
+    inspected?.target.revision_number ?? 'no-inspected',
+    sourceFile?.path ?? 'no-source',
+    preview === null ? 'no-preview' : 'preview-ready',
+    activityFollowCursor,
+  ].join('|');
 
   useEffect(() => {
     if (!pendingSourceFocusRef.current || !sourceDisclosureOpen) return;
@@ -830,6 +858,17 @@ export function BuilderPage({
     pendingSourceFocusRef.current = false;
     disclosure.focus();
   }, [sourceDisclosureOpen, sourceFile?.path]);
+
+  useEffect(() => {
+    if (!shouldFollowChatRef.current) return;
+    chatTailRef.current?.scrollIntoView?.({ block: 'end' });
+  }, [chatFollowKey]);
+
+  function updateChatFollowState(): void {
+    const scroll = chatScrollRef.current;
+    if (scroll === null) return;
+    shouldFollowChatRef.current = isNearChatBottom(scroll);
+  }
 
   function selectFile(path: string): boolean {
     if (typeof onSelectFile !== 'function') return false;
@@ -1192,7 +1231,12 @@ export function BuilderPage({
           data-builder-chat-workspace="true"
         >
           <div className="cf-builder-chat-main" data-builder-chat-main="true">
-            <div className="cf-builder-chat-scroll">
+            <div
+              className="cf-builder-chat-scroll"
+              data-builder-chat-scroll="true"
+              onScroll={updateChatFollowState}
+              ref={chatScrollRef}
+            >
               <ActivityPanel
                 canReviewPlan={canReviewPlan}
                 hasUnsavedDraft={hasUnsavedDraft}
@@ -1277,6 +1321,12 @@ export function BuilderPage({
               )}
 
               {conversationNotice}
+              <div
+                aria-hidden="true"
+                className="cf-builder-chat-tail"
+                data-builder-chat-tail="true"
+                ref={chatTailRef}
+              />
             </div>
 
             {composer}

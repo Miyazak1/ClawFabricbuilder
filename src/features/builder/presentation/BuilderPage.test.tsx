@@ -364,6 +364,51 @@ function keyDown(
   return event;
 }
 
+function installScrollIntoViewSpy() {
+  const prototype = HTMLElement.prototype as HTMLElement & {
+    scrollIntoView?: HTMLElement['scrollIntoView'];
+  };
+  const hadOwnProperty = Object.hasOwn(prototype, 'scrollIntoView');
+  const original = prototype.scrollIntoView;
+  const spy = vi.fn();
+  Object.defineProperty(prototype, 'scrollIntoView', {
+    configurable: true,
+    value: spy,
+  });
+  return {
+    spy,
+    restore() {
+      if (hadOwnProperty) {
+        Object.defineProperty(prototype, 'scrollIntoView', {
+          configurable: true,
+          value: original,
+        });
+        return;
+      }
+      Reflect.deleteProperty(prototype, 'scrollIntoView');
+    },
+  };
+}
+
+function setScrollMetrics(
+  element: HTMLElement,
+  metrics: Readonly<{ clientHeight: number; scrollHeight: number; scrollTop: number }>,
+): void {
+  Object.defineProperty(element, 'clientHeight', {
+    configurable: true,
+    value: metrics.clientHeight,
+  });
+  Object.defineProperty(element, 'scrollHeight', {
+    configurable: true,
+    value: metrics.scrollHeight,
+  });
+  Object.defineProperty(element, 'scrollTop', {
+    configurable: true,
+    value: metrics.scrollTop,
+    writable: true,
+  });
+}
+
 describe('BuilderPage v2', () => {
   it('renders a continuous composer without pretending a new project is saved', async () => {
     const { fresh } = await snapshots();
@@ -733,6 +778,87 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
+  });
+
+  it('keeps the latest conversation content visible while following the chat bottom', async () => {
+    const { saved } = await snapshots();
+    const initialActivity = await candidateActivity();
+    const nextActivity = await answerActivity();
+    const { restore, spy } = installScrollIntoViewSpy();
+    let setActivity!: (value: typeof initialActivity) => void;
+
+    function ChatFollowBuilderPage() {
+      const [conversationSnapshot, updateActivity] = useState(initialActivity);
+      setActivity = updateActivity;
+      return (
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={conversationSnapshot}
+          instruction=""
+          snapshot={saved}
+        />
+      );
+    }
+
+    try {
+      const container = render(<ChatFollowBuilderPage />);
+      expect(container.querySelector('[data-builder-chat-scroll="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-chat-tail="true"]')).not.toBeNull();
+      expect(spy).toHaveBeenCalledExactlyOnceWith({ block: 'end' });
+
+      act(() => setActivity(nextActivity));
+
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy).toHaveBeenLastCalledWith({ block: 'end' });
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not pull the chat back down while the user is reading older content', async () => {
+    const { saved } = await snapshots();
+    const initialActivity = await candidateActivity();
+    const nextActivity = await answerActivity();
+    const acceptedActivity = await acceptedCandidateActivity();
+    const { restore, spy } = installScrollIntoViewSpy();
+    let setActivity!: (value: typeof initialActivity) => void;
+
+    function ChatFollowBuilderPage() {
+      const [conversationSnapshot, updateActivity] = useState(initialActivity);
+      setActivity = updateActivity;
+      return (
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={conversationSnapshot}
+          instruction=""
+          snapshot={saved}
+        />
+      );
+    }
+
+    try {
+      const container = render(<ChatFollowBuilderPage />);
+      const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+      expect(scroll).not.toBeNull();
+      expect(spy).toHaveBeenCalledTimes(1);
+      const initialCallCount = spy.mock.calls.length;
+
+      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1200, scrollTop: 120 });
+      act(() => {
+        scroll?.dispatchEvent(new Event('scroll'));
+      });
+      act(() => setActivity(nextActivity));
+      expect(spy).toHaveBeenCalledTimes(initialCallCount);
+
+      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1200, scrollTop: 720 });
+      act(() => {
+        scroll?.dispatchEvent(new Event('scroll'));
+      });
+      act(() => setActivity(acceptedActivity));
+      expect(spy).toHaveBeenCalledTimes(initialCallCount + 1);
+    } finally {
+      restore();
+    }
   });
 
   it('renders questions and AI answers as chat messages while keeping run events as status', async () => {

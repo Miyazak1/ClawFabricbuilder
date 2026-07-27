@@ -438,6 +438,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   justify-self: center;
 }
 
+.cf-builder-chat-tail {
+  min-height: 1px;
+  width: 1px;
+  justify-self: center;
+}
+
 .cf-builder-review-sidebar {
   display: grid;
   min-height: 0;
