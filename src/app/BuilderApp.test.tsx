@@ -1100,7 +1100,7 @@ describe('BuilderApp v2', () => {
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
-        .toContain("I'm working on this...");
+        .toContain('Applying the approved plan...');
     });
     expect(container.querySelector('[data-builder-live-output="true"]')?.getAttribute('data-builder-live-output-state'))
       .toBe('waiting');

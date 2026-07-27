@@ -1747,6 +1747,39 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('can label approved-plan continuation waiting output without changing the message surface', async () => {
+    const { saved } = await snapshots();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '',
+          chunk_count: 0,
+          waiting_text: 'Applying the approved plan...',
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const liveOutput = container.querySelector('[data-builder-live-output="true"]');
+    expect(liveOutput).not.toBeNull();
+    expect(liveOutput?.getAttribute('data-builder-live-output-state')).toBe('waiting');
+    expect(liveOutput?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(
+      liveOutput?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('plain');
+    expect(liveOutput?.textContent).toContain('Applying the approved plan...');
+    expect(liveOutput?.textContent).not.toContain("I'm working on this...");
+    expect(container.textContent).not.toMatch(
+      /request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
   it('keeps pending tool requests visible without exposing internal evidence', async () => {
     const { saved } = await snapshots();
     const activity = await pendingToolActivity();

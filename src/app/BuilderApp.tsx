@@ -90,6 +90,7 @@ const BUILDER_RAIL_ITEMS: readonly BuilderRailItem[] = Object.freeze([
 ]);
 const MAX_LIVE_OUTPUT_TEXT_BYTES = 16 * 1024;
 const LIVE_OUTPUT_ENCODER = new TextEncoder();
+const APPROVED_PLAN_WAITING_TEXT = 'Applying the approved plan...';
 
 export type BuilderLiveOutputSnapshot = Readonly<{
   state: 'streaming';
@@ -97,6 +98,7 @@ export type BuilderLiveOutputSnapshot = Readonly<{
   project_id: string;
   text: string;
   chunk_count: number;
+  waiting_text?: string;
 }>;
 
 const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
@@ -409,6 +411,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
+  const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
   const workspacePorts = useMemo(() => {
@@ -506,6 +509,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         project_id: event.project_id,
         text: '',
         chunk_count: 0,
+        waiting_text: approvedPlanWaitingProjectRef.current === event.project_id
+          ? APPROVED_PLAN_WAITING_TEXT
+          : undefined,
       }));
     }) ?? (() => undefined)
   ), [ports.generator]);
@@ -531,6 +537,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
+    approvedPlanWaitingProjectRef.current = null;
     restoreAttemptKeysRef.current.clear();
     submitInFlightRef.current = false;
     setWorkspaceEpoch(workspaceEpochRef.current);
@@ -721,12 +728,20 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     await conversation.load(request.project_id).catch(() => undefined);
     if (!reviewed || request.decision !== 'approved') return;
     setLiveOutput(null);
-    const result = await project.generateApprovedPlan({
-      project_id: request.project_id,
-      conversation_id: request.conversation_id,
-      turn_id: request.turn_id,
-      run_id: request.run_id,
-    });
+    approvedPlanWaitingProjectRef.current = request.project_id;
+    let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
+    try {
+      result = await project.generateApprovedPlan({
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        turn_id: request.turn_id,
+        run_id: request.run_id,
+      });
+    } finally {
+      if (approvedPlanWaitingProjectRef.current === request.project_id) {
+        approvedPlanWaitingProjectRef.current = null;
+      }
+    }
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch, request.project_id);
     setLiveOutput(null);

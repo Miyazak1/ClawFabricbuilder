@@ -60,6 +60,7 @@ export type BuilderLiveOutputSnapshot = Readonly<{
   project_id: string;
   text: string;
   chunk_count: number;
+  waiting_text?: string;
 }>;
 
 export type BuilderPageProps = {
@@ -940,6 +941,7 @@ function ActivityLiveOutputItem({
   liveOutput: BuilderLiveOutputSnapshot;
 }>) {
   const hasText = liveOutput.text.length > 0;
+  const waitingText = liveOutput.waiting_text ?? "I'm working on this...";
   return (
     <li
       className="cf-builder-activity-item"
@@ -957,7 +959,7 @@ function ActivityLiveOutputItem({
       >
         <div className="cf-builder-activity-title">Assistant</div>
         <p className="cf-builder-activity-body">
-          {hasText ? liveOutput.text : "I'm working on this..."}
+          {hasText ? liveOutput.text : waitingText}
           <span className="cf-builder-live-output-cursor" aria-hidden="true" />
         </p>
       </div>
