@@ -532,12 +532,16 @@ Current checkpoint:
   owner-bound Agent identity, Agent version, and lifecycle status decisions. It
   deterministically binds the owner, Agent id, version instructions, explicit
   permission-required boundary, and archive/revoke/reactivate-style lifecycle
-  facts through canonical digests. It does not create a repository, expose
-  IPC/preload, show an Agents UI, supervise Tasks/Runs, dispatch providers or
-  tools, read credentials or source, mutate Git/SQLite project facts, grant
-  permissions, or create Review/Revision/Artifact authority. A visible or
-  persistent Agent must build on this contract instead of introducing an
-  incompatible identity shape.
+  facts through canonical digests;
+- the current Agent definition store persists those records in a strict
+  main-only SQLite store with restart restore, idempotent replay,
+  owner-scoped reads, version ordering, lifecycle finality after revocation,
+  schema fingerprint verification, and fixed redacted failures. It exposes no
+  IPC/preload, shows no Agents UI, supervises no Tasks/Runs, dispatches no
+  providers or tools, reads no credentials or source, mutates no Git or Project
+  Revision facts, grants no permissions, and creates no Review/Artifact
+  authority. A visible Agent or Agent assignment must build on this store
+  instead of introducing an incompatible identity shape.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
