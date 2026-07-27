@@ -437,13 +437,21 @@ test('generates a bounded plan proposal from source context without creating Git
   ]);
   let planContexts = 0;
   let transportInput;
+  const observed = [];
   const adapter = createBuilderGenerationHostAdapter(dependencies({
     buildPlanContext: (raw) => {
       planContexts += 1;
       return planContextFor(raw, { source_context_result: sourceContext });
     },
+    onOutputDelta(event) {
+      observed.push(event);
+      throw new Error(PRIVATE_MARKER);
+    },
     transport: async (...args) => {
       transportInput = args;
+      await args[1].on_output_delta({ delta_text: '{"kind":"builder_project_plan_proposal",' });
+      await args[1].on_output_delta({ delta_text: '"summary":"Prepare a bounded' });
+      await args[1].on_output_delta({ delta_text: ' implementation","steps":[]}' });
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerPlan()),
@@ -469,6 +477,16 @@ test('generates a bounded plan proposal from source context without creating Git
   assert.match(transportInput[0].messages[1].content, /Plan a smaller settings panel/u);
   assert.match(transportInput[0].messages[1].content, /export const Settings/u);
   assert.equal(transportInput[1].signal instanceof AbortSignal, true);
+  assert.equal(typeof transportInput[1].on_output_delta, 'function');
+  assert.deepEqual(observed.map((event) => event.delta_text), [
+    '{"kind":"builder_project_plan_proposal",',
+    '"summary":"Prepare a bounded',
+    ' implementation","steps":[]}',
+  ]);
+  assert.equal(observed[0].context.project_id, PROJECT_ID);
+  assert.equal(observed[0].context.turn_id, TURN_ID);
+  assert.equal(observed[0].context.task_id, TASK_ID);
+  assert.equal(observed[0].context.run_id, RUN_ID);
   assert.match(
     result.context.source_context_result.private_source_context.files[0].content,
     /export const Settings/u,

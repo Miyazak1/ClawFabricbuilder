@@ -449,7 +449,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
 
   async function runPlan(request, controller) {
     if (buildPlanContext === null) fail('builder_generation_base_unavailable');
-    const context = await boundedContext(
+    let context = await boundedContext(
       request,
       controller.signal,
       buildPlanContext,
@@ -479,7 +479,12 @@ function createBuilderGenerationHostAdapter(options = {}) {
         timeout_ms: config.timeout_ms,
         ...(config.temperature === null ? {} : { temperature: config.temperature }),
         ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
-      }, { signal: controller.signal }]);
+      }, {
+        signal: controller.signal,
+        ...(onOutputDelta === null
+          ? {}
+          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+      }]);
     } catch (error) {
       mapTransportError(error, controller.signal);
     }

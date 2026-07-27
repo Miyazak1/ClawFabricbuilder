@@ -480,10 +480,13 @@ Evidence requirements:
   reply before the first display-safe delta arrives; later safe deltas replace
   that waiting text in the same assistant row. The same visible waiting path is
   covered for approved-plan continuation after the user approves a proposed
-  plan, so plan review does not fall back to an invisible background step. This
-  live output is ephemeral
+  plan, so plan review does not fall back to an invisible background step. The
+  same output path now covers plan-first proposal text after source-context
+  collection has bound the trusted work Run, without adding durable provider
+  progress events to the plan admission contract. This live output is ephemeral
   conversation UI, not durable Task Stream fact, and carries no raw provider
-  envelope, prompt, credential, source, Git, Save, or Project Revision authority.
+  envelope, prompt, credential, source, plan record evidence, Git, Save, or
+  Project Revision authority.
   Tool streaming and arbitrary execution remain later independent protocols;
 - the current renderer-safe tool activity projection turns admitted Task Stream
   tool request/result facts into ordinary conversation status language. Pending

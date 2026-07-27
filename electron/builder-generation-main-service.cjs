@@ -900,8 +900,10 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   function observedConversationContext(context) {
+    const planSourceContext = planContexts.get(context);
     const directConversationContext = generationContexts.get(context)
-      ?? explanationContexts.get(context);
+      ?? explanationContexts.get(context)
+      ?? (planSourceContext === undefined ? undefined : valueAt(planSourceContext, 'context'));
     const latest = latestConversationContext(context, directConversationContext);
     if (latest !== undefined) return latest;
     const runId = typeof context.run_id === 'string' ? context.run_id : null;

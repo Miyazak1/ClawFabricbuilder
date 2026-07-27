@@ -241,13 +241,14 @@ Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`
 deltas while preserving the same terminal generation result. Raw provider deltas
 remain main-only. The current renderer path exposes only ephemeral live display
 text extracted from approved generation result fields, so the conversation can
-show active AI text without making it a durable Task Stream item. Renderer-safe
-tool activity projection is now part of the visible conversation workspace:
-pending tool requests appear as ordinary project steps, and a matching recorded
-tool result folds the request into one final status row. This projection is
-read-only UI language over already-admitted Task Stream facts; it exposes no
-provider envelopes, prompts, credentials, source evidence, Git receipts, raw
-tool output, Save authority, or Project Revision facts.
+show active AI text for generation, explanation, approved-plan continuation,
+and plan-first proposal runs without making it a durable Task Stream item.
+Renderer-safe tool activity projection is now part of the visible conversation
+workspace: pending tool requests appear as ordinary project steps, and a
+matching recorded tool result folds the request into one final status row. This
+projection is read-only UI language over already-admitted Task Stream facts; it
+exposes no provider envelopes, prompts, credentials, source evidence, Git
+receipts, raw tool output, Save authority, or Project Revision facts.
 - Candidate, saved, failed, and superseded states are visually distinct.
 - The user can always identify the current saved Version.
 - Engineering terms such as IPC, schema, receipt, adapter, and admission remain

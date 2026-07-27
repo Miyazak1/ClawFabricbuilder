@@ -1363,6 +1363,7 @@ test('records a main-only plan proposal from collected source context without so
   });
   const reads = [];
   const collected = [];
+  const observed = [];
   const transportInputs = [];
   const started = [];
   const lifecycle = conversationService();
@@ -1389,8 +1390,17 @@ test('records a main-only plan proposal from collected source context without so
     onGenerationStarted(event) {
       started.push(event);
     },
-    transport: async (input) => {
+    onProviderOutputDelta(event) {
+      observed.push(event);
+      throw new Error(PRIVATE_MARKER);
+    },
+    transport: async (input, control) => {
       transportInputs.push(input);
+      assert.equal(control.signal instanceof AbortSignal, true);
+      assert.equal(typeof control.on_output_delta, 'function');
+      await control.on_output_delta({ delta_text: '{"kind":"builder_project_plan_proposal","title":"Review",' });
+      await control.on_output_delta({ delta_text: '"summary":"Prepare a bounded' });
+      await control.on_output_delta({ delta_text: ' implementation before editing","steps":[{"title":"secret source text"}]}' });
       assert.match(input.messages[0].content, /builder_project_plan_proposal/u);
       assert.doesNotMatch(input.messages[0].content, /builder_code_change_operations|builder_conversation_explanation/u);
       assert.match(input.messages[1].content, /Plan a smaller settings panel/u);
@@ -1454,6 +1464,32 @@ test('records a main-only plan proposal from collected source context without so
     request_id: raw.request_digest,
     project_id: PROJECT_ID,
   }]);
+  assert.deepEqual(observed.map((event) => event.display_delta_text), [
+    'Prepare a bounded',
+    ' implementation before editing',
+  ]);
+  assert.deepEqual(Reflect.ownKeys(observed[0]).sort(), [
+    'conversation_id',
+    'display_delta_text',
+    'event_version',
+    'project_id',
+    'request_id',
+    'run_id',
+    'task_id',
+    'turn_id',
+  ]);
+  assert.equal(observed[0].event_version, 'builder-generation-output.v1');
+  assert.equal(observed[0].request_id, raw.request_digest);
+  assert.equal(observed[0].project_id, PROJECT_ID);
+  assert.match(observed[0].conversation_id, /^builder-conversation:/u);
+  assert.match(observed[0].turn_id, /^builder-turn:/u);
+  assert.match(observed[0].task_id, /^builder-task:/u);
+  assert.match(observed[0].run_id, /^builder-run:/u);
+  assert.equal(Object.isFrozen(observed[0]), true);
+  assert.doesNotMatch(
+    JSON.stringify(observed),
+    /secret source text|credential|provider\.example|builder-model|source_tree|operations|src\/app|export const|commit_oid|tree_oid|receipt|record_digest/iu,
+  );
   assert.equal(Object.hasOwn(result, 'draft_id'), false);
   assert.equal(Object.hasOwn(result, 'plan_proposal_record'), false);
   assert.equal(Object.hasOwn(result, 'source_context_result'), false);

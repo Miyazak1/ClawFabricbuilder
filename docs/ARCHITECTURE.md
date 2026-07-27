@@ -118,16 +118,19 @@ bounded `text/event-stream` response and assembles the same terminal
 generated-text result. Raw provider deltas stay main-only. The Generation main
 service may extract top-level display text from the approved generation result
 shape and send that through one renderer-safe live output event so the
-conversation can show active AI text while the Run is in flight. This event is
-ephemeral UI state, not a Task Stream fact, and it carries no raw provider
-envelope, prompt, credential, source content, Git evidence, Save authority, or
-Project Revision authority. Separately, already-admitted Task Stream tool
-request/result facts have a renderer-safe activity projection: pending requests
-show as ordinary project steps, and matching fixed-code results fold the request
-into one final status row. That projection is read-only UI state and exposes no
-raw tool output, dispatch evidence, provider envelope, source content, Git
-evidence, Save authority, or Project Revision authority; tool-output streaming
-and arbitrary execution still require separate protocols.
+conversation can show active AI text while the Run is in flight. This covers
+code candidate generation, explanation, approved-plan continuation, and
+plan-first proposal text after the source-context collection has bound a trusted
+work Run. This event is ephemeral UI state, not a Task Stream fact, and it
+carries no raw provider envelope, prompt, credential, source content, plan
+record evidence, Git evidence, Save authority, or Project Revision authority.
+Separately, already-admitted Task Stream tool request/result facts have a
+renderer-safe activity projection: pending requests show as ordinary project
+steps, and matching fixed-code results fold the request into one final status
+row. That projection is read-only UI state and exposes no raw tool output,
+dispatch evidence, provider envelope, source content, Git evidence, Save
+authority, or Project Revision authority; tool-output streaming and arbitrary
+execution still require separate protocols.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
