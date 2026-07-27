@@ -189,7 +189,7 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.previewLimitation) {
       if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
-      return 'Preview may look blank Interactive code is not running here. If this draft uses JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code, the preview can look blank even when the files were generated. Review Changes or Source before saving.';
+      return 'Preview may look blank The files were generated, but interactive code is not running here. If this draft uses 3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or backend code, this preview can look blank. Review Changes or Source before saving.';
     }
     if (this.selector === SELECTORS.changesSummary) {
       return '1 file change: 1 added.';

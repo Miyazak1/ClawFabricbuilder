@@ -3413,10 +3413,11 @@ async function capturePreviewEvidence(page, gate) {
     if (
       typeof limitationText !== 'string'
       || !limitationText.includes('Preview may look blank')
-      || !limitationText.includes('Interactive code is not running here')
+      || !limitationText.includes('The files were generated')
+      || !limitationText.includes('interactive code is not running here')
+      || !limitationText.includes('3D/WebGL')
       || !limitationText.includes('JavaScript modules')
-      || !limitationText.includes('Three.js')
-      || !limitationText.includes('blank even when the files were generated')
+      || !limitationText.includes('this preview can look blank')
       || !limitationText.includes('Review Changes or Source before saving')
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
     ) fail('canary_preview_failed');
