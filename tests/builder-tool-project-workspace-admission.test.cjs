@@ -60,6 +60,42 @@ test('creates a branded main-only workspace admission derived from projects root
   assert.equal(Object.isFrozen(sanitized), true);
 });
 
+test('admits a SQLite-bound selected source folder without falling back to projects root', (t) => {
+  const { projectsRoot } = fixture(t);
+  const selectedRootRaw = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-selected-source-root-'));
+  const selectedRoot = fs.realpathSync.native(selectedRootRaw);
+  t.after(() => fs.rmSync(selectedRootRaw, { recursive: true, force: true }));
+  assert.equal(path.relative(projectsRoot, selectedRoot).startsWith('..'), true);
+  const resolverCalls = [];
+  const authority = createBuilderToolProjectWorkspaceAuthority({
+    projects_root: projectsRoot,
+    resolve_project_root(projectId) {
+      resolverCalls.push(projectId);
+      assert.equal(projectId, PROJECT_ID);
+      return selectedRoot;
+    },
+  });
+
+  const admission = authority.admit_project_workspace({
+    project_id: PROJECT_ID,
+    admitted_at_ms: 62,
+  });
+  const sanitized = sanitizeBuilderToolProjectWorkspaceAdmission(admission);
+
+  assert.deepEqual(resolverCalls, [PROJECT_ID]);
+  assert.equal(sanitized.projects_root_real_path, fs.realpathSync.native(projectsRoot));
+  assert.equal(sanitized.project_root_real_path, fs.realpathSync.native(selectedRoot));
+  assert.equal(sanitized.authority.project_root_authority, 'main_project_workspace_root_contract_v1');
+  assert.equal(sanitized.authority.path_derivation, 'sqlite_project_identity_root_path');
+  assert.equal(sanitized.authority.renderer_authority, 'not_present');
+  assert.equal(sanitized.authority.provider_dispatch, false);
+  assert.equal(sanitized.authority.filesystem_read, 'not_performed');
+  assert.notEqual(
+    sanitized.project_root_real_path,
+    path.join(fs.realpathSync.native(projectsRoot), PROJECT_UUID),
+  );
+});
+
 test('rejects cloned, drifted, missing-directory, malformed, and hostile workspace admissions', (t) => {
   const { projectsRoot } = fixture(t);
   const authority = createBuilderToolProjectWorkspaceAuthority({ projects_root: projectsRoot });

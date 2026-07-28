@@ -267,6 +267,68 @@ test('projects a verified candidate to Git main and repairs the materialized wor
   assert.equal(fs.existsSync(path.join(value.projectRoot, 'scratch-again.txt')), false);
 });
 
+test('projects a verified candidate into the selected source folder from project identity', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-current-projection-selected-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectsRoot = path.join(root, 'projects');
+  const runtimeRoot = path.join(root, 'runtime');
+  const selectedRoot = path.join(root, 'selected-source');
+  fs.mkdirSync(selectedRoot, { recursive: true });
+  assert.equal(path.relative(projectsRoot, selectedRoot).startsWith('..'), true);
+  const resolverCalls = [];
+  let now = 1_750_000_000;
+  const resolveProjectRoot = (projectId) => {
+    resolverCalls.push(projectId);
+    assert.equal(projectId, PROJECT_ID);
+    return selectedRoot;
+  };
+  const repository = createDefaultBuilderGitProjectRepository({
+    projects_root: projectsRoot,
+    runtime_root: runtimeRoot,
+    now_seconds: () => now++,
+    resolve_project_root: resolveProjectRoot,
+  });
+  const projection = createDefaultBuilderGitCurrentProjection({
+    projects_root: projectsRoot,
+    runtime_root: runtimeRoot,
+    git_repository: repository,
+    resolve_project_root: resolveProjectRoot,
+  });
+  const runner = createDefaultBuilderGitCommandRunner({ runtime_root: runtimeRoot });
+  const first = candidate({
+    index: 1,
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main>Selected source</main>\n' },
+      { operation: 'upsert', path: 'src/app.js', content: 'document.title = "Selected";\n' },
+    ],
+  });
+  const receipt = await repository.persist_candidate_commit(request(first, 1));
+  const internalProjectRoot = path.join(projectsRoot, UUID);
+  assert.equal(fs.existsSync(internalProjectRoot), false);
+  assert.equal(fs.existsSync(path.join(selectedRoot, 'index.html')), false);
+  fs.writeFileSync(path.join(selectedRoot, 'scratch.txt'), 'local drift\n');
+
+  const projected = await projection.project_current({
+    candidate_receipt: receipt,
+    projection_mode: 'base_cas',
+  });
+
+  assert.equal(projected.result_version, BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION);
+  assert.equal(projected.project_id, PROJECT_ID);
+  assert.equal(projected.commit_oid, receipt.commit_oid);
+  assert.equal(projected.main_ref, 'updated');
+  assert.equal(projected.worktree, 'materialized');
+  assert.equal(projected.worktree_file_count, 2);
+  assert.equal(fs.existsSync(internalProjectRoot), false);
+  assert.equal(fs.readFileSync(path.join(selectedRoot, 'index.html'), 'utf8'), '<main>Selected source</main>\n');
+  assert.equal(fs.readFileSync(path.join(selectedRoot, 'src', 'app.js'), 'utf8'), 'document.title = "Selected";\n');
+  assert.equal(fs.existsSync(path.join(selectedRoot, 'scratch.txt')), false);
+  const main = await runner.run('read_main_ref', selectedRoot, { object_format: 'sha1' });
+  assert.equal(main.stdout.trim(), receipt.commit_oid);
+  assert.equal(resolverCalls.every((projectId) => projectId === PROJECT_ID), true);
+  assert.equal(JSON.stringify(projected).includes(selectedRoot), false);
+});
+
 test('fails closed on main CAS conflict without releasing a false projection', async (t) => {
   const value = fixture(t);
   const first = candidate({
