@@ -46,6 +46,7 @@ import {
   BuilderDesktopPlanReviewPortError,
   createBuilderDesktopPlanReviewPort,
 } from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
+import { routeBuilderComposerIntent } from '../features/builder/application/builderComposerIntent';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
@@ -652,7 +653,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setIdea('');
     setLiveOutput(null);
     try {
-      const result = await project.submit(submittedIdea);
+      const result = routeBuilderComposerIntent(submittedIdea) === 'build'
+        ? await project.submit(submittedIdea)
+        : await project.answer(submittedIdea);
       if (workspaceEpochRef.current !== commandEpoch) return;
       if (!shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
       await readActivityAfterTerminal(result, commandEpoch);

@@ -1335,7 +1335,7 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toMatch(/builder-generation-draft:|sha256:|provider|credential/iu);
   });
 
-  it('asks a question through the submit bridge without draft, save, or revision UI', async () => {
+  it('answers a question through the chat bridge without draft, save, or revision UI', async () => {
     const { answer, container, generate, readTaskStream, saveDraft, submit } = await setup({
       answerActivity: true,
     });
@@ -1352,8 +1352,8 @@ describe('BuilderApp v2', () => {
         .toContain('This answer does not change files.');
     });
 
-    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'What does this project do?' });
-    expect(answer).not.toHaveBeenCalled();
+    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'What does this project do?' });
+    expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
@@ -1363,6 +1363,32 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('request_id');
+  });
+
+  it('keeps casual composer turns in chat without starting draft generation', async () => {
+    const { answer, container, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'hi');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+        .toContain('This answer does not change files.');
+    });
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
   it('restores a pending draft from project activity after opening a saved project', async () => {

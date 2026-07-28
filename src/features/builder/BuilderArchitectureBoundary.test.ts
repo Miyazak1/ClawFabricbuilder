@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const BUILDER_ROOT = join(process.cwd(), 'src', 'features', 'builder');
 const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'application/builderGeneration.ts',
+  'application/builderComposerIntent.ts',
   'application/builderConversationController.ts',
   'application/builderPorts.ts',
   'application/builderProjectCatalogController.ts',
