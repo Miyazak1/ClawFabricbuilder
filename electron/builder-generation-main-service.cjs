@@ -18,6 +18,9 @@ const {
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
+  createBuilderCodeChangeCandidate,
+} = require('./builder-code-change-kernel.cjs');
+const {
   createBuilderProjectSourceTree,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
@@ -33,9 +36,14 @@ const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-dra
 const GENERATE_OPERATION_PREFIX = 'generate:';
 const ANSWER_OPERATION_PREFIX = 'answer:';
 const PLAN_OPERATION_PREFIX = 'plan:';
+const RESTORE_REVISION_OPERATION_PREFIX = 'restore-revision:';
 const PROVIDER_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
 const MAX_LIVE_OUTPUT_BUFFER_BYTES = 512 * 1024;
 const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
+const RESTORE_REVISION_REQUEST_KEYS = Object.freeze([
+  'project_id',
+  'revision_receipt_digest',
+]);
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
@@ -530,7 +538,7 @@ function newId(createUuid, prefix) {
   return `${prefix}:${safeUuid(Reflect.apply(createUuid, undefined, []))}`;
 }
 
-function sanitizeReadResult(value, expectedProjectId) {
+function sanitizeReadResult(value, expectedProjectId, expectedOperation = 'current_loaded') {
   exactObject(value, [
     'result_version',
     'operation',
@@ -543,7 +551,7 @@ function sanitizeReadResult(value, expectedProjectId) {
   ]);
   if (
     valueAt(value, 'result_version') !== 'builder-project-read-result.v1'
-    || valueAt(value, 'operation') !== 'current_loaded'
+    || valueAt(value, 'operation') !== expectedOperation
   ) fail();
   const receipt = valueAt(value, 'product_revision_receipt');
   if (!isPlainObject(receipt)) fail();
@@ -567,6 +575,46 @@ function sanitizeReadResult(value, expectedProjectId) {
     },
     source_tree: sourceTree,
   });
+}
+
+function sanitizeRestoreRevisionRequest(value) {
+  exactObject(value, RESTORE_REVISION_REQUEST_KEYS);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    revision_receipt_digest: safeDigest(valueAt(value, 'revision_receipt_digest')),
+  });
+}
+
+function sourceTreePathKey(value) {
+  return value.normalize('NFKC').toUpperCase();
+}
+
+function operationsToReachSourceTree(baseSourceTree, targetSourceTree) {
+  const targetFilesByKey = new Map(
+    targetSourceTree.files.map((file) => [sourceTreePathKey(file.path), file]),
+  );
+  const baseFilesByKey = new Map(
+    baseSourceTree.files.map((file) => [sourceTreePathKey(file.path), file]),
+  );
+  const operations = [];
+  for (const file of baseSourceTree.files) {
+    if (!targetFilesByKey.has(sourceTreePathKey(file.path))) {
+      operations.push({ operation: 'delete', path: file.path, content: null });
+    }
+  }
+  for (const file of targetSourceTree.files) {
+    const base = baseFilesByKey.get(sourceTreePathKey(file.path));
+    if (
+      base === undefined
+      || base.path !== file.path
+      || base.content_digest !== file.content_digest
+    ) {
+      operations.push({ operation: 'upsert', path: file.path, content: file.content });
+    }
+  }
+  operations.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  if (operations.length === 0) fail();
+  return freezeDeep(operations);
 }
 
 function emptyBaseForBoundProject(value, expectedProjectId) {
@@ -962,7 +1010,12 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   function rejectIfOtherRouteInFlight(prefix, requestDigest) {
-    for (const otherPrefix of [GENERATE_OPERATION_PREFIX, ANSWER_OPERATION_PREFIX, PLAN_OPERATION_PREFIX]) {
+    for (const otherPrefix of [
+      GENERATE_OPERATION_PREFIX,
+      ANSWER_OPERATION_PREFIX,
+      PLAN_OPERATION_PREFIX,
+      RESTORE_REVISION_OPERATION_PREFIX,
+    ]) {
       if (otherPrefix !== prefix && inFlight.has(operationKey(otherPrefix, requestDigest))) {
         return Promise.reject(new BuilderGenerationMainServiceError());
       }
@@ -1512,6 +1565,169 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function restoreRevisionRequestDigest(request, current, target) {
+    return sha256Canonical({
+      request_version: 'builder-generation-restore-revision-request.v1',
+      project_id: request.project_id,
+      current_revision: current.base_revision,
+      target_revision: target.base_revision,
+      target_source_tree_digest: target.source_tree.source_tree_digest,
+    });
+  }
+
+  function restoreRevisionPublicRequest(request, requestDigest) {
+    return freezeDeep({
+      version: 'builder-generation-request.v2',
+      instruction: 'Restore the selected saved version.',
+      existing_project_id: request.project_id,
+      request_digest: requestDigest,
+    });
+  }
+
+  async function restoreRevisionAsDraft(rawRequest) {
+    let key = null;
+    try {
+      const request = sanitizeRestoreRevisionRequest(rawRequest);
+      const loadRevisionProject = ownMethod(options.projectReadAuthority, 'load_revision');
+      const current = sanitizeReadResult(
+        await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{
+          project_id: request.project_id,
+        }]),
+        request.project_id,
+      );
+      const target = sanitizeReadResult(
+        await Reflect.apply(loadRevisionProject, options.projectReadAuthority, [{
+          project_id: request.project_id,
+          revision_receipt_digest: request.revision_receipt_digest,
+        }]),
+        request.project_id,
+        'revision_loaded',
+      );
+      if (target.base_revision.revision_receipt_digest !== request.revision_receipt_digest) fail();
+      const operations = operationsToReachSourceTree(current.source_tree, target.source_tree);
+      const requestDigest = restoreRevisionRequestDigest(request, current, target);
+      key = operationKey(RESTORE_REVISION_OPERATION_PREFIX, requestDigest);
+      if (inFlight.has(key)) return inFlight.get(key);
+      const routeConflict = rejectIfOtherRouteInFlight(
+        RESTORE_REVISION_OPERATION_PREFIX,
+        requestDigest,
+      );
+      if (routeConflict) return routeConflict;
+      const publicRequest = restoreRevisionPublicRequest(request, requestDigest);
+      const operation = (async () => {
+        let conversationContext = Reflect.apply(
+          beginConversationWork,
+          options.conversationService,
+          [{
+            project_id: request.project_id,
+            instruction: publicRequest.instruction,
+            request_digest: requestDigest,
+            base_revision: current.base_revision,
+          }],
+        );
+        activeContexts.set(key, conversationContext);
+        conversationContext = Reflect.apply(
+          recordConversationRunProgress,
+          options.conversationService,
+          [{ context: conversationContext, stage: 'context_ready' }],
+        );
+        activeContexts.set(key, conversationContext);
+        liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
+
+        const candidate = createBuilderCodeChangeCandidate({
+          conversation_events: conversationContext.events,
+          turn_id: conversationContext.ids.turn_id,
+          run_id: conversationContext.ids.run_id,
+          base_revision_evidence: current.base_revision_evidence,
+          base_source_tree: current.source_tree,
+          operations,
+        });
+        const gitRequestId = newId(options.createUuid, 'builder-git-request');
+        const draftId = `builder-generation-draft:${sha256Canonical({
+          draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
+          request_id: requestDigest,
+          candidate_id: candidate.candidate_id,
+          candidate_digest: candidate.candidate_digest,
+          run_id: candidate.run_id,
+          restore_revision_receipt_digest: request.revision_receipt_digest,
+        }).slice('sha256:'.length)}`;
+        const gitCandidateReceipt = await Reflect.apply(
+          persistCandidateCommit,
+          options.gitAuthority,
+          [{
+            request_id: gitRequestId,
+            expected_base_oid: candidate.base_revision_evidence === null
+              ? null
+              : candidate.base_revision_evidence.commit_oid,
+            candidate,
+          }],
+        );
+        const gitVerificationReceipt = await Reflect.apply(
+          verifyCandidateReceipt,
+          options.gitAuthority,
+          [gitCandidateReceipt],
+        );
+        const receiptPair = sanitizeBuilderGitCandidateReceiptPair(
+          gitCandidateReceipt,
+          gitVerificationReceipt,
+        );
+        const title = 'Restored saved version';
+        const summary = 'Review this restored draft before saving it as a new version.';
+        const recorded = Reflect.apply(
+          completeConversationCandidate,
+          options.conversationService,
+          [{
+            context: conversationContext,
+            candidate_result: {
+              draft_id: draftId,
+              title,
+              summary,
+              git_candidate_receipt: receiptPair.candidate_receipt,
+            },
+            assistant_text: summary,
+          }],
+        );
+        const stored = freezeDeep({
+          version: BUILDER_GENERATION_RESULT_PROTOCOL,
+          request_id: requestDigest,
+          title,
+          summary,
+          admissions: {
+            conversation: 'sqlite_recorded',
+            draft: 'candidate_not_saved',
+            save: 'not_performed',
+            preview: 'not_evaluated',
+            execution: 'not_evaluated',
+          },
+          candidate,
+          candidate_proof: {
+            ...candidateProofFromCandidate(candidate),
+            git_request_id: gitRequestId,
+          },
+          draft_id: draftId,
+          request: publicRequest,
+          git_request_id: gitRequestId,
+          conversation_head: recorded.head,
+          restart_restore: 'not_persisted',
+        });
+        pendingDrafts.set(draftId, stored);
+        return publicDraftResult(stored);
+      })().catch((error) => {
+        if (key !== null) recordFailure(key, error);
+        if (error instanceof BuilderGenerationMainServiceError) throw error;
+        throw new BuilderGenerationMainServiceError();
+      }).finally(() => {
+        activeContexts.delete(key);
+        if (inFlight.get(key) === operation) inFlight.delete(key);
+      });
+      inFlight.set(key, operation);
+      return operation;
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
+  }
+
   function startGenerate(request, retryableContext) {
     const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
@@ -1979,6 +2195,7 @@ function createBuilderGenerationMainService(rawOptions) {
     cancel,
     steer,
     availability: host.availability,
+    restore_revision_as_draft: restoreRevisionAsDraft,
     restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
     release_pending_draft: releasePendingDraft,
@@ -1991,6 +2208,7 @@ function createBuilderGenerationMainService(rawOptions) {
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
+      history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,
       electron_registration: false,

@@ -770,6 +770,26 @@ function readResult(sourceTree = createBuilderProjectSourceTree({
   };
 }
 
+function revisionReadResult({
+  sourceTree,
+  revisionDigest = `sha256:${'3'.repeat(64)}`,
+  commitOid = '4'.repeat(40),
+} = {}) {
+  const base = readResult(sourceTree ?? createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const restored = true;\n' }],
+  }));
+  return {
+    ...base,
+    operation: 'revision_loaded',
+    product_revision_receipt: {
+      ...base.product_revision_receipt,
+      revision_receipt_digest: revisionDigest,
+      commit_oid: commitOid,
+      resulting_tree_digest: base.source_tree.source_tree_digest,
+    },
+  };
+}
+
 function repositories(overrides = {}) {
   let generation = 0;
   const providerConfigRepository = {
@@ -866,6 +886,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
     approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
     plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
+    history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
     run_steering: 'request_id_only_main_conversation_fact',
     credential_exposed_to_renderer: false,
     electron_registration: false,
@@ -945,6 +966,133 @@ test('generates first draft for a bound local project before any saved revision 
     JSON.stringify(result),
     /provider_config|provider_secret|credential_secret|credential_value|secret_ref|provider\.example|builder-model|git_candidate_receipt|operations|conversation_events|private-main-service-marker/iu,
   );
+});
+
+test('restores a saved revision as a new unsaved Git candidate without provider dispatch', async () => {
+  const currentSourceTree = createBuilderProjectSourceTree({
+    files: [
+      { path: 'index.html', content: '<main>Current</main>\n' },
+      { path: 'src/old.js', content: 'export const old = true;\n' },
+      { path: 'src/theme.css', content: 'body { color: black; }\n' },
+    ],
+  });
+  const targetSourceTree = createBuilderProjectSourceTree({
+    files: [
+      { path: 'index.html', content: '<main>Restored</main>\n' },
+      { path: 'README.md', content: '# Restored version\n' },
+      { path: 'src/theme.css', content: 'body { color: black; }\n' },
+    ],
+  });
+  const targetDigest = `sha256:${'3'.repeat(64)}`;
+  const currentReads = [];
+  const revisionReads = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(query) {
+          currentReads.push(query);
+          return readResult(currentSourceTree);
+        },
+        load_revision(query) {
+          revisionReads.push(query);
+          return revisionReadResult({
+            sourceTree: targetSourceTree,
+            revisionDigest: targetDigest,
+          });
+        },
+      },
+    }),
+    transport: async () => {
+      throw new Error('restore must not dispatch provider transport');
+    },
+  });
+
+  const result = await service.restore_revision_as_draft({
+    project_id: PROJECT_ID,
+    revision_receipt_digest: targetDigest,
+  });
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.title, 'Restored saved version');
+  assert.equal(result.summary, 'Review this restored draft before saving it as a new version.');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, PROJECT_ID);
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.equal(result.restart_restore, 'not_persisted');
+  assert.equal(result.source_tree.source_tree_digest, targetSourceTree.source_tree_digest);
+  assert.deepEqual(
+    result.source_tree.files.map((file) => file.path),
+    ['README.md', 'index.html', 'src/theme.css'],
+  );
+  assert.equal(result.base_revision_evidence.source_tree_digest, currentSourceTree.source_tree_digest);
+  assert.deepEqual(currentReads, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(revisionReads, [{
+    project_id: PROJECT_ID,
+    revision_receipt_digest: targetDigest,
+  }]);
+  assert.deepEqual(lifecycle.calls.begin.map((call) => call.instruction), [
+    'Restore the selected saved version.',
+  ]);
+  assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
+    'context_ready',
+  ]);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 3);
+  assert.equal(
+    lifecycle.calls.candidate[0].candidate_result.git_candidate_receipt.request_id,
+    git.receipts[0].request_id,
+  );
+  assert.equal(git.receipts.length, 1);
+  assert.equal(git.receipts[0].project_id, PROJECT_ID);
+  assert.equal(git.receipts[0].expected_base_oid, '2'.repeat(40));
+  assert.equal(git.receipts[0].resulting_tree_digest, targetSourceTree.source_tree_digest);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /git_candidate_receipt|verification_receipt|provider|credential|operations|src\/old\.js/iu,
+  );
+});
+
+test('does not create a restore candidate when the saved revision matches current source', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Same</main>\n' }],
+  });
+  const targetDigest = `sha256:${'3'.repeat(64)}`;
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(sourceTree); },
+        load_revision() {
+          return revisionReadResult({
+            sourceTree,
+            revisionDigest: targetDigest,
+          });
+        },
+      },
+    }),
+    transport: async () => {
+      throw new Error('restore must not dispatch provider transport');
+    },
+  });
+
+  await assert.rejects(
+    service.restore_revision_as_draft({
+      project_id: PROJECT_ID,
+      revision_receipt_digest: targetDigest,
+    }),
+    { code: 'builder_generation_service_unavailable' },
+  );
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(git.receipts.length, 0);
 });
 
 test('observes display-safe provider output deltas through a redacted main-only envelope', async () => {
@@ -2651,7 +2799,7 @@ test('does not register Electron, save, old revision, or expose provider credent
     /require\(['"]electron['"]\)/u,
     /ipcMain|ipcRenderer|contextBridge|BrowserWindow/u,
     /safeStorage|write_current|publish\(/u,
-    /builder-project-revision|projectRevisionRepository|load_revision|revision_digest/u,
+    /builder-project-revision|projectRevisionRepository/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
   ]) assert.doesNotMatch(source, forbidden);
 });
