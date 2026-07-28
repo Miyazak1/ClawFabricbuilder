@@ -643,6 +643,34 @@ canary scope.
   `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-current-1785249868603.png`
   as local visual evidence only.
 
+## 2026-07-28 Main-Owned Chinese Submit Routing Check
+
+This addendum records focused Electron main-service evidence for checkpoint
+`89092ce`. It closes the gap between the renderer composer router and the
+main-owned `submit` route. It is desktop package evidence only; it does not
+extend installer evidence, code-signing status, mobile evidence, arbitrary
+runtime/tool-execution readiness, or the prior real-provider DeepSeek canary
+scope.
+
+- Main-owned submit routing now treats how-to/explanation phrasing as chat even
+  when the text mentions editing words. A request such as `怎么把按钮改红？` goes
+  through the explanation path, creates no Git candidate, no draft, no Save, and
+  no Project Revision, even without an existing project.
+- Clear Chinese edit phrasing such as `把按钮颜色改红` is recognized as work
+  intent by main-owned routing. The product controller and desktop app still
+  enforce the local project/source-folder gate before ordinary users can reach
+  build work from the UI.
+- Focused Electron validation passed through
+  `node --test tests\builder-generation-main-service.test.cjs`; the command
+  reported 28 passing subtests.
+- Adjacent generation IPC validation passed through
+  `node --test tests\builder-generation-ipc-runtime.test.cjs tests\builder-generation-ipc-adapter.test.cjs`;
+  the command reported 31 passing subtests.
+- `npm.cmd run lint` and `npm.cmd run pack` passed for the same source tree.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 751 ASAR entries.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
