@@ -20,7 +20,7 @@ const BRIDGE_KEYS = Object.freeze([
   'listHistory',
 ]);
 const OPEN_REQUEST_KEYS = Object.freeze(['project_id']);
-const CREATE_LOCAL_PROJECT_REQUEST_KEYS = Object.freeze(['project_title']);
+const CREATE_LOCAL_PROJECT_REQUEST_KEYS = Object.freeze(['project_id', 'project_title']);
 const SAVE_DRAFT_REQUEST_KEYS = Object.freeze(['draft_id']);
 const LOAD_REVISION_REQUEST_KEYS = Object.freeze(['project_id', 'revision_receipt_digest']);
 const LIST_HISTORY_REQUEST_KEYS = Object.freeze(['project_id', 'limit']);
@@ -200,7 +200,7 @@ export function createBuilderDesktopProjectWorkspacePort(
     open(request: Readonly<{ project_id: string | null }>) {
       return call(bridge, bridge.open, [requestFields(request, OPEN_REQUEST_KEYS)]);
     },
-    createLocalProject(request: Readonly<{ project_title: string }>) {
+    createLocalProject(request: Readonly<{ project_id: string | null; project_title: string }>) {
       return call(bridge, bridge.createLocalProject, [requestFields(request, CREATE_LOCAL_PROJECT_REQUEST_KEYS)]);
     },
     saveDraft(request: Readonly<{ draft_id: string }>) {

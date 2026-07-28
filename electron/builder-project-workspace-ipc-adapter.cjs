@@ -206,8 +206,11 @@ function openProjectRequest(value) {
 }
 
 function createLocalProjectRequest(value) {
-  const source = exactPayload(value, ['project_title']);
-  return Object.freeze({ project_title: safeProjectTitle(source.project_title) });
+  const source = exactPayload(value, ['project_id', 'project_title']);
+  return Object.freeze({
+    project_id: safeProjectId(source.project_id, true),
+    project_title: safeProjectTitle(source.project_title),
+  });
 }
 
 function saveDraftRequest(value) {

@@ -30,9 +30,10 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     } as unknown as Readonly<{ project_id: null }>;
     const openResult = await port.open(openRequest);
     const createRequest = {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
       project_title: 'Focus timer',
       project_root_path: 'renderer-forged',
-    } as unknown as Readonly<{ project_title: string }>;
+    } as unknown as Readonly<{ project_id: string; project_title: string }>;
     const createLocalProjectResult = await port.createLocalProject(createRequest);
     const saveRequest = {
       draft_id: `builder-generation-draft:${'1'.repeat(64)}`,
@@ -64,7 +65,10 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(open.mock.calls[0][0]).toEqual({ project_id: null });
     expect(open.mock.calls[0][0]).not.toBe(openRequest);
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'Focus timer' });
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      project_title: 'Focus timer',
+    });
     expect(createLocalProject.mock.calls[0][0]).not.toBe(createRequest);
     expect(saveDraft).toHaveBeenCalledOnce();
     expect(saveDraft.mock.calls[0][0]).toEqual({

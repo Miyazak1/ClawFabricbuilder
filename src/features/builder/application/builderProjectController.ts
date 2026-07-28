@@ -657,10 +657,12 @@ export function createBuilderProjectController(
   ): Promise<string | null> {
     const existingProjectId = retained?.target.project_id ?? current.workingProjectId;
     if (existingProjectId !== null) return existingProjectId;
+    const logicalProjectId = current.answer?.project_id ?? null;
     publish(snapshot('opening', retained, null, preview, null));
     try {
       const workingProject = sanitizeOptionalLocalProjectSelection(
         await dependencies.workspace.createLocalProject({
+          project_id: logicalProjectId,
           project_title: DEFAULT_WORKING_PROJECT_TITLE,
         }),
       );
@@ -738,10 +740,12 @@ export function createBuilderProjectController(
     inFlight = null;
     activeGeneration = null;
     retryableGeneration = null;
+    const logicalProjectId = current.answer?.project_id ?? null;
     return run(async (operationEpoch) => {
       publish(snapshot('opening', null, null, null, null));
       try {
         const workingProject = sanitizeLocalProject(await dependencies.workspace.createLocalProject({
+          project_id: logicalProjectId,
           project_title: safeProjectTitleInput(projectTitle),
         }));
         if (disposed || operationEpoch !== epoch) return current;

@@ -213,12 +213,30 @@ function safePublicWorkspaceText(value, maximum) {
 }
 
 function createLocalProjectRequest(rawRequest) {
+  const projectId = exactDataValue(rawRequest, ['project_id', 'project_title'], 'project_id');
+  if (projectId !== null && (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId))) fail();
   return Object.freeze({
+    project_id: projectId,
     project_title: safePublicWorkspaceText(
-      exactDataValue(rawRequest, ['project_title'], 'project_title'),
+      exactDataValue(rawRequest, ['project_id', 'project_title'], 'project_title'),
       80,
     ),
   });
+}
+
+function verifiedProjectIdentityId(value, expectedProjectId) {
+  if (!isPlainObject(value)) fail();
+  const operation = Object.getOwnPropertyDescriptor(value, 'operation');
+  const project = Object.getOwnPropertyDescriptor(value, 'project');
+  if (
+    !operation
+    || operation.value !== 'project_identity_loaded'
+    || !project
+    || !isPlainObject(project.value)
+  ) fail();
+  const projectId = Object.getOwnPropertyDescriptor(project.value, 'project_id');
+  if (!projectId || projectId.value !== expectedProjectId) fail();
+  return expectedProjectId;
 }
 
 function planSourceReadApprovalProjectId(rawRequest) {
@@ -941,7 +959,20 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
           project_id: null,
         });
       }
-      const projectId = `builder-project:${randomUUID()}`;
+      const projectId = request.project_id ?? `builder-project:${randomUUID()}`;
+      if (request.project_id !== null) {
+        try {
+          verifiedProjectIdentityId(
+            await projectMainAuthority.metadata_authority.load_project_identity({
+              project_id: request.project_id,
+            }),
+            request.project_id,
+          );
+        } catch (error) {
+          if (operationEpoch === selectionEpoch) selectionPending = false;
+          throw error;
+        }
+      }
       const boundAtMs = Date.now();
       let result;
       try {

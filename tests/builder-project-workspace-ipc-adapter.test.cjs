@@ -106,6 +106,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
     draft_id: DRAFT_ID,
   });
   const created = await value.channels.createLocalProject.invoke(authority.event, {
+    project_id: null,
     project_title: 'Focus timer',
   });
   const loaded = await value.channels.loadCurrent.invoke(authority.event, {
@@ -130,7 +131,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   assert.deepEqual(calls, [
     ['open', { project_id: null }],
     ['save', { draft_id: DRAFT_ID }],
-    ['createLocalProject', { project_title: 'Focus timer' }],
+    ['createLocalProject', { project_id: null, project_title: 'Focus timer' }],
     ['load', { project_id: PROJECT_ID }],
     ['revision', { project_id: PROJECT_ID, revision_receipt_digest: REVISION_DIGEST }],
     ['list'],
@@ -192,11 +193,20 @@ test('workspace adapter rejects forged request fields before authority calls', a
       source_tree: { files: [] },
     }),
     () => value.channels.createLocalProject.invoke(authority.event, {
+      project_id: null,
       project_title: 'Focus timer',
       project_root_path: 'renderer-forged',
     }),
     () => value.channels.createLocalProject.invoke(authority.event, {
+      project_id: null,
       project_title: '',
+    }),
+    () => value.channels.createLocalProject.invoke(authority.event, {
+      project_title: 'Focus timer',
+    }),
+    () => value.channels.createLocalProject.invoke(authority.event, {
+      project_id: 'not-a-builder-project',
+      project_title: 'Focus timer',
     }),
     () => value.channels.open.invoke(authority.event, {
       project_id: 'not-a-builder-project',

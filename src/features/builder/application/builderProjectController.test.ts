@@ -267,7 +267,10 @@ describe('Builder project controller v2', () => {
     const { controller, createLocalProject, generate, loadCurrent, saveDraft } = setup();
     const result = await controller.generate('Make a timer.');
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'New project' });
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: null,
+      project_title: 'New project',
+    });
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(loadCurrent).not.toHaveBeenCalled();
@@ -282,7 +285,10 @@ describe('Builder project controller v2', () => {
     const { controller, createLocalProject, saveDraft, submit } = setup();
     const result = await controller.submit('Make a timer.');
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'New project' });
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: null,
+      project_title: 'New project',
+    });
     expect(submit).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('submit_failed');
@@ -304,7 +310,10 @@ describe('Builder project controller v2', () => {
 
     const result = await controller.submit('Make a timer.');
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'New project' });
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: null,
+      project_title: 'New project',
+    });
     expect(submit.mock.calls[0][0]).toMatchObject({
       instruction: 'Make a timer.',
       existing_project_id: PROJECT_ID,
@@ -433,6 +442,29 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
     expect(result.savedProject).toBeNull();
     expect(JSON.stringify(result)).not.toContain('request_id');
+  });
+
+  it('binds a selected source folder to the answered logical project instead of forking it', async () => {
+    const { controller, createLocalProject } = setup({
+      createLocalProject: async (request) => createLocalProjectSelection({
+        projectId: request.project_id ?? PROJECT_ID,
+        title: request.project_title,
+      }),
+    });
+    const answered = await controller.answer('hi');
+    expect(answered.answer?.project_id).toBe(PROJECT_ID);
+
+    const result = await controller.createLocalProject('Focus timer');
+
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      project_title: 'Focus timer',
+    });
+    expect(result.status).toBe('ready');
+    expect(result.workingProjectId).toBe(PROJECT_ID);
+    expect(result.workingProject?.project_id).toBe(PROJECT_ID);
+    expect(result.savedProject).toBeNull();
+    expect(result.draft).toBeNull();
   });
 
   it('submits one composer turn that can produce an unsaved draft', async () => {

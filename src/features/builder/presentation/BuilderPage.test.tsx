@@ -72,7 +72,7 @@ function render(element: ReactNode): HTMLDivElement {
   return container;
 }
 
-async function createLocalProjectSelectionCancelled(request: Readonly<{ project_title: string }>) {
+async function createLocalProjectSelectionCancelled(request: Readonly<{ project_id: string | null; project_title: string }>) {
   void request;
   return {
     result_version: 'builder-project-selection-result.v1',

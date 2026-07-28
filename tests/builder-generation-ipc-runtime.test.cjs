@@ -438,7 +438,48 @@ function runtimeWithService(service, probes = {}) {
                 append_conversation_events() {},
                 load_conversation() {},
                 load_conversation_candidate_by_draft() {},
-                load_project_identity() {},
+                load_project_identity(body) {
+                  probes.loadProjectIdentityRequests ??= [];
+                  probes.loadProjectIdentityRequests.push({ project_id: body.project_id });
+                  if (typeof probes.loadProjectIdentity === 'function') return probes.loadProjectIdentity(body);
+                  context.__identityProjectId = body.project_id;
+                  return vm.runInContext(`({
+                    result_version: "builder-product-metadata-result.v1",
+                    operation: "project_identity_loaded",
+                    project: {
+                      project_id: __identityProjectId,
+                      created_at_ms: 1,
+                      current_revision_receipt_digest: null,
+                      current_revision_number: 0
+                    }
+                  })`, context);
+                },
+                bind_project_workspace(body) {
+                  probes.bindProjectWorkspaceRequests ??= [];
+                  probes.bindProjectWorkspaceRequests.push({
+                    project_id: body.project_id,
+                    project_title: body.project_title,
+                    project_root_path: body.project_root_path,
+                    source_folder_name: body.source_folder_name,
+                  });
+                  if (typeof probes.bindProjectWorkspace === 'function') return probes.bindProjectWorkspace(body);
+                  context.__workspaceProjectId = body.project_id;
+                  context.__workspaceTitle = body.project_title;
+                  context.__workspaceRoot = body.project_root_path;
+                  context.__workspaceFolder = body.source_folder_name;
+                  return vm.runInContext(`({
+                    result_version: "builder-product-metadata-result.v1",
+                    operation: "project_workspace_bound",
+                    workspace: {
+                      project_id: __workspaceProjectId,
+                      project_title: __workspaceTitle,
+                      project_root_path: __workspaceRoot,
+                      source_folders: [{ name: __workspaceFolder, status: "selected" }],
+                      bound_at_ms: 1,
+                      binding_status: "bound"
+                    }
+                  })`, context);
+                },
                 record_project_revision_receipt() {},
               },
               project_read_authority: {
@@ -511,6 +552,7 @@ function runtimeWithService(service, probes = {}) {
       };
       context.__mainWindow = options.mainWindow;
       context.__userDataPath = options.userDataPath;
+      context.__showOpenDialog = options.showOpenDialog;
       context.__grantPermissionForExplicitApproval = options.grantPermissionForExplicitApproval ?? (async () => ({
         result_version: 'builder-permission-grant-result.v1',
         project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
@@ -523,6 +565,7 @@ function runtimeWithService(service, probes = {}) {
         grantPermissionForExplicitApproval: __grantPermissionForExplicitApproval,
         ipcMain: __ipcMain,
         mainWindowRef: () => __mainWindow,
+        ...(typeof __showOpenDialog === "function" ? { showOpenDialog: __showOpenDialog } : {}),
         userDataPath: __userDataPath,
       })`, context);
     },
@@ -617,13 +660,16 @@ test('binds one selected empty folder as the main-owned local project workspace'
 
   const selected = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)(
     { sender: mainWindow.webContents },
-    { project_title: 'Focus timer' },
+    { project_id: null, project_title: 'Focus timer' },
   );
   assert.equal(selected.result_version, 'builder-project-selection-result.v1');
   assert.equal(selected.operation, 'local_project_bound');
   assert.match(selected.project_id, /^builder-project:/u);
   assert.equal(selected.project_title, 'Focus timer');
-  assert.deepEqual(selected.source_folders, [{
+  assert.deepEqual(Array.from(selected.source_folders, (folder) => ({
+    name: folder.name,
+    status: folder.status,
+  })), [{
     name: path.basename(selectedProjectRootPath),
     status: 'selected',
   }]);
@@ -652,6 +698,69 @@ test('binds one selected empty folder as the main-owned local project workspace'
   assert.equal(identity.project.current_revision_receipt_digest, null);
   assert.equal(identity.project.current_revision_number, 0);
   metadata.close();
+});
+
+test('binds source folders to an existing logical project identity over workspace IPC', async (t) => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-existing-logical-project-'));
+  const selectedProjectRootPath = fs.realpathSync.native(projectRoot);
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const probes = {};
+  const runtimeModule = runtimeWithService({
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const dialogCalls = [];
+  runtimeModule.context.__selectedProjectRootPath = selectedProjectRootPath;
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+    showOpenDialog: async (windowRef, dialogOptions) => {
+      dialogCalls.push({ windowRef, dialogOptions });
+      return vm.runInContext(
+        '({ canceled: false, filePaths: [__selectedProjectRootPath] })',
+        runtimeModule.context,
+      );
+    },
+  });
+  runtime.register();
+
+  const selected = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(
+      `({ project_id: ${JSON.stringify(PROJECT_ID)}, project_title: "Focus timer" })`,
+      runtimeModule.context,
+    ),
+  );
+
+  assert.equal(selected.result_version, 'builder-project-selection-result.v1');
+  assert.equal(selected.operation, 'local_project_bound');
+  assert.equal(selected.project_id, PROJECT_ID);
+  assert.equal(selected.project_title, 'Focus timer');
+  assert.deepEqual(Array.from(selected.source_folders, (folder) => ({
+    name: folder.name,
+    status: folder.status,
+  })), [{
+    name: path.basename(selectedProjectRootPath),
+    status: 'selected',
+  }]);
+  assert.equal(JSON.stringify(selected).includes(selectedProjectRootPath), false);
+  assert.deepEqual(probes.loadProjectIdentityRequests, [{ project_id: PROJECT_ID }]);
+  assert.equal(probes.bindProjectWorkspaceRequests.length, 1);
+  assert.deepEqual(probes.bindProjectWorkspaceRequests[0], {
+    project_id: PROJECT_ID,
+    project_title: 'Focus timer',
+    project_root_path: selectedProjectRootPath,
+    source_folder_name: path.basename(selectedProjectRootPath),
+  });
+  assert.equal(dialogCalls.length, 1);
+  assert.deepEqual([...dialogCalls[0].dialogOptions.properties], ['openDirectory', 'createDirectory']);
+  assert.equal(runtime.dispose(), true);
 });
 
 test('keeps active-renderer and request validation inside the controlled adapter', async (t) => {

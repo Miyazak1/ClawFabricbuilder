@@ -174,7 +174,7 @@ async function renderHook(
   };
   const workspace = {
     open,
-    createLocalProject: async (request: Readonly<{ project_title: string }>) => {
+    createLocalProject: async (request: Readonly<{ project_id: string | null; project_title: string }>) => {
       void request;
       return {
         result_version: 'builder-project-selection-result.v1',

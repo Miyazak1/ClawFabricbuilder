@@ -406,12 +406,20 @@ async function setup(options: Readonly<{
       }
       : readWire;
   });
-  const createLocalProject = vi.fn(async (request: Readonly<{ project_title: string }>) => {
-    void request;
+  const createLocalProject = vi.fn(async (request: Readonly<{ project_id: string | null; project_title: string }>) => {
+    const projectId = request.project_id ?? PROJECT_ID;
+    selectedProjectId = projectId;
     return {
       result_version: 'builder-project-selection-result.v1',
-      operation: 'new_selected',
-      project_id: null,
+      operation: 'local_project_bound',
+      project_id: projectId,
+      project_title: request.project_title,
+      source_folders: [
+        {
+          name: 'focus-timer',
+          status: 'selected',
+        },
+      ],
     };
   });
   const listCurrent = vi.fn(async () => (
@@ -811,7 +819,87 @@ describe('BuilderApp v2', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'New project' });
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: null,
+      project_title: 'New project',
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+  });
+
+  it('keeps chat-first project identity when a later build turn binds source folders', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, 'hi');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    await waitFor(() => {
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')).not.toBeNull();
+    });
+
+    const buildTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(buildTextarea).not.toBeNull();
+    act(() => {
+      if (buildTextarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(buildTextarea, 'Make a timer.');
+        buildTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        buildTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    await waitFor(() => {
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
+        .toBe('Make a timer.');
+    });
+    const send = container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]');
+    expect(send?.disabled).toBe(false);
+    act(() => send?.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(answer).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Choose or create a project before I build.');
+    });
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+
+    click(container, '[data-builder-workspace-new-project="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
+        .toContain('Source folders');
+    });
+    click(container, '[data-builder-add-source-folder="true"]');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      project_title: 'New project',
+    });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
