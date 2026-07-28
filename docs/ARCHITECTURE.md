@@ -178,6 +178,13 @@ Review state before any replacement Run or provider dispatch. Preparing the
 admission itself starts no Run, releases no prior candidate, dispatches no
 provider/tool, exposes no source, creates no Git evidence, accepts no Review,
 saves no Project Revision, and has no IPC/preload/renderer authority.
+After that admission, Generation main can prepare a separate main-only pending
+candidate base from verified Git candidate evidence. That base may contain the
+verified source tree and parent candidate commit/tree OIDs for the future
+draft-to-draft generator, but it is explicitly not a Project Revision, Save
+receipt, or renderer-safe payload. Preparing it still starts no Run, dispatches
+no provider/tool, performs no source mutation, creates no new Git candidate, and
+opens no IPC/preload/renderer command.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

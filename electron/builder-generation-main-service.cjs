@@ -34,6 +34,10 @@ const {
   createBuilderDraftContinuationAdmission,
   sanitizeBuilderDraftContinuationAdmission,
 } = require('./builder-draft-continuation-admission.cjs');
+const {
+  createBuilderDraftContinuationBase,
+  sanitizeBuilderDraftContinuationBase,
+} = require('./builder-draft-continuation-base.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
@@ -2155,6 +2159,65 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function assertConversationDraftMatchesPending(conversationDraft, draft) {
+    if (
+      conversationDraft.title !== draft.title
+      || conversationDraft.summary !== draft.summary
+      || conversationDraft.conversation_head.sequence !== draft.conversation_head.sequence
+      || conversationDraft.conversation_head.event_id !== draft.conversation_head.event_id
+      || conversationDraft.conversation_head.event_digest !== draft.conversation_head.event_digest
+      || conversationDraft.git_candidate_receipt.request_id !== draft.git_request_id
+      || conversationDraft.candidate_proof.git_request_id !== draft.git_request_id
+      || conversationDraft.candidate_proof.project_id !== draft.candidate_proof.project_id
+      || conversationDraft.candidate_proof.conversation_id !== draft.candidate_proof.conversation_id
+      || conversationDraft.candidate_proof.turn_id !== draft.candidate_proof.turn_id
+      || conversationDraft.candidate_proof.task_id !== draft.candidate_proof.task_id
+      || conversationDraft.candidate_proof.run_id !== draft.candidate_proof.run_id
+      || conversationDraft.candidate_proof.candidate_id !== draft.candidate_proof.candidate_id
+      || conversationDraft.candidate_proof.candidate_digest !== draft.candidate_proof.candidate_digest
+      || conversationDraft.candidate_proof.resulting_tree_digest !== draft.candidate_proof.resulting_tree_digest
+      || conversationDraft.candidate_proof.expected_base_oid !== draft.candidate_proof.expected_base_oid
+      || canonicalJson(conversationDraft.candidate_proof.base_revision)
+        !== canonicalJson(draft.candidate_proof.base_revision)
+    ) fail();
+  }
+
+  async function prepareDraftContinuationBase(rawRequest) {
+    try {
+      exactObject(rawRequest, ['draft_id']);
+      const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
+      const draft = await loadPendingDraftById(draftId);
+      const conversationDraft = sanitizeConversationDraft(
+        Reflect.apply(
+          readConversationCandidateDraft,
+          options.conversationService,
+          [{ draft_id: draftId }],
+        ),
+        draftId,
+      );
+      assertConversationDraftMatchesPending(conversationDraft, draft);
+      const verifiedRead = await Reflect.apply(
+        readVerifiedCandidate,
+        options.gitAuthority,
+        [conversationDraft.git_candidate_receipt],
+      );
+      sanitizeVerifiedCandidateRead(verifiedRead, conversationDraft.git_candidate_receipt);
+      return sanitizeBuilderDraftContinuationBase(
+        createBuilderDraftContinuationBase({
+          admission: createBuilderDraftContinuationAdmission({
+            pending_draft: pendingDraftResult(draft),
+            continuation_id: newId(options.createUuid, 'builder-draft-continuation'),
+            admitted_at_ms: safeTimestamp(Date.now()),
+          }),
+          verified_candidate: verifiedRead,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
+  }
+
   function releasePendingDraft(rawRequest) {
     try {
       exactObject(rawRequest, ['draft_id', 'candidate_digest']);
@@ -2221,6 +2284,7 @@ function createBuilderGenerationMainService(rawOptions) {
     restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
     prepare_draft_continuation: prepareDraftContinuation,
+    prepare_draft_continuation_base: prepareDraftContinuationBase,
     release_pending_draft: releasePendingDraft,
     reject_draft: rejectDraft,
     authority: Object.freeze({
@@ -2232,6 +2296,7 @@ function createBuilderGenerationMainService(rawOptions) {
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
       draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
+      draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,

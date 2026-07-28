@@ -541,8 +541,15 @@ Evidence requirements:
   use. Preparing this admission starts no replacement Run, releases no prior
   candidate, dispatches no provider or tool, exposes no source tree or source
   text, mutates no Git or SQLite Project Revision fact, accepts no Review, and
-  opens no IPC/preload/renderer command. The next slice must consume this
-  admission inside a main-only draft-to-draft generation service before any
+  opens no IPC/preload/renderer command. Generation main service can also
+  prepare a separate pending-candidate base from verified Git candidate
+  evidence: it can read the verified source tree and parent candidate
+  commit/tree OIDs for future draft-to-draft generation, while explicitly
+  marking that base as not a Project Revision, not a Save receipt, and not a
+  renderer-safe payload. Preparing that base still starts no replacement Run,
+  dispatches no provider/tool, mutates no source, and creates no new Git
+  candidate. The next slice must add the Conversation head/pending Review
+  revalidation and main-only draft-to-draft generation service before any
   visible composer affordance is enabled;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
