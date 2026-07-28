@@ -741,6 +741,29 @@ general-purpose coding-agent tool execution readiness.
   unchanged, two accepted saved revisions, pending continuation draft distinct
   from Version 2, and redacted DeepSeek endpoint/model digests only.
 
+## 2026-07-28 Current Installer Refresh Check
+
+This addendum records installer evidence after refreshing the Windows NSIS
+installer from current HEAD `29cbb91`. It extends local desktop installer
+evidence only; it does not extend code-signing status, mobile evidence,
+arbitrary runtime/tool-execution readiness, generated-code execution, or
+external-network permissions inside generated projects.
+
+- `npm.cmd run dist` passed. The command rebuilt the production renderer,
+  packaged `release\win-unpacked`, built
+  `release\ClawFabric Builder Setup 0.1.0.exe`, built its blockmap, and ran
+  `verify:package`.
+- Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 751 ASAR entries.
+- The installer was exercised in a guarded temporary install directory. The
+  installed tree contained all 487 files from `release\win-unpacked` with
+  matching byte sizes and SHA-256 digests.
+- The only installer-added file in the guarded install directory was
+  `Uninstall ClawFabric Builder.exe`.
+- The official uninstaller was run in silent mode and removed the installed
+  executable; the guarded install directory was empty afterward.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
