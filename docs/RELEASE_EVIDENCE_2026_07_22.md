@@ -944,6 +944,35 @@ or external-network permissions inside generated projects.
   default app profile locations on this machine did not contain a saved
   provider profile/key during the refresh.
 
+## 2026-07-29 DeepSeek V4 Model Preset Choice Check
+
+This addendum records focused desktop evidence after the provider settings
+surface made the DeepSeek V4 model choice explicit. It extends local desktop
+UI evidence only; it does not extend the prior real-provider DeepSeek canary,
+installer evidence, code-signing status, mobile evidence, generated-code
+execution, arbitrary runtime/tool execution, or external-network permissions
+inside generated projects.
+
+- The provider settings UI now offers separate `Use V4 Flash` and `Use V4 Pro`
+  preset buttons. Both fill the same official OpenAI-compatible DeepSeek base
+  URL, timeout, temperature, and token budget fields while selecting either
+  `deepseek-v4-flash` or `deepseek-v4-pro`. The API key field is preserved.
+- The preset buttons remain form-only convenience controls: they do not save
+  settings, do not read credentials, do not call the provider bridge, and do
+  not move provider or credential material into renderer-readable evidence.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderProviderSettingsPanel.test.tsx src\features\builder\presentation\BuilderProviderSettingsRouteAdapter.test.tsx`;
+  the command reported 22 passing Vitest tests.
+- `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run test:unit`,
+  `npm.cmd run build`, and `npm.cmd run pack` passed for the same source tree.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 753 ASAR entries.
+- A packaged Settings screenshot using an isolated canary profile was captured
+  at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-deepseek-presets-1785278708829.png`.
+  The two DeepSeek preset buttons rendered side by side without text overflow.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

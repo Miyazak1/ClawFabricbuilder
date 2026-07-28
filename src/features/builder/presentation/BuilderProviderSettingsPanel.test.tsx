@@ -109,7 +109,8 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(container.querySelector('.cf-builder-settings-actions')).not.toBeNull();
     expect(container.querySelector('h2')?.textContent).toBe('AI provider');
     expect(container.textContent).toContain('Connect an AI provider before making projects.');
-    expect(buttonWithText(container, 'Use DeepSeek V4')?.disabled).toBe(false);
+    expect(buttonWithText(container, 'Use V4 Flash')?.disabled).toBe(false);
+    expect(buttonWithText(container, 'Use V4 Pro')?.disabled).toBe(false);
     expect(input(container, 'builder-provider-base-url').value).toBe('https://provider.example/v1');
     expect(input(container, 'builder-provider-base-url').placeholder).toBe('https://api.example.com/v1');
     expect(input(container, 'builder-provider-base-url').className).toContain('cf-builder-input');
@@ -144,7 +145,10 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(Object.isFrozen(onValuesChange.mock.calls[0][0])).toBe(true);
   });
 
-  it('applies the DeepSeek V4 preset without touching the API key or saving', () => {
+  it.each([
+    ['Use V4 Flash', 'deepseek-v4-flash'],
+    ['Use V4 Pro', 'deepseek-v4-pro'],
+  ])('applies the DeepSeek preset %s without touching the API key or saving', (buttonText, model) => {
     const onValuesChange = vi.fn();
     const onSave = vi.fn();
     const original = values({
@@ -161,13 +165,13 @@ describe('BuilderProviderSettingsPanel', () => {
       onValuesChange,
     })} />);
 
-    act(() => buttonWithText(container, 'Use DeepSeek V4')?.click());
+    act(() => buttonWithText(container, buttonText)?.click());
 
     expect(onValuesChange).toHaveBeenCalledExactlyOnceWith({
       ...original,
       baseUrl: 'https://api.deepseek.com/v1',
       maxTokens: '8192',
-      model: 'deepseek-v4-flash',
+      model,
       temperature: '0.2',
       timeoutMs: '120000',
     });
@@ -279,7 +283,8 @@ describe('BuilderProviderSettingsPanel', () => {
       'Provider settings are unavailable right now.',
     );
     expect(buttonWithText(unavailable, 'Save provider')?.disabled).toBe(true);
-    expect(buttonWithText(unavailable, 'Use DeepSeek V4')?.disabled).toBe(true);
+    expect(buttonWithText(unavailable, 'Use V4 Flash')?.disabled).toBe(true);
+    expect(buttonWithText(unavailable, 'Use V4 Pro')?.disabled).toBe(true);
   });
 
   it('renders error status without exposing any credential text', () => {

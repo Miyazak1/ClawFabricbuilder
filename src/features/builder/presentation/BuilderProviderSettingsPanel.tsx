@@ -52,9 +52,12 @@ const EMPTY_FIELD_ERRORS: BuilderProviderSettingsPanelFieldErrors = Object.freez
 const DEEPSEEK_V4_PRESET = Object.freeze({
   baseUrl: 'https://api.deepseek.com/v1',
   maxTokens: '8192',
-  model: 'deepseek-v4-flash',
   temperature: '0.2',
   timeoutMs: '120000',
+});
+const DEEPSEEK_V4_MODELS = Object.freeze({
+  flash: 'deepseek-v4-flash',
+  pro: 'deepseek-v4-pro',
 });
 
 function updateValue(
@@ -114,11 +117,12 @@ export function BuilderProviderSettingsPanel({
     onValuesChange(updateValue(values, key, value));
   }
 
-  function applyDeepSeekPreset(): void {
+  function applyDeepSeekPreset(model: string): void {
     if (!editable) return;
     onValuesChange(Object.freeze({
       ...values,
       ...DEEPSEEK_V4_PRESET,
+      model,
       apiKey: values.apiKey,
     }));
   }
@@ -168,15 +172,28 @@ export function BuilderProviderSettingsPanel({
             <h3 className="text-sm font-semibold">Connection</h3>
             <p className="mt-1 text-xs text-muted-foreground">Use the provider endpoint and model for Builder projects.</p>
           </header>
-          <button
-            className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-9 w-fit items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!editable}
-            onClick={applyDeepSeekPreset}
-            type="button"
-          >
-            <Sparkles aria-hidden="true" className="size-3.5" />
-            Use DeepSeek V4
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-9 w-fit items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-deepseek-preset="flash"
+              disabled={!editable}
+              onClick={() => applyDeepSeekPreset(DEEPSEEK_V4_MODELS.flash)}
+              type="button"
+            >
+              <Sparkles aria-hidden="true" className="size-3.5" />
+              Use V4 Flash
+            </button>
+            <button
+              className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-9 w-fit items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-deepseek-preset="pro"
+              disabled={!editable}
+              onClick={() => applyDeepSeekPreset(DEEPSEEK_V4_MODELS.pro)}
+              type="button"
+            >
+              <Sparkles aria-hidden="true" className="size-3.5" />
+              Use V4 Pro
+            </button>
+          </div>
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-base-url">
             Base URL
             <input
