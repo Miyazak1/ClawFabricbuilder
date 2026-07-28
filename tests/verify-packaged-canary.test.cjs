@@ -71,6 +71,15 @@ function reviewDiffEvidence() {
   };
 }
 
+function workspaceGateEvidence() {
+  return {
+    build_without_workspace_blocked: true,
+    composer_text_preserved_until_workspace_bound: true,
+    source_folder_required: true,
+    workspace_picker_visible: true,
+  };
+}
+
 function input(overrides = {}) {
   return JSON.stringify({
     executable_path: path.join(process.cwd(), 'release', 'win-unpacked', 'ClawFabric Builder.exe'),
@@ -109,6 +118,20 @@ class FakeLocator {
   async click() {
     this.page.events.push(['click', this.selector]);
     if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
+    if (this.selector === SELECTORS.workspaceChip) {
+      this.page.workspacePickerVisible = true;
+      this.page.newProjectPanelVisible = false;
+    }
+    if (this.selector === SELECTORS.workspaceNewProject) {
+      this.page.workspacePickerVisible = true;
+      this.page.newProjectPanelVisible = true;
+    }
+    if (this.selector === SELECTORS.addSourceFolder) {
+      this.page.workspaceBound = true;
+      this.page.forceWorkspaceGateForNextBuild = false;
+      this.page.workspacePickerVisible = false;
+      this.page.newProjectPanelVisible = false;
+    }
     if (this.selector === SELECTORS.reviewOpenChanges) {
       this.page.changesPanelVisible = true;
       this.page.changesDisclosureOpen = true;
@@ -235,6 +258,12 @@ class FakeLocator {
       if (this.page.changesTextOverride !== null) return this.page.changesTextOverride;
       return 'Changes 1 file change: 1 added. 1 line added + Focus timer preview';
     }
+    if (this.selector === SELECTORS.workspacePicker) {
+      return 'Choose or create a project before I build. Search projects No saved projects yet. New project';
+    }
+    if (this.selector === SELECTORS.newProjectPanel) {
+      return 'New project Project name Source folders No source folder selected. Add source folder';
+    }
     return null;
   }
 
@@ -264,21 +293,28 @@ class FakeLocator {
 
   async waitFor(options) {
     this.page.events.push(['waitFor', this.selector, options?.state ?? null]);
-    if (this.page.failWaitFor.has(this.selector)) throw new Error('secret-marker');
+    const state = options?.state ?? 'visible';
+    const initialWorkspaceGateDraftAbsenceCheck = this.selector === SELECTORS.unsavedDraft
+      && state === 'hidden'
+      && this.page.workspacePickerVisible
+      && this.page.forceWorkspaceGateForNextBuild;
+    if (this.page.failWaitFor.has(this.selector) && !initialWorkspaceGateDraftAbsenceCheck) {
+      throw new Error('secret-marker');
+    }
     if (this.selector === SELECTORS.retryDraft) {
-      this.page.assertSelectorVisibility(this.selector, this.page.retryDraftVisible, options?.state ?? 'visible');
+      this.page.assertSelectorVisibility(this.selector, this.page.retryDraftVisible, state);
       return;
     }
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
-      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, options?.state ?? 'visible');
+      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
       return;
     }
     if (this.selector === SELECTORS.historyPreview) {
-      this.page.assertSelectorVisibility(this.selector, this.page.historyViewingRevision !== null, options?.state ?? 'visible');
+      this.page.assertSelectorVisibility(this.selector, this.page.historyViewingRevision !== null, state);
       return;
     }
     if (this.selector === SELECTORS.reviewCheckpoint || this.selector === SELECTORS.reviewOpenChanges) {
-      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, options?.state ?? 'visible');
+      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
       return;
     }
     if (
@@ -289,7 +325,7 @@ class FakeLocator {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.planTurns > this.page.approvedPlanReviews,
-        options?.state ?? 'visible',
+        state,
       );
       return;
     }
@@ -297,7 +333,7 @@ class FakeLocator {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.approvedPlanReviews > 0,
-        options?.state ?? 'visible',
+        state,
       );
       return;
     }
@@ -305,7 +341,7 @@ class FakeLocator {
       this.selector === SELECTORS.toolActivityRequested
       || this.selector === SELECTORS.toolActivitySucceeded
     ) {
-      this.page.assertSelectorVisibility(this.selector, this.page.planTurns > 0, options?.state ?? 'visible');
+      this.page.assertSelectorVisibility(this.selector, this.page.planTurns > 0, state);
       return;
     }
     if (
@@ -318,15 +354,23 @@ class FakeLocator {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.unsavedDraftVisible && this.page.changesPanelVisible,
-        options?.state ?? 'visible',
+        state,
       );
+      return;
+    }
+    if (this.selector === SELECTORS.workspacePicker) {
+      this.page.assertSelectorVisibility(this.selector, this.page.workspacePickerVisible, state);
+      return;
+    }
+    if (this.selector === SELECTORS.newProjectPanel) {
+      this.page.assertSelectorVisibility(this.selector, this.page.newProjectPanelVisible, state);
       return;
     }
     if (this.selector === SELECTORS.preview) {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.previewVisible && !this.page.previewUnavailable,
-        options?.state ?? 'visible',
+        state,
       );
       return;
     }
@@ -334,7 +378,7 @@ class FakeLocator {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.previewUnavailable,
-        options?.state ?? 'visible',
+        state,
       );
       return;
     }
@@ -342,7 +386,7 @@ class FakeLocator {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.previewVisible && !this.page.previewUnavailable && !this.page.previewRuntimeBlocked,
-        options?.state ?? 'visible',
+        state,
       );
     }
   }
@@ -364,9 +408,24 @@ class FakeRole {
     this.page.events.push(['roleClick', this.role, this.name]);
     if (this.page.failRoleClicks.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
     if (this.name === 'Save provider') this.page.values.set(SELECTORS.apiKey, '');
+    if (this.name === 'New project') {
+      this.page.forceWorkspaceGateForNextBuild = true;
+      this.page.workspaceBound = false;
+      this.page.workspacePickerVisible = false;
+      this.page.newProjectPanelVisible = false;
+    }
     if (this.name === 'Send') {
       const instruction = this.page.values.get(SELECTORS.idea) ?? '';
       if (/[?\uFF1F]\s*$/u.test(instruction)) this.page.recordQuestion();
+      else if (
+        !this.page.workspaceBound
+        && (
+          this.page.forceWorkspaceGateForNextBuild
+          || (!this.page.draftSaved && this.page.savedRevision <= 0)
+        )
+      ) {
+        this.page.workspacePickerVisible = true;
+      }
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
     }
     if (this.name === 'Plan first') this.page.recordPlanAttempt();
@@ -438,6 +497,7 @@ class FakePage {
     this.failRoleWaits = new Set();
     this.failTextWaitFor = new Set();
     this.failWaitFor = new Set();
+    this.forceWorkspaceGateForNextBuild = false;
     this.forcedVersionLabel = null;
     this.historyViewingRevision = null;
     this.disabledRoles = new Set();
@@ -452,6 +512,7 @@ class FakePage {
     this.previewUnavailableTextOverride = null;
     this.projectStatus = 'ready';
     this.questionTurns = 0;
+    this.newProjectPanelVisible = false;
     this.retryDraftVisible = false;
     this.reviewTextOverride = null;
     this.previewLimitationTextOverride = null;
@@ -471,6 +532,8 @@ class FakePage {
     this.unsavedDraftVisible = false;
     this.versionLabel = 'Version 1';
     this.values = new Map();
+    this.workspaceBound = false;
+    this.workspacePickerVisible = false;
     this.listeners = new Map();
     this.assertSelectorVisibility = (_selector, visible, state) => {
       const expectedVisible = state !== 'hidden';
@@ -1794,9 +1857,28 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
     unsaved_draft_observed: true,
+    workspace_gate: workspaceGateEvidence(),
   });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Send']);
+  assert.deepEqual(roleClicks, ['New project', 'Send', 'Send']);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'click').map((event) => event[1]).slice(0, 2),
+    [SELECTORS.workspaceNewProject, SELECTORS.addSourceFolder],
+  );
+  const firstSend = page.events.findIndex((event) => event[0] === 'roleClick' && event[2] === 'Send');
+  const pickerVisible = page.events.findIndex((event) => (
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.workspacePicker
+    && event[2] === 'visible'
+  ));
+  const sourceFolderClick = page.events.findIndex((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.addSourceFolder
+  ));
+  const secondSend = page.events.findLastIndex((event) => event[0] === 'roleClick' && event[2] === 'Send');
+  assert.ok(firstSend >= 0 && firstSend < pickerVisible);
+  assert.ok(pickerVisible < sourceFolderClick);
+  assert.ok(sourceFolderClick < secondSend);
   const saveScroll = page.events.findIndex(
     (event) => event[0] === 'scrollIntoView' && event[1] === SELECTORS.saveVersion,
   );
@@ -2026,7 +2108,7 @@ test('answers a saved-project question without creating a draft or revision', as
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send'],
+    ['New project', 'Send', 'Send', 'Send'],
   );
 });
 
@@ -2140,7 +2222,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send'],
+    ['New project', 'Send', 'Send', 'Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
@@ -2200,7 +2282,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send'],
+    ['New project', 'Send', 'Send', 'Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
@@ -2296,6 +2378,15 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'new_project',
+    },
+    {
+      code: 'canary_build_workspace_required_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failWaitFor.add(SELECTORS.workspacePicker);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'build_workspace_required',
     },
     {
       code: 'canary_generation_terminal_failed',
@@ -3056,6 +3147,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       review_diff: reviewDiffEvidence(),
       saved_via_ui: true,
       unsaved_draft_observed: true,
+      workspace_gate: workspaceGateEvidence(),
     },
     restart_continuation: {
       approved_plan_continued: true,
@@ -3484,6 +3576,7 @@ test('copies only saved provider profile files and runs without provider input o
     .map((event) => event[2]);
   assert.deepEqual(roleClicks, [
     'New project',
+    'Send',
     'Send',
     'Send',
     'Send',

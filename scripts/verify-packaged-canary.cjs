@@ -116,6 +116,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_settings_panel_failed: 'Packaged canary settings panel failed.',
   canary_settings_save_failed: 'Packaged canary settings save failed.',
   canary_saved_profile_failed: 'Packaged canary saved profile setup failed.',
+  canary_build_workspace_required_failed: 'Packaged canary build workspace gate failed.',
   canary_new_project_failed: 'Packaged canary new project failed.',
   canary_plan_alert_failed: 'Packaged canary plan proposal showed an app error.',
   canary_plan_after_context_failed: 'Packaged canary plan failed after reading project context.',
@@ -178,6 +179,7 @@ const ERROR_STAGES = Object.freeze({
   canary_settings_panel_failed: 'settings_panel',
   canary_settings_save_failed: 'settings_save',
   canary_saved_profile_failed: 'saved_profile',
+  canary_build_workspace_required_failed: 'build_workspace_required',
   canary_new_project_failed: 'new_project',
   canary_plan_alert_failed: 'plan_alert',
   canary_plan_after_context_failed: 'plan_after_context',
@@ -1655,13 +1657,59 @@ async function bindNewProjectWorkspaceViaUi(page) {
   }
 }
 
+async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
+  try {
+    await page.locator(SELECTORS.idea).fill(idea);
+    await clickByRole(page, 'button', 'Send');
+    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
+    const pickerText = await page.locator(SELECTORS.workspacePicker).textContent();
+    const preservedBeforeBinding = await page.locator(SELECTORS.idea).inputValue();
+    if (
+      typeof pickerText !== 'string'
+      || !pickerText.includes('Choose or create a project before I build.')
+      || !pickerText.includes('New project')
+      || preservedBeforeBinding !== idea
+      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(pickerText)
+    ) fail('canary_build_workspace_required_failed');
+
+    await page.locator(SELECTORS.workspaceNewProject).click();
+    await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible' });
+    const newProjectText = await page.locator(SELECTORS.newProjectPanel).textContent();
+    if (
+      typeof newProjectText !== 'string'
+      || !newProjectText.includes('Project name')
+      || !newProjectText.includes('Source folders')
+      || !newProjectText.includes('Add source folder')
+      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(newProjectText)
+    ) fail('canary_build_workspace_required_failed');
+
+    await page.locator(SELECTORS.addSourceFolder).click();
+    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
+    await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`)
+      .waitFor({ state: 'visible', timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
+    const preservedAfterBinding = await page.locator(SELECTORS.idea).inputValue();
+    if (preservedAfterBinding !== idea) fail('canary_build_workspace_required_failed');
+    return Object.freeze({
+      build_without_workspace_blocked: true,
+      composer_text_preserved_until_workspace_bound: true,
+      source_folder_required: true,
+      workspace_picker_visible: true,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_build_workspace_required_failed');
+  }
+}
+
 async function generateProjectViaUi(page, idea) {
   let draftReviewDiff = null;
+  let workspaceGate = null;
   try {
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
-    await bindNewProjectWorkspaceViaUi(page);
-    await page.locator(SELECTORS.idea).fill(idea);
+    workspaceGate = await requireBuildWorkspaceBeforeDraftViaUi(page, idea);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_new_project_failed');
@@ -1712,6 +1760,7 @@ async function generateProjectViaUi(page, idea) {
     review_diff: draftReviewDiff,
     saved_via_ui: true,
     unsaved_draft_observed: true,
+    workspace_gate: workspaceGate,
   });
 }
 
