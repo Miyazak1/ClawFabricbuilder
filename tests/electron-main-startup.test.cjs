@@ -34,8 +34,10 @@ async function executeMain({
   };
   const applicationMenuCalls = [];
   const browserWindowOptions = [];
+  const dialogCalls = [];
   let sessionCreated = sessionDataExists;
   const events = new Map();
+  const generationRuntimeOptions = [];
   function runtime(index) {
     return {
       index,
@@ -70,6 +72,12 @@ async function executeMain({
   const electron = {
     app,
     BrowserWindow,
+    dialog: {
+      showOpenDialog(...args) {
+        dialogCalls.push(args);
+        return Promise.resolve({ canceled: true, filePaths: [] });
+      },
+    },
     Menu: {
       setApplicationMenu(value) {
         applicationMenuCalls.push(value);
@@ -152,6 +160,8 @@ async function executeMain({
           createBuilderGenerationIpcRuntime(options) {
             calls.createGenerationRuntime += 1;
             assert.equal(options.fetchImpl, electron.net.fetch);
+            assert.equal(typeof options.showOpenDialog, 'function');
+            generationRuntimeOptions.push(options);
             return runtime(2);
           },
         };
@@ -172,11 +182,21 @@ async function executeMain({
   try {
     vm.runInNewContext(mainSource, context, { filename: mainPath });
   } catch (error) {
-    if (returnOnThrow) return { applicationMenuCalls, browserWindowOptions, calls, error, events };
+    if (returnOnThrow) {
+      return {
+        applicationMenuCalls,
+        browserWindowOptions,
+        calls,
+        dialogCalls,
+        error,
+        events,
+        generationRuntimeOptions,
+      };
+    }
     throw error;
   }
   await new Promise((resolve) => setImmediate(resolve));
-  return { applicationMenuCalls, browserWindowOptions, calls, events };
+  return { applicationMenuCalls, browserWindowOptions, calls, dialogCalls, events, generationRuntimeOptions };
 }
 
 test('a second application instance exits before registering Builder authorities', async () => {
@@ -230,6 +250,20 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.equal(browserWindowOptions[0].webPreferences.sandbox, true);
 });
 
+test('project folder dialog uses native Electron selection outside packaged canary automation', async () => {
+  const { dialogCalls, generationRuntimeOptions } = await executeMain({
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+
+  assert.equal(generationRuntimeOptions.length, 1);
+  assert.deepEqual(
+    await generationRuntimeOptions[0].showOpenDialog('owner-window', { properties: ['openDirectory'] }),
+    { canceled: true, filePaths: [] },
+  );
+  assert.deepEqual(dialogCalls, [['owner-window', { properties: ['openDirectory'] }]]);
+});
+
 test('runtime registration failure rolls back previously registered handlers and quits', async () => {
   const { calls } = await executeMain({
     singleInstanceLock: true,
@@ -267,6 +301,27 @@ test('packaged canary sentinel overrides userData and sessionData before ready',
   ]);
   assert.equal(calls.mkdir, 1);
   assert.equal(calls.whenReady, 1);
+});
+
+test('packaged canary project root supplies a guarded main-only folder dialog result', async () => {
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  const projectRoot = path.join(userData, 'project-root');
+  const { dialogCalls, generationRuntimeOptions } = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH: projectRoot,
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    sessionDataExists: false,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+
+  assert.equal(generationRuntimeOptions.length, 1);
+  const result = await generationRuntimeOptions[0].showOpenDialog('owner-window', { properties: ['openDirectory'] });
+  assert.equal(result.canceled, false);
+  assert.deepEqual([...result.filePaths], [projectRoot]);
+  assert.deepEqual(dialogCalls, []);
 });
 
 test('packaged canary path guard rejects non-temp and unpackaged overrides', async () => {
@@ -330,6 +385,62 @@ test('packaged canary rejects nested paths, prefix drift, and root reparse befor
   });
   assert.match(rootJunction.error.message, /^invalid packaged canary user data path$/u);
   assert.deepEqual(rootJunction.calls.setPath, []);
+});
+
+test('packaged canary rejects project roots outside the guarded userData child before setPath', async () => {
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  for (const projectRoot of [
+    path.join(process.cwd(), 'tmp', 'project-root'),
+    path.join(userData, 'nested', 'project-root'),
+    path.join(userData, 'wrong-name'),
+  ]) {
+    const { calls, error } = await executeMain({
+      env: {
+        BUILDER_PACKAGED_CANARY: '1',
+        BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH: projectRoot,
+        BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+      },
+      returnOnThrow: true,
+      singleInstanceLock: true,
+      windowConstructionFails: true,
+    });
+    assert.match(error.message, /^invalid packaged canary project root path$/u);
+    assert.deepEqual(calls.setPath, []);
+  }
+});
+
+test('packaged canary rejects project root symlinks and realpath escapes before setPath', async () => {
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-main');
+  const projectRoot = path.join(userData, 'project-root');
+  const rootJunction = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH: projectRoot,
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    returnOnThrow: true,
+    singleInstanceLock: true,
+    symlinkPaths: [projectRoot],
+    windowConstructionFails: true,
+  });
+  assert.match(rootJunction.error.message, /^invalid packaged canary project root path$/u);
+  assert.deepEqual(rootJunction.calls.setPath, []);
+
+  const escapedRoot = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH: projectRoot,
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    realpathMap: {
+      [projectRoot]: path.join(process.cwd(), 'outside', 'project-root'),
+    },
+    returnOnThrow: true,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.match(escapedRoot.error.message, /^invalid packaged canary project root path$/u);
+  assert.deepEqual(escapedRoot.calls.setPath, []);
 });
 
 test('packaged canary rejects realpath escapes and session-data replacement before setPath', async () => {

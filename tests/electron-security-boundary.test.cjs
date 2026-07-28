@@ -24,6 +24,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /app\.getPath\(['"]userData['"]\)/u);
   assert.match(main, /BUILDER_PACKAGED_CANARY/u);
   assert.match(main, /BUILDER_PACKAGED_CANARY_USER_DATA_PATH/u);
+  assert.match(main, /BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH/u);
   assert.match(main, /clawfabric-builder-packaged-canary-/u);
   assert.match(main, /fs\.lstatSync/u);
   assert.match(main, /fs\.realpathSync\.native/u);
@@ -39,7 +40,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /createBuilderWindowControlsIpcRuntime/u);
   assert.match(main, /mainWindowRef:\s*\(\)\s*=>\s*mainWindow/u);
   assert.match(main, /const userDataPath = app\.getPath\(['"]userData['"]\)/u);
-  assert.match(main, /const runtimes = createIpcRuntimes\(userDataPath\)/u);
+  assert.match(main, /const runtimes = createIpcRuntimes\(userDataPath,\s*packagedCanaryProjectRootPath\)/u);
   assert.match(main, /registerIpcRuntimes\(runtimes\)/u);
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);

@@ -16,6 +16,8 @@ const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state 
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
+const PACKAGED_CANARY_PROJECT_ROOT_PATH = 'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH';
+const PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY = 'project-root';
 const LOCAL_STATE_FILE_NAME = 'Local State';
 const PROVIDER_CONFIG_DIRECTORY_NAME = 'builder-provider-config-v1';
 const PROVIDER_CONFIG_CURRENT_FILE_NAME = 'current.json';
@@ -1399,7 +1401,7 @@ function copySavedProviderProfile(input, userDataRoot, fsModule = fs) {
   return Object.freeze({ sourceRoot, snapshot });
 }
 
-function sanitizeLaunchEnvironment(sourceEnv, userDataPath) {
+function sanitizeLaunchEnvironment(sourceEnv, userDataPath, projectRootPath) {
   const output = {};
   let descriptors;
   try {
@@ -1427,6 +1429,7 @@ function sanitizeLaunchEnvironment(sourceEnv, userDataPath) {
   }
   output[PACKAGED_CANARY_SENTINEL] = '1';
   output[PACKAGED_CANARY_USER_DATA_PATH] = userDataPath;
+  output[PACKAGED_CANARY_PROJECT_ROOT_PATH] = projectRootPath;
   return Object.freeze(output);
 }
 
@@ -4022,6 +4025,24 @@ function makeTempUserData(fsModule = fs, osModule = os) {
   return fsModule.mkdtempSync(path.join(osModule.tmpdir(), PACKAGED_CANARY_USER_DATA_PREFIX));
 }
 
+function createCanaryProjectRoot(userDataRoot, fsModule = fs, osModule = os) {
+  const currentRoot = reverifyGuardedUserDataRoot(userDataRoot, fsModule, osModule);
+  const projectRootPath = path.join(currentRoot.path, PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY);
+  try {
+    fsModule.mkdirSync(projectRootPath);
+  } catch {
+    guardedUserDataError();
+  }
+  const stat = lstatDirectory(fsModule, projectRootPath);
+  const projectRootRealPath = realpath(fsModule, projectRootPath);
+  if (
+    path.basename(projectRootRealPath) !== PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY
+    || !samePath(path.dirname(projectRootRealPath), currentRoot.realPath)
+  ) guardedUserDataError();
+  if (stat.isSymbolicLink()) guardedUserDataError();
+  return projectRootPath;
+}
+
 function removeDirectory(rootIdentity, fsModule = fs, osModule = os) {
   if (!rootIdentity) return;
   reverifyGuardedUserDataRoot(rootIdentity, fsModule, osModule);
@@ -4062,12 +4083,12 @@ function attachApplicationNetworkRecorder(recorder, app) {
   return recorder.attachApplication(app) === true;
 }
 
-async function launchApp({ electron, executablePath, userDataPath, env }) {
+async function launchApp({ electron, executablePath, userDataPath, projectRootPath, env }) {
   try {
     return await electron.launch({
       args: [],
       executablePath,
-      env: sanitizeLaunchEnvironment(env, userDataPath),
+      env: sanitizeLaunchEnvironment(env, userDataPath, projectRootPath),
     });
   } catch {
     fail('canary_launch_failed');
@@ -4092,6 +4113,7 @@ async function runPackagedCanary(rawInput, options = {}) {
   let savedProfile = null;
   let rawUserDataPath = null;
   let recorder = null;
+  let projectRootPath = null;
   let userDataRoot = null;
   try {
     input = sanitizeInput(rawInput);
@@ -4103,6 +4125,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     const argv = runOptions.argv ?? process.argv.slice(2);
     rawUserDataPath = runOptions.userDataPath ?? makeTempUserData(fsModule, osModule);
     userDataRoot = captureGuardedUserDataRoot(rawUserDataPath, fsModule, osModule);
+    projectRootPath = createCanaryProjectRoot(userDataRoot, fsModule, osModule);
     gate = createArtifactGate();
     savedProfile = copySavedProviderProfile(input, userDataRoot, fsModule);
     if (input.mode !== 'saved_profile') {
@@ -4117,7 +4140,13 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (!executableExists) fail('canary_launch_failed');
 
     recorder = networkRecorder();
-    app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
+    app = await launchApp({
+      electron,
+      env,
+      executablePath: input.executable_path,
+      projectRootPath,
+      userDataPath: userDataRoot.path,
+    });
     const applicationObserver = attachApplicationNetworkRecorder(recorder, app);
     const page = await app.firstWindow();
     if (applicationObserver !== true) recorder.attachPage(page);
@@ -4154,7 +4183,13 @@ async function runPackagedCanary(rawInput, options = {}) {
     await closeApp(app);
     app = null;
 
-    app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
+    app = await launchApp({
+      electron,
+      env,
+      executablePath: input.executable_path,
+      projectRootPath,
+      userDataPath: userDataRoot.path,
+    });
     const pendingRestartApplicationObserver = attachApplicationNetworkRecorder(recorder, app);
     const pendingRestartPage = await app.firstWindow();
     if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
@@ -4191,7 +4226,13 @@ async function runPackagedCanary(rawInput, options = {}) {
     await closeApp(app);
     app = null;
 
-    app = await launchApp({ electron, env, executablePath: input.executable_path, userDataPath: userDataRoot.path });
+    app = await launchApp({
+      electron,
+      env,
+      executablePath: input.executable_path,
+      projectRootPath,
+      userDataPath: userDataRoot.path,
+    });
     const restartApplicationObserver = attachApplicationNetworkRecorder(recorder, app);
     const restartedPage = await app.firstWindow();
     if (restartApplicationObserver !== true) recorder.attachPage(restartedPage);
@@ -4462,6 +4503,8 @@ module.exports = {
   CANARY_INPUT_VERSION,
   CANARY_QUESTION,
   CANARY_RESULT_VERSION,
+  PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY,
+  PACKAGED_CANARY_PROJECT_ROOT_PATH,
   PACKAGED_CANARY_SENTINEL,
   PACKAGED_CANARY_USER_DATA_PATH,
   PACKAGED_CANARY_USER_DATA_PREFIX,
@@ -4480,6 +4523,7 @@ module.exports = {
   capturePreviewEvidence,
   captureSavedActivityEvidence,
   copySavedProviderProfile,
+  createCanaryProjectRoot,
   createUpdateDraftViaUi,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,

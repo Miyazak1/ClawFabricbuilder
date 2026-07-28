@@ -13,6 +13,8 @@ const {
   CANARY_INPUT_VERSION,
   CANARY_QUESTION,
   CANARY_RESULT_VERSION,
+  PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY,
+  PACKAGED_CANARY_PROJECT_ROOT_PATH,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
   assertCustomChromeControls,
@@ -29,6 +31,7 @@ const {
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
+  createCanaryProjectRoot,
   createUpdateDraftViaUi,
   createArtifactGate,
   ensureCredentialOnlyFromStdin,
@@ -2840,18 +2843,23 @@ test('sanitizes launch environment and canary root identity without following dr
   });
   env[Symbol('SECRET')] = 'symbol-secret';
 
-  const launchEnv = sanitizeLaunchEnvironment(env, userDataPath);
+  const projectRootPath = path.join(userDataPath, PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY);
+  const launchEnv = sanitizeLaunchEnvironment(env, userDataPath, projectRootPath);
   assert.deepEqual(Object.keys(launchEnv).sort(), [
+    'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH',
     'BUILDER_PACKAGED_CANARY',
     'BUILDER_PACKAGED_CANARY_USER_DATA_PATH',
     'PATH',
     'SystemRoot',
-  ]);
+  ].sort());
   assert.equal(getterCalls, 0);
   assert.equal(Object.hasOwn(launchEnv, 'JWT_SECRET'), false);
+  assert.equal(launchEnv[PACKAGED_CANARY_PROJECT_ROOT_PATH], projectRootPath);
 
   const identity = captureGuardedUserDataRoot(userDataPath, fsModule, osModule);
   assert.equal(identity.path, userDataPath);
+  assert.equal(createCanaryProjectRoot(identity, fsModule, osModule), projectRootPath);
+  assert.equal(state.stats.has(projectRootPath), true);
   assert.throws(
     () => captureGuardedUserDataRoot(path.join(tempRoot, 'nested', `${PACKAGED_CANARY_USER_DATA_PREFIX}unit`), fsModule, osModule),
     (error) => error.code === 'canary_cleanup_failed',
@@ -3190,6 +3198,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   ]);
   for (const launch of electron.launches) {
     assert.equal(launch.env.BUILDER_PACKAGED_CANARY, '1');
+    assert.equal(
+      launch.env.BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH,
+      path.join(userDataPath, PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY),
+    );
     assert.equal(launch.env.BUILDER_PACKAGED_CANARY_USER_DATA_PATH, userDataPath);
     assert.equal(Object.hasOwn(launch.env, 'JWT_SECRET'), false);
     assert.equal(Object.hasOwn(launch.env, 'PROVIDER_API_KEY'), false);
@@ -3363,6 +3375,12 @@ test('copies only saved provider profile files and runs without provider input o
     ['contextOn', 'request'],
     ['firstWindow'],
   ]);
+  for (const launch of electron.launches) {
+    assert.equal(
+      launch.env.BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH,
+      path.join(userDataPath, PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY),
+    );
+  }
   assert.deepEqual(removed, [userDataPath]);
   const packet = JSON.stringify(result);
   for (const forbidden of [

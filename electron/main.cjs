@@ -14,11 +14,17 @@ const DEV_SERVER_URL = process.env.BUILDER_RENDERER_URL || '';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
+const PACKAGED_CANARY_PROJECT_ROOT_PATH = 'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH';
+const PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY = 'project-root';
 let mainWindow = null;
 let ipcRuntimes = Object.freeze([]);
 
 function invalidPackagedCanaryPath() {
   throw new Error('invalid packaged canary user data path');
+}
+
+function invalidPackagedCanaryProjectRootPath() {
+  throw new Error('invalid packaged canary project root path');
 }
 
 function samePath(left, right) {
@@ -27,24 +33,24 @@ function samePath(left, right) {
     : left === right;
 }
 
-function checkedRealDirectory(directoryPath) {
+function checkedRealDirectory(directoryPath, invalidPath = invalidPackagedCanaryPath) {
   let stat;
   let realPath;
   try {
     stat = fs.lstatSync(directoryPath);
     realPath = path.resolve(fs.realpathSync.native(directoryPath));
   } catch {
-    invalidPackagedCanaryPath();
+    invalidPath();
   }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) invalidPackagedCanaryPath();
+  if (!stat.isDirectory() || stat.isSymbolicLink()) invalidPath();
   return realPath;
 }
 
-function assertDirectChild(realPath, expectedParentRealPath, expectedBasename) {
+function assertDirectChild(realPath, expectedParentRealPath, expectedBasename, invalidPath = invalidPackagedCanaryPath) {
   if (
     !samePath(path.dirname(realPath), expectedParentRealPath)
     || path.basename(realPath) !== expectedBasename
-  ) invalidPackagedCanaryPath();
+  ) invalidPath();
 }
 
 function resolvePackagedCanaryUserDataPath() {
@@ -74,9 +80,41 @@ function resolvePackagedCanaryUserDataPath() {
   return resolved;
 }
 
+function resolvePackagedCanaryProjectRootPath(userDataPath) {
+  if (!app.isPackaged || process.env[PACKAGED_CANARY_SENTINEL] !== '1') return null;
+  const requested = process.env[PACKAGED_CANARY_PROJECT_ROOT_PATH];
+  if (requested === undefined) return null;
+  if (
+    typeof requested !== 'string'
+    || requested.length === 0
+    || requested.length > 1_024
+    || requested.trim() !== requested
+    || requested.includes('\0')
+  ) invalidPackagedCanaryProjectRootPath();
+
+  const resolved = path.resolve(requested);
+  const basename = path.basename(resolved);
+  if (
+    resolved !== requested
+    || path.normalize(resolved) !== resolved
+    || path.dirname(resolved) !== userDataPath
+    || basename !== PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY
+  ) invalidPackagedCanaryProjectRootPath();
+
+  const userDataRealPath = checkedRealDirectory(userDataPath, invalidPackagedCanaryProjectRootPath);
+  const projectRootRealPath = checkedRealDirectory(resolved, invalidPackagedCanaryProjectRootPath);
+  assertDirectChild(
+    projectRootRealPath,
+    userDataRealPath,
+    PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY,
+    invalidPackagedCanaryProjectRootPath,
+  );
+  return resolved;
+}
+
 function configurePackagedCanaryPaths() {
   const userDataPath = resolvePackagedCanaryUserDataPath();
-  if (userDataPath === null) return;
+  if (userDataPath === null) return null;
   const sessionDataPath = path.join(userDataPath, 'session-data');
   try {
     fs.mkdirSync(sessionDataPath);
@@ -86,8 +124,10 @@ function configurePackagedCanaryPaths() {
   const userDataRealPath = path.resolve(fs.realpathSync.native(userDataPath));
   const sessionDataRealPath = checkedRealDirectory(sessionDataPath);
   assertDirectChild(sessionDataRealPath, userDataRealPath, 'session-data');
+  const projectRootPath = resolvePackagedCanaryProjectRootPath(userDataPath);
   app.setPath('userData', userDataPath);
   app.setPath('sessionData', sessionDataPath);
+  return projectRootPath;
 }
 
 function createMainWindow() {
@@ -147,7 +187,17 @@ function disposeIpcRuntimes() {
   ipcRuntimes = Object.freeze([]);
 }
 
-function createIpcRuntimes(userDataPath) {
+function createProjectFolderDialog(packagedCanaryProjectRootPath) {
+  if (packagedCanaryProjectRootPath !== null) {
+    return async () => Object.freeze({
+      canceled: false,
+      filePaths: Object.freeze([packagedCanaryProjectRootPath]),
+    });
+  }
+  return (...args) => dialog.showOpenDialog(...args);
+}
+
+function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
   return Object.freeze([
     createBuilderProviderSettingsIpcRuntime({
       ipcMain,
@@ -163,7 +213,7 @@ function createIpcRuntimes(userDataPath) {
       fetchImpl: net.fetch,
       ipcMain,
       mainWindowRef: () => mainWindow,
-      showOpenDialog: (...args) => dialog.showOpenDialog(...args),
+      showOpenDialog: createProjectFolderDialog(packagedCanaryProjectRootPath),
       userDataPath,
     }),
     createBuilderWindowControlsIpcRuntime({
@@ -193,7 +243,7 @@ function registerIpcRuntimes(runtimes) {
 }
 
 app.setAppUserModelId('com.clawfabric.builder');
-configurePackagedCanaryPaths();
+const packagedCanaryProjectRootPath = configurePackagedCanaryPaths();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -208,7 +258,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     denyRendererPermissions();
     const userDataPath = app.getPath('userData');
-    const runtimes = createIpcRuntimes(userDataPath);
+    const runtimes = createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath);
     registerIpcRuntimes(runtimes);
     ipcRuntimes = runtimes;
     createMainWindow();
