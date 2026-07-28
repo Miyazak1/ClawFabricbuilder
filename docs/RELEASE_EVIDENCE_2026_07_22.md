@@ -836,6 +836,39 @@ generated projects.
   entries. The current local package remains
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-29 Draft Review Composer Gate Package Check
+
+This addendum records focused desktop package evidence for checkpoint
+`757b512`, after the composer was gated while an unsaved draft is waiting for
+Review. It extends desktop package evidence only; it does not extend real
+DeepSeek evidence, installer evidence, code-signing status, mobile evidence,
+arbitrary runtime/tool execution readiness, generated-code execution, or
+external-network permissions inside generated projects.
+
+- When a generated draft is pending Review, the composer no longer shows the
+  previously submitted instruction as editable text and does not expose a new
+  Send action for another request. It instead shows a clear Save-or-discard
+  message plus a lightweight Review draft action that returns focus to the
+  Review checkpoint.
+- The Review checkpoint remains the only visible place for Save version and
+  Discard draft actions in this state. The composer Review draft action does
+  not save, discard, submit, steer, grant permission, create Git evidence, or
+  create a Project Revision.
+- Focused desktop validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderDesktopLayoutStyles.test.ts`;
+  the command reported 66 passing Vitest tests.
+- `npm.cmd run lint`, `npm.cmd run build`, and `npm.cmd run pack` passed for
+  checkpoint `757b512`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 751 ASAR
+  entries. The current local package remains
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- A packaged desktop screenshot using a temporary local OpenAI-compatible
+  provider was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-draft-review-gated-1785266679860.png`
+  as local visual evidence only. This screenshot is not a real-provider or
+  DeepSeek canary.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
