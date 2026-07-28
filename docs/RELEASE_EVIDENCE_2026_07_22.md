@@ -610,6 +610,39 @@ arbitrary runtime/tool-execution readiness.
   and changed/unchanged preview digests where expected across save, restart, and
   continuation.
 
+## 2026-07-28 Chinese Composer Routing Package Check
+
+This addendum records focused desktop evidence for checkpoint `a63f519`, after
+the single composer route was tightened for natural Chinese edit turns and then
+proved at the full `BuilderApp` layer. It is desktop package evidence only; it
+does not extend installer evidence, code-signing status, mobile evidence,
+arbitrary runtime/tool-execution readiness, or the prior real-provider DeepSeek
+canary scope.
+
+- The composer intent router keeps ordinary chat and how-to questions on the
+  answer path while routing clear edit/build requests to the build gate.
+  `hi`, status/how-to questions, and `怎么把按钮改红？` do not create a draft,
+  Save action, or Project Revision. Clear edit turns such as `把按钮颜色改红`
+  are treated as build intent.
+- The desktop app-level evidence now proves that a clear Chinese edit turn with
+  no bound local project opens the composer project picker first, preserves the
+  user's text, and calls no answer bridge, generator, draft save, or local
+  project creation. The same test proves that a Chinese how-to question answers
+  in chat without opening the project picker.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\app\BuilderApp.test.tsx src\features\builder\application\builderComposerIntent.test.ts`;
+  the command reported 56 passing Vitest tests.
+- `npm.cmd exec tsc -b --pretty false`, `npm.cmd run lint`, and
+  `npm.cmd run pack` passed for the same source tree. Package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 751 ASAR
+  entries.
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`. A packaged desktop screenshot
+  of the fresh conversation surface was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-current-1785249868603.png`
+  as local visual evidence only.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
