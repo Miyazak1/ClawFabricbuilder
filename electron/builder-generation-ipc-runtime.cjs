@@ -124,8 +124,22 @@ class BuilderGenerationIpcRuntimeError extends Error {
   }
 }
 
+class BuilderGenerationProjectWorkspaceRequiredError extends Error {
+  constructor() {
+    super('Choose or open a project folder before building.');
+    this.name = 'BuilderGenerationProjectWorkspaceRequiredError';
+    this.code = 'builder_generation_project_workspace_required';
+    this.retryable = false;
+    this.stack = `${this.name}: ${this.message}`;
+  }
+}
+
 function fail() {
   throw new BuilderGenerationIpcRuntimeError();
+}
+
+function failGenerationProjectWorkspaceRequired() {
+  throw new BuilderGenerationProjectWorkspaceRequiredError();
 }
 
 function failGenerationBaseUnavailable() {
@@ -758,6 +772,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
 
     function trackedGenerate(rawRequest) {
+      publicInstruction(rawRequest);
+      if (selectionPending) fail();
+      if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
       return trackedGenerationOperation(rawRequest, service.generate);
     }
 
@@ -877,6 +894,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
 
     function trackedRetryGenerate(rawRequest) {
+      publicInstruction(rawRequest);
+      if (selectionPending) fail();
+      if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
       return trackedGenerationOperation(rawRequest, service.retry_generate);
     }
 

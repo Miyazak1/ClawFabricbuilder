@@ -95,6 +95,7 @@ const RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_draft_conflict: 'The generated project draft could not be verified.',
+  builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
   builder_generation_service_unavailable: 'AI project generation is unavailable.',
 });
 
@@ -123,11 +124,14 @@ const CHINESE_WORK_INTENT_PATTERN =
   /(?:创建|生成|编写|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计|做一个|做个|做出|加一个|加个|帮我.{0,16}(?:做|写|创建|生成|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计)|(?:把|将).{0,32}(?:改|换|替换|设为|设置|添加|新增|加个|加一个|删除|删掉|去掉|移除|修复|调整|调成|调为|放大|缩小|移动|移到)|(?:登录页|页面|按钮|表单|网站|网页|应用|工具|组件|功能|样式|布局|代码|小游戏|仪表盘|看板|预览|界面|UI).{0,16}(?:做|创建|生成|写|编写|实现|开发|搭建|添加|新增|修改|改|调整|优化|修复|删除|移除|重构|设计))/iu;
 const CHINESE_EXPLANATION_INTENT_PATTERN =
   /(?:是什么|为什么|怎么|如何|怎样|解释|说明|介绍|总结|对比|分析|原因|含义|意思|做什么|干什么|能做什么|会做什么)/u;
+const CASUAL_CHAT_INTENT_PATTERN =
+  /^(?:hi|hello|hey|你好|您好|在吗|你在吗|在不在)[.!?。！？]*$/iu;
 
 function shouldSubmitAsExplanation(instruction, existingProjectId = null) {
   const text = String(instruction).trim();
   if (text.length === 0) return false;
   const lower = text.toLowerCase();
+  if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return true;
   const hasQuestionMark = /[?\uFF1F]\s*$/u.test(text);
   const hasExplanationIntent =
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(lower)
@@ -1672,9 +1676,13 @@ function createBuilderGenerationMainService(rawOptions) {
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    return shouldSubmitAsExplanation(request.instruction, request.existing_project_id)
-      ? answer(request)
-      : startGenerate(request, null);
+    const shouldAnswer = shouldSubmitAsExplanation(request.instruction, request.existing_project_id);
+    if (!shouldAnswer && request.existing_project_id === null) {
+      return Promise.reject(new BuilderGenerationMainServiceError(
+        'builder_generation_project_workspace_required',
+      ));
+    }
+    return shouldAnswer ? answer(request) : startGenerate(request, null);
   }
 
   async function retryGenerate(rawRequest) {

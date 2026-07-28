@@ -1720,8 +1720,17 @@ test('submits one composer turn through main-owned work or explanation routing',
     }),
   });
 
-  const draft = await service.submit(request({ instruction: 'Make a timer.' }));
-  const chineseDraft = await service.submit(request({ instruction: '可以帮我做一个登录页吗？' }));
+  await assert.rejects(service.submit(request({ instruction: 'Make a timer.' })), {
+    code: 'builder_generation_project_workspace_required',
+  });
+  const draft = await service.submit(request({
+    instruction: 'Make a timer.',
+    existingProjectId: PROJECT_ID,
+  }));
+  const chineseDraft = await service.submit(request({
+    instruction: '可以帮我做一个登录页吗？',
+    existingProjectId: PROJECT_ID,
+  }));
   const chineseClearEditDraft = await service.submit(request({
     instruction: '把按钮颜色改红',
     existingProjectId: PROJECT_ID,

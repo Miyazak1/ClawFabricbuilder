@@ -47,6 +47,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_parent_unavailable: 'The current project version is unavailable.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_cancelled: 'AI project generation was cancelled.',
+  builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
@@ -57,6 +58,7 @@ const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
   builder_generation_base_unavailable: true,
   builder_generation_parent_unavailable: true,
   builder_generation_provider_unavailable: false,
+  builder_generation_project_workspace_required: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
   builder_generation_structured_response_invalid: true,
@@ -75,6 +77,7 @@ const CONTROL_ERROR_CODES = new Set([
   'builder_generation_parent_unavailable',
   'builder_generation_provider_unavailable',
   'builder_generation_cancelled',
+  'builder_generation_project_workspace_required',
   'builder_generation_timeout',
   'builder_generation_failed',
 ]);

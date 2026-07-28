@@ -1893,12 +1893,14 @@ test('keeps selected project identity in main and accepts only instruction over 
     { sender: mainWindow.webContents },
     vm.runInContext('({ project_id: null })', runtimeModule.context),
   );
-  await ipcMain.handlers.get(GENERATE_CHANNEL)(
-    { sender: mainWindow.webContents },
-    vm.runInContext('({ instruction: "Make a fresh timer." })', runtimeModule.context),
+  await assert.rejects(
+    async () => ipcMain.handlers.get(GENERATE_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext('({ instruction: "Make a fresh timer." })', runtimeModule.context),
+    ),
+    { code: 'builder_generation_project_workspace_required' },
   );
-  assert.equal(generated[1].existing_project_id, null);
-  assert.equal(generated[1].request_digest, hostRequestDigest('Make a fresh timer.', null));
+  assert.equal(generated.length, 1);
   await ipcMain.handlers.get(ANSWER_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Explain the fresh project." })', runtimeModule.context),
@@ -2063,8 +2065,11 @@ test('ignores stale Open and Save completions when a newer project selection win
     project_id: __projectB
   })`, runtimeModule.context));
   assert.equal((await save).error, undefined);
-  await invoke(GENERATE_CHANNEL, body('({ instruction: "Make a fresh project." })'));
-  assert.equal(generated.at(-1).existing_project_id, null);
+  await assert.rejects(
+    async () => invoke(GENERATE_CHANNEL, body('({ instruction: "Make a fresh project." })')),
+    { code: 'builder_generation_project_workspace_required' },
+  );
+  assert.equal(generated.at(-1).existing_project_id, projectB);
   runtime.dispose();
 });
 
@@ -2091,10 +2096,10 @@ test('cancels every accepted generation, submit, retry, or answer before removin
       cancelRequests.push(body);
       const error = new Error('private provider request');
       error.code = 'builder_generation_cancelled';
-      if (body.request_id === hostRequestDigest('Make a timer.')) rejectGeneration(error);
-      if (body.request_id === hostRequestDigest('Continue the timer.')) rejectSubmit(error);
-      if (body.request_id === hostRequestDigest('Retry the timer.')) rejectRetry(error);
-      if (body.request_id === hostRequestDigest('Explain the timer.')) rejectAnswer(error);
+      if (body.request_id === hostRequestDigest('Make a timer.', PROJECT_ID)) rejectGeneration(error);
+      if (body.request_id === hostRequestDigest('Continue the timer.', PROJECT_ID)) rejectSubmit(error);
+      if (body.request_id === hostRequestDigest('Retry the timer.', PROJECT_ID)) rejectRetry(error);
+      if (body.request_id === hostRequestDigest('Explain the timer.', PROJECT_ID)) rejectAnswer(error);
       return { request_id: body.request_id, cancelled: true };
     },
     availability() {
@@ -2112,6 +2117,10 @@ test('cancels every accepted generation, submit, retry, or answer before removin
     userDataPath: temporaryUserData(t),
   });
   runtime.register();
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, runtimeModule.context),
+  );
   const generateBody = vm.runInContext('({ instruction: "Make a timer." })', runtimeModule.context);
   const submitBody = vm.runInContext('({ instruction: "Continue the timer." })', runtimeModule.context);
   const retryBody = vm.runInContext('({ instruction: "Retry the timer." })', runtimeModule.context);
@@ -2127,10 +2136,10 @@ test('cancels every accepted generation, submit, retry, or answer before removin
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.dispose(), true);
   assert.deepEqual(cancelRequests.map((request) => request.request_id), [
-    hostRequestDigest('Make a timer.'),
-    hostRequestDigest('Continue the timer.'),
-    hostRequestDigest('Retry the timer.'),
-    hostRequestDigest('Explain the timer.'),
+    hostRequestDigest('Make a timer.', PROJECT_ID),
+    hostRequestDigest('Continue the timer.', PROJECT_ID),
+    hostRequestDigest('Retry the timer.', PROJECT_ID),
+    hostRequestDigest('Explain the timer.', PROJECT_ID),
   ]);
   await cancelledGeneration;
   await cancelledSubmission;
@@ -2163,6 +2172,10 @@ test('does not close project authority when an active generation lacks durable c
     userDataPath: temporaryUserData(t),
   });
   runtime.register();
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, runtimeModule.context),
+  );
   const body = vm.runInContext('({ instruction: "Make a timer." })', runtimeModule.context);
   const operation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, body);
   await new Promise((resolve) => setImmediate(resolve));
@@ -2173,7 +2186,7 @@ test('does not close project authority when an active generation lacks durable c
   assert.deepEqual([...ipcMain.handlers.keys()], []);
   resolveGeneration(vm.runInContext(`({
     version: "builder-generation-result.v2",
-    request_id: "${hostRequestDigest()}"
+    request_id: "${hostRequestDigest('Make a timer.', PROJECT_ID)}"
   })`, runtimeModule.context));
   await operation;
   assert.equal(runtime.dispose(), true);
