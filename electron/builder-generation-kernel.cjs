@@ -11,6 +11,7 @@ const {
 const {
   BuilderProjectSourceTreeError,
   MAX_SOURCE_TREE_UTF8_BYTES,
+  createBuilderProjectSourceTree,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
 const {
@@ -63,6 +64,16 @@ const RESULT_INPUT_KEYS = Object.freeze([
   'run_id',
   'generated_text',
 ]);
+const DRAFT_CONTINUATION_RESULT_INPUT_KEYS = Object.freeze([
+  'request',
+  'prompt_base_source_tree',
+  'candidate_base_revision_evidence',
+  'candidate_base_source_tree',
+  'conversation_events',
+  'turn_id',
+  'run_id',
+  'generated_text',
+]);
 const PLAN_RESULT_INPUT_KEYS = Object.freeze(['request', 'source_context_result', 'proposed_at_ms', 'generated_text']);
 const PROVIDER_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'operations']);
 const EXPLANATION_OUTPUT_KEYS = Object.freeze(['kind', 'title', 'summary', 'explanation']);
@@ -71,6 +82,7 @@ const RAW_OPERATION_KEYS = Object.freeze(['operation', 'path', 'content']);
 const RAW_PLAN_STEP_KEYS = Object.freeze(['title', 'purpose', 'expected_change']);
 const PLAN_PROMPT_PRIVATE_CONTEXT_KEYS = Object.freeze(['context_version', 'files']);
 const PLAN_PROMPT_PRIVATE_FILE_KEYS = Object.freeze(['path', 'entry_kind', 'content', 'content_digest', 'content_bytes']);
+const PATH_FOLD_KEY_LOCALE = 'en-US';
 
 const JSON_OUTPUT_EXAMPLE = JSON.stringify({
   kind: BUILDER_GENERATED_OPERATIONS_KIND,
@@ -237,6 +249,10 @@ function canonicalJson(value, code) {
 
 function sha256Canonical(value, code = 'builder_generation_request_invalid') {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value, code), 'utf8').digest('hex')}`;
+}
+
+function pathComparisonKey(value) {
+  return value.normalize('NFKC').toLocaleUpperCase(PATH_FOLD_KEY_LOCALE);
 }
 
 function hasUnpairedSurrogate(value) {
@@ -597,6 +613,68 @@ function sanitizeGeneratedOperations(value) {
   };
 }
 
+function sanitizeRawGeneratedOperation(value) {
+  assertExactObject(value, RAW_OPERATION_KEYS, 'builder_generation_structured_response_invalid');
+  const operation = valueAt(value, 'operation', 'builder_generation_structured_response_invalid');
+  if (operation !== 'upsert' && operation !== 'delete') fail('builder_generation_structured_response_invalid');
+  const content = valueAt(value, 'content', 'builder_generation_structured_response_invalid');
+  if ((operation === 'delete') !== (content === null)) fail('builder_generation_structured_response_invalid');
+  const single = createBuilderProjectSourceTree({
+    files: [{
+      path: valueAt(value, 'path', 'builder_generation_structured_response_invalid'),
+      content: operation === 'upsert' ? content : '',
+    }],
+  }).files[0];
+  return {
+    operation,
+    path: single.path,
+    content: operation === 'upsert' ? single.content : null,
+  };
+}
+
+function applyProviderOperationsToSourceTree(baseSourceTree, operations) {
+  const sourceTree = sanitizeBuilderProjectSourceTree(baseSourceTree);
+  const filesByPath = new Map(sourceTree.files.map((file) => [
+    pathComparisonKey(file.path),
+    { path: file.path, content: file.content },
+  ]));
+  const seenOperations = new Set();
+  for (const rawOperation of operations) {
+    const operation = sanitizeRawGeneratedOperation(rawOperation);
+    const key = pathComparisonKey(operation.path);
+    if (seenOperations.has(key)) fail('builder_generation_structured_response_invalid');
+    seenOperations.add(key);
+    if (operation.operation === 'delete') {
+      if (!filesByPath.has(key)) fail('builder_generation_structured_response_invalid');
+      filesByPath.delete(key);
+    } else {
+      filesByPath.set(key, { path: operation.path, content: operation.content });
+    }
+  }
+  return createBuilderProjectSourceTree({ files: [...filesByPath.values()] });
+}
+
+function operationsToReachSourceTree(baseSourceTree, targetSourceTree) {
+  const base = sanitizeBuilderProjectSourceTree(baseSourceTree);
+  const target = sanitizeBuilderProjectSourceTree(targetSourceTree);
+  const targetByPath = new Map(target.files.map((file) => [pathComparisonKey(file.path), file]));
+  const operations = [];
+  for (const file of base.files) {
+    if (!targetByPath.has(pathComparisonKey(file.path))) {
+      operations.push({ operation: 'delete', path: file.path, content: null });
+    }
+  }
+  const baseByPath = new Map(base.files.map((file) => [pathComparisonKey(file.path), file]));
+  for (const file of target.files) {
+    const current = baseByPath.get(pathComparisonKey(file.path));
+    if (current === undefined || current.content_digest !== file.content_digest || current.path !== file.path) {
+      operations.push({ operation: 'upsert', path: file.path, content: file.content });
+    }
+  }
+  if (operations.length === 0) fail('builder_generation_structured_response_invalid');
+  return operations;
+}
+
 function sanitizeGeneratedPlanSteps(value, requestDigest) {
   if (
     !Array.isArray(value)
@@ -772,6 +850,64 @@ function projectBuilderGenerationResult(value) {
   }
 }
 
+function projectBuilderDraftContinuationGenerationResult(value) {
+  try {
+    assertExactObject(value, DRAFT_CONTINUATION_RESULT_INPUT_KEYS, 'builder_generation_request_invalid');
+    const request = sanitizeBuilderGenerationRequestInternal(
+      valueAt(value, 'request', 'builder_generation_request_invalid'),
+    );
+    const generated = parseProviderOutputText(
+      valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
+    );
+    if (generated.result_kind !== 'candidate') fail('builder_generation_structured_response_invalid');
+    const targetSourceTree = applyProviderOperationsToSourceTree(
+      valueAt(value, 'prompt_base_source_tree', 'builder_generation_base_unavailable'),
+      generated.operations,
+    );
+    let candidate;
+    try {
+      candidate = createBuilderCodeChangeCandidate({
+        conversation_events: valueAt(value, 'conversation_events', 'builder_generation_request_invalid'),
+        turn_id: valueAt(value, 'turn_id', 'builder_generation_request_invalid'),
+        run_id: valueAt(value, 'run_id', 'builder_generation_request_invalid'),
+        base_revision_evidence: valueAt(value, 'candidate_base_revision_evidence', 'builder_generation_base_unavailable'),
+        base_source_tree: valueAt(value, 'candidate_base_source_tree', 'builder_generation_base_unavailable'),
+        operations: operationsToReachSourceTree(
+          valueAt(value, 'candidate_base_source_tree', 'builder_generation_base_unavailable'),
+          targetSourceTree,
+        ),
+      });
+    } catch (error) {
+      if (
+        error instanceof BuilderCodeChangeKernelError
+        || error instanceof BuilderProjectSourceTreeError
+      ) {
+        fail('builder_generation_structured_response_invalid');
+      }
+      throw error;
+    }
+    if (candidate.request_digest !== request.request_digest) fail('builder_generation_request_invalid');
+    return freezeDeep({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'candidate',
+      request_id: request.request_digest,
+      title: generated.title,
+      summary: generated.summary,
+      candidate,
+      admissions: {
+        conversation: 'candidate_local_not_recorded',
+        draft: 'candidate_not_saved',
+        save: 'not_performed',
+        preview: 'not_evaluated',
+        execution: 'not_evaluated',
+      },
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationKernelError) throw error;
+    fail('builder_generation_structured_response_invalid');
+  }
+}
+
 function projectBuilderExplanationResult(value) {
   try {
     assertExactObject(value, ['request', 'generated_text'], 'builder_generation_request_invalid');
@@ -873,6 +1009,7 @@ module.exports = Object.freeze({
   createBuilderGenerationPromptDescriptor,
   createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
+  projectBuilderDraftContinuationGenerationResult,
   projectBuilderGenerationResult,
   projectBuilderPlanProposalResult,
 });

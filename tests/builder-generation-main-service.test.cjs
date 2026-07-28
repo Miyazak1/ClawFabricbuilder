@@ -282,6 +282,7 @@ function conversationService() {
     readApprovedPlan: [],
     approvedPlanWork: [],
     approvedPlanContinuation: [],
+    draftContinuationWork: [],
   };
   let progressCommand = 10_000;
   function nextProgressCommandId() {
@@ -707,6 +708,92 @@ function conversationService() {
         base_revision: input.base_revision,
       });
     },
+    begin_draft_continuation_work(input) {
+      calls.draftContinuationWork.push(input);
+      generation += 1;
+      const draft = candidateDrafts.get(input.admission.draft_id);
+      if (draft === undefined || rejectedDrafts.has(input.admission.draft_id)) {
+        const error = new Error('missing private draft');
+        error.code = 'builder_conversation_main_service_unavailable';
+        throw error;
+      }
+      const suffix = UUIDS[(generation + 4) % UUIDS.length];
+      const first = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.admission.project_id,
+        conversation_id: input.admission.conversation_id,
+        sequence: 1,
+        command_id: `builder-command:${UUIDS[(generation + 5) % UUIDS.length]}`,
+        event_type: 'turn_submitted',
+        previous_event: null,
+        payload: {
+          message: {
+            message_id: `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`,
+            text: input.instruction,
+          },
+          turn_id: `builder-turn:${suffix}`,
+          mode: 'work',
+          task: {
+            task_id: `builder-task:${suffix}`,
+            title: 'Revise unsaved draft',
+          },
+          base_revision: draft.base_revision,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
+      const second = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.admission.project_id,
+        conversation_id: input.admission.conversation_id,
+        sequence: first.sequence + 1,
+        command_id: `builder-command:${UUIDS[(generation + 7) % UUIDS.length]}`,
+        event_type: 'run_started',
+        previous_event: eventHead(first),
+        payload: {
+          turn_id: `builder-turn:${suffix}`,
+          run_id: `builder-run:${suffix}`,
+          task_id: `builder-task:${suffix}`,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          input_digest: input.request_digest,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
+      return {
+        context_version: 'builder-conversation-run-context.v1',
+        mode: 'work',
+        project: {
+          project_id: input.admission.project_id,
+          created_at_ms: 1,
+        },
+        conversation: {
+          project_id: input.admission.project_id,
+          conversation_id: input.admission.conversation_id,
+          created_at_ms: 1,
+        },
+        request_digest: input.request_digest,
+        start_head: eventHead(second),
+        attempt_number: 1,
+        events: [first, second],
+        run_terminal_failure_code: null,
+        ids: {
+          turn_id: `builder-turn:${suffix}`,
+          task_id: `builder-task:${suffix}`,
+          run_id: `builder-run:${suffix}`,
+        },
+        cancel_requested: false,
+        draft_continuation: {
+          admission_digest: input.admission.admission_digest,
+          draft_id: input.admission.draft_id,
+          previous_turn_id: input.admission.previous_turn_id,
+          previous_task_id: input.admission.previous_task_id,
+          previous_run_id: input.admission.previous_run_id,
+          previous_candidate_digest: input.admission.candidate_digest,
+        },
+      };
+    },
   };
   return service;
 }
@@ -894,6 +981,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
     draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
     draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
+    draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
     history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
     run_steering: 'request_id_only_main_conversation_fact',
     credential_exposed_to_renderer: false,
@@ -2755,6 +2843,130 @@ test('prepares a draft continuation base from verified pending candidate Git evi
   );
 });
 
+test('generates a replacement draft from pending candidate source squashed onto project base', async () => {
+  const savedSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  let firstGeneratedSourceTree = null;
+  const readCurrentCalls = [];
+  const transportInputs = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      createUuid: createUniqueUuidFactory(1_000),
+      gitAuthority: {
+        ...git,
+        async read_verified_candidate(receipt) {
+          if (firstGeneratedSourceTree === null) throw new Error(PRIVATE_MARKER);
+          return {
+            result_version: 'builder-git-verified-candidate-read-result.v1',
+            candidate_receipt: receipt,
+            verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
+            source_tree: firstGeneratedSourceTree,
+            code_authority: 'git_commit_tree',
+            read_admission: 'verified',
+          };
+        },
+      },
+      projectReadAuthority: {
+        load_current(input) {
+          readCurrentCalls.push(input);
+          return readResult(savedSourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(transportInputs.length === 1
+          ? providerOutput({
+            operations: [
+              { operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' },
+              { operation: 'upsert', path: 'src/draft.js', content: 'export const draft = true;\n' },
+            ],
+          })
+          : providerOutput({
+            title: 'Calmer draft',
+            summary: 'The pending draft was revised before saving.',
+            operations: [
+              { operation: 'upsert', path: 'src/draft.js', content: 'export const draft = "calm";\n' },
+              { operation: 'upsert', path: 'styles.css', content: 'body { color: #123; }\n' },
+            ],
+          })),
+      };
+    },
+  });
+
+  const first = await service.generate(request({ existingProjectId: PROJECT_ID }));
+  firstGeneratedSourceTree = createBuilderProjectSourceTree({
+    files: first.source_tree.files.map((file) => ({
+      path: file.path,
+      content: file.content,
+    })),
+  });
+  const replacement = await service.generate_draft_continuation({
+    draft_id: first.draft_id,
+    instruction: 'Make this pending draft calmer before saving.',
+  });
+
+  assert.equal(transportInputs.length, 2);
+  assert.match(transportInputs[1].messages[1].content, /Make this pending draft calmer/u);
+  assert.match(transportInputs[1].messages[1].content, /export const draft = true/u);
+  assert.match(transportInputs[1].messages[1].content, /export const before = false/u);
+  assert.doesNotMatch(transportInputs[1].messages[1].content, /export const before = true/u);
+  assert.deepEqual(readCurrentCalls, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.draftContinuationWork.length, 1);
+  assert.equal(lifecycle.calls.draftContinuationWork[0].admission.draft_id, first.draft_id);
+  assert.equal(lifecycle.calls.draftContinuationWork[0].instruction, 'Make this pending draft calmer before saving.');
+  assert.equal(lifecycle.calls.draftContinuationWork[0].request_digest, replacement.request_id);
+  assert.equal(lifecycle.calls.candidate.length, 2);
+  assert.equal(lifecycle.calls.candidate[1].context.events[0].payload.task.title, 'Revise unsaved draft');
+  assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ]);
+  assert.equal(git.receipts.length, 2);
+  assert.equal(git.receipts[0].expected_base_oid, '2'.repeat(40));
+  assert.equal(git.receipts[1].expected_base_oid, '2'.repeat(40));
+  assert.equal(replacement.version, 'builder-generation-result.v2');
+  assert.equal(replacement.project_id, PROJECT_ID);
+  assert.equal(replacement.existing_project_id, PROJECT_ID);
+  assert.notEqual(replacement.draft_id, first.draft_id);
+  assert.equal(replacement.title, 'Calmer draft');
+  assert.equal(replacement.base_revision_evidence.source_tree_digest, savedSourceTree.source_tree_digest);
+  assert.equal(replacement.base_revision_evidence.commit_oid, '2'.repeat(40));
+  assert.deepEqual(replacement.source_tree.files.map((file) => file.path), [
+    'src/app.js',
+    'src/draft.js',
+    'styles.css',
+  ]);
+  assert.equal(
+    replacement.source_tree.files.find((file) => file.path === 'src/draft.js').content,
+    'export const draft = "calm";\n',
+  );
+  assert.equal(
+    replacement.source_tree.files.find((file) => file.path === 'styles.css').content,
+    'body { color: #123; }\n',
+  );
+  const pending = await service.read_pending_draft({ draft_id: replacement.draft_id });
+  assert.equal(pending.candidate_proof.candidate_digest, replacement.candidate.candidate_digest);
+  assert.equal(pending.candidate_proof.expected_base_oid, '2'.repeat(40));
+  assert.doesNotMatch(
+    JSON.stringify(replacement),
+    /git_candidate_receipt|verification_receipt|operations|provider\.example|credential|secret|Authorization|Bearer/iu,
+  );
+});
+
 test('restores a pending draft from conversation proof and verified Git source after memory loss', async () => {
   const baseSource = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
@@ -2962,6 +3174,8 @@ test('does not register Electron, save, old revision, or expose provider credent
   assert.match(source, /main_only_pending_draft_identity_no_dispatch/u);
   assert.match(source, /prepare_draft_continuation_base/u);
   assert.match(source, /main_only_pending_candidate_git_base_no_dispatch/u);
+  assert.match(source, /generate_draft_continuation/u);
+  assert.match(source, /main_only_pending_candidate_context_squashed_to_project_base/u);
   assert.match(source, /propose_plan/u);
   assert.match(source, /main_only_source_context_plan_no_source_mutation/u);
   for (const forbidden of [

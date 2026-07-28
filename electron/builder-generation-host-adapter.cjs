@@ -7,6 +7,7 @@ const {
   createBuilderGenerationPromptDescriptor,
   createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
+  projectBuilderDraftContinuationGenerationResult,
   projectBuilderGenerationResult,
   projectBuilderPlanProposalResult,
   sanitizeBuilderGenerationRequest,
@@ -25,6 +26,17 @@ const GENERATION_CONTEXT_KEYS = Object.freeze([
   'project_id',
   'base_revision_evidence',
   'base_source_tree',
+  'conversation_events',
+  'turn_id',
+  'task_id',
+  'run_id',
+  'git_request_id',
+]);
+const DRAFT_CONTINUATION_CONTEXT_KEYS = Object.freeze([
+  'project_id',
+  'prompt_base_source_tree',
+  'candidate_base_revision_evidence',
+  'candidate_base_source_tree',
   'conversation_events',
   'turn_id',
   'task_id',
@@ -245,6 +257,9 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const readProviderConfig = requiredMethod(options.readProviderConfig);
   const resolveSecret = requiredMethod(options.resolveSecret);
   const buildGenerationContext = requiredMethod(options.buildGenerationContext, 'builder_generation_base_unavailable');
+  const buildDraftContinuationContext = options.buildDraftContinuationContext === undefined
+    ? null
+    : requiredMethod(options.buildDraftContinuationContext, 'builder_generation_base_unavailable');
   const buildExplanationContext = options.buildExplanationContext === undefined
     ? null
     : requiredMethod(options.buildExplanationContext, 'builder_generation_base_unavailable');
@@ -257,6 +272,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const onProgress = options.onProgress === undefined ? null : requiredMethod(options.onProgress);
   const onOutputDelta = options.onOutputDelta === undefined ? null : requiredMethod(options.onOutputDelta);
   const inFlight = new Map();
+  const draftContinuationInFlight = new Map();
   const explanationInFlight = new Map();
   const planInFlight = new Map();
 
@@ -394,6 +410,110 @@ function createBuilderGenerationHostAdapter(options = {}) {
         base_revision_evidence: ownValue(context, 'base_revision_evidence', 'builder_generation_base_unavailable'),
         base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
         conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
+        turn_id: ownValue(context, 'turn_id', 'builder_generation_base_unavailable'),
+        run_id: ownValue(context, 'run_id', 'builder_generation_base_unavailable'),
+        generated_text: generatedText,
+      });
+      return Object.freeze({ ...draft, context });
+    } catch (error) {
+      mapKernelError(error);
+    }
+  }
+
+  async function runDraftContinuation(request, controller) {
+    if (buildDraftContinuationContext === null) fail('builder_generation_base_unavailable');
+    let context = await boundedContext(
+      request,
+      controller.signal,
+      buildDraftContinuationContext,
+      DRAFT_CONTINUATION_CONTEXT_KEYS,
+    );
+    let descriptor;
+    try {
+      descriptor = createBuilderGenerationPromptDescriptor({
+        request,
+        base_source_tree: ownValue(
+          context,
+          'prompt_base_source_tree',
+          'builder_generation_base_unavailable',
+        ),
+      });
+    } catch (error) {
+      mapKernelError(error);
+    }
+    context = await progressContext(
+      context,
+      'context_ready',
+      DRAFT_CONTINUATION_CONTEXT_KEYS,
+      controller.signal,
+    );
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const { config, credential } = providerAuthority();
+    context = await progressContext(
+      context,
+      'provider_request_started',
+      DRAFT_CONTINUATION_CONTEXT_KEYS,
+      controller.signal,
+    );
+    let transportResult;
+    try {
+      transportResult = await Reflect.apply(transport, undefined, [{
+        base_url: config.base_url,
+        model: config.model,
+        credential,
+        messages: [
+          { role: 'system', content: descriptor.system_instruction },
+          { role: 'user', content: descriptor.user_instruction },
+        ],
+        timeout_ms: config.timeout_ms,
+        ...(config.temperature === null ? {} : { temperature: config.temperature }),
+        ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
+      }, {
+        signal: controller.signal,
+        ...(onOutputDelta === null
+          ? {}
+          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+      }]);
+    } catch (error) {
+      mapTransportError(error, controller.signal);
+    }
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    context = await progressContext(
+      context,
+      'provider_response_received',
+      DRAFT_CONTINUATION_CONTEXT_KEYS,
+      controller.signal,
+    );
+    const generatedText = sanitizeTransportResult(transportResult);
+    context = await progressContext(
+      context,
+      'result_preparing',
+      DRAFT_CONTINUATION_CONTEXT_KEYS,
+      controller.signal,
+    );
+    try {
+      const draft = projectBuilderDraftContinuationGenerationResult({
+        request,
+        prompt_base_source_tree: ownValue(
+          context,
+          'prompt_base_source_tree',
+          'builder_generation_base_unavailable',
+        ),
+        candidate_base_revision_evidence: ownValue(
+          context,
+          'candidate_base_revision_evidence',
+          'builder_generation_base_unavailable',
+        ),
+        candidate_base_source_tree: ownValue(
+          context,
+          'candidate_base_source_tree',
+          'builder_generation_base_unavailable',
+        ),
+        conversation_events: ownValue(
+          context,
+          'conversation_events',
+          'builder_generation_base_unavailable',
+        ),
         turn_id: ownValue(context, 'turn_id', 'builder_generation_base_unavailable'),
         run_id: ownValue(context, 'run_id', 'builder_generation_base_unavailable'),
         generated_text: generatedText,
@@ -574,6 +694,24 @@ function createBuilderGenerationHostAdapter(options = {}) {
     return entry.promise;
   }
 
+  function generateDraftContinuation(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationHostAdapterError('builder_generation_request_invalid'));
+    }
+    const existing = draftContinuationInFlight.get(request.request_digest);
+    if (existing) return existing.promise;
+    const controller = new AbortController();
+    const entry = { controller, promise: null };
+    entry.promise = runDraftContinuation(request, controller).finally(() => {
+      if (draftContinuationInFlight.get(request.request_digest) === entry) {
+        draftContinuationInFlight.delete(request.request_digest);
+      }
+    });
+    draftContinuationInFlight.set(request.request_digest, entry);
+    return entry.promise;
+  }
+
   function explain(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -613,10 +751,14 @@ function createBuilderGenerationHostAdapter(options = {}) {
   function cancel(rawRequest) {
     const requestId = sanitizeCancelRequest(rawRequest);
     const entry = inFlight.get(requestId);
+    const draftContinuationEntry = draftContinuationInFlight.get(requestId);
     const explanationEntry = explanationInFlight.get(requestId);
     const planEntry = planInFlight.get(requestId);
-    if (!entry && !explanationEntry && !planEntry) return Object.freeze({ request_id: requestId, cancelled: false });
+    if (!entry && !draftContinuationEntry && !explanationEntry && !planEntry) {
+      return Object.freeze({ request_id: requestId, cancelled: false });
+    }
     if (entry) entry.controller.abort();
+    if (draftContinuationEntry) draftContinuationEntry.controller.abort();
     if (explanationEntry) explanationEntry.controller.abort();
     if (planEntry) planEntry.controller.abort();
     return Object.freeze({ request_id: requestId, cancelled: true });
@@ -641,7 +783,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  return Object.freeze({ generate, explain, plan, cancel, availability });
+  return Object.freeze({ generate, generateDraftContinuation, explain, plan, cancel, availability });
 }
 
 module.exports = Object.freeze({

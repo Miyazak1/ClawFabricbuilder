@@ -15,6 +15,7 @@ const {
 } = require('./builder-git-receipt-contract.cjs');
 const {
   BUILDER_GENERATION_RESULT_PROTOCOL,
+  createBuilderGenerationRequest,
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
@@ -45,6 +46,7 @@ const GENERATE_OPERATION_PREFIX = 'generate:';
 const ANSWER_OPERATION_PREFIX = 'answer:';
 const PLAN_OPERATION_PREFIX = 'plan:';
 const RESTORE_REVISION_OPERATION_PREFIX = 'restore-revision:';
+const DRAFT_CONTINUATION_OPERATION_PREFIX = 'draft-continuation:';
 const PROVIDER_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
 const MAX_LIVE_OUTPUT_BUFFER_BYTES = 512 * 1024;
 const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
@@ -942,6 +944,10 @@ function createBuilderGenerationMainService(rawOptions) {
     options.conversationService,
     'admit_approved_plan_continuation',
   );
+  const beginDraftContinuationWork = ownMethod(
+    options.conversationService,
+    'begin_draft_continuation_work',
+  );
   const persistCandidateCommit = ownMethod(options.gitAuthority, 'persist_candidate_commit');
   const verifyCandidateReceipt = ownMethod(options.gitAuthority, 'verify_candidate_receipt');
   const readVerifiedCandidate = ownMethod(options.gitAuthority, 'read_verified_candidate');
@@ -954,6 +960,8 @@ function createBuilderGenerationMainService(rawOptions) {
   const retryableContexts = new Map();
   const pendingRetryContexts = new Map();
   const generationContexts = new WeakMap();
+  const draftContinuationContexts = new WeakMap();
+  const pendingDraftContinuationContexts = new Map();
   const explanationContexts = new WeakMap();
   const providerOutputStates = new WeakMap();
   const liveOutputContextsByRunId = new Map();
@@ -1009,6 +1017,7 @@ function createBuilderGenerationMainService(rawOptions) {
   function observedConversationContext(context) {
     const planSourceContext = planContexts.get(context);
     const directConversationContext = generationContexts.get(context)
+      ?? draftContinuationContexts.get(context)
       ?? explanationContexts.get(context)
       ?? (planSourceContext === undefined ? undefined : valueAt(planSourceContext, 'context'));
     const latest = latestConversationContext(context, directConversationContext);
@@ -1020,6 +1029,7 @@ function createBuilderGenerationMainService(rawOptions) {
   function rejectIfOtherRouteInFlight(prefix, requestDigest) {
     for (const otherPrefix of [
       GENERATE_OPERATION_PREFIX,
+      DRAFT_CONTINUATION_OPERATION_PREFIX,
       ANSWER_OPERATION_PREFIX,
       PLAN_OPERATION_PREFIX,
       RESTORE_REVISION_OPERATION_PREFIX,
@@ -1169,6 +1179,52 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
+  function sanitizeDraftContinuationGenerationRequest(rawRequest) {
+    exactObject(rawRequest, ['draft_id', 'instruction']);
+    return freezeDeep({
+      draft_id: safeDraftId(valueAt(rawRequest, 'draft_id')),
+      instruction: valueAt(rawRequest, 'instruction'),
+    });
+  }
+
+  async function prepareDraftContinuationBasePair(draftId) {
+    const draft = await loadPendingDraftById(draftId);
+    const conversationDraft = sanitizeConversationDraft(
+      Reflect.apply(
+        readConversationCandidateDraft,
+        options.conversationService,
+        [{ draft_id: draftId }],
+      ),
+      draftId,
+    );
+    assertConversationDraftMatchesPending(conversationDraft, draft);
+    const verifiedRead = await Reflect.apply(
+      readVerifiedCandidate,
+      options.gitAuthority,
+      [conversationDraft.git_candidate_receipt],
+    );
+    sanitizeVerifiedCandidateRead(verifiedRead, conversationDraft.git_candidate_receipt);
+    const admission = sanitizeBuilderDraftContinuationAdmission(
+      createBuilderDraftContinuationAdmission({
+        pending_draft: pendingDraftResult(draft),
+        continuation_id: newId(options.createUuid, 'builder-draft-continuation'),
+        admitted_at_ms: safeTimestamp(Date.now()),
+      }),
+    );
+    const base = sanitizeBuilderDraftContinuationBase(
+      createBuilderDraftContinuationBase({
+        admission,
+        verified_candidate: verifiedRead,
+      }),
+    );
+    return freezeDeep({
+      draft,
+      conversation_draft: conversationDraft,
+      admission,
+      base,
+    });
+  }
+
   async function buildGenerationContext(request) {
     try {
       const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
@@ -1258,6 +1314,52 @@ function createBuilderGenerationMainService(rawOptions) {
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);
       return generationContextFromConversation(request, base, conversationContext);
+    } catch {
+      fail();
+    }
+  }
+
+  async function buildDraftContinuationContext(request) {
+    try {
+      const key = operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, request.request_digest);
+      const continuation = pendingDraftContinuationContexts.get(key);
+      if (continuation === undefined) fail();
+      pendingDraftContinuationContexts.delete(key);
+      if (
+        request.existing_project_id !== continuation.admission.project_id
+        || request.instruction !== continuation.instruction
+      ) fail();
+      const conversationContext = Reflect.apply(
+        beginDraftContinuationWork,
+        options.conversationService,
+        [{
+          admission: continuation.admission,
+          instruction: request.instruction,
+          request_digest: request.request_digest,
+        }],
+      );
+      const candidateBase = await baseForGeneration(
+        request,
+        conversationContext.project.project_id,
+        baseRevisionFromConversationContext(conversationContext),
+      );
+      const context = freezeDeep({
+        project_id: conversationContext.project.project_id,
+        prompt_base_source_tree: continuation.base.base_source_tree,
+        candidate_base_revision_evidence: candidateBase.base_revision_evidence,
+        candidate_base_source_tree: candidateBase.source_tree,
+        conversation_events: conversationContext.events,
+        turn_id: conversationContext.ids.turn_id,
+        task_id: conversationContext.ids.task_id,
+        run_id: conversationContext.ids.run_id,
+        git_request_id: newId(options.createUuid, 'builder-git-request'),
+      });
+      draftContinuationContexts.set(context, conversationContext);
+      liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
+      activeContexts.set(key, conversationContext);
+      retryableContexts.delete(key);
+      notifyGenerationStarted(request, conversationContext.project.project_id);
+      return context;
     } catch {
       fail();
     }
@@ -1368,6 +1470,7 @@ function createBuilderGenerationMainService(rawOptions) {
     readProviderConfig,
     resolveSecret,
     buildGenerationContext,
+    buildDraftContinuationContext,
     buildExplanationContext,
     buildPlanContext,
     onProgress({ context, stage }) {
@@ -1387,6 +1490,29 @@ function createBuilderGenerationMainService(rawOptions) {
         liveOutputContextsByRunId.set(progressed.ids.run_id, progressed);
         activeContexts.set(
           operationKey(GENERATE_OPERATION_PREFIX, generationContext.request_digest),
+          progressed,
+        );
+        return updated;
+      }
+      const draftContinuationContext = latestConversationContext(
+        context,
+        draftContinuationContexts.get(context),
+      );
+      if (draftContinuationContext !== undefined) {
+        const progressed = Reflect.apply(
+          recordConversationRunProgress,
+          options.conversationService,
+          [{ context: draftContinuationContext, stage }],
+        );
+        const updated = freezeDeep({
+          ...context,
+          conversation_events: progressed.events,
+        });
+        inheritLiveOutputState(context, updated);
+        draftContinuationContexts.set(updated, progressed);
+        liveOutputContextsByRunId.set(progressed.ids.run_id, progressed);
+        activeContexts.set(
+          operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, draftContinuationContext.request_digest),
           progressed,
         );
         return updated;
@@ -1823,12 +1949,138 @@ function createBuilderGenerationMainService(rawOptions) {
     return operation;
   }
 
+  function startDraftContinuationGenerate(request, continuationContext) {
+    const key = operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, request.request_digest);
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const routeConflict = rejectIfOtherRouteInFlight(
+      DRAFT_CONTINUATION_OPERATION_PREFIX,
+      request.request_digest,
+    );
+    if (routeConflict) return routeConflict;
+    pendingDraftContinuationContexts.set(key, continuationContext);
+    const operation = Promise.resolve(host.generateDraftContinuation(request)).then(async (internal) => {
+      const context = valueAt(internal, 'context');
+      const conversationContext = latestConversationContext(
+        context,
+        draftContinuationContexts.get(context),
+      );
+      if (conversationContext === undefined) fail();
+      const draftId = `builder-generation-draft:${sha256Canonical({
+        draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
+        request_id: internal.request_id,
+        candidate_id: internal.candidate.candidate_id,
+        candidate_digest: internal.candidate.candidate_digest,
+        run_id: internal.candidate.run_id,
+        continuation_base_digest: continuationContext.base.base_digest,
+        previous_draft_id: continuationContext.admission.draft_id,
+      }).slice('sha256:'.length)}`;
+      const gitCandidateReceipt = await Reflect.apply(
+        persistCandidateCommit,
+        options.gitAuthority,
+        [{
+          request_id: valueAt(context, 'git_request_id'),
+          expected_base_oid: internal.candidate.base_revision_evidence === null
+            ? null
+            : internal.candidate.base_revision_evidence.commit_oid,
+          candidate: internal.candidate,
+        }],
+      );
+      const gitVerificationReceipt = await Reflect.apply(
+        verifyCandidateReceipt,
+        options.gitAuthority,
+        [gitCandidateReceipt],
+      );
+      const receiptPair = sanitizeBuilderGitCandidateReceiptPair(
+        gitCandidateReceipt,
+        gitVerificationReceipt,
+      );
+      const recorded = Reflect.apply(
+        completeConversationCandidate,
+        options.conversationService,
+        [{
+          context: conversationContext,
+          candidate_result: {
+            draft_id: draftId,
+            title: internal.title,
+            summary: internal.summary,
+            git_candidate_receipt: receiptPair.candidate_receipt,
+          },
+          assistant_text: internal.summary,
+        }],
+      );
+      const stored = freezeDeep({
+        version: internal.version,
+        request_id: internal.request_id,
+        title: internal.title,
+        summary: internal.summary,
+        admissions: {
+          ...internal.admissions,
+          conversation: 'sqlite_recorded',
+        },
+        candidate: internal.candidate,
+        candidate_proof: {
+          ...candidateProofFromCandidate(internal.candidate),
+          git_request_id: valueAt(context, 'git_request_id'),
+        },
+        draft_id: draftId,
+        request,
+        git_request_id: valueAt(context, 'git_request_id'),
+        conversation_head: recorded.head,
+        restart_restore: 'not_persisted',
+        draft_continuation: {
+          previous_draft_id: continuationContext.admission.draft_id,
+          admission_digest: continuationContext.admission.admission_digest,
+          base_digest: continuationContext.base.base_digest,
+          squash_authority: 'pending_candidate_context_project_base_candidate_v1',
+        },
+      });
+      pendingDrafts.set(draftId, stored);
+      pendingDrafts.delete(continuationContext.admission.draft_id);
+      retryableContexts.delete(key);
+      return publicDraftResult(stored);
+    }).catch((error) => {
+      recordFailure(key, error);
+      throw error;
+    }).finally(() => {
+      pendingDraftContinuationContexts.delete(key);
+      activeContexts.delete(key);
+      if (inFlight.get(key) === operation) inFlight.delete(key);
+    });
+    inFlight.set(key, operation);
+    return operation;
+  }
+
   async function generate(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
     return startGenerate(request, null);
+  }
+
+  async function generateDraftContinuation(rawRequest) {
+    let request = null;
+    try {
+      const continuationRequest = sanitizeDraftContinuationGenerationRequest(rawRequest);
+      const continuationContext = await prepareDraftContinuationBasePair(continuationRequest.draft_id);
+      request = createBuilderGenerationRequest({
+        instruction: continuationRequest.instruction,
+        existing_project_id: continuationContext.admission.project_id,
+      });
+      return await startDraftContinuationGenerate(request, freezeDeep({
+        ...continuationContext,
+        instruction: request.instruction,
+      }));
+    } catch (error) {
+      if (request !== null) {
+        pendingDraftContinuationContexts.delete(
+          operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, request.request_digest),
+        );
+      }
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
   }
 
   async function generateApprovedPlan(rawRequest) {
@@ -2186,32 +2438,7 @@ function createBuilderGenerationMainService(rawOptions) {
     try {
       exactObject(rawRequest, ['draft_id']);
       const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
-      const draft = await loadPendingDraftById(draftId);
-      const conversationDraft = sanitizeConversationDraft(
-        Reflect.apply(
-          readConversationCandidateDraft,
-          options.conversationService,
-          [{ draft_id: draftId }],
-        ),
-        draftId,
-      );
-      assertConversationDraftMatchesPending(conversationDraft, draft);
-      const verifiedRead = await Reflect.apply(
-        readVerifiedCandidate,
-        options.gitAuthority,
-        [conversationDraft.git_candidate_receipt],
-      );
-      sanitizeVerifiedCandidateRead(verifiedRead, conversationDraft.git_candidate_receipt);
-      return sanitizeBuilderDraftContinuationBase(
-        createBuilderDraftContinuationBase({
-          admission: createBuilderDraftContinuationAdmission({
-            pending_draft: pendingDraftResult(draft),
-            continuation_id: newId(options.createUuid, 'builder-draft-continuation'),
-            admitted_at_ms: safeTimestamp(Date.now()),
-          }),
-          verified_candidate: verifiedRead,
-        }),
-      );
+      return (await prepareDraftContinuationBasePair(draftId)).base;
     } catch (error) {
       if (error instanceof BuilderGenerationMainServiceError) throw error;
       fail();
@@ -2274,6 +2501,7 @@ function createBuilderGenerationMainService(rawOptions) {
     answer,
     propose_plan: proposePlan,
     generate,
+    generate_draft_continuation: generateDraftContinuation,
     generate_approved_plan: generateApprovedPlan,
     retry_generate: retryGenerate,
     prepare_approved_plan_edit_context: prepareApprovedPlanEditContext,
@@ -2297,6 +2525,7 @@ function createBuilderGenerationMainService(rawOptions) {
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
       draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
       draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
+      draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,

@@ -554,8 +554,18 @@ Evidence requirements:
   Turn/Run for the requested replacement. That start gate still dispatches no
   provider/tool, reads no source, mutates no Git, creates no candidate, accepts
   no Review, creates no Save/Project Revision, and opens no IPC/preload/renderer
-  command. The next slice must add the main-only draft-to-draft generation
-  service before any visible composer affordance is enabled;
+  command. The current draft-to-draft generation checkpoint consumes that
+  admission plus the verified pending candidate source tree through a main-only
+  host path. Provider prompting is based on the pending candidate source, while
+  the final unsaved candidate is squashed back onto the current product base
+  revision or empty bound project base before Git evidence is persisted. This
+  preserves Save/History/SQLite semantics by not treating a pending candidate as
+  a saved Project Revision. The path records a fresh Conversation work Run,
+  fixed progress stages, a new unsaved Git candidate, and a candidate result,
+  but still exposes no IPC/preload command, renderer source, receipt, provider
+  envelope, credential, Save authority, Project Revision authority, or `main`
+  projection. The next slice may add the controlled IPC/frontend affordance for
+  continuing an unsaved draft from the single composer;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

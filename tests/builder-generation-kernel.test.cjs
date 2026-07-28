@@ -18,6 +18,7 @@ const {
   createBuilderGenerationPromptDescriptor,
   createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
+  projectBuilderDraftContinuationGenerationResult,
   projectBuilderGenerationResult,
   projectBuilderPlanProposalResult,
   sanitizeBuilderGenerationRequest,
@@ -433,6 +434,80 @@ test('projects provider operations into a host-owned unsaved code-change candida
   assert.equal(result.admissions.save, 'not_performed');
   assert.equal(result.admissions.conversation, 'candidate_local_not_recorded');
   assert.ok(result.candidate.resulting_source_tree.files.some((file) => file.path === 'src/app.js'));
+});
+
+test('squashes draft continuation output back onto the current product base', () => {
+  const rawRequest = request({ instruction: 'Make the pending draft calmer.', existingProjectId: PROJECT_ID });
+  const productBase = sourceTree([
+    { path: 'index.html', content: '<main><h1>Saved</h1></main>\n' },
+    { path: 'src/app.js', content: 'export const saved = true;\n' },
+  ]);
+  const pendingDraftBase = sourceTree([
+    { path: 'index.html', content: '<main><h1>Draft</h1><p>Ready</p></main>\n' },
+    { path: 'src/app.js', content: 'export const saved = false;\n' },
+    { path: 'src/draft.js', content: 'export const pending = true;\n' },
+  ]);
+  const result = projectBuilderDraftContinuationGenerationResult({
+    request: rawRequest,
+    prompt_base_source_tree: pendingDraftBase,
+    candidate_base_revision_evidence: baseEvidence(productBase),
+    candidate_base_source_tree: productBase,
+    conversation_events: conversationEvents({
+      requestDigest: rawRequest.request_digest,
+      baseRevision: {
+        revision_receipt_digest: REVISION_RECEIPT_DIGEST,
+        commit_oid: COMMIT_OID,
+      },
+    }),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+    generated_text: generatedText({
+      title: 'Calmer draft',
+      summary: 'The pending draft was revised before saving.',
+      operations: [
+        { operation: 'upsert', path: 'src/draft.js', content: 'export const pending = "calm";\n' },
+        { operation: 'upsert', path: 'styles.css', content: 'body { color: #123; }\n' },
+      ],
+    }),
+  });
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'candidate');
+  assert.equal(result.title, 'Calmer draft');
+  assert.equal(result.request_id, rawRequest.request_digest);
+  assert.deepEqual(result.candidate.base_revision_evidence, baseEvidence(productBase));
+  assert.deepEqual(result.candidate.base_source_tree, productBase);
+  assert.deepEqual(result.candidate.run_binding.base_revision, {
+    revision_receipt_digest: REVISION_RECEIPT_DIGEST,
+    commit_oid: COMMIT_OID,
+  });
+  assert.deepEqual(result.candidate.resulting_source_tree.files.map((file) => file.path), [
+    'index.html',
+    'src/app.js',
+    'src/draft.js',
+    'styles.css',
+  ]);
+  assert.equal(
+    result.candidate.resulting_source_tree.files.find((file) => file.path === 'index.html').content,
+    '<main><h1>Draft</h1><p>Ready</p></main>\n',
+  );
+  assert.equal(
+    result.candidate.resulting_source_tree.files.find((file) => file.path === 'src/draft.js').content,
+    'export const pending = "calm";\n',
+  );
+  assert.deepEqual(result.candidate.operations.map((operation) => operation.path), [
+    'index.html',
+    'src/app.js',
+    'src/draft.js',
+    'styles.css',
+  ]);
+  assert.deepEqual(result.admissions, {
+    conversation: 'candidate_local_not_recorded',
+    draft: 'candidate_not_saved',
+    save: 'not_performed',
+    preview: 'not_evaluated',
+    execution: 'not_evaluated',
+  });
 });
 
 test('projects provider explanation without creating a candidate or source change', () => {

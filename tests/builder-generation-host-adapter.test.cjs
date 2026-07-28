@@ -243,6 +243,22 @@ function contextFor(raw = request(), overrides = {}) {
   };
 }
 
+function draftContinuationContextFor(raw = request({ existingProjectId: PROJECT_ID }), overrides = {}) {
+  return {
+    project_id: PROJECT_ID,
+    prompt_base_source_tree: overrides.prompt_base_source_tree ?? sourceTree([
+      { path: 'index.html', content: '<main><h1>Draft</h1></main>\n' },
+    ]),
+    candidate_base_revision_evidence: overrides.candidate_base_revision_evidence ?? null,
+    candidate_base_source_tree: overrides.candidate_base_source_tree ?? sourceTree(),
+    conversation_events: overrides.conversation_events ?? events({ requestDigest: raw.request_digest }),
+    turn_id: TURN_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    git_request_id: GIT_REQUEST_ID,
+  };
+}
+
 function explanationContextFor(raw = request(), overrides = {}) {
   const base = overrides.base_source_tree ?? sourceTree();
   return {
@@ -293,6 +309,7 @@ function dependencies(overrides = {}) {
       credential: 'real-key-value',
     }),
     buildGenerationContext: (raw) => contextFor(raw),
+    buildDraftContinuationContext: (raw) => draftContinuationContextFor(raw),
     buildExplanationContext: (raw) => explanationContextFor(raw),
     buildPlanContext: (raw) => planContextFor(raw),
     transport: async () => ({
@@ -606,6 +623,85 @@ test('passes verified current source into the prompt for an existing project', a
   assert.equal(result.candidate.base_source_tree.source_tree_digest, base.source_tree_digest);
 });
 
+test('generates a draft continuation from pending candidate source while squashing to product base', async () => {
+  const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Make the draft calmer.' });
+  const productBase = sourceTree([
+    { path: 'index.html', content: '<main><h1>Saved</h1></main>\n' },
+  ]);
+  const pendingBase = sourceTree([
+    { path: 'index.html', content: '<main><h1>Draft</h1></main>\n' },
+    { path: 'src/draft.js', content: 'export const pending = true;\n' },
+  ]);
+  const baseRevision = {
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
+  };
+  const stages = [];
+  let userPrompt = '';
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildDraftContinuationContext: () => draftContinuationContextFor(rawRequest, {
+      prompt_base_source_tree: pendingBase,
+      candidate_base_source_tree: productBase,
+      candidate_base_revision_evidence: {
+        evidence_version: 'builder-project-base-revision-evidence.v2',
+        project_id: PROJECT_ID,
+        revision_receipt_digest: baseRevision.revision_receipt_digest,
+        commit_oid: baseRevision.commit_oid,
+        source_tree_digest: productBase.source_tree_digest,
+        verification_admission: 'git_sqlite_read_authority_verified',
+      },
+      conversation_events: events({
+        requestDigest: rawRequest.request_digest,
+        baseRevision,
+      }),
+    }),
+    onProgress: ({ context, stage }) => {
+      stages.push({
+        stage,
+        promptDigest: context.prompt_base_source_tree.source_tree_digest,
+        candidateDigest: context.candidate_base_source_tree.source_tree_digest,
+      });
+      return context;
+    },
+    transport: async (input) => {
+      userPrompt = input.messages[1].content;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          operations: [
+            { operation: 'upsert', path: 'src/draft.js', content: 'export const pending = "calm";\n' },
+          ],
+        })),
+      };
+    },
+  }));
+
+  const result = await adapter.generateDraftContinuation(rawRequest);
+
+  assert.match(userPrompt, /Make the draft calmer/u);
+  assert.match(userPrompt, /export const pending = true/u);
+  assert.doesNotMatch(userPrompt, /<main><h1>Saved<\/h1><\/main>/u);
+  assert.deepEqual(stages.map((stage) => stage.stage), [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ]);
+  assert.equal(stages.every((stage) => stage.promptDigest === pendingBase.source_tree_digest), true);
+  assert.equal(stages.every((stage) => stage.candidateDigest === productBase.source_tree_digest), true);
+  assert.equal(result.candidate.base_source_tree.source_tree_digest, productBase.source_tree_digest);
+  assert.equal(result.candidate.base_revision_evidence.commit_oid, baseRevision.commit_oid);
+  assert.deepEqual(result.candidate.resulting_source_tree.files.map((file) => file.path), [
+    'index.html',
+    'src/draft.js',
+  ]);
+  assert.equal(
+    result.candidate.resulting_source_tree.files.find((file) => file.path === 'src/draft.js').content,
+    'export const pending = "calm";\n',
+  );
+  assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
+});
+
 test('shares exact concurrent requests and releases single-flight after completion', async () => {
   let resolveTransport;
   let calls = 0;
@@ -663,6 +759,22 @@ test('cancels only the exact active request and propagates abort to transport', 
     cancelled: true,
   });
   await assert.rejects(answer, { code: 'builder_generation_cancelled' });
+
+  const continuationAdapter = createBuilderGenerationHostAdapter(dependencies({
+    transport: async (_input, control) => new Promise((_resolve, reject) => {
+      control.signal.addEventListener('abort', () => {
+        const error = new Error('cancelled');
+        error.code = 'builder_provider_cancelled';
+        reject(error);
+      }, { once: true });
+    }),
+  }));
+  const continuation = continuationAdapter.generateDraftContinuation(request({ existingProjectId: PROJECT_ID }));
+  assert.deepEqual(continuationAdapter.cancel({ request_id: request({ existingProjectId: PROJECT_ID }).request_digest }), {
+    request_id: request({ existingProjectId: PROJECT_ID }).request_digest,
+    cancelled: true,
+  });
+  await assert.rejects(continuation, { code: 'builder_generation_cancelled' });
 
   const planAdapter = createBuilderGenerationHostAdapter(dependencies({
     transport: async (_input, control) => new Promise((_resolve, reject) => {

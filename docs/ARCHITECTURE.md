@@ -193,6 +193,19 @@ the requested replacement work, but it still dispatches no provider/tool, reads
 no source, mutates no Git state, creates no new candidate, accepts no Review,
 saves no Project Revision, and exposes no IPC/preload/renderer command.
 
+Generation main service can now use that private admission and verified pending
+candidate base for a main-only draft-to-draft generation path. The provider
+prompt is built from the verified pending candidate source tree so the model can
+revise the unsaved draft the user is looking at. The resulting candidate is then
+squashed back onto the current product base revision or empty bound project base
+before Git evidence is persisted. This keeps `expected_base_oid`, Save, History,
+and SQLite Project Revision semantics tied to product revision truth instead of
+pretending a pending candidate is a saved Version. The path starts a fresh
+Conversation work Run, records the same fixed progress stages, persists a new
+unsaved Git candidate, and records the candidate result in Conversation, but it
+does not save, accept Review, update `main`, create a Project Revision, expose
+source/receipts/provider data to the renderer, or open IPC/preload authority.
+
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
 Builder Project Revision is a SQLite product receipt that binds a Project,
