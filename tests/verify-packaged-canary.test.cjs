@@ -82,6 +82,14 @@ function workspaceGateEvidence() {
   };
 }
 
+function liveOutputEvidence() {
+  return {
+    internal_evidence_hidden: true,
+    live_output_visible: true,
+    user_facing_work_status_visible: true,
+  };
+}
+
 function input(overrides = {}) {
   return JSON.stringify({
     executable_path: path.join(process.cwd(), 'release', 'win-unpacked', 'ClawFabric Builder.exe'),
@@ -247,6 +255,10 @@ class FakeLocator {
       ) return '';
       return `Version saved This draft was saved as Version ${this.page.savedActivityRevision}.`;
     }
+    if (this.selector === SELECTORS.liveOutput) {
+      if (this.page.liveOutputTextOverride !== null) return this.page.liveOutputTextOverride;
+      return 'Assistant Building the first project draft.';
+    }
     if (this.selector === SELECTORS.reviewCheckpoint) {
       if (this.page.reviewTextOverride !== null) return this.page.reviewTextOverride;
       return 'Review before saving 1 file change: 1 added. Preview and changes are ready.';
@@ -319,6 +331,10 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.historyPreview) {
       this.page.assertSelectorVisibility(this.selector, this.page.historyViewingRevision !== null, state);
+      return;
+    }
+    if (this.selector === SELECTORS.liveOutput) {
+      this.page.assertSelectorVisibility(this.selector, this.page.liveOutputVisible, state);
       return;
     }
     if (this.selector === SELECTORS.reviewCheckpoint || this.selector === SELECTORS.reviewOpenChanges) {
@@ -519,6 +535,8 @@ class FakePage {
     this.draftFailuresRemaining = 0;
     this.keepPasswordValue = false;
     this.lastFailedDraftTarget = null;
+    this.liveOutputTextOverride = null;
+    this.liveOutputVisible = false;
     this.approvedPlanReviews = 0;
     this.planTurns = 0;
     this.planSourceReadApprovalVisible = false;
@@ -562,9 +580,11 @@ class FakePage {
       const revision = Math.max(this.savedRevision + 1, this.candidateTurns);
       this.retryDraftVisible = false;
       this.unsavedDraftVisible = false;
+      this.liveOutputVisible = false;
       return revision;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
+      this.liveOutputVisible = true;
       if (this.draftFailuresRemaining > 0) {
         this.draftFailuresRemaining -= 1;
         this.alertVisible = true;
@@ -1886,6 +1906,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
   assert.deepEqual(draftEvidence, {
+    live_output: liveOutputEvidence(),
     pre_save_catalog_empty: true,
     review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
@@ -1912,6 +1933,23 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(firstSend >= 0 && firstSend < pickerVisible);
   assert.ok(pickerVisible < sourceFolderClick);
   assert.ok(sourceFolderClick < secondSend);
+  const liveOutputVisible = page.events.findIndex((event) => (
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.liveOutput
+    && event[2] === 'visible'
+  ));
+  const liveOutputText = page.events.findIndex((event) => (
+    event[0] === 'textContent'
+    && event[1] === SELECTORS.liveOutput
+  ));
+  const terminalPreview = page.events.findIndex((event) => (
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.preview
+    && event[2] === 'visible'
+  ));
+  assert.ok(secondSend < liveOutputVisible);
+  assert.ok(liveOutputVisible < liveOutputText);
+  assert.ok(liveOutputText < terminalPreview);
   const saveScroll = page.events.findIndex(
     (event) => event[0] === 'scrollIntoView' && event[1] === SELECTORS.saveVersion,
   );
@@ -2285,6 +2323,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   const pendingFacts = assertTaskStreamPendingCandidateFacts(pendingEvidence, firstRevision, 2);
 
   assert.deepEqual(pending, {
+    live_output: liveOutputEvidence(),
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
     unsaved_draft_observed: true,
@@ -2366,6 +2405,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   const update = await updateProjectViaUi(page, firstRevision);
 
   assert.deepEqual(update, {
+    live_output: liveOutputEvidence(),
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
@@ -2480,6 +2520,24 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'build_workspace_required',
+    },
+    {
+      code: 'canary_generation_terminal_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failWaitFor.add(SELECTORS.liveOutput);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'generation_terminal',
+    },
+    {
+      code: 'canary_generation_terminal_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.liveOutputTextOverride = 'Assistant request_id provider credential source_tree sha256:secret';
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'generation_terminal',
     },
     {
       code: 'canary_generation_terminal_failed',
@@ -2650,6 +2708,40 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await askProjectQuestionViaUi(page, first, CANARY_QUESTION, 1, 2);
       },
       stage: 'question_evidence',
+    },
+    {
+      code: 'canary_update_generation_terminal_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.failWaitFor.add(SELECTORS.liveOutput);
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await updateProjectViaUi(page, first);
+      },
+      stage: 'update_generation_terminal',
+    },
+    {
+      code: 'canary_update_generation_terminal_failed',
+      run: async () => {
+        const page = new FakePage();
+        installBridge(page);
+        page.draftSaved = true;
+        page.savedRevision = 1;
+        page.liveOutputTextOverride = 'Assistant builder-run:11111111-1111-4111-8111-111111111111 provider credential';
+        const first = bridgeEvidence(
+          'builder-project:11111111-1111-4111-8111-111111111111',
+          true,
+          1,
+        ).current.product_revision_receipt;
+        await updateProjectViaUi(page, first);
+      },
+      stage: 'update_generation_terminal',
     },
     {
       code: 'canary_update_generation_terminal_failed',
@@ -3236,6 +3328,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   });
   assert.deepEqual(result.draft, {
     initial: {
+      live_output: liveOutputEvidence(),
       pre_save_catalog_empty: true,
       review_diff: reviewDiffEvidence(),
       saved_via_ui: true,
@@ -3256,6 +3349,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       unsaved_draft_restored: true,
     },
     update: {
+      live_output: liveOutputEvidence(),
       previous_revision_verified_before_save: true,
       review_diff: reviewDiffEvidence(),
       saved_via_ui: true,

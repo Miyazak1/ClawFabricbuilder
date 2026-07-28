@@ -59,6 +59,7 @@ const SELECTORS = Object.freeze({
   currentVersion: '[data-builder-current-version="true"]',
   historyPreview: '[data-builder-history-preview="true"]',
   idea: '#builder-idea',
+  liveOutput: '[data-builder-live-output="true"]',
   newProjectPanel: '[data-builder-new-project-panel="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
   approvePlanSourceRead: '[data-builder-approve-plan-source-read="true"]',
@@ -1521,6 +1522,27 @@ async function waitForGenerationTerminal(page) {
   fail('canary_preview_failed');
 }
 
+async function captureGenerationLiveOutputViaUi(page, failureCode) {
+  try {
+    const liveOutput = page.locator(SELECTORS.liveOutput);
+    await liveOutput.waitFor({ state: 'visible' });
+    const text = await liveOutput.textContent();
+    if (
+      typeof text !== 'string'
+      || !/(?:assistant|working|preparing|building|writing|updating|checking|draft|response|request)/iu.test(text)
+      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(text)
+    ) fail(failureCode);
+    return Object.freeze({
+      internal_evidence_hidden: true,
+      live_output_visible: true,
+      user_facing_work_status_visible: true,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail(failureCode);
+  }
+}
+
 function planStreamFailureCode(value) {
   try {
     if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) return null;
@@ -1734,6 +1756,7 @@ async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
 
 async function generateProjectViaUi(page, idea) {
   let draftReviewDiff = null;
+  let liveOutput = null;
   let workspaceGate = null;
   try {
     await clickByRole(page, 'button', 'New project');
@@ -1745,6 +1768,7 @@ async function generateProjectViaUi(page, idea) {
   }
   try {
     await clickByRole(page, 'button', 'Send');
+    liveOutput = await captureGenerationLiveOutputViaUi(page, 'canary_generation_terminal_failed');
     await waitForGenerationTerminal(page);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
@@ -1785,6 +1809,7 @@ async function generateProjectViaUi(page, idea) {
   }
   await assertVisibleVersion(page, 1);
   return Object.freeze({
+    live_output: liveOutput,
     pre_save_catalog_empty: true,
     review_diff: draftReviewDiff,
     saved_via_ui: true,
@@ -2041,9 +2066,11 @@ async function createUpdateDraftViaUi(
   expectedQuestionTurns = 0,
 ) {
   let draftReviewDiff = null;
+  let liveOutput = null;
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
     await clickByRole(page, 'button', 'Send');
+    liveOutput = await captureGenerationLiveOutputViaUi(page, 'canary_update_generation_terminal_failed');
     await waitForGenerationTerminal(page);
   } catch {
     fail('canary_update_generation_terminal_failed');
@@ -2067,6 +2094,7 @@ async function createUpdateDraftViaUi(
     fail('canary_update_draft_failed');
   }
   return Object.freeze({
+    live_output: liveOutput,
     previous_revision_verified_before_save: true,
     review_diff: draftReviewDiff,
     unsaved_draft_observed: true,
