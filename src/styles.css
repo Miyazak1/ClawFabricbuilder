@@ -488,6 +488,99 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-weight: 600;
 }
 
+.cf-builder-workspace-picker-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cf-builder-workspace-picker-heading h2 {
+  margin: 0;
+  color: var(--cf-text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.cf-builder-workspace-link-button {
+  border: 0;
+  background: transparent;
+  color: var(--cf-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 4px;
+}
+
+.cf-builder-workspace-link-button:hover,
+.cf-builder-workspace-link-button:focus-visible {
+  color: var(--cf-primary-text);
+  outline: none;
+}
+
+.cf-builder-new-project-panel {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.cf-builder-new-project-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--cf-text-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.cf-builder-new-project-field input {
+  min-height: 34px;
+  min-width: 0;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+  font-size: 12px;
+  outline: none;
+  padding: 0 9px;
+}
+
+.cf-builder-new-project-field input:focus {
+  border-color: color-mix(in srgb, var(--cf-primary) 42%, var(--cf-border));
+  background: var(--cf-surface);
+}
+
+.cf-builder-source-folders-box {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface-muted);
+  padding: 9px;
+}
+
+.cf-builder-source-folders-box h3,
+.cf-builder-source-folders-box p {
+  margin: 0;
+}
+
+.cf-builder-source-folders-box h3 {
+  color: var(--cf-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.cf-builder-source-folders-box p {
+  margin-top: 3px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .cf-builder-workspace-search {
   display: flex;
   min-height: 34px;

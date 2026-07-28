@@ -2,7 +2,7 @@ import type { BuilderProjectWorkspacePort } from '../application/builderPorts';
 
 type BuilderProjectWorkspaceBridge = Readonly<{
   open(request: unknown): Promise<unknown>;
-  createLocalProject(): Promise<unknown>;
+  createLocalProject(request: unknown): Promise<unknown>;
   saveDraft(request: unknown): Promise<unknown>;
   loadCurrent(request: unknown): Promise<unknown>;
   loadRevision(request: unknown): Promise<unknown>;
@@ -20,6 +20,7 @@ const BRIDGE_KEYS = Object.freeze([
   'listHistory',
 ]);
 const OPEN_REQUEST_KEYS = Object.freeze(['project_id']);
+const CREATE_LOCAL_PROJECT_REQUEST_KEYS = Object.freeze(['project_title']);
 const SAVE_DRAFT_REQUEST_KEYS = Object.freeze(['draft_id']);
 const LOAD_REVISION_REQUEST_KEYS = Object.freeze(['project_id', 'revision_receipt_digest']);
 const LIST_HISTORY_REQUEST_KEYS = Object.freeze(['project_id', 'limit']);
@@ -199,8 +200,8 @@ export function createBuilderDesktopProjectWorkspacePort(
     open(request: Readonly<{ project_id: string | null }>) {
       return call(bridge, bridge.open, [requestFields(request, OPEN_REQUEST_KEYS)]);
     },
-    createLocalProject() {
-      return call(bridge, bridge.createLocalProject, []);
+    createLocalProject(request: Readonly<{ project_title: string }>) {
+      return call(bridge, bridge.createLocalProject, [requestFields(request, CREATE_LOCAL_PROJECT_REQUEST_KEYS)]);
     },
     saveDraft(request: Readonly<{ draft_id: string }>) {
       return call(bridge, bridge.saveDraft, [requestFields(request, SAVE_DRAFT_REQUEST_KEYS)]);

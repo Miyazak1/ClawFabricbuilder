@@ -39,13 +39,13 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v13',
+  bridgeVersion: 'builder-preload.v14',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
     },
-    createLocalProject() {
-      return ipcRenderer.invoke(CREATE_LOCAL_PROJECT_CHANNEL);
+    createLocalProject(request) {
+      return ipcRenderer.invoke(CREATE_LOCAL_PROJECT_CHANNEL, request);
     },
     saveDraft(request) {
       return ipcRenderer.invoke(SAVE_DRAFT_CHANNEL, request);

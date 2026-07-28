@@ -172,7 +172,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(controller).not.toContain('repository.commit');
     expect(workspacePort).toContain('const BRIDGE_KEYS = Object.freeze([');
     expect(workspacePort).toContain("'createLocalProject'");
-    expect(workspacePort).toContain('createLocalProject()');
+    expect(workspacePort).toContain('createLocalProject(request');
     expect(workspacePort).not.toMatch(/projectRevisions|\bprojectCatalog\b|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).toContain('submit: methods.submit');

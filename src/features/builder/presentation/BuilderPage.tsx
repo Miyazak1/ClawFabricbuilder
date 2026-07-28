@@ -97,7 +97,7 @@ export type BuilderPageProps = {
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onCancel?: () => void;
-  onCreateProject?: () => Promise<unknown> | void;
+  onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onDismissPlanSourceReadApproval?: () => void;
   onSteerInstruction?: () => void;
   onProposePlan?: () => void;
@@ -1218,6 +1218,7 @@ export function BuilderPage({
   const viewingHistory = inspected !== null;
   const hasContent = files.length > 0;
   const title = draft?.title ?? inspected?.target.title ?? saved?.target.title ?? 'New project';
+  const workingProject = current?.workingProject ?? null;
   const catalog = isTrustedBuilderProjectCatalogSnapshot(projectCatalogSnapshot)
     ? projectCatalogSnapshot
     : null;
@@ -1225,13 +1226,13 @@ export function BuilderPage({
   const catalogBusy = catalog?.status === 'loading' || catalog?.status === 'refreshing';
   const workspaceLabel = saved !== null
     ? saved.target.title
-    : current?.workingProjectId !== null
-      ? 'Local project selected'
-      : 'Choose project';
+    : workingProject !== null
+      ? workingProject.title
+    : 'Choose project';
   const workspaceDetail = saved !== null
     ? `Version ${saved.target.revision_number}`
-    : current?.workingProjectId !== null
-      ? 'Unsaved workspace'
+    : workingProject !== null
+      ? workingProject.source_folders[0]?.name ?? 'Source folder selected'
       : 'Chat without a project';
   const version = saved?.target.revision_number ?? null;
   const canAddContext = typeof onSteerInstruction === 'function'
@@ -1351,19 +1352,25 @@ export function BuilderPage({
   );
   const [workspacePickerState, setWorkspacePickerState] = useState<Readonly<{
     buildPrompt: boolean;
+    creating: boolean;
     open: boolean;
     request: number;
     search: string;
+    title: string;
   }>>(() => ({
     buildPrompt: false,
+    creating: false,
     open: false,
     request: 0,
     search: '',
+    title: 'New project',
   }));
   const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
   const workspacePickerOpen = workspacePickerState.open || pendingWorkspacePickerRequest;
   const workspacePickerBuildPrompt = workspacePickerState.buildPrompt || pendingWorkspacePickerRequest;
   const workspaceSearch = workspacePickerState.search;
+  const newProjectTitle = workspacePickerState.title;
+  const canCreateProjectFromPicker = typeof onCreateProject === 'function' && newProjectTitle.trim().length > 0;
   const normalizedWorkspaceSearch = workspaceSearch.trim().toLocaleLowerCase('en-US');
   const visibleWorkspaceProjects = normalizedWorkspaceSearch.length === 0
     ? catalogProjects
@@ -1461,6 +1468,7 @@ export function BuilderPage({
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
+      creating: false,
       open: false,
       request: workspacePickerRequest,
     }));
@@ -1471,14 +1479,32 @@ export function BuilderPage({
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
+      creating: false,
       open: !picker.open,
       request: workspacePickerRequest,
     }));
   }
 
+  function showNewProjectPanel(): void {
+    setWorkspacePickerState((picker) => ({
+      ...picker,
+      creating: true,
+      search: '',
+    }));
+  }
+
+  function hideNewProjectPanel(): void {
+    setWorkspacePickerState((picker) => ({
+      ...picker,
+      creating: false,
+    }));
+  }
+
   function createProjectFromPicker(): void {
+    if (!canCreateProjectFromPicker) return;
+    const projectTitle = newProjectTitle.trim();
     closeWorkspacePicker();
-    void onCreateProject?.();
+    void onCreateProject?.(projectTitle);
   }
 
   function openProjectFromPicker(projectId: string): void {
@@ -1910,41 +1936,88 @@ export function BuilderPage({
             data-builder-workspace-picker="true"
             role="dialog"
           >
-            {workspacePickerBuildPrompt ? (
-              <p className="cf-builder-workspace-picker-note" role="status">
-                Choose or create a project before I build.
-              </p>
-            ) : null}
-            <label className="cf-builder-workspace-search">
-              <Search aria-hidden="true" className="size-3.5" />
-              <input
-                aria-label="Search projects"
-                autoComplete="off"
-                data-builder-workspace-search="true"
-                disabled={catalogBusy}
-                onChange={(event) => {
-                  setWorkspacePickerState((picker) => ({
-                    ...picker,
-                    search: event.currentTarget.value,
-                  }));
-                }}
-                placeholder="Search projects"
-                type="search"
-                value={workspaceSearch}
-              />
-            </label>
-            <div className="cf-builder-workspace-picker-list" role="listbox">
-              {catalogBusy ? (
-                <p className="cf-builder-workspace-picker-empty" role="status">
-                  Loading projects...
-                </p>
-              ) : null}
-              {!catalogBusy && visibleWorkspaceProjects.length === 0 ? (
-                <p className="cf-builder-workspace-picker-empty">
-                  {catalogProjects.length === 0 ? 'No saved projects yet.' : 'No matching projects.'}
-                </p>
-              ) : null}
-              {!catalogBusy && visibleWorkspaceProjects.map((project) => (
+            {workspacePickerState.creating ? (
+              <div className="cf-builder-new-project-panel" data-builder-new-project-panel="true">
+                <div className="cf-builder-workspace-picker-heading">
+                  <h2>New project</h2>
+                  <button
+                    className="cf-builder-workspace-link-button"
+                    onClick={hideNewProjectPanel}
+                    type="button"
+                  >
+                    Back
+                  </button>
+                </div>
+                <label className="cf-builder-new-project-field">
+                  <span>Project name</span>
+                  <input
+                    aria-label="Project name"
+                    autoComplete="off"
+                    data-builder-new-project-title="true"
+                    maxLength={80}
+                    onChange={(event) => {
+                      setWorkspacePickerState((picker) => ({
+                        ...picker,
+                        title: event.currentTarget.value,
+                      }));
+                    }}
+                    value={newProjectTitle}
+                  />
+                </label>
+                <section className="cf-builder-source-folders-box" aria-label="Source folders">
+                  <div>
+                    <h3>Source folders</h3>
+                    <p>No source folder selected.</p>
+                  </div>
+                  <button
+                    className="cf-builder-workspace-new-project"
+                    data-builder-add-source-folder="true"
+                    disabled={!canCreateProjectFromPicker}
+                    onClick={createProjectFromPicker}
+                    type="button"
+                  >
+                    <FolderPlus aria-hidden="true" className="size-3.5" />
+                    Add source folder
+                  </button>
+                </section>
+              </div>
+            ) : (
+              <>
+                {workspacePickerBuildPrompt ? (
+                  <p className="cf-builder-workspace-picker-note" role="status">
+                    Choose or create a project before I build.
+                  </p>
+                ) : null}
+                <label className="cf-builder-workspace-search">
+                  <Search aria-hidden="true" className="size-3.5" />
+                  <input
+                    aria-label="Search projects"
+                    autoComplete="off"
+                    data-builder-workspace-search="true"
+                    disabled={catalogBusy}
+                    onChange={(event) => {
+                      setWorkspacePickerState((picker) => ({
+                        ...picker,
+                        search: event.currentTarget.value,
+                      }));
+                    }}
+                    placeholder="Search projects"
+                    type="search"
+                    value={workspaceSearch}
+                  />
+                </label>
+                <div className="cf-builder-workspace-picker-list" role="listbox">
+                  {catalogBusy ? (
+                    <p className="cf-builder-workspace-picker-empty" role="status">
+                      Loading projects...
+                    </p>
+                  ) : null}
+                  {!catalogBusy && visibleWorkspaceProjects.length === 0 ? (
+                    <p className="cf-builder-workspace-picker-empty">
+                      {catalogProjects.length === 0 ? 'No saved projects yet.' : 'No matching projects.'}
+                    </p>
+                  ) : null}
+                  {!catalogBusy && visibleWorkspaceProjects.map((project) => (
                 <button
                   className="cf-builder-workspace-project-row"
                   data-builder-workspace-project={project.project_id}
@@ -1962,18 +2035,20 @@ export function BuilderPage({
                     </span>
                   </span>
                 </button>
-              ))}
-            </div>
-            <button
-              className="cf-builder-workspace-new-project"
-              data-builder-workspace-new-project="true"
-              disabled={typeof onCreateProject !== 'function' || catalogBusy}
-              onClick={createProjectFromPicker}
-              type="button"
-            >
-              <FolderPlus aria-hidden="true" className="size-3.5" />
-              New project
-            </button>
+                  ))}
+                </div>
+                <button
+                  className="cf-builder-workspace-new-project"
+                  data-builder-workspace-new-project="true"
+                  disabled={typeof onCreateProject !== 'function' || catalogBusy}
+                  onClick={showNewProjectPanel}
+                  type="button"
+                >
+                  <FolderPlus aria-hidden="true" className="size-3.5" />
+                  New project
+                </button>
+              </>
+            )}
           </div>
         ) : null}
       </div>

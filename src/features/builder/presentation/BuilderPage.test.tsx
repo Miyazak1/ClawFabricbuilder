@@ -72,7 +72,8 @@ function render(element: ReactNode): HTMLDivElement {
   return container;
 }
 
-async function createLocalProjectSelectionCancelled() {
+async function createLocalProjectSelectionCancelled(request: Readonly<{ project_title: string }>) {
+  void request;
   return {
     result_version: 'builder-project-selection-result.v1',
     operation: 'new_selected',
@@ -914,7 +915,17 @@ describe('BuilderPage v2', () => {
 
     click(container, '[data-builder-workspace-new-project="true"]');
 
-    expect(onCreateProject).toHaveBeenCalledOnce();
+    const newProjectPanel = container.querySelector('[data-builder-new-project-panel="true"]');
+    expect(newProjectPanel).not.toBeNull();
+    expect(newProjectPanel?.textContent).toContain('Project name');
+    expect(newProjectPanel?.textContent).toContain('Source folders');
+    expect(newProjectPanel?.textContent).toContain('No source folder selected.');
+    const title = container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]');
+    expect(title?.value).toBe('New project');
+
+    click(container, '[data-builder-add-source-folder="true"]');
+
+    expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('New project');
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
   });
 

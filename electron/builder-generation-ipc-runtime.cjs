@@ -196,6 +196,31 @@ function openProjectId(rawRequest) {
   return projectId;
 }
 
+function safePublicWorkspaceText(value, maximum) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > maximum * 2
+    || value.length > maximum
+    || value.trim() !== value
+    || value.includes('\0')
+  ) fail();
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) fail();
+  }
+  return value;
+}
+
+function createLocalProjectRequest(rawRequest) {
+  return Object.freeze({
+    project_title: safePublicWorkspaceText(
+      exactDataValue(rawRequest, ['project_title'], 'project_title'),
+      80,
+    ),
+  });
+}
+
 function planSourceReadApprovalProjectId(rawRequest) {
   const projectId = exactDataValue(rawRequest, ['project_id'], 'project_id');
   if (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId)) fail();
@@ -314,6 +339,10 @@ function selectedDirectoryFromDialog(value) {
     || fs.readdirSync(realPath).length !== 0
   ) fail();
   return realPath;
+}
+
+function sourceFolderNameFromRoot(projectRootPath) {
+  return safePublicWorkspaceText(path.basename(projectRootPath), 120);
 }
 
 function safeProjectSourcePath(value) {
@@ -881,7 +910,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       return result;
     }
-    async function createLocalProject() {
+    async function createLocalProject(rawRequest) {
+      const request = createLocalProjectRequest(rawRequest);
       if (options.showOpenDialog === null) fail();
       const operationEpoch = ++selectionEpoch;
       selectionPending = true;
@@ -917,7 +947,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       try {
         result = await projectMainAuthority.metadata_authority.bind_project_workspace({
           project_id: projectId,
+          project_title: request.project_title,
           project_root_path: projectRootPath,
+          source_folder_name: sourceFolderNameFromRoot(projectRootPath),
           created_at_ms: boundAtMs,
           bound_at_ms: boundAtMs,
         });
@@ -934,6 +966,13 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         result_version: 'builder-project-selection-result.v1',
         operation: 'local_project_bound',
         project_id: projectId,
+        project_title: request.project_title,
+        source_folders: [
+          {
+            name: sourceFolderNameFromRoot(projectRootPath),
+            status: 'selected',
+          },
+        ],
       });
     }
     async function saveDraft(rawRequest) {

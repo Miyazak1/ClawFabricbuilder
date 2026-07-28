@@ -50,12 +50,14 @@ function adapter(overrides = {}) {
       calls.push(['save', request]);
       return { result_version: 'builder-project-save-result.v1', draft_id: request.draft_id };
     }),
-    createLocalProject: overrides.createLocalProject ?? (async () => {
-      calls.push(['createLocalProject']);
+    createLocalProject: overrides.createLocalProject ?? (async (request) => {
+      calls.push(['createLocalProject', request]);
       return {
         result_version: 'builder-project-selection-result.v1',
         operation: 'local_project_bound',
         project_id: PROJECT_ID,
+        project_title: request.project_title,
+        source_folders: [{ name: 'focus-timer', status: 'selected' }],
       };
     }),
     loadCurrent: overrides.loadCurrent ?? (async (request) => {
@@ -103,7 +105,9 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   const saved = await value.channels.saveDraft.invoke(authority.event, {
     draft_id: DRAFT_ID,
   });
-  const created = await value.channels.createLocalProject.invoke(authority.event);
+  const created = await value.channels.createLocalProject.invoke(authority.event, {
+    project_title: 'Focus timer',
+  });
   const loaded = await value.channels.loadCurrent.invoke(authority.event, {
     project_id: PROJECT_ID,
   });
@@ -126,7 +130,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   assert.deepEqual(calls, [
     ['open', { project_id: null }],
     ['save', { draft_id: DRAFT_ID }],
-    ['createLocalProject'],
+    ['createLocalProject', { project_title: 'Focus timer' }],
     ['load', { project_id: PROJECT_ID }],
     ['revision', { project_id: PROJECT_ID, revision_receipt_digest: REVISION_DIGEST }],
     ['list'],
@@ -157,6 +161,11 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
       && error.code === 'builder_project_workspace_invalid',
   );
   await assert.rejects(
+    value.channels.createLocalProject.invoke(authority.event),
+    (error) => error instanceof BuilderProjectWorkspaceIpcError
+      && error.code === 'builder_project_workspace_invalid',
+  );
+  await assert.rejects(
     value.channels.loadRevision.invoke(authority.event, {
       project_id: PROJECT_ID,
     }, {
@@ -181,6 +190,13 @@ test('workspace adapter rejects forged request fields before authority calls', a
     () => value.channels.open.invoke(authority.event, {
       project_id: null,
       source_tree: { files: [] },
+    }),
+    () => value.channels.createLocalProject.invoke(authority.event, {
+      project_title: 'Focus timer',
+      project_root_path: 'renderer-forged',
+    }),
+    () => value.channels.createLocalProject.invoke(authority.event, {
+      project_title: '',
     }),
     () => value.channels.open.invoke(authority.event, {
       project_id: 'not-a-builder-project',

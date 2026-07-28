@@ -127,7 +127,7 @@ export interface BuilderCodeGeneratorPort {
 
 export interface BuilderProjectWorkspacePort {
   open(request: Readonly<{ project_id: string | null }>): Promise<unknown>;
-  createLocalProject(): Promise<unknown>;
+  createLocalProject(request: Readonly<{ project_title: string }>): Promise<unknown>;
   saveDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   loadCurrent(request: Readonly<{ project_id: string }>): Promise<unknown>;
   loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>): Promise<unknown>;

@@ -45,7 +45,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v13/u);
+  assert.match(preload, /builder-preload\.v14/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /createLocalProject/u);

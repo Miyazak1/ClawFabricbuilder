@@ -406,11 +406,14 @@ async function setup(options: Readonly<{
       }
       : readWire;
   });
-  const createLocalProject = vi.fn(async () => ({
-    result_version: 'builder-project-selection-result.v1',
-    operation: 'new_selected',
-    project_id: null,
-  }));
+  const createLocalProject = vi.fn(async (request: Readonly<{ project_title: string }>) => {
+    void request;
+    return {
+      result_version: 'builder-project-selection-result.v1',
+      operation: 'new_selected',
+      project_id: null,
+    };
+  });
   const listCurrent = vi.fn(async () => (
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
@@ -795,11 +798,20 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
 
     click(container, '[data-builder-workspace-new-project="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
+        .toContain('Source folders');
+    });
+    expect(createLocalProject).not.toHaveBeenCalled();
+
+    const title = container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]');
+    expect(title?.value).toBe('New project');
+    click(container, '[data-builder-add-source-folder="true"]');
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(createLocalProject).toHaveBeenCalledOnce();
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'New project' });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();

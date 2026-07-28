@@ -23,7 +23,7 @@ const {
 const BUILDER_PROJECT_MAIN_AUTHORITY_VERSION = 'builder-project-main-authority.v1';
 const PROJECT_REPOSITORY_DIRECTORY = 'builder-projects-v2';
 const GIT_RUNTIME_DIRECTORY = 'builder-git-runtime-v2';
-const METADATA_DIRECTORY = 'builder-product-metadata-v5';
+const METADATA_DIRECTORY = 'builder-product-metadata-v6';
 const METADATA_DATABASE = 'builder.sqlite';
 const OPTION_KEYS = Object.freeze(['userDataPath', 'nowSeconds']);
 const ERROR_MESSAGE = 'Builder project authority is unavailable.';

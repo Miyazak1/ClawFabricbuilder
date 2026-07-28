@@ -189,9 +189,9 @@ function assertSchemaError(fn) {
 }
 
 test('defines the exact C0 product metadata schema surface', () => {
-  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v5');
+  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v6');
   assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v4');
-  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 5);
+  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 6);
   assert.deepEqual(METADATA_TABLES, [
     'projects',
     'project_workspaces',
@@ -207,6 +207,9 @@ test('defines the exact C0 product metadata schema surface', () => {
   assert.equal(CREATE_SCHEMA_SQL.filter((sql) => /\bCREATE TABLE\b/u.test(sql)).length, 10);
   assert.ok(CREATE_SCHEMA_SQL.every((sql) => !/\bCREATE TABLE\b/u.test(sql) || /\bSTRICT\b/u.test(sql)));
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /CREATE TABLE project_workspaces/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /project_title TEXT NOT NULL/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /source_folder_name TEXT NOT NULL/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /source_folder_count INTEGER NOT NULL/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /binding_status TEXT NOT NULL/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /FOREIGN KEY \(project_id, run_id\) REFERENCES runs/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /UNIQUE \(project_id, commit_oid\)/u);
@@ -221,7 +224,7 @@ test('defines the exact C0 product metadata schema surface', () => {
   assert.doesNotMatch(CREATE_SCHEMA_SQL.join('\n'),
     /conversation_events_conversation_sequence_idx/u);
   assert.doesNotMatch(CREATE_SCHEMA_SQL.join('\n'),
-    /builder-product-metadata-schema\.v2/u);
+    /builder-product-metadata-schema\.v[1-5]/u);
   assert.doesNotMatch(CREATE_SCHEMA_SQL.join('\n'), /receipt_json|source_bytes|credential|ui_state|localStorage|provider_secret/iu);
 });
 

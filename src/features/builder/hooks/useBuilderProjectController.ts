@@ -46,6 +46,7 @@ const UNAVAILABLE_SNAPSHOT: BuilderProjectControllerSnapshot = Object.freeze({
   error: 'unavailable',
   retryableGeneration: false,
   workingProjectId: null,
+  workingProject: null,
 });
 
 export function useBuilderProjectController(
@@ -91,7 +92,7 @@ export function useBuilderProjectController(
     [controller],
   );
   const createLocalProject = useCallback<BuilderProjectController['createLocalProject']>(
-    () => controller.createLocalProject().catch(() => controller.getSnapshot()),
+    (projectTitle) => controller.createLocalProject(projectTitle).catch(() => controller.getSnapshot()),
     [controller],
   );
   const submit = useCallback<BuilderProjectController['submit']>(

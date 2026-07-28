@@ -453,8 +453,9 @@ Evidence requirements:
   no draft, grants no permission, saves no Version, and writes no substitute
   project. Successful selection records a main-owned workspace binding in
   SQLite, creates or reuses the local Git project under that folder, and exposes
-  only the resulting Project identity to the renderer as `workingProjectId`.
-  Renderer code still cannot send a path, write a project receipt, grant
+  only the resulting Project identity plus bounded public title/source-folder
+  summary to the renderer as a working project. Renderer code still cannot send
+  a path, write a project receipt, grant
   permission, create Git evidence, or make the project saved. Explicit Save is
   still the only path from a candidate to a verified Git/SQLite Project
   Revision;

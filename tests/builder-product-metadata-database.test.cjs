@@ -391,7 +391,7 @@ function seedRevisionChainFixture(filePath, length) {
     const insertProject = raw.prepare(`INSERT OR IGNORE INTO projects (
       project_id, project_created_at_ms, current_revision_receipt_digest,
       current_revision_number, metadata_schema_version
-    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v5')`);
+    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v6')`);
     const insertConversation = raw.prepare(`INSERT OR IGNORE INTO conversations (
       project_id, conversation_id, created_at_ms
     ) VALUES (?, ?, ?)`);
@@ -636,7 +636,9 @@ test('binds a logical project to one local workspace root without creating a rev
   const metadata = createBuilderProductMetadataDatabase(filePath);
   const requestValue = {
     project_id: PROJECT_ID,
+    project_title: 'Focus timer',
     project_root_path: projectRoot,
+    source_folder_name: path.basename(projectRoot),
     created_at_ms: 123,
     bound_at_ms: 456,
   };
@@ -649,7 +651,12 @@ test('binds a logical project to one local workspace root without creating a rev
   assert.equal(bound.operation, 'project_workspace_bound');
   assert.deepEqual(bound.workspace, {
     project_id: PROJECT_ID,
+    project_title: 'Focus timer',
     project_root_path: projectRoot,
+    source_folders: [{
+      name: path.basename(projectRoot),
+      status: 'selected',
+    }],
     bound_at_ms: 456,
     binding_status: 'bound',
   });

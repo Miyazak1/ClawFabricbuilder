@@ -410,7 +410,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v13');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v14');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -555,7 +555,7 @@ assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowContr
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
 assert.equal(preloadConstants.get('READ_WINDOW_STATE_CHANNEL'), windowControlsChannels[3]);
 exactInvokeMethod(workspaceBridge, 'open', 'OPEN_PROJECT_CHANNEL', ['request']);
-exactInvokeMethod(workspaceBridge, 'createLocalProject', 'CREATE_LOCAL_PROJECT_CHANNEL', []);
+exactInvokeMethod(workspaceBridge, 'createLocalProject', 'CREATE_LOCAL_PROJECT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'saveDraft', 'SAVE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadRevision', 'LOAD_REVISION_CHANNEL', ['request']);

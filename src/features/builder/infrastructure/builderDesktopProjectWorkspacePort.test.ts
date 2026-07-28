@@ -8,7 +8,7 @@ import {
 describe('createBuilderDesktopProjectWorkspacePort', () => {
   it('forwards only the seven v2 workspace methods with fresh plain data', async () => {
     const open = vi.fn(async (request: unknown) => ({ operation: 'project_opened', request }));
-    const createLocalProject = vi.fn(async () => ({ operation: 'local_project_bound' }));
+    const createLocalProject = vi.fn(async (request: unknown) => ({ operation: 'local_project_bound', request }));
     const saveDraft = vi.fn(async (request: unknown) => ({ operation: 'draft_saved', request }));
     const loadCurrent = vi.fn(async (request: unknown) => ({ operation: 'current_loaded', request }));
     const loadRevision = vi.fn(async (request: unknown) => ({ operation: 'revision_loaded', request }));
@@ -29,7 +29,11 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       receipt: `sha256:${'f'.repeat(64)}`,
     } as unknown as Readonly<{ project_id: null }>;
     const openResult = await port.open(openRequest);
-    const createLocalProjectResult = await port.createLocalProject();
+    const createRequest = {
+      project_title: 'Focus timer',
+      project_root_path: 'renderer-forged',
+    } as unknown as Readonly<{ project_title: string }>;
+    const createLocalProjectResult = await port.createLocalProject(createRequest);
     const saveRequest = {
       draft_id: `builder-generation-draft:${'1'.repeat(64)}`,
       source_tree: { files: [] },
@@ -60,7 +64,8 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(open.mock.calls[0][0]).toEqual({ project_id: null });
     expect(open.mock.calls[0][0]).not.toBe(openRequest);
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith();
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({ project_title: 'Focus timer' });
+    expect(createLocalProject.mock.calls[0][0]).not.toBe(createRequest);
     expect(saveDraft).toHaveBeenCalledOnce();
     expect(saveDraft.mock.calls[0][0]).toEqual({
       draft_id: `builder-generation-draft:${'1'.repeat(64)}`,

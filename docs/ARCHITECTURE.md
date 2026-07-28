@@ -136,11 +136,13 @@ folder-selection flow; cancellation surfaces only a fixed
 project-folder-required diagnostic and performs no generation, hidden write,
 permission grant, Git mutation, Save, or Revision creation. Successful
 selection records the workspace binding in SQLite, creates or reuses the local
-Git project under that folder, and returns only the Project identity to the
-renderer as a working project. The renderer never sends filesystem paths or
-Project Revision receipts. A working project can preview and review an unsaved
-candidate, but it does not become a saved Version until explicit Save verifies
-the Git candidate and selects a SQLite Project Revision receipt.
+Git project under that folder, and returns only a public working-project summary
+to the renderer: Project identity, bounded project title, and bounded source
+folder display name/count. The renderer never sends or receives filesystem
+paths, and it cannot send Project Revision receipts. A working project can
+preview and review an unsaved candidate, but it does not become a saved Version
+until explicit Save verifies the Git candidate and selects a SQLite Project
+Revision receipt.
 
 The OpenAI-compatible provider transport also has a streaming observer path.
 When the Generation host supplies an internal observer, the request uses a

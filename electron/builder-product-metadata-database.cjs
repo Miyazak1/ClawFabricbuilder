@@ -1161,13 +1161,23 @@ function verifyWorkspaceRow(row, request) {
   if (
     !row
     || row.project_id !== request.project_id
+    || row.project_title !== request.project_title
     || row.project_root_path !== request.project_root_path
+    || row.source_folder_name !== request.source_folder_name
+    || row.source_folder_count !== 1
     || row.bound_at_ms !== request.bound_at_ms
     || row.binding_status !== 'bound'
   ) fail('builder_product_metadata_integrity_failed');
   return frozen({
     project_id: row.project_id,
+    project_title: row.project_title,
     project_root_path: row.project_root_path,
+    source_folders: [
+      {
+        name: row.source_folder_name,
+        status: 'selected',
+      },
+    ],
     bound_at_ms: row.bound_at_ms,
     binding_status: 'bound',
   });
@@ -1211,10 +1221,13 @@ function bindProjectWorkspace(db, rawRequest) {
       return workspaceResult(db, workspace);
     }
     run(db, `INSERT INTO project_workspaces (
-      project_id, project_root_path, bound_at_ms, binding_status
-    ) VALUES (?, ?, ?, 'bound')`, [
+      project_id, project_title, project_root_path, source_folder_name,
+      source_folder_count, bound_at_ms, binding_status
+    ) VALUES (?, ?, ?, ?, 1, ?, 'bound')`, [
       request.project_id,
+      request.project_title,
       request.project_root_path,
+      request.source_folder_name,
       request.bound_at_ms,
     ]);
     const workspace = verifyWorkspaceRow(workspaceRow(db, request.project_id), request);
@@ -1232,7 +1245,14 @@ function loadProjectWorkspace(db, rawRequest) {
   if (!row) fail('builder_product_metadata_not_found');
   return workspaceResult(db, frozen({
     project_id: request.project_id,
+    project_title: row.project_title,
     project_root_path: row.project_root_path,
+    source_folders: [
+      {
+        name: row.source_folder_name,
+        status: 'selected',
+      },
+    ],
     bound_at_ms: row.bound_at_ms,
     binding_status: 'bound',
   }));

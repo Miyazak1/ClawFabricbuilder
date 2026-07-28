@@ -192,7 +192,8 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
-  createLocalProject() {
+  createLocalProject(request: Parameters<BuilderProjectWorkspacePort['createLocalProject']>[0]) {
+    void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
   saveDraft(request: Parameters<BuilderProjectWorkspacePort['saveDraft']>[0]) {
@@ -506,8 +507,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
         return ports.workspace.open(request);
       },
-      createLocalProject() {
-        return ports.workspace.createLocalProject();
+      createLocalProject(request: Parameters<BuilderProjectWorkspacePort['createLocalProject']>[0]) {
+        return ports.workspace.createLocalProject(request);
       },
       saveDraft(request: Parameters<BuilderProjectWorkspacePort['saveDraft']>[0]) {
         return ports.workspace.saveDraft(request);
@@ -628,12 +629,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(undefined);
   }, [resetWorkspace]);
 
-  const createWorkspaceProject = useCallback(async () => {
+  const createWorkspaceProject = useCallback(async (projectTitle: string) => {
+    if (projectTitle.trim().length === 0) return;
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     try {
       setView('project');
-      const result = await project.createLocalProject();
+      const result = await project.createLocalProject(projectTitle);
       if (result.workingProjectId !== null || result.savedProject !== null) {
         setActiveFile(null);
         setLiveOutput(null);

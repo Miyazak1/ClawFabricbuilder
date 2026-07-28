@@ -51,9 +51,11 @@ const SELECTORS = Object.freeze({
   changesDisclosure: '[data-builder-changes-disclosure="true"]',
   changesSummaryToggle: '[data-builder-changes-disclosure="true"] > summary',
   changesSummary: '[data-builder-changes-summary="true"]',
+  addSourceFolder: '[data-builder-add-source-folder="true"]',
   currentVersion: '[data-builder-current-version="true"]',
   historyPreview: '[data-builder-history-preview="true"]',
   idea: '#builder-idea',
+  newProjectPanel: '[data-builder-new-project-panel="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
   planApproved: '[data-builder-activity-card="Plan approved"]',
   planProposed: '[data-builder-activity-card="Plan proposed"]',
@@ -63,6 +65,9 @@ const SELECTORS = Object.freeze({
   toolActivitySucceeded: '[data-builder-tool-activity="succeeded"]',
   versionSavedActivity: '[data-builder-activity-card="Version saved"]',
   versionHistory: '[data-builder-version-history="true"]',
+  workspaceChip: '[data-builder-workspace-chip="true"]',
+  workspaceNewProject: '[data-builder-workspace-new-project="true"]',
+  workspacePicker: '[data-builder-workspace-picker="true"]',
   maxTokens: '#builder-provider-max-tokens',
   model: '#builder-provider-model',
   providerPanel: '[data-builder-provider-settings-panel="true"]',
@@ -1621,11 +1626,26 @@ async function fillProviderSettingsViaUi(page, provider, gate) {
   }
 }
 
+async function bindNewProjectWorkspaceViaUi(page) {
+  try {
+    await page.locator(SELECTORS.workspaceChip).click();
+    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.workspaceNewProject).click();
+    await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.addSourceFolder).click();
+    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_new_project_failed');
+  }
+}
+
 async function generateProjectViaUi(page, idea) {
   let draftReviewDiff = null;
   try {
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
+    await bindNewProjectWorkspaceViaUi(page);
     await page.locator(SELECTORS.idea).fill(idea);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
@@ -1786,6 +1806,7 @@ async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE
   try {
     await clickByRole(page, 'button', 'New project');
     await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
+    await bindNewProjectWorkspaceViaUi(page);
     await page.locator(SELECTORS.idea).fill(idea);
     await clickByRole(page, 'button', 'Send');
     await page.getByRole('alert').waitFor({ state: 'visible' });
@@ -2277,12 +2298,12 @@ function assertReadEvidence(value) {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v13'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v14'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.plan_review_namespace.value !== 'review_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v13',
+    bridge_version: 'builder-preload.v14',
     legacy_namespaces_absent: true,
     plan_review_namespace: 'review_method_only',
   });

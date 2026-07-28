@@ -13,8 +13,8 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 
-const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v5';
-const BUILDER_PRODUCT_METADATA_USER_VERSION = 5;
+const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v6';
+const BUILDER_PRODUCT_METADATA_USER_VERSION = 6;
 const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v4';
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -52,7 +52,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     current_revision_receipt_digest TEXT,
     current_revision_number INTEGER NOT NULL DEFAULT 0,
     metadata_schema_version TEXT NOT NULL,
-    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v5'),
+    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v6'),
     CHECK (project_created_at_ms >= 0),
     CHECK (current_revision_number >= 0),
     CHECK (
@@ -66,10 +66,16 @@ const CREATE_SCHEMA_SQL = Object.freeze([
   ) STRICT`,
   `CREATE TABLE project_workspaces (
     project_id TEXT PRIMARY KEY,
+    project_title TEXT NOT NULL,
     project_root_path TEXT NOT NULL,
+    source_folder_name TEXT NOT NULL,
+    source_folder_count INTEGER NOT NULL,
     bound_at_ms INTEGER NOT NULL,
     binding_status TEXT NOT NULL,
+    CHECK (length(project_title) BETWEEN 1 AND 80),
     CHECK (length(project_root_path) BETWEEN 1 AND 1024),
+    CHECK (length(source_folder_name) BETWEEN 1 AND 120),
+    CHECK (source_folder_count = 1),
     CHECK (bound_at_ms >= 0),
     CHECK (binding_status = 'bound'),
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
@@ -762,10 +768,19 @@ function sanitizeLoadCurrentRequest(value) {
 }
 
 function sanitizeBindProjectWorkspaceRequest(value) {
-  exactObject(value, ['project_id', 'project_root_path', 'created_at_ms', 'bound_at_ms']);
+  exactObject(value, [
+    'project_id',
+    'project_title',
+    'project_root_path',
+    'source_folder_name',
+    'created_at_ms',
+    'bound_at_ms',
+  ]);
   return freezeDeep({
     project_id: safeProjectId(valueAt(value, 'project_id')),
+    project_title: safeText(valueAt(value, 'project_title'), 80),
     project_root_path: safeProjectRootPath(valueAt(value, 'project_root_path')),
+    source_folder_name: safeText(valueAt(value, 'source_folder_name'), 120),
     created_at_ms: safeInteger(valueAt(value, 'created_at_ms')),
     bound_at_ms: safeInteger(valueAt(value, 'bound_at_ms')),
   });

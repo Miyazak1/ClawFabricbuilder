@@ -37,6 +37,7 @@ const MAX_PLAIN_DATA_ENTRIES = 20_000;
 const MAX_PLAIN_DATA_UTF8_BYTES = 16 * 1024 * 1024;
 const MAX_PLAIN_DATA_DEPTH = 64;
 const MAX_LIST_HISTORY_LIMIT = 256;
+const MAX_PROJECT_TITLE_LENGTH = 80;
 const ERROR_MESSAGES = Object.freeze({
   builder_project_workspace_forbidden: 'Builder projects are unavailable.',
   builder_project_workspace_invalid: 'The Builder project request could not be verified.',
@@ -158,6 +159,26 @@ function safeProjectId(value, nullable = false) {
   return value;
 }
 
+function hasControlCharacter(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function safeProjectTitle(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_PROJECT_TITLE_LENGTH * 2
+    || value.length > MAX_PROJECT_TITLE_LENGTH
+    || value.trim() !== value
+    || hasControlCharacter(value)
+  ) throw ipcError('builder_project_workspace_invalid');
+  return value;
+}
+
 function safeDraftId(value) {
   if (typeof value !== 'string' || !DRAFT_ID_PATTERN.test(value)) {
     throw ipcError('builder_project_workspace_invalid');
@@ -182,6 +203,11 @@ function safeLimit(value) {
 function openProjectRequest(value) {
   const source = exactPayload(value, ['project_id']);
   return Object.freeze({ project_id: safeProjectId(source.project_id, true) });
+}
+
+function createLocalProjectRequest(value) {
+  const source = exactPayload(value, ['project_title']);
+  return Object.freeze({ project_title: safeProjectTitle(source.project_title) });
 }
 
 function saveDraftRequest(value) {
@@ -363,7 +389,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
         channel: CREATE_LOCAL_PROJECT_CHANNEL,
         method: 'createLocalProject',
         invoke(event, ...rawArguments) {
-          return invoke(event, rawArguments, options.createLocalProject, 0);
+          return invoke(event, rawArguments, options.createLocalProject, 1, createLocalProjectRequest);
         },
       }),
       loadCurrent: Object.freeze({

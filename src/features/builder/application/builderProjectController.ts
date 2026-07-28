@@ -57,6 +57,17 @@ export type BuilderProjectControllerError =
   | 'unavailable'
   | null;
 
+export type BuilderWorkingProjectSourceFolder = Readonly<{
+  name: string;
+  status: 'selected';
+}>;
+
+export type BuilderWorkingProject = Readonly<{
+  project_id: string;
+  title: string;
+  source_folders: readonly BuilderWorkingProjectSourceFolder[];
+}>;
+
 export type BuilderProjectControllerSnapshot = Readonly<{
   status: BuilderProjectControllerStatus;
   busy: boolean;
@@ -68,6 +79,7 @@ export type BuilderProjectControllerSnapshot = Readonly<{
   error: BuilderProjectControllerError;
   retryableGeneration: boolean;
   workingProjectId: string | null;
+  workingProject: BuilderWorkingProject | null;
 }>;
 
 export type BuilderProjectControllerDependencies = Readonly<{
@@ -80,7 +92,7 @@ export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
-  createLocalProject(): Promise<BuilderProjectControllerSnapshot>;
+  createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot>;
   submit(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   proposePlan(instruction: string): Promise<BuilderProjectControllerSnapshot>;
@@ -120,6 +132,14 @@ const SAVE_EVIDENCE_KEYS = Object.freeze([
   'renderer_authority',
 ]);
 const SELECTION_RESULT_KEYS = Object.freeze(['result_version', 'operation', 'project_id']);
+const LOCAL_PROJECT_SELECTION_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'operation',
+  'project_id',
+  'project_title',
+  'source_folders',
+]);
+const SOURCE_FOLDER_SELECTION_KEYS = Object.freeze(['name', 'status']);
 const CANCEL_RESULT_KEYS = Object.freeze(['request_id', 'cancelled']);
 const STEER_RESULT_KEYS = Object.freeze(['request_id', 'steered']);
 const REJECT_RESULT_KEYS = Object.freeze([
@@ -131,6 +151,7 @@ const REJECT_RESULT_KEYS = Object.freeze([
   'conversation_event_admission',
 ]);
 const TRUSTED_SNAPSHOTS = new WeakSet<object>();
+const DEFAULT_WORKING_PROJECT_TITLE = 'New project';
 
 function snapshot(
   status: BuilderProjectControllerStatus,
@@ -142,7 +163,13 @@ function snapshot(
   inspectedRevision: BuilderProjectReadSnapshot | null = null,
   retryableGeneration = false,
   workingProjectId: string | null = null,
+  workingProject: BuilderWorkingProject | null = null,
 ): BuilderProjectControllerSnapshot {
+  const selectedWorkingProject = workingProjectId !== null
+    && workingProject !== null
+    && workingProject.project_id === workingProjectId
+    ? workingProject
+    : null;
   const result = Object.freeze({
     status,
     busy: status === 'opening'
@@ -160,6 +187,7 @@ function snapshot(
     error,
     retryableGeneration,
     workingProjectId,
+    workingProject: selectedWorkingProject,
   });
   TRUSTED_SNAPSHOTS.add(result);
   return result;
@@ -223,6 +251,30 @@ function exactRecord(value: unknown, keys: readonly string[]): Record<string, un
 function safeDigest(value: unknown): string {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) throw new Error();
   return value;
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function safePublicText(value: unknown, maximumLength: number): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > maximumLength * 2
+    || value.length > maximumLength
+    || value.trim() !== value
+    || hasControlCharacter(value)
+  ) throw new Error();
+  return value;
+}
+
+function safeProjectTitleInput(value: string): string {
+  return safePublicText(value, 80);
 }
 
 function sanitizeCancelResult(value: unknown, requestId: string): boolean {
@@ -318,30 +370,40 @@ function sanitizeNewSelection(value: unknown): void {
   ) throw new Error();
 }
 
-function sanitizeLocalProjectSelection(value: unknown): string {
-  const source = exactRecord(value, SELECTION_RESULT_KEYS);
+function sanitizeLocalProject(value: unknown): BuilderWorkingProject {
+  const source = exactRecord(value, LOCAL_PROJECT_SELECTION_RESULT_KEYS);
   if (
     source.result_version !== 'builder-project-selection-result.v1'
     || source.operation !== 'local_project_bound'
     || typeof source.project_id !== 'string'
     || !PROJECT_ID_PATTERN.test(source.project_id)
   ) throw new Error();
-  return source.project_id;
+  if (!Array.isArray(source.source_folders) || source.source_folders.length !== 1) throw new Error();
+  const folder = exactRecord(source.source_folders[0], SOURCE_FOLDER_SELECTION_KEYS);
+  if (folder.status !== 'selected') throw new Error();
+  return Object.freeze({
+    project_id: source.project_id,
+    title: safePublicText(source.project_title, 80),
+    source_folders: Object.freeze([
+      Object.freeze({
+        name: safePublicText(folder.name, 120),
+        status: 'selected' as const,
+      }),
+    ]),
+  });
 }
 
-function sanitizeOptionalLocalProjectSelection(value: unknown): string | null {
-  const source = exactRecord(value, SELECTION_RESULT_KEYS);
-  if (
-    source.result_version === 'builder-project-selection-result.v1'
-    && source.operation === 'new_selected'
-    && source.project_id === null
-  ) return null;
-  if (
-    source.result_version === 'builder-project-selection-result.v1'
-    && source.operation === 'local_project_bound'
-    && typeof source.project_id === 'string'
-    && PROJECT_ID_PATTERN.test(source.project_id)
-  ) return source.project_id;
+function sanitizeOptionalLocalProjectSelection(value: unknown): BuilderWorkingProject | null {
+  try {
+    const source = exactRecord(value, SELECTION_RESULT_KEYS);
+    if (
+      source.result_version === 'builder-project-selection-result.v1'
+      && source.operation === 'new_selected'
+      && source.project_id === null
+    ) return null;
+  } catch {
+    return sanitizeLocalProject(value);
+  }
   throw new Error();
 }
 
@@ -416,6 +478,18 @@ function unsavedWorkingProjectId(
   return draft?.project_id ?? fallback;
 }
 
+function unsavedWorkingProject(
+  savedProject: BuilderProjectReadSnapshot | null,
+  draft: BuilderGenerationDraft | null,
+  fallbackProjectId: string | null,
+  fallbackWorkingProject: BuilderWorkingProject | null,
+): BuilderWorkingProject | null {
+  const projectId = unsavedWorkingProjectId(savedProject, draft, fallbackProjectId);
+  return projectId !== null && fallbackWorkingProject?.project_id === projectId
+    ? fallbackWorkingProject
+    : null;
+}
+
 export function createBuilderProjectController(
   dependencies: BuilderProjectControllerDependencies,
 ): BuilderProjectController {
@@ -460,6 +534,7 @@ export function createBuilderProjectController(
       current.inspectedRevision,
       current.retryableGeneration,
       event.project_id,
+      current.workingProject,
     ));
   });
 
@@ -494,6 +569,7 @@ export function createBuilderProjectController(
         inspectedRevision,
         false,
         unsavedWorkingProjectId(savedProject, draft, current.workingProjectId),
+        unsavedWorkingProject(savedProject, draft, current.workingProjectId, current.workingProject),
       ));
     } catch {
       if (disposed || operationEpoch !== epoch) return current;
@@ -507,6 +583,7 @@ export function createBuilderProjectController(
         inspectedRevision,
         false,
         unsavedWorkingProjectId(savedProject, draft, current.workingProjectId),
+        unsavedWorkingProject(savedProject, draft, current.workingProjectId, current.workingProject),
       ));
     }
   }
@@ -568,6 +645,7 @@ export function createBuilderProjectController(
       value.inspectedRevision,
       false,
       value.workingProjectId,
+      value.workingProject,
     );
   }
 
@@ -581,14 +659,17 @@ export function createBuilderProjectController(
     if (existingProjectId !== null) return existingProjectId;
     publish(snapshot('opening', retained, null, preview, null));
     try {
-      const projectId = sanitizeOptionalLocalProjectSelection(
-        await dependencies.workspace.createLocalProject(),
+      const workingProject = sanitizeOptionalLocalProjectSelection(
+        await dependencies.workspace.createLocalProject({
+          project_title: DEFAULT_WORKING_PROJECT_TITLE,
+        }),
       );
       if (disposed || operationEpoch !== epoch) return null;
-      if (projectId === null) {
+      if (workingProject === null) {
         publish(buildWorkspaceRequiredSnapshot(status, retained, preview));
         return null;
       }
+      const projectId = workingProject.project_id;
       publish(snapshot(
         settledStatus(retained, preview, projectId),
         retained,
@@ -599,6 +680,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, null, projectId),
+        retained === null ? workingProject : null,
       ));
       return projectId;
     } catch {
@@ -650,7 +732,7 @@ export function createBuilderProjectController(
     });
   }
 
-  async function createLocalProject(): Promise<BuilderProjectControllerSnapshot> {
+  async function createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot> {
     if (disposed || current.busy || current.draft !== null || current.inspectedRevision !== null) return current;
     epoch += 1;
     inFlight = null;
@@ -659,7 +741,9 @@ export function createBuilderProjectController(
     return run(async (operationEpoch) => {
       publish(snapshot('opening', null, null, null, null));
       try {
-        const projectId = sanitizeLocalProjectSelection(await dependencies.workspace.createLocalProject());
+        const workingProject = sanitizeLocalProject(await dependencies.workspace.createLocalProject({
+          project_title: safeProjectTitleInput(projectTitle),
+        }));
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
           'ready',
@@ -670,7 +754,8 @@ export function createBuilderProjectController(
           null,
           null,
           false,
-          projectId,
+          workingProject.project_id,
+          workingProject,
         ));
       } catch {
         if (disposed || operationEpoch !== epoch) return current;
@@ -703,6 +788,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, null, targetProjectId),
+        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
       ));
       let requestId: string | null = null;
       try {
@@ -732,6 +818,7 @@ export function createBuilderProjectController(
           null,
           false,
           unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
@@ -746,6 +833,7 @@ export function createBuilderProjectController(
           null,
           false,
           unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
       }
     });
@@ -784,6 +872,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, null, targetProjectId),
+        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
       ));
       let requestId: string | null = null;
       let request: BuilderGenerationRequest | null = null;
@@ -813,6 +902,7 @@ export function createBuilderProjectController(
             null,
             false,
             unsavedWorkingProjectId(retained, null, targetProjectId),
+            unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
           ));
         }
         const draft = await sanitizeBuilderGenerationDraft(result, request);
@@ -833,6 +923,7 @@ export function createBuilderProjectController(
           null,
           false,
           unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
       }
     });
@@ -870,6 +961,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, null, targetProjectId),
+        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
       ));
       let requestId: string | null = null;
       let request: BuilderGenerationRequest | null = null;
@@ -905,6 +997,7 @@ export function createBuilderProjectController(
           null,
           retryableGeneration !== null,
           unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
       }
     });
@@ -995,6 +1088,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, null, targetProjectId),
+        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
       ));
       activeGeneration = Object.freeze({
         before,
@@ -1024,6 +1118,7 @@ export function createBuilderProjectController(
           null,
           retryableGeneration !== null,
           unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
       }
     });
@@ -1100,6 +1195,7 @@ export function createBuilderProjectController(
         null,
         false,
         current.workingProjectId,
+        current.workingProject,
       ));
       try {
         const draft = await sanitizeRestoredBuilderGenerationDraft(
@@ -1230,6 +1326,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+        unsavedWorkingProject(retained, draft, current.workingProjectId, current.workingProject),
       ));
       try {
         sanitizeRejectResult(
@@ -1248,6 +1345,7 @@ export function createBuilderProjectController(
             null,
             false,
             draft.project_id,
+            current.workingProject?.project_id === draft.project_id ? current.workingProject : null,
           ));
         }
         return withPreview('ready', retained, null, operationEpoch);
@@ -1273,6 +1371,7 @@ export function createBuilderProjectController(
         null,
         false,
         unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+        unsavedWorkingProject(retained, draft, current.workingProjectId, current.workingProject),
       ));
       let saveReceipt: ReturnType<typeof sanitizeSaveResult>;
       try {
@@ -1304,6 +1403,7 @@ export function createBuilderProjectController(
           null,
           false,
           unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+          unsavedWorkingProject(retained, draft, current.workingProjectId, current.workingProject),
         ));
       }
       try {
@@ -1322,6 +1422,7 @@ export function createBuilderProjectController(
             null,
             false,
             unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+            unsavedWorkingProject(retained, draft, current.workingProjectId, current.workingProject),
           ));
         }
         return withPreview('ready', saved, null, operationEpoch);
@@ -1337,6 +1438,7 @@ export function createBuilderProjectController(
           null,
           false,
           unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+          unsavedWorkingProject(retained, draft, current.workingProjectId, current.workingProject),
         ));
       }
     });

@@ -284,7 +284,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderProjectWorkspaceIpcAdapter: (options) => ({
             channels: {
               open: { invoke: (_event, body) => options.openProject(body) },
-              createLocalProject: { invoke: () => options.createLocalProject() },
+              createLocalProject: { invoke: (_event, body) => options.createLocalProject(body) },
               saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
               loadRevision: { invoke: (_event, body) => options.loadRevision(body) },
@@ -420,7 +420,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           PROJECT_REPOSITORY_DIRECTORY: 'builder-projects-v2',
           GIT_RUNTIME_DIRECTORY: 'builder-git-runtime-v2',
-          METADATA_DIRECTORY: 'builder-product-metadata-v5',
+          METADATA_DIRECTORY: 'builder-product-metadata-v6',
           METADATA_DATABASE: 'builder.sqlite',
           createBuilderProjectMainAuthority(options) {
             probes.projectMainAuthorityOptions = options;
@@ -568,7 +568,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
-  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v5', 'builder.sqlite')), true);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v6', 'builder.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-config-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-permissions-v1', 'permissions.sqlite')), true);
@@ -615,24 +615,36 @@ test('binds one selected empty folder as the main-owned local project workspace'
   });
   runtime.register();
 
-  const selected = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)({
-    sender: mainWindow.webContents,
-  });
+  const selected = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { project_title: 'Focus timer' },
+  );
   assert.equal(selected.result_version, 'builder-project-selection-result.v1');
   assert.equal(selected.operation, 'local_project_bound');
   assert.match(selected.project_id, /^builder-project:/u);
+  assert.equal(selected.project_title, 'Focus timer');
+  assert.deepEqual(selected.source_folders, [{
+    name: path.basename(selectedProjectRootPath),
+    status: 'selected',
+  }]);
+  assert.equal(JSON.stringify(selected).includes(selectedProjectRootPath), false);
   assert.equal(dialogCalls.length, 1);
   assert.equal(dialogCalls[0].windowRef, mainWindow);
   assert.deepEqual(dialogCalls[0].dialogOptions.properties, ['openDirectory', 'createDirectory']);
 
   runtime.dispose();
   const metadata = createBuilderProductMetadataDatabase(
-    path.join(userDataPath, 'builder-product-metadata-v5', 'builder.sqlite'),
+    path.join(userDataPath, 'builder-product-metadata-v6', 'builder.sqlite'),
   );
   const workspace = metadata.load_project_workspace({ project_id: selected.project_id });
   assert.deepEqual(workspace.workspace, {
     project_id: selected.project_id,
+    project_title: 'Focus timer',
     project_root_path: selectedProjectRootPath,
+    source_folders: [{
+      name: path.basename(selectedProjectRootPath),
+      status: 'selected',
+    }],
     bound_at_ms: workspace.workspace.bound_at_ms,
     binding_status: 'bound',
   });
