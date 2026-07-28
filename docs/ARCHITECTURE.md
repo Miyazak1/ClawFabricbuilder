@@ -168,6 +168,16 @@ follow-up read for overlapping hints, and grants no renderer-side work,
 review, Save, Git, provider, source, or revision authority. Tool-output
 streaming and arbitrary execution still require separate protocols.
 
+Continuing from an unsaved draft requires its own main-only admission before it
+can become a visible composer behavior. The current draft-continuation admission
+binds only a pending draft id, candidate id/digest, resulting tree digest, and
+Conversation head digest. It explicitly requires the later generation service to
+reverify the current Conversation head and the pending Review state before any
+replacement Run or provider dispatch. The admission itself starts no Run,
+releases no prior candidate, dispatches no provider/tool, exposes no source,
+creates no Git evidence, accepts no Review, saves no Project Revision, and has
+no IPC/preload/renderer authority.
+
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.
 Builder Project Revision is a SQLite product receipt that binds a Project,

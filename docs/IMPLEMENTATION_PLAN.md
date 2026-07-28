@@ -532,6 +532,16 @@ Evidence requirements:
   read-only projection only: it adds no tool dispatch, raw-output exposure,
   provider call, source mutation, Git evidence, Save authority, or Project
   Revision authority;
+- the current main-only draft-continuation admission checkpoint prepares the
+  clean path toward "continue modifying this unsaved draft" without exposing
+  that behavior yet. It verifies the pending draft/candidate identity and
+  resulting tree digest, records that current Conversation head and pending
+  Review state must be reverified before use, and starts no replacement Run. It
+  releases no prior candidate, dispatches no provider or tool, exposes no source
+  tree or source text, mutates no Git or SQLite Project Revision fact, accepts
+  no Review, and opens no IPC/preload/renderer command. The next slice must use
+  this admission from main before any draft-to-draft generation service or
+  visible composer affordance is enabled;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project
