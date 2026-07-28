@@ -906,6 +906,36 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
   });
 
+  it('routes clear Chinese edit turns to the project picker before any draft work', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup();
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '把按钮颜色改红');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Choose or create a project before I build.');
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
+      .toBe('把按钮颜色改红');
+  });
+
   it('keeps one composer turn editable after submit failure without draft retry', async () => {
     const { container, generate, readTaskStream, retry, saveDraft, submit } = await setup({
       failSubmitOnce: true,
@@ -1639,6 +1669,35 @@ describe('BuilderApp v2', () => {
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
+  it('keeps Chinese how-to questions in chat without opening the project picker', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, '怎么把按钮改红？');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+        .toContain('This answer does not change files.');
+    });
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '怎么把按钮改红？' });
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
