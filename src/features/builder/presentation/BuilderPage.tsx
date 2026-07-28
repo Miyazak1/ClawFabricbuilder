@@ -476,6 +476,21 @@ function toolRequestBody(
 function toolResultTitle(
   item: Extract<BuilderConversationItem, { item_kind: 'tool_call_result_recorded' }>,
 ): string {
+  if (item.action === 'context.read' || item.action === 'project.read') {
+    if (item.result.status === 'succeeded') return 'Project context ready';
+    if (item.result.status === 'cancelled') return 'Project context stopped';
+    return 'Project context needs attention';
+  }
+  if (item.action === 'filesystem.read') {
+    if (item.result.status === 'succeeded') return 'Project files reviewed';
+    if (item.result.status === 'cancelled') return 'Project file check stopped';
+    return 'Project files need attention';
+  }
+  if (item.action === 'project.edit' || item.action === 'filesystem.write') {
+    if (item.result.status === 'succeeded') return 'Changes ready';
+    if (item.result.status === 'cancelled') return 'Change step stopped';
+    return 'Changes need attention';
+  }
   const subject = toolActivitySubject(item.action);
   if (item.result.status === 'succeeded') return `${subject} finished`;
   if (item.result.status === 'cancelled') return `${subject} stopped`;
@@ -485,7 +500,18 @@ function toolResultTitle(
 function toolResultBody(
   item: Extract<BuilderConversationItem, { item_kind: 'tool_call_result_recorded' }>,
 ): string {
-  if (item.result.summary_code === 'completed_without_raw_output') return 'This project step finished.';
+  if (item.result.summary_code === 'completed_without_raw_output') {
+    if (item.action === 'context.read' || item.action === 'project.read') {
+      return 'I checked the project context needed for this request.';
+    }
+    if (item.action === 'filesystem.read') {
+      return 'I checked the project files needed for this request.';
+    }
+    if (item.action === 'project.edit' || item.action === 'filesystem.write') {
+      return 'The project changes are ready for review.';
+    }
+    return 'This project step finished.';
+  }
   if (item.result.summary_code === 'output_rejected') {
     return 'I could not safely use the information from this step.';
   }

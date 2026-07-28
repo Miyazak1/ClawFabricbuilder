@@ -276,7 +276,15 @@ async function toolActivity(
     summary_code: 'completed_without_raw_output',
     display_summary: 'This step completed. Details were not kept.',
   },
+  options: Readonly<{
+    action?: 'filesystem.read' | 'project.read';
+    resourceKind?: 'filesystem' | 'project';
+    toolLabel?: string;
+  }> = {},
 ) {
+  const action = options.action ?? 'project.read';
+  const resourceKind = options.resourceKind ?? 'project';
+  const toolLabel = options.toolLabel ?? 'Read project context';
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
     stream_version: 'builder-task-stream-read-result.v1',
     project_id: PROJECT_ID,
@@ -323,10 +331,10 @@ async function toolActivity(
           run_id: RUN_ID,
           step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
           tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
-          tool_label: 'Read project context',
-          action: 'project.read',
+          tool_label: toolLabel,
+          action,
           resource: {
-            resource_kind: 'project',
+            resource_kind: resourceKind,
           },
           lifecycle: {
             permission_admission: 'verified_allowed',
@@ -343,10 +351,10 @@ async function toolActivity(
           run_id: RUN_ID,
           step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
           tool_call_id: 'builder-tool-call:123e4567-e89b-42d3-a456-426614174000',
-          tool_label: 'Read project context',
-          action: 'project.read',
+          tool_label: toolLabel,
+          action,
           resource: {
-            resource_kind: 'project',
+            resource_kind: resourceKind,
           },
           result: {
             status: result.status,
@@ -1976,7 +1984,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('folds completed tool requests into one visible project step without exposing internal evidence', async () => {
+  it('folds completed project context checks into one visible status without exposing internal evidence', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity();
     const container = render(
@@ -1993,13 +2001,41 @@ describe('BuilderPage v2', () => {
     expect(requested).toBeNull();
     expect(completed).not.toBeNull();
     expect(completed?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(completed?.textContent).toContain('Project check finished');
-    expect(completed?.textContent).toContain('This project step finished.');
+    expect(completed?.textContent).toContain('Project context ready');
+    expect(completed?.textContent).toContain('I checked the project context needed for this request.');
     expect(completed?.textContent).not.toContain('Read project context');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
       .toContain('I prepared a draft after reading the project context.');
     expect(container.textContent).not.toMatch(
       /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
+  it('shows completed project file reads as ordinary assistant work status', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity(undefined, {
+      action: 'filesystem.read',
+      resourceKind: 'filesystem',
+      toolLabel: 'Read project file',
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const requested = container.querySelector('[data-builder-tool-activity="requested"]');
+    const completed = container.querySelector('[data-builder-tool-activity="succeeded"]');
+    expect(requested).toBeNull();
+    expect(completed).not.toBeNull();
+    expect(completed?.textContent).toContain('Project files reviewed');
+    expect(completed?.textContent).toContain('I checked the project files needed for this request.');
+    expect(completed?.textContent).not.toContain('Read project file');
+    expect(completed?.textContent).not.toMatch(
+      /tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:|source_tree|receipt/iu,
     );
   });
 
@@ -2022,7 +2058,7 @@ describe('BuilderPage v2', () => {
     const completed = container.querySelector('[data-builder-tool-activity="failed"]');
     expect(completed).not.toBeNull();
     expect(completed?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(completed?.textContent).toContain('Project check needs attention');
+    expect(completed?.textContent).toContain('Project context needs attention');
     expect(completed?.textContent).toContain('could not safely use the information from this step');
     expect(completed?.textContent).not.toMatch(/tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:/iu);
   });
@@ -2045,7 +2081,7 @@ describe('BuilderPage v2', () => {
 
     const completed = container.querySelector('[data-builder-tool-activity="failed"]');
     expect(completed).not.toBeNull();
-    expect(completed?.textContent).toContain('Project check needs attention');
+    expect(completed?.textContent).toContain('Project context needs attention');
     expect(completed?.textContent).toContain('This project step is not available yet.');
     expect(completed?.textContent).not.toMatch(/tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:/iu);
   });
