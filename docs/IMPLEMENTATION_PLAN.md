@@ -640,6 +640,14 @@ Current checkpoint:
   Agents UI, dispatches no provider/model or tool, reads no credentials or
   source, writes no files, runs no process or tests, mutates no Git or Project
   Revision facts, and creates no Review/Artifact authority.
+- the current Agent budget audit store persists those receipts in a strict
+  main-only SQLite store with restart restore, idempotent replay, owner-scoped
+  audit reads, task-scoped and lease-scoped audit listing, schema fingerprint
+  verification, and fixed redacted failures. It stores only indexed identity,
+  bounded usage counters, and canonical contract receipts; opens no IPC/preload
+  path; shows no Agents UI; dispatches no provider/model or tool; reads no
+  credentials or source; writes no files; runs no process or tests; mutates no
+  Git or Project Revision facts; and creates no Review/Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
