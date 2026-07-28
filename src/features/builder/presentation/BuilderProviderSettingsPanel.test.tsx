@@ -233,6 +233,35 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('can hide pristine field errors without enabling save', () => {
+    const onSave = vi.fn();
+    const container = render(<BuilderProviderSettingsPanel {...props({
+      canSave: false,
+      fieldErrors: fieldErrors({
+        apiKey: 'Enter an API key.',
+        baseUrl: 'Enter an HTTPS address or a local provider address.',
+        model: 'Enter a model name.',
+      }),
+      showFieldErrors: false,
+      values: values({
+        apiKey: '',
+        baseUrl: '',
+        model: '',
+      }),
+      onSave,
+    })} />);
+
+    expect(container.querySelector('#builder-provider-base-url-error')).toBeNull();
+    expect(container.querySelector('#builder-provider-model-error')).toBeNull();
+    expect(container.querySelector('#builder-provider-api-key-error')).toBeNull();
+    expect(input(container, 'builder-provider-base-url').getAttribute('aria-invalid')).toBe('false');
+    expect(input(container, 'builder-provider-model').getAttribute('aria-invalid')).toBe('false');
+    expect(input(container, 'builder-provider-api-key').getAttribute('aria-invalid')).toBe('false');
+    expect(buttonWithText(container, 'Save provider')?.disabled).toBe(true);
+    act(() => buttonWithText(container, 'Save provider')?.click());
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it('accepts a local provider address when the controller marks it valid', () => {
     const onSave = vi.fn();
     const container = render(<BuilderProviderSettingsPanel {...props({

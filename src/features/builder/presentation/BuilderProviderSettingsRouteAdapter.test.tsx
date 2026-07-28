@@ -163,6 +163,34 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
     expect(container.textContent).not.toContain('real-key-value');
   });
 
+  it('hides pristine unconfigured field errors while keeping save disabled', async () => {
+    const bridge = {
+      readCurrent: vi.fn(async () => current({
+        configured: false,
+        config: null,
+        credential_status: 'missing',
+      })),
+      replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      status: vi.fn(async () => status({
+        configured: false,
+        config_digest: null,
+        credential_status: 'missing',
+      })),
+    };
+    const container = render(<BuilderProviderSettingsRouteAdapter providerSettingsBridge={bridge} />);
+    await flush();
+
+    expect(container.textContent).toContain('Connect an AI provider before making projects.');
+    expect(container.querySelector('#builder-provider-base-url-error')).toBeNull();
+    expect(container.querySelector('#builder-provider-model-error')).toBeNull();
+    expect(container.querySelector('#builder-provider-api-key-error')).toBeNull();
+    expect(input(container, 'builder-provider-base-url').getAttribute('aria-invalid')).toBe('false');
+    expect(input(container, 'builder-provider-model').getAttribute('aria-invalid')).toBe('false');
+    expect(input(container, 'builder-provider-api-key').getAttribute('aria-invalid')).toBe('false');
+    expect(buttonWithText(container, 'Save provider').disabled).toBe(true);
+    expect(bridge.replaceCurrent).not.toHaveBeenCalled();
+  });
+
   it('maps controller field errors into the panel without calling the bridge', async () => {
     const replaceCurrent = vi.fn(async () => current({ operation: 'current_replaced' }));
     const bridge = {

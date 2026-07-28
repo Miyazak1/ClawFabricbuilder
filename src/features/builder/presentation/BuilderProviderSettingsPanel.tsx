@@ -28,6 +28,7 @@ export type BuilderProviderSettingsPanelFieldErrors = Readonly<{
 export type BuilderProviderSettingsPanelProps = Readonly<{
   canSave?: boolean;
   fieldErrors?: BuilderProviderSettingsPanelFieldErrors;
+  showFieldErrors?: boolean;
   status: BuilderProviderSettingsPanelStatus;
   values: BuilderProviderSettingsPanelValues;
   onValuesChange?: (values: BuilderProviderSettingsPanelValues) => void;
@@ -94,6 +95,7 @@ function fieldError(
 export function BuilderProviderSettingsPanel({
   canSave: canSaveCommand = false,
   fieldErrors = EMPTY_FIELD_ERRORS,
+  showFieldErrors = true,
   status,
   values,
   onValuesChange,
@@ -111,6 +113,7 @@ export function BuilderProviderSettingsPanel({
     : normalizedStatus === 'error' || normalizedStatus === 'unavailable'
       ? 'text-destructive'
       : 'text-muted-foreground';
+  const visibleFieldErrors = showFieldErrors ? fieldErrors : EMPTY_FIELD_ERRORS;
 
   function change(key: keyof BuilderProviderSettingsPanelValues, value: string): void {
     if (!editable) return;
@@ -127,12 +130,12 @@ export function BuilderProviderSettingsPanel({
     }));
   }
 
-  const baseUrlError = fieldError('builder-provider-base-url', fieldErrors.baseUrl);
-  const modelError = fieldError('builder-provider-model', fieldErrors.model);
-  const apiKeyError = fieldError('builder-provider-api-key', fieldErrors.apiKey);
-  const timeoutError = fieldError('builder-provider-timeout', fieldErrors.timeoutMs);
-  const temperatureError = fieldError('builder-provider-temperature', fieldErrors.temperature);
-  const maxTokensError = fieldError('builder-provider-max-tokens', fieldErrors.maxTokens);
+  const baseUrlError = fieldError('builder-provider-base-url', visibleFieldErrors.baseUrl);
+  const modelError = fieldError('builder-provider-model', visibleFieldErrors.model);
+  const apiKeyError = fieldError('builder-provider-api-key', visibleFieldErrors.apiKey);
+  const timeoutError = fieldError('builder-provider-timeout', visibleFieldErrors.timeoutMs);
+  const temperatureError = fieldError('builder-provider-temperature', visibleFieldErrors.temperature);
+  const maxTokensError = fieldError('builder-provider-max-tokens', visibleFieldErrors.maxTokens);
 
   return (
     <section

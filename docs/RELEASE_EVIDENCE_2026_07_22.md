@@ -973,6 +973,34 @@ inside generated projects.
   `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-deepseek-presets-1785278708829.png`.
   The two DeepSeek preset buttons rendered side by side without text overflow.
 
+## 2026-07-29 Provider Settings Pristine Validation Check
+
+This addendum records focused desktop evidence after the provider settings
+surface stopped showing required-field errors before the user edits the form.
+It extends local desktop UI evidence only; it does not change provider
+validation, credential storage, provider bridge authority, real-provider
+canary coverage, generated-code execution, or external-network permissions
+inside generated projects.
+
+- The provider settings panel now separates raw validation from visible field
+  errors. The raw validation result still controls whether `Save provider` is
+  enabled, while the route adapter hides required-field messages until the user
+  edits the form or the controller reports an error state.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderProviderSettingsPanel.test.tsx src\features\builder\presentation\BuilderProviderSettingsRouteAdapter.test.tsx`;
+  the command reported 24 passing Vitest tests.
+- `npm.cmd exec tsc -b --pretty false`, `npm.cmd run lint`,
+  `npm.cmd run test:unit`, `npm.cmd run build`, and `npm.cmd run pack` passed
+  for the same source tree. Full unit reported 433 passing Vitest tests.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 753 ASAR entries.
+- A packaged Settings screenshot using an isolated canary profile was captured
+  at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-settings-pristine-1785279208706.png`.
+  The screenshot check reported zero visible required-field errors and a
+  disabled `Save provider` command in the pristine unconfigured form.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

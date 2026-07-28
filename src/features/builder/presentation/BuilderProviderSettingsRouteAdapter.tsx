@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
   BuilderDesktopProviderSettingsPortError,
@@ -6,7 +6,10 @@ import {
   type BuilderProviderSettingsPort,
 } from '../infrastructure/builderDesktopProviderSettingsPort';
 import { useBuilderProviderSettingsController } from '../hooks/useBuilderProviderSettingsController';
-import { BuilderProviderSettingsPanel } from './BuilderProviderSettingsPanel';
+import {
+  BuilderProviderSettingsPanel,
+  type BuilderProviderSettingsPanelValues,
+} from './BuilderProviderSettingsPanel';
 
 export type BuilderProviderSettingsRouteAdapterProps = Readonly<{
   providerSettingsBridge: unknown;
@@ -40,13 +43,19 @@ export function BuilderProviderSettingsRouteAdapter({
     [providerSettingsBridge],
   );
   const controller = useBuilderProviderSettingsController(port);
+  const [showFieldErrors, setShowFieldErrors] = useState(false);
+  const onValuesChange = useCallback((values: BuilderProviderSettingsPanelValues) => {
+    setShowFieldErrors(true);
+    controller.onValuesChange(values);
+  }, [controller]);
 
   return (
     <BuilderProviderSettingsPanel
       canSave={controller.canSave}
       fieldErrors={controller.fieldErrors}
       onSave={controller.onSave}
-      onValuesChange={controller.onValuesChange}
+      onValuesChange={onValuesChange}
+      showFieldErrors={showFieldErrors || controller.status === 'error'}
       status={controller.status}
       values={controller.values}
     />
