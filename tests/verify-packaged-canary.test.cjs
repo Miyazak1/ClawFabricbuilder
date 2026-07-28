@@ -221,6 +221,10 @@ class FakeLocator {
       if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
       return 'Preview may look blank The files were generated, but interactive code is not running here. If this draft uses 3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or backend code, this preview can look blank. Review Changes or Source before saving.';
     }
+    if (this.selector === SELECTORS.previewUnavailable) {
+      if (this.page.previewUnavailableTextOverride !== null) return this.page.previewUnavailableTextOverride;
+      return 'Preview unavailable The files were generated, but this preview cannot run this kind of project yet. Review the source files and changes before saving. 3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, and backend code need live preview support.';
+    }
     if (this.selector === SELECTORS.changesSummary) {
       return '1 file change: 1 added.';
     }
@@ -234,6 +238,17 @@ class FakeLocator {
   async screenshot() {
     if (!this.page.artifactsAllowed) throw new Error('artifact before password cleared');
     return pngFixture();
+  }
+
+  async count() {
+    this.page.events.push(['count', this.selector]);
+    if (this.selector === SELECTORS.previewUnavailable) {
+      return this.page.previewUnavailable ? 1 : 0;
+    }
+    if (this.selector === SELECTORS.previewRuntimeBlocked) {
+      return this.page.previewRuntimeBlocked ? 1 : 0;
+    }
+    return 1;
   }
 
   async boundingBox() {
@@ -304,8 +319,28 @@ class FakeLocator {
       );
       return;
     }
-    if (this.selector === SELECTORS.preview && this.page.previewVisible === false) {
-      return new Promise(() => {});
+    if (this.selector === SELECTORS.preview) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.previewVisible && !this.page.previewUnavailable,
+        options?.state ?? 'visible',
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.previewUnavailable) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.previewUnavailable,
+        options?.state ?? 'visible',
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.previewFrame) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.previewVisible && !this.page.previewUnavailable && !this.page.previewRuntimeBlocked,
+        options?.state ?? 'visible',
+      );
     }
   }
 
@@ -409,6 +444,9 @@ class FakePage {
     this.approvedPlanReviews = 0;
     this.planTurns = 0;
     this.previewVisible = true;
+    this.previewRuntimeBlocked = false;
+    this.previewUnavailable = false;
+    this.previewUnavailableTextOverride = null;
     this.projectStatus = 'ready';
     this.questionTurns = 0;
     this.retryDraftVisible = false;
@@ -2798,6 +2836,7 @@ test('captures chat-flow preview evidence without relying on the retired preview
 
   const evidence = await capturePreviewEvidence(page, gate);
 
+  assert.equal(evidence.preview_mode, 'static_frame');
   assert.equal(evidence.sandbox, 'empty');
   assert.equal(evidence.script_src, 'none');
   assert.equal(evidence.frame_body_nonempty, true);
@@ -2825,6 +2864,58 @@ test('captures chat-flow preview evidence without relying on the retired preview
   await assert.rejects(
     capturePreviewEvidence(page, gate),
     (error) => error.code === 'canary_preview_failed',
+  );
+});
+
+test('captures runtime-unavailable preview evidence without claiming a rendered iframe', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+  page.previewRuntimeBlocked = true;
+  page.previewLimitationTextOverride = [
+    'Preview unavailable here',
+    'The files were generated, but this draft needs live preview support before it can be shown here.',
+    'Review Changes or Source before saving.',
+    'It uses JavaScript modules, so the visible result may be incomplete here.',
+  ].join(' ');
+
+  const evidence = await capturePreviewEvidence(page, gate);
+
+  assert.equal(evidence.preview_mode, 'runtime_unavailable');
+  assert.equal(evidence.sandbox, 'not_mounted');
+  assert.equal(evidence.script_src, 'none');
+  assert.equal(evidence.frame_body_nonempty, false);
+  assert.equal(evidence.static_preview_limitation_visible, true);
+  assert.equal(evidence.runtime_preview_limit_explained, true);
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitFor' && event[1] === SELECTORS.previewFrame),
+    false,
+  );
+});
+
+test('captures preview-unavailable evidence as a terminal explained preview state', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+  page.previewUnavailable = true;
+
+  const evidence = await capturePreviewEvidence(page, gate);
+
+  assert.equal(evidence.preview_mode, 'preview_unavailable');
+  assert.equal(evidence.sandbox, 'not_mounted');
+  assert.equal(evidence.script_src, 'none');
+  assert.equal(evidence.frame_body_nonempty, false);
+  assert.equal(evidence.static_preview_limitation_visible, true);
+  assert.equal(evidence.runtime_preview_limit_explained, true);
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitFor' && event[1] === SELECTORS.preview),
+    false,
+  );
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitFor' && event[1] === SELECTORS.previewFrame),
+    false,
   );
 });
 

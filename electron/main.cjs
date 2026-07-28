@@ -109,7 +109,7 @@ function resolvePackagedCanaryProjectRootPath(userDataPath) {
     PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY,
     invalidPackagedCanaryProjectRootPath,
   );
-  return resolved;
+  return projectRootRealPath;
 }
 
 function configurePackagedCanaryPaths() {

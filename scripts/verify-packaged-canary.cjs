@@ -76,6 +76,8 @@ const SELECTORS = Object.freeze({
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
   previewLimitation: '[data-builder-preview-limitation="true"]',
+  previewRuntimeBlocked: '[data-builder-preview-runtime-blocked="true"]',
+  previewUnavailable: '[data-builder-preview-unavailable="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   discardDraft: '[data-builder-discard-draft="true"]',
@@ -1489,13 +1491,22 @@ async function clickSaveVersionViaUi(page) {
   await save.click();
 }
 
+async function waitForPreviewSurface(page) {
+  const staticPreview = page.locator(SELECTORS.preview).waitFor({ state: 'visible' })
+    .then(() => 'static_preview', () => 'static_preview_timeout');
+  const unavailablePreview = page.locator(SELECTORS.previewUnavailable).waitFor({ state: 'visible' })
+    .then(() => 'preview_unavailable', () => 'preview_unavailable_timeout');
+  const outcome = await Promise.race([staticPreview, unavailablePreview]);
+  if (outcome === 'static_preview' || outcome === 'preview_unavailable') return outcome;
+  return 'preview_timeout';
+}
+
 async function waitForGenerationTerminal(page) {
-  const preview = page.locator(SELECTORS.preview).waitFor({ state: 'visible' })
-    .then(() => 'preview', () => 'preview_timeout');
+  const preview = waitForPreviewSurface(page);
   const alert = page.getByRole('alert').waitFor({ state: 'visible' })
     .then(() => 'alert', () => 'alert_unavailable');
   const outcome = await Promise.race([alert, preview]);
-  if (outcome === 'preview') return;
+  if (outcome === 'static_preview' || outcome === 'preview_unavailable') return;
   if (outcome === 'alert') fail('canary_generation_terminal_failed');
   fail('canary_preview_failed');
 }
@@ -2129,8 +2140,12 @@ async function inspectHistoryVersionViaUi(
   try {
     const viewedPreview = await capturePreviewEvidence(page, gate);
     if (
-      viewedPreview.srcdoc_digest !== historicalPreviewEvidence.srcdoc_digest
-      || viewedPreview.srcdoc_digest === currentPreviewEvidence.srcdoc_digest
+      !samePreviewEvidence(viewedPreview, historicalPreviewEvidence)
+      || (
+        viewedPreview.preview_mode === 'static_frame'
+        && currentPreviewEvidence.preview_mode === 'static_frame'
+        && samePreviewEvidence(viewedPreview, currentPreviewEvidence)
+      )
     ) fail('canary_history_preview_failed');
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError && error.code === 'canary_history_preview_failed') {
@@ -2163,7 +2178,7 @@ async function inspectHistoryVersionViaUi(
     await page.locator(SELECTORS.historyPreview).waitFor({ state: 'hidden' });
     await assertVisibleVersion(page, currentVersion);
     const restoredPreview = await capturePreviewEvidence(page, gate);
-    if (restoredPreview.srcdoc_digest !== currentPreviewEvidence.srcdoc_digest) {
+    if (!samePreviewEvidence(restoredPreview, currentPreviewEvidence)) {
       fail('canary_history_return_failed');
     }
   } catch (error) {
@@ -3951,11 +3966,60 @@ function summarizePng(buffer, pngModule = PNG) {
 async function capturePreviewEvidence(page, gate) {
   try {
     gate.assertAllowed();
+    const unavailable = page.locator(SELECTORS.previewUnavailable);
+    const unavailableCount = await unavailable.count();
+    if (unavailableCount > 0) {
+      await unavailable.waitFor({ state: 'visible' });
+      const unavailableText = await unavailable.textContent();
+      if (
+        typeof unavailableText !== 'string'
+        || !unavailableText.includes('Preview unavailable')
+        || !unavailableText.includes('The files were generated')
+        || !unavailableText.includes('live preview support')
+        || !unavailableText.includes('Review')
+        || !/(?:3D|WebGL|JavaScript modules|canvas|backend|live preview)/iu.test(unavailableText)
+        || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(unavailableText)
+      ) fail('canary_preview_failed');
+      const screenshot = await unavailable.screenshot();
+      return Object.freeze({
+        ...summarizePng(screenshot),
+        frame_body_nonempty: false,
+        preview_mode: 'preview_unavailable',
+        runtime_preview_limit_explained: true,
+        sandbox: 'not_mounted',
+        script_src: 'none',
+        srcdoc_digest: digestText(unavailableText),
+        static_preview_limitation_visible: true,
+      });
+    }
     const section = page.locator(SELECTORS.preview);
     await section.waitFor({ state: 'visible' });
     const limitation = page.locator(SELECTORS.previewLimitation);
     await limitation.waitFor({ state: 'visible' });
     const limitationText = await limitation.textContent();
+    const runtimeBlocked = await page.locator(SELECTORS.previewRuntimeBlocked).count();
+    if (runtimeBlocked > 0) {
+      if (
+        typeof limitationText !== 'string'
+        || !limitationText.includes('Preview unavailable here')
+        || !limitationText.includes('The files were generated')
+        || !limitationText.includes('live preview support')
+        || !limitationText.includes('Review Changes or Source before saving')
+        || !/(?:3D|WebGL|JavaScript modules|canvas|live preview)/iu.test(limitationText)
+        || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
+      ) fail('canary_preview_failed');
+      const screenshot = await section.screenshot();
+      return Object.freeze({
+        ...summarizePng(screenshot),
+        frame_body_nonempty: false,
+        preview_mode: 'runtime_unavailable',
+        runtime_preview_limit_explained: true,
+        sandbox: 'not_mounted',
+        script_src: 'none',
+        srcdoc_digest: digestText(limitationText),
+        static_preview_limitation_visible: true,
+      });
+    }
     if (
       typeof limitationText !== 'string'
       || !limitationText.includes('Preview may look blank')
@@ -3984,6 +4048,7 @@ async function capturePreviewEvidence(page, gate) {
     return Object.freeze({
       ...summarizePng(screenshot),
       frame_body_nonempty: true,
+      preview_mode: 'static_frame',
       sandbox: 'empty',
       script_src: 'none',
       static_preview_limitation_visible: true,
@@ -3995,6 +4060,15 @@ async function capturePreviewEvidence(page, gate) {
       && error.code === 'canary_secret_source_invalid') throw error;
     fail('canary_preview_failed');
   }
+}
+
+function samePreviewEvidence(left, right) {
+  return left.preview_mode === right.preview_mode && left.srcdoc_digest === right.srcdoc_digest;
+}
+
+function staticPreviewSrcdocChanged(left, right) {
+  if (left.preview_mode !== 'static_frame' || right.preview_mode !== 'static_frame') return true;
+  return left.srcdoc_digest !== right.srcdoc_digest;
 }
 
 async function openProjectFromCatalogById(page, project, failureCode = 'canary_restart_failed') {
@@ -4198,7 +4272,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
     const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 1);
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
-    if (pendingUpdatePreviewEvidence.srcdoc_digest === initialPreviewEvidence.srcdoc_digest) {
+    if (!staticPreviewSrcdocChanged(pendingUpdatePreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
     }
     await closeApp(app);
@@ -4226,7 +4300,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     if (!pendingRestartTaskStreamUnchanged) fail('canary_pending_draft_restart_failed');
     const pendingRestartPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
-    if (pendingRestartPreviewEvidence.srcdoc_digest !== pendingUpdatePreviewEvidence.srcdoc_digest) {
+    if (!samePreviewEvidence(pendingRestartPreviewEvidence, pendingUpdatePreviewEvidence)) {
       fail('canary_pending_draft_restart_failed');
     }
     const updateDraft = Object.freeze({
@@ -4241,7 +4315,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     assertRevisionAdvance(initialRevision, updatedRevision);
     const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 1);
     const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
-    if (updatedPreviewEvidence.srcdoc_digest === initialPreviewEvidence.srcdoc_digest) {
+    if (!staticPreviewSrcdocChanged(updatedPreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
     }
     await closeApp(app);
@@ -4298,7 +4372,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       && restartProject.revision_receipt_digest === updatedProject.revision_receipt_digest
       && restartProject.commit_oid === updatedProject.commit_oid
       && restartProject.tree_oid === updatedProject.tree_oid
-      && restartPreviewEvidence.srcdoc_digest === updatedPreviewEvidence.srcdoc_digest
+      && samePreviewEvidence(restartPreviewEvidence, updatedPreviewEvidence)
     );
     if (!restartRevisionUnchanged) fail('canary_evidence_failed');
     const restartTaskStreamUnchanged = digestCanonical(restartTaskStream) === digestCanonical(updatedTaskStream);
@@ -4343,7 +4417,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       },
     );
     const restartContinuationPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
-    if (restartContinuationPreviewEvidence.srcdoc_digest === restartPreviewEvidence.srcdoc_digest) {
+    if (!staticPreviewSrcdocChanged(restartContinuationPreviewEvidence, restartPreviewEvidence)) {
       fail('canary_preview_failed');
     }
     const restartContinuationAdvancedCandidateCount = (

@@ -330,6 +330,38 @@ test('packaged canary project root supplies a guarded main-only folder dialog re
   assert.deepEqual(dialogCalls, []);
 });
 
+test('packaged canary folder dialog returns the verified project-root realpath', async () => {
+  const tempRoot = path.join(process.cwd(), 'tmp');
+  const tempRootReal = path.join(process.cwd(), 'tmp-real');
+  const basename = 'clawfabric-builder-packaged-canary-main';
+  const userData = path.join(tempRoot, basename);
+  const userDataReal = path.join(tempRootReal, basename);
+  const projectRoot = path.join(userData, 'project-root');
+  const projectRootReal = path.join(userDataReal, 'project-root');
+  const sessionData = path.join(userData, 'session-data');
+  const sessionDataReal = path.join(userDataReal, 'session-data');
+  const { generationRuntimeOptions } = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH: projectRoot,
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    realpathMap: {
+      [tempRoot]: tempRootReal,
+      [userData]: userDataReal,
+      [sessionData]: sessionDataReal,
+      [projectRoot]: projectRootReal,
+    },
+    sessionDataExists: false,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+
+  assert.equal(generationRuntimeOptions.length, 1);
+  const result = await generationRuntimeOptions[0].showOpenDialog('owner-window', { properties: ['openDirectory'] });
+  assert.deepEqual([...result.filePaths], [projectRootReal]);
+});
+
 test('packaged canary path guard rejects non-temp and unpackaged overrides', async () => {
   await assert.rejects(
     executeMain({
