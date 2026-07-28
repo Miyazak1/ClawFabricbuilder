@@ -68,14 +68,30 @@ describe('Builder desktop layout styles', () => {
     );
   });
 
-  it('stacks the review sidebar only after the narrow desktop breakpoint', () => {
+  it('keeps narrow desktop inside the fixed chat scroll boundary', () => {
     const source = styles();
 
+    expect(source).toContain('@media (min-width: 721px) and (max-width: 1160px)');
     expect(source).toMatch(
-      /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/u,
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-surface-body \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\)/u,
     );
     expect(source).toMatch(
-      /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-review-sidebar \{[\s\S]*?border-top: 1px solid var\(--cf-border\)/u,
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell \{[\s\S]*?height: 100%;[\s\S]*?min-height: 0;[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?grid-template-rows: minmax\(0, 1fr\) auto/u,
+    );
+    expect(source).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell\[data-builder-review-sidebar-visible="false"\] \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\)/u,
+    );
+    expect(source).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-main \{[\s\S]*?min-height: 0/u,
+    );
+    expect(source).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-review-sidebar \{[\s\S]*?border-top: 1px solid var\(--cf-border\)/u,
+    );
+    expect(source).not.toMatch(
+      /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell \{[\s\S]*?height: auto/u,
+    );
+    expect(source).not.toMatch(
+      /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell \{[\s\S]*?min-height: 680px/u,
     );
   });
 
@@ -234,5 +250,21 @@ describe('Builder desktop layout styles', () => {
     expect(reviewLink).toContain('border: 0;');
     expect(reviewLink).toContain('background: transparent;');
     expect(reviewLink).toContain('color: var(--cf-primary-text);');
+  });
+
+  it('keeps the composer workspace chip tall enough for its two-line label', () => {
+    const source = styles();
+    const workspaceChip = styleBlock(source, '.cf-builder-workspace-chip');
+    const workspaceCopy = styleBlock(source, '.cf-builder-workspace-chip-copy');
+    const workspaceLabel = styleBlock(source, '.cf-builder-workspace-chip-label');
+    const workspaceDetail = styleBlock(source, '.cf-builder-workspace-chip-detail');
+
+    expect(workspaceChip).toContain('min-height: 40px;');
+    expect(workspaceChip).toContain('padding: 3px 9px;');
+    expect(workspaceCopy).toContain('display: grid;');
+    expect(workspaceCopy).toContain('gap: 1px;');
+    expect(workspaceLabel).toContain('white-space: nowrap;');
+    expect(workspaceDetail).toContain('white-space: nowrap;');
+    expect(workspaceDetail).toContain('line-height: 1.15;');
   });
 });

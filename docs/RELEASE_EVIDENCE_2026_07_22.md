@@ -1001,6 +1001,34 @@ inside generated projects.
   The screenshot check reported zero visible required-field errors and a
   disabled `Save provider` command in the pristine unconfigured form.
 
+## 2026-07-29 Narrow Desktop Scroll Boundary Check
+
+This addendum records focused desktop layout evidence after the narrow desktop
+breakpoint stopped opting the conversation workspace back into page-level
+scrolling. It extends local UI/package evidence only; it does not change
+provider, generation, Git, SQLite, Save, permission, or preview authority.
+
+- The 721px-to-1160px desktop breakpoint now keeps the Builder surface and chat
+  shell on the fixed viewport height chain, keeps the composer in the chat main
+  row, and lets only the conversation scroll area overflow. The review sidebar
+  may stack at this breakpoint, but it no longer makes the whole window the
+  scroll container.
+- Focused layout validation passed through
+  `npm.cmd exec vitest run src\app\BuilderDesktopLayoutStyles.test.ts`; the
+  command reported 10 passing Vitest tests.
+- `npm.cmd exec tsc -b --pretty false`, `npm.cmd run lint`,
+  `npm.cmd run test:unit`, `npm.cmd run build`, and `npm.cmd run pack` passed
+  for the same source tree. Full unit reported 434 passing Vitest tests.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 753 ASAR entries.
+- A packaged 1000px-wide desktop smoke screenshot using an isolated canary
+  profile was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-narrow-desktop-scroll-1785279939684.png`.
+  Runtime metrics reported `documentScrollHeight` equal to
+  `documentClientHeight`, `rootOverflow` and `bodyOverflow` as `hidden`,
+  `chatScrollOverflow` as `auto`, and a 40px composer project chip.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
