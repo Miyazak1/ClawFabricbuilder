@@ -671,6 +671,35 @@ scope.
   network-denying CSP, app id `com.clawfabric.builder`, product name
   `ClawFabric Builder`, and 751 ASAR entries.
 
+## 2026-07-28 Main-Owned No-Project Build Gate Check
+
+This addendum records desktop runtime evidence for checkpoint `42ecc48`. It
+closes the remaining public main/IPC path where a build-like composer turn could
+enter draft generation without a bound local project workspace. It is desktop
+package evidence only; it does not extend installer evidence, code-signing
+status, mobile evidence, arbitrary runtime/tool-execution readiness, or the
+prior real-provider DeepSeek canary scope.
+
+- Main-owned `submit` still allows casual chat and explanation turns without a
+  local project. Greetings such as `hi` and how-to questions continue through
+  the answer path without creating a Git candidate, draft, Save action, or
+  Project Revision.
+- Build-like submit turns now fail closed before draft generation when no local
+  project is bound. Direct public generate and retry IPC calls also require the
+  selected project identity in main, so renderer drift cannot silently build
+  into a hidden logical project.
+- Focused Electron validation passed through
+  `node --test tests\builder-generation-main-service.test.cjs tests\builder-generation-ipc-runtime.test.cjs tests\builder-generation-ipc-adapter.test.cjs`;
+  the command reported 59 passing subtests.
+- Full Node boundary validation passed through `npm.cmd run test:boundaries`;
+  the command reported 594 passing tests. Full frontend validation passed
+  through `npm.cmd run test:unit`; the command reported 406 passing Vitest
+  tests.
+- `npm.cmd run lint` and `npm.cmd run pack` passed for the same source tree.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 751 ASAR entries.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
