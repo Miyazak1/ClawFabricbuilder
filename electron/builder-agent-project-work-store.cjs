@@ -199,14 +199,6 @@ function safeWorkResultId(value) {
   return safePattern(value, WORK_RESULT_ID_PATTERN);
 }
 
-function safeLeaseId(value) {
-  return safePattern(value, LEASE_ID_PATTERN);
-}
-
-function safeAssignmentId(value) {
-  return safePattern(value, ASSIGNMENT_ID_PATTERN);
-}
-
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail('builder_agent_project_work_store_invalid');
   return value;
