@@ -102,15 +102,17 @@ config, credential, request digest, Save authority, or Project Revision
 authority.
 
 The Generation main service can also record fixed Run progress stages through
-the Conversation main service while a provider generation or explanation is in
-flight. The only current stages are `context_ready`,
-`provider_request_started`, `provider_response_received`, and
+the Conversation main service while provider generation, explanation, or
+plan-first proposal work is in flight. The only current stages are
+`context_ready`, `provider_request_started`, `provider_response_received`, and
 `result_preparing`. Each stage advances the trusted Conversation head and is
 replayed before the renderer-safe Task Stream exposes it as a status item. The
 projection contains no provider envelope, prompt, token delta, credential,
 source content, Git evidence, Save authority, or Project Revision authority.
 This is durable work visibility, not a token-streaming or tool-execution
-protocol.
+protocol. Plan-first source context remains fail-closed until an explicit
+permission grant path has recorded allowed filesystem-read facts for the bounded
+main-selected project resources.
 
 The OpenAI-compatible provider transport also has a streaming observer path.
 When the Generation host supplies an internal observer, the request uses a

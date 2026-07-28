@@ -489,6 +489,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
     } catch (error) {
       mapKernelError(error);
     }
+    context = await progressContext(context, 'context_ready', PLAN_CONTEXT_KEYS, controller.signal);
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
     async function requestPlanTransport(repair = false) {
@@ -526,7 +527,20 @@ function createBuilderGenerationHostAdapter(options = {}) {
         generated_text: generatedText,
       });
     }
+    context = await progressContext(
+      context,
+      'provider_request_started',
+      PLAN_CONTEXT_KEYS,
+      controller.signal,
+    );
     const generatedText = await requestPlanTransport(false);
+    context = await progressContext(
+      context,
+      'provider_response_received',
+      PLAN_CONTEXT_KEYS,
+      controller.signal,
+    );
+    context = await progressContext(context, 'result_preparing', PLAN_CONTEXT_KEYS, controller.signal);
     try {
       const plan = buildPlanResult(generatedText);
       return Object.freeze({ ...plan, context });

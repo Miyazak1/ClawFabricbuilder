@@ -447,11 +447,14 @@ Evidence requirements:
   project-save authority and does not mark the project saved;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,
-  `provider_response_received`, `result_preparing`) before terminal generation
-  or explanation results. These stages advance the trusted Conversation context
-  head and appear in the read-only Task Stream as lightweight status rows, but
-  they carry no provider envelope, prompt, token delta, credential, source,
-  Git, Save, or Project Revision authority;
+  `provider_response_received`, `result_preparing`) before terminal generation,
+  explanation, or plan-first proposal results. These stages advance the trusted
+  Conversation context head and appear in the read-only Task Stream as
+  lightweight status rows, but they carry no provider envelope, prompt, token
+  delta, credential, source, Git, Save, or Project Revision authority. Real
+  plan-first source context remains blocked until a visible permission approval
+  path can record durable allowed filesystem-read grant facts; generation must
+  not silently create those grants from renderer selection or a composer submit;
 - the current main-only steering fact checkpoint records a bounded user
   steering message against the currently trusted active Run context, advances the
   SQLite Conversation event head, and exposes only the renderer-safe

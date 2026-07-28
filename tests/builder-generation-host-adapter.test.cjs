@@ -435,6 +435,7 @@ test('generates a bounded plan proposal from source context without creating Git
   const sourceContext = planSourceContextResult(rawRequest, [
     { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
   ]);
+  const stages = [];
   let planContexts = 0;
   let transportInput;
   const observed = [];
@@ -442,6 +443,13 @@ test('generates a bounded plan proposal from source context without creating Git
     buildPlanContext: (raw) => {
       planContexts += 1;
       return planContextFor(raw, { source_context_result: sourceContext });
+    },
+    onProgress: ({ context, stage }) => {
+      stages.push({
+        stage,
+        eventCount: context.conversation_events.length,
+      });
+      return context;
     },
     onOutputDelta(event) {
       observed.push(event);
@@ -478,6 +486,12 @@ test('generates a bounded plan proposal from source context without creating Git
   assert.match(transportInput[0].messages[1].content, /export const Settings/u);
   assert.equal(transportInput[1].signal instanceof AbortSignal, true);
   assert.equal(typeof transportInput[1].on_output_delta, 'function');
+  assert.deepEqual(stages, [
+    { stage: 'context_ready', eventCount: 2 },
+    { stage: 'provider_request_started', eventCount: 2 },
+    { stage: 'provider_response_received', eventCount: 2 },
+    { stage: 'result_preparing', eventCount: 2 },
+  ]);
   assert.deepEqual(observed.map((event) => event.delta_text), [
     '{"kind":"builder_project_plan_proposal",',
     '"summary":"Prepare a bounded',

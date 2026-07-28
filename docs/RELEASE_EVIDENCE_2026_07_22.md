@@ -476,6 +476,39 @@ evidence.
   update/continuation, and zero unexpected renderer network requests during the
   canary scope.
 
+## 2026-07-28 Plan Source-Context Runtime Wiring Check
+
+This addendum records the source-context/plan-progress runtime wiring checkpoint
+after the desktop conversation layout fixes. It is not release-ready evidence:
+the real DeepSeek packaged canary still fails closed before plan source-context
+tool activity because there is no visible permission grant path for bounded
+filesystem-read approval.
+
+- The current local package was rebuilt at
+  `release\win-unpacked\ClawFabric Builder.exe`; package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- Focused Node validation passed with 65 subtests covering generation IPC
+  runtime wiring, Generation main service plan completion, Generation host
+  adapter plan progress, and the main-only source-context collector.
+- The Generation IPC runtime now constructs a main-owned source-context
+  collector backed by the project workspace authority, Conversation service,
+  and deny-by-default Permission facts evaluator. Renderer still sends only
+  bounded instruction text and cannot send source content, resource ids,
+  permission grants, provider config, credentials, Git evidence, or Save
+  authority.
+- Plan-first proposal work now records the same fixed progress stages as
+  generation/explanation and carries the advanced Conversation head through the
+  source-context result before terminal plan admission.
+- A real saved-profile DeepSeek V4 packaged canary was run against the rebuilt
+  app. It failed at `plan_before_context` with
+  `canary_plan_before_context_failed`, confirming the remaining blocker is the
+  missing explicit permission approval/grant path rather than a renderer grant
+  fallback. The app must not be presented as fully usable for continuous
+  chat-style project work until that approval path is implemented and the
+  packaged canary passes.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

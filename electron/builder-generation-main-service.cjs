@@ -1286,6 +1286,36 @@ function createBuilderGenerationMainService(rawOptions) {
         );
         return updated;
       }
+      const planSourceContextResult = planContexts.get(context);
+      if (planSourceContextResult !== undefined) {
+        const planConversationContext = latestConversationContext(
+          context,
+          valueAt(planSourceContextResult, 'context'),
+        );
+        if (planConversationContext === undefined) fail();
+        const progressed = Reflect.apply(
+          recordConversationRunProgress,
+          options.conversationService,
+          [{ context: planConversationContext, stage }],
+        );
+        const updatedSourceContextResult = freezeDeep({
+          ...planSourceContextResult,
+          context: progressed,
+        });
+        const updated = freezeDeep({
+          ...context,
+          source_context_result: updatedSourceContextResult,
+          conversation_events: progressed.events,
+        });
+        inheritLiveOutputState(context, updated);
+        planContexts.set(updated, updatedSourceContextResult);
+        liveOutputContextsByRunId.set(progressed.ids.run_id, progressed);
+        activeContexts.set(
+          operationKey(PLAN_OPERATION_PREFIX, planConversationContext.request_digest),
+          progressed,
+        );
+        return updated;
+      }
       fail();
     },
     ...(Object.hasOwn(options, 'onProviderOutputDelta')

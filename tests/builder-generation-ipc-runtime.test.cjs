@@ -165,6 +165,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.projectReadAuthority, context.__projectMainAuthority.project_read_authority);
             assert.equal(options.conversationService, context.__conversationService);
             assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
+            assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
@@ -186,6 +187,10 @@ function runtimeWithService(service, probes = {}) {
               complete_failure() {},
               record_retryable_failure() {},
               record_run_progress() {},
+              record_tool_call_request() {},
+              select_tool_adapter() {},
+              admit_tool_runtime_invocation() {},
+              record_tool_result() {},
               retry_after_failure() {},
               request_cancel() {},
               record_steering() {},
@@ -291,6 +296,84 @@ function runtimeWithService(service, probes = {}) {
       }
       if (specifier === './builder-provider-config-repository.cjs') {
         return { createBuilderProviderConfigRepository: () => ({ bind_current_authority() {} }) };
+      }
+      if (specifier === './builder-permission-authority-contract.cjs') {
+        const actual = require('../electron/builder-permission-authority-contract.cjs');
+        return {
+          BUILDER_PERMISSION_POLICY_VERSION: actual.BUILDER_PERMISSION_POLICY_VERSION,
+        };
+      }
+      if (specifier === './builder-permission-ipc-runtime.cjs') {
+        return {
+          LOCAL_BUILDER_USER_ACTOR_ID: 'builder-user:00000000-0000-4000-8000-000000000001',
+          PERMISSION_DATABASE: 'permissions.sqlite',
+          PERMISSION_DIRECTORY: 'builder-permissions-v1',
+        };
+      }
+      if (specifier === './builder-permission-fact-store.cjs') {
+        return {
+          createBuilderPermissionFactStore: (databasePath) => {
+            probes.permissionDatabasePath = databasePath;
+            return {
+              close() {
+                probes.permissionStoreClosed = (probes.permissionStoreClosed ?? 0) + 1;
+              },
+              create_evaluator() {
+                probes.permissionEvaluatorCreated = (probes.permissionEvaluatorCreated ?? 0) + 1;
+                return {
+                  evaluate(request) {
+                    probes.permissionEvaluateRequests ??= [];
+                    probes.permissionEvaluateRequests.push(request);
+                    return {
+                      decision_version: 'builder-permission-decision.v1',
+                      policy_version: request.policy_version,
+                      actor_id: request.actor_id,
+                      action: request.action,
+                      resource: request.resource,
+                      evaluated_at_ms: request.now_ms,
+                      decision: 'denied',
+                      reason: 'no_matching_active_grant',
+                      permission_id: null,
+                      permission_authority: 'builder_permission_facts_deny_by_default_v1',
+                      ui_selection_authority: 'not_permission',
+                    };
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+      if (specifier === './builder-tool-permission-admission.cjs') {
+        return {
+          createBuilderToolPermissionAdmission: (options) => {
+            probes.permissionAdmissionOptions = options;
+            return {
+              admission_version: 'builder-tool-permission-admission.v1',
+              admit(request) {
+                probes.permissionAdmissionRequests ??= [];
+                probes.permissionAdmissionRequests.push(request);
+                return {
+                  admission_version: 'builder-tool-permission-admission-record.v1',
+                  permission_admission: 'denied',
+                };
+              },
+            };
+          },
+        };
+      }
+      if (specifier === './builder-tool-source-context-collector.cjs') {
+        return {
+          createBuilderToolSourceContextCollector: (options) => {
+            probes.sourceContextCollectorOptions = options;
+            return {
+              collector_version: 'builder-tool-source-context-collector.v1',
+              collect_project_source_context() {
+                throw new Error('collector must stay behind generation service in runtime tests');
+              },
+            };
+          },
+        };
       }
       if (specifier === './builder-generation-kernel.cjs') {
         const actual = require('../electron/builder-generation-kernel.cjs');
@@ -447,6 +530,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v4', 'builder.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-config-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-permissions-v1', 'permissions.sqlite')), true);
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
   assert.deepEqual([...ipcMain.handlers.keys()], runtime.channels);

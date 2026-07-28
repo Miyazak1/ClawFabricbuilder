@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
 const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
@@ -64,6 +65,23 @@ const {
 const {
   createBuilderProviderConfigRepository,
 } = require('./builder-provider-config-repository.cjs');
+const {
+  BUILDER_PERMISSION_POLICY_VERSION,
+} = require('./builder-permission-authority-contract.cjs');
+const {
+  createBuilderPermissionFactStore,
+} = require('./builder-permission-fact-store.cjs');
+const {
+  LOCAL_BUILDER_USER_ACTOR_ID,
+  PERMISSION_DATABASE,
+  PERMISSION_DIRECTORY,
+} = require('./builder-permission-ipc-runtime.cjs');
+const {
+  createBuilderToolPermissionAdmission,
+} = require('./builder-tool-permission-admission.cjs');
+const {
+  createBuilderToolSourceContextCollector,
+} = require('./builder-tool-source-context-collector.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
@@ -475,6 +493,7 @@ function safeOptions(value) {
 function createBuilderGenerationIpcRuntime(rawOptions) {
   const options = safeOptions(rawOptions);
   let providerConfigRepository = null;
+  let permissionFactStore = null;
   let projectMainAuthority = null;
   let service;
   let adapter;
@@ -513,11 +532,36 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       nowMs: () => Date.now(),
       onTaskStreamChanged: publishTaskStreamChanged,
     });
+    const permissionRoot = path.join(options.userDataPath, PERMISSION_DIRECTORY);
+    fs.mkdirSync(permissionRoot, { recursive: true, mode: 0o700 });
+    permissionFactStore = createBuilderPermissionFactStore(path.join(permissionRoot, PERMISSION_DATABASE));
+    const permissionEvaluator = permissionFactStore.create_evaluator();
+    const permissionAdmission = createBuilderToolPermissionAdmission({
+      actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+      evaluate_permission(request) {
+        return permissionEvaluator.evaluate({
+          policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+          actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+          action: request.action,
+          resource: request.resource,
+          now_ms: request.now_ms,
+        });
+      },
+      now_ms: () => Date.now(),
+    });
+    const sourceContextCollector = createBuilderToolSourceContextCollector({
+      conversation_service: conversationService,
+      permission_admission: permissionAdmission,
+      project_workspace_authority: projectMainAuthority.project_workspace_authority,
+      create_uuid: randomUUID,
+      now_ms: () => Date.now(),
+    });
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
       projectReadAuthority: projectMainAuthority.project_read_authority,
       conversationService,
       gitAuthority: projectMainAuthority.git_authority,
+      sourceContextCollector,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
         const webContents = activeWebContents(options.mainWindowRef);
@@ -692,6 +736,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
+    try { permissionFactStore?.close(); } catch { /* fixed failure below */ }
     try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
     fail();
   }
@@ -757,6 +802,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
   }
 
+  function closePermissionFactStore() {
+    if (permissionFactStore === null) return true;
+    try {
+      permissionFactStore.close();
+      permissionFactStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return Object.freeze({
     runtime_version: BUILDER_GENERATION_IPC_RUNTIME_VERSION,
     channels: Object.freeze(handlers.map(({ channel }) => channel)),
@@ -772,16 +828,18 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return true;
       } catch {
         const removed = removeInstalledHandlers();
-        const closed = closeProjectMainAuthority();
-        state = removed && closed ? 'disposed' : 'cleanup_required';
+        const permissionsClosed = closePermissionFactStore();
+        const closed = permissionsClosed ? closeProjectMainAuthority() : false;
+        state = removed && permissionsClosed && closed ? 'disposed' : 'cleanup_required';
         fail();
       }
     },
     dispose() {
       if (state === 'disposed') return false;
       if (state === 'idle') {
-        const closed = closeProjectMainAuthority();
-        if (!closed) {
+        const permissionsClosed = closePermissionFactStore();
+        const closed = permissionsClosed ? closeProjectMainAuthority() : false;
+        if (!permissionsClosed || !closed) {
           state = 'cleanup_required';
           fail();
         }
@@ -790,8 +848,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       const cancelled = cancelActiveRequests();
       const removed = removeInstalledHandlers();
-      const closed = cancelled ? closeProjectMainAuthority() : false;
-      if (!cancelled || !removed || !closed) {
+      const permissionsClosed = cancelled ? closePermissionFactStore() : false;
+      const closed = permissionsClosed ? closeProjectMainAuthority() : false;
+      if (!cancelled || !removed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();
       }

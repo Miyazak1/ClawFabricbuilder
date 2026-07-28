@@ -1439,7 +1439,7 @@ test('records a main-only plan proposal from collected source context without so
     review: 'not_recorded',
   });
   assert.deepEqual(result.conversation_head, {
-    sequence: 6,
+    sequence: 10,
     event_id: `builder-conversation-event:${'9'.repeat(64)}`,
     event_digest: `sha256:${'8'.repeat(64)}`,
   });
@@ -1451,11 +1451,17 @@ test('records a main-only plan proposal from collected source context without so
   assert.deepEqual(collected[0].resource_ids, ['project:/src/app.tsx']);
   assert.equal(lifecycle.calls.plan.length, 1);
   assert.equal(lifecycle.calls.plan[0].context.ids.turn_id, collected[0].context.ids.turn_id);
+  assert.equal(lifecycle.calls.plan[0].context.start_head.sequence, 8);
   assert.equal(lifecycle.calls.plan[0].plan_proposal_record.context_binding.file_count, 1);
   assert.equal(lifecycle.calls.plan[0].plan_proposal_record.lifecycle.source_mutation, 'not_performed');
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.explanation.length, 0);
-  assert.equal(lifecycle.calls.progress.length, 0);
+  assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ]);
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(git.receipts.length, 0);
   assert.equal(transportInputs.length, 1);
