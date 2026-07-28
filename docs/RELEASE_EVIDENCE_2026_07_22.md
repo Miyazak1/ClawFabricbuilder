@@ -700,6 +700,47 @@ prior real-provider DeepSeek canary scope.
   network-denying CSP, app id `com.clawfabric.builder`, product name
   `ClawFabric Builder`, and 751 ASAR entries.
 
+## 2026-07-28 Real DeepSeek V4 Packaged Canary Check
+
+This addendum records a real packaged desktop DeepSeek V4 canary collected while
+the repository HEAD was `93cb03b`. The packaged runtime under
+`release\win-unpacked\ClawFabric Builder.exe` was launched through the
+saved-profile canary path, using the already saved local provider profile as the
+credential source. This is desktop package evidence only; it does not extend
+installer evidence, code-signing status, mobile evidence, arbitrary generated
+runtime execution, external-network permissions inside generated projects, or
+general-purpose coding-agent tool execution readiness.
+
+- The saved provider profile was verified as DeepSeek V4 OpenAI-compatible
+  configuration before launch. The canary accepted no provider material through
+  stdin, argv, env, logs, or renderer-readable evidence, and the source profile
+  remained unchanged after the run.
+- The real packaged UI completed the first local project flow: build intent
+  without a workspace was blocked, the composer text stayed editable until a
+  source folder was bound, an unsaved draft was observed, review changes were
+  visible before Save, and Version 1 was saved through explicit UI action.
+- A saved-project question produced a visible assistant answer without advancing
+  the candidate count or changing the saved revision.
+- A follow-up update produced a pending unsaved draft, survived packaged app
+  restart with Save still explicit, then saved as Version 2 after verifying the
+  previous Git/SQLite revision evidence.
+- Restart recovery restored the saved project catalog and Version 2, preserved
+  current revision identity, allowed inspection of Version 1 history without
+  mutating the current revision, and returned to the current version.
+- The Plan first continuation path after restart showed project-read tool
+  activity, three succeeded tool results, a visible plan review, explicit plan
+  approval, and a new pending unsaved continuation draft without saving a third
+  version.
+- Review/Changes layout evidence reported stable review actions, inline diff
+  visible, changes nested inside the panel, no review/changes overlap, and no
+  internal Git, receipt, provider, credential, or source evidence in public UI.
+- Static preview evidence remained nonblank across initial, update, restart,
+  and continuation states. The preview stayed sandboxed with no script source,
+  runtime limitations explained, and zero unexpected renderer network requests.
+- The canary result reported credential status `stored`, source profile
+  unchanged, two accepted saved revisions, pending continuation draft distinct
+  from Version 2, and redacted DeepSeek endpoint/model digests only.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
