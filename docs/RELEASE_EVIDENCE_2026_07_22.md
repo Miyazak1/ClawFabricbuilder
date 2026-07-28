@@ -764,6 +764,43 @@ external-network permissions inside generated projects.
 - The official uninstaller was run in silent mode and removed the installed
   executable; the guarded install directory was empty afterward.
 
+## 2026-07-29 Bound Workspace Picker Package Check
+
+This addendum records focused desktop package evidence for checkpoint `51d2832`,
+after bound-but-unsaved local project workspaces became visible in the composer
+project picker. It extends desktop package evidence only; it does not extend
+installer evidence, code-signing status, mobile evidence, arbitrary runtime/tool
+execution readiness, generated-code execution, or external-network permissions
+inside generated projects.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- The composer project picker now lists saved Project Versions separately from
+  bound local workspaces that do not yet have a saved Version. Saved projects
+  suppress duplicate workspace rows, while unsaved bound workspaces display only
+  the public project title and source-folder display name.
+- Reopening a bound unsaved workspace from the picker restores the working
+  Project identity for further build turns without making it a saved Project
+  Revision. Explicit Save remains the only path from a candidate to a verified
+  Git/SQLite Version.
+- The main-owned workspace list path reads SQLite project-workspace bindings and
+  exposes a renderer-safe catalog projection with `folder_name_only` path
+  disclosure. Renderer code still cannot receive a source path, submit a path,
+  create Git evidence, grant permission, save a Version, expose provider or
+  credential material, or read source through the workspace list.
+- Focused desktop validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx src\app\BuilderDesktopLayoutStyles.test.ts src\features\builder\application\builderComposerIntent.test.ts`;
+  the command reported 120 passing Vitest tests.
+- `npm.cmd run pack` passed for the same source tree before the checkpoint was
+  handed to the user. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 751 ASAR
+  entries.
+- A packaged desktop screenshot of the fresh conversation surface was captured
+  at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-packaged-current.png`
+  as local visual evidence only.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
