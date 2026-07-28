@@ -545,6 +545,33 @@ readiness, mobile evidence, or real-provider DeepSeek canary evidence.
   It is local visual evidence only and was not committed. The screenshot does
   not claim the generated-draft Review/Changes overlap issue is fixed.
 
+## 2026-07-28 Bound Local Draft And Preview Copy Package Check
+
+This addendum records focused evidence for code checkpoint `36cb195`, after the
+first-draft path for a bound local project was fixed and the static preview copy
+was clarified. It is not a new real-provider canary and does not extend
+installer evidence, code-signing status, public release readiness, mobile
+evidence, or arbitrary runtime/tool-execution readiness.
+
+- Bound local projects with no saved Project Revision can now begin their first
+  draft from the selected local workspace identity instead of failing before the
+  provider call.
+- Static preview copy now distinguishes rendered HTML/CSS previews from
+  runtime-only drafts. Rendered static previews no longer imply that the preview
+  may look blank; runtime-only drafts still use the explicit
+  "Preview unavailable here" explanation.
+- Focused Node validation passed through
+  `node --test tests\builder-conversation-main-service.test.cjs tests\builder-generation-main-service.test.cjs tests\verify-packaged-canary.test.cjs`;
+  the command reported 96 passing subtests.
+- Focused frontend validation passed through
+  `npm run test:unit -- BuilderStaticPreview BuilderPage`; the command reported
+  54 passing Vitest tests.
+- The current local package directory at
+  `release\win-unpacked\ClawFabric Builder.exe` passed `npm run verify:package`.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 747 ASAR entries.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
