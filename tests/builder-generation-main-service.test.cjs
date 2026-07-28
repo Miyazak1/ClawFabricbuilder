@@ -40,6 +40,9 @@ const {
 const {
   createBuilderApprovedPlanContinuationAdmission,
 } = require('../electron/builder-approved-plan-continuation-admission.cjs');
+const {
+  sanitizeBuilderDraftContinuationAdmission,
+} = require('../electron/builder-draft-continuation-admission.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -886,6 +889,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
     approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
     plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
+    draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
     history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
     run_steering: 'request_id_only_main_conversation_fact',
     credential_exposed_to_renderer: false,
@@ -2590,6 +2594,80 @@ test('uses read authority for existing projects and stores a main-only pending d
   );
 });
 
+test('prepares draft continuation admission from a pending draft without dispatching replacement work', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const transportInputs = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      createUuid: createUniqueUuidFactory(900),
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          operations: [{ operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' }],
+        })),
+      };
+    },
+  });
+
+  const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
+  const pending = await service.read_pending_draft({ draft_id: result.draft_id });
+  const admission = await service.prepare_draft_continuation({ draft_id: result.draft_id });
+
+  assert.deepEqual(sanitizeBuilderDraftContinuationAdmission(admission), admission);
+  assert.equal(admission.admission_version, 'builder-draft-continuation-admission.v1');
+  assert.equal(admission.admission_kind, 'builder_draft_continuation_admission');
+  assert.equal(admission.project_id, PROJECT_ID);
+  assert.equal(admission.conversation_id, pending.candidate_proof.conversation_id);
+  assert.equal(admission.previous_turn_id, pending.candidate_proof.turn_id);
+  assert.equal(admission.previous_task_id, pending.candidate_proof.task_id);
+  assert.equal(admission.previous_run_id, pending.candidate_proof.run_id);
+  assert.equal(admission.previous_request_digest, pending.candidate_proof.request_digest);
+  assert.equal(admission.draft_id, result.draft_id);
+  assert.equal(admission.candidate_id, pending.candidate_proof.candidate_id);
+  assert.equal(admission.candidate_digest, result.candidate.candidate_digest);
+  assert.equal(admission.resulting_tree_digest, result.candidate.resulting_tree_digest);
+  assert.equal(admission.pending_draft_restart_restore, 'not_persisted');
+  assert.deepEqual(admission.conversation_head, pending.conversation_head);
+  assert.match(admission.continuation_id, /^builder-draft-continuation:/u);
+  assert.equal(admission.lifecycle.continuation_admission, 'admitted_without_starting_run');
+  assert.equal(admission.lifecycle.provider_dispatch, 'not_started');
+  assert.equal(admission.lifecycle.tool_dispatch, 'not_started');
+  assert.equal(admission.lifecycle.prior_candidate_release, 'not_performed');
+  assert.equal(admission.lifecycle.git_authority, 'not_present');
+  assert.equal(admission.lifecycle.revision_admission, 'not_created');
+  assert.equal(admission.lifecycle.save_admission, 'not_performed');
+  assert.equal(admission.authority.renderer_authority, 'not_present');
+  assert.equal(admission.authority.provider_dispatch, false);
+  assert.equal(admission.authority.credential_readback, false);
+  assert.equal(admission.authority.source_mutation, 'not_performed');
+  assert.equal(admission.authority.git_authority, 'not_present');
+  assert.equal(admission.authority.save_authority, 'not_present');
+  assert.deepEqual(await service.read_pending_draft({ draft_id: result.draft_id }), pending);
+  assert.equal(transportInputs.length, 1);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.rejectCandidate.length, 0);
+  assert.equal(git.receipts.length, 1);
+  assert.doesNotMatch(
+    JSON.stringify(admission),
+    /title|summary|source_tree|operations|provider_config|provider_secret|credential_secret|credential_value|secret_ref|api[_-]?key|Authorization|Bearer|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_result/iu,
+  );
+});
+
 test('restores a pending draft from conversation proof and verified Git source after memory loss', async () => {
   const baseSource = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
@@ -2793,6 +2871,8 @@ test('does not register Electron, save, old revision, or expose provider credent
   assert.match(source, /main_generation_approved_plan_edit_context_v1/u);
   assert.match(source, /main_only_fresh_continuation_current_source_no_dispatch/u);
   assert.match(source, /main_only_approved_plan_starts_work_run_before_provider/u);
+  assert.match(source, /prepare_draft_continuation/u);
+  assert.match(source, /main_only_pending_draft_identity_no_dispatch/u);
   assert.match(source, /propose_plan/u);
   assert.match(source, /main_only_source_context_plan_no_source_mutation/u);
   for (const forbidden of [

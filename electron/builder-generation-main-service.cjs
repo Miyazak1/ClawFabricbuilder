@@ -30,6 +30,10 @@ const {
 const {
   sanitizeBuilderApprovedPlanContinuationAdmission,
 } = require('./builder-approved-plan-continuation-admission.cjs');
+const {
+  createBuilderDraftContinuationAdmission,
+  sanitizeBuilderDraftContinuationAdmission,
+} = require('./builder-draft-continuation-admission.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
@@ -2133,6 +2137,24 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  async function prepareDraftContinuation(rawRequest) {
+    try {
+      exactObject(rawRequest, ['draft_id']);
+      const draftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
+      const draft = await loadPendingDraftById(draftId);
+      return sanitizeBuilderDraftContinuationAdmission(
+        createBuilderDraftContinuationAdmission({
+          pending_draft: pendingDraftResult(draft),
+          continuation_id: newId(options.createUuid, 'builder-draft-continuation'),
+          admitted_at_ms: safeTimestamp(Date.now()),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
+  }
+
   function releasePendingDraft(rawRequest) {
     try {
       exactObject(rawRequest, ['draft_id', 'candidate_digest']);
@@ -2198,6 +2220,7 @@ function createBuilderGenerationMainService(rawOptions) {
     restore_revision_as_draft: restoreRevisionAsDraft,
     restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
+    prepare_draft_continuation: prepareDraftContinuation,
     release_pending_draft: releasePendingDraft,
     reject_draft: rejectDraft,
     authority: Object.freeze({
@@ -2208,6 +2231,7 @@ function createBuilderGenerationMainService(rawOptions) {
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
+      draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,
