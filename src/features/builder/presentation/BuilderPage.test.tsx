@@ -81,6 +81,21 @@ async function createLocalProjectSelectionCancelled(request: Readonly<{ project_
   };
 }
 
+async function createLocalProjectSelection(request: Readonly<{ project_id: string | null; project_title: string }>) {
+  return {
+    result_version: 'builder-project-selection-result.v1',
+    operation: 'local_project_bound',
+    project_id: request.project_id ?? PROJECT_ID,
+    project_title: request.project_title,
+    source_folders: [
+      {
+        name: 'site-source',
+        status: 'selected',
+      },
+    ],
+  };
+}
+
 async function snapshots() {
   const readWire = await createReadWire();
   let draft = await createGenerationDraft();
@@ -165,6 +180,89 @@ async function snapshots() {
   const saved = await controller.open(PROJECT_ID);
   const draftReady = await controller.generate('Add a timer.');
   return { draftReady, fresh, saved };
+}
+
+async function workingProjectSnapshot() {
+  const readWire = await createReadWire();
+  let draft = await createGenerationDraft();
+  const controller = createBuilderProjectController({
+    generator: {
+      async submit(request) {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
+      async generate(request) {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
+      async generateApprovedPlan() {
+        return draft;
+      },
+      async proposePlan() {
+        return null;
+      },
+      async preparePlanSourceReadApproval() {
+        return PLAN_SOURCE_READ_READY;
+      },
+      async approvePlanSourceRead() {
+        return PLAN_SOURCE_READ_APPROVED;
+      },
+      async retry(request) {
+        draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
+      async answer(request) {
+        return createGenerationAnswer(request);
+      },
+      async restoreDraft() {
+        return draft;
+      },
+      async rejectDraft(request) {
+        return {
+          result_version: 'builder-generation-draft-rejection-result.v1',
+          draft_id: request.draft_id,
+          project_id: PROJECT_ID,
+          rejected: true,
+          pending_draft_released: true,
+          conversation_event_admission: 'sqlite_recorded',
+        };
+      },
+      async cancel(request) {
+        return { request_id: request.request_id, cancelled: true };
+      },
+      async steer(request) {
+        return { request_id: request.request_id, steered: true };
+      },
+    },
+    workspace: {
+      async open(request) {
+        return request.project_id === null
+          ? {
+            result_version: 'builder-project-selection-result.v1',
+            operation: 'new_selected',
+            project_id: null,
+          }
+          : readWire;
+      },
+      createLocalProject: createLocalProjectSelection,
+      async saveDraft() {
+        return createSaveResult(draft, readWire);
+      },
+      async loadCurrent() {
+        return readWire;
+      },
+      async loadRevision() {
+        return { ...readWire, operation: 'revision_loaded' };
+      },
+      async listCurrent() {
+        return { projects: [] };
+      },
+      async listHistory() {
+        return { revisions: [] };
+      },
+    },
+  });
+  return controller.createLocalProject('Unsaved dashboard');
 }
 
 function taskStreamPort(read: Parameters<typeof createBuilderConversationController>[0]['read']) {
@@ -900,6 +998,38 @@ describe('BuilderPage v2', () => {
     expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
     expect(onCreateProject).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+  });
+
+  it('keeps the current source folder visible in the project picker before first save', async () => {
+    const working = await workingProjectSnapshot();
+    const onCreateProject = vi.fn();
+    const onOpenProject = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCreateProject={onCreateProject}
+        onOpenProject={onOpenProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
+        snapshot={working}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+      .toContain('Unsaved dashboard');
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+      .toContain('site-source');
+
+    click(container, '[data-builder-workspace-chip="true"]');
+
+    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
+    expect(picker).not.toBeNull();
+    expect(picker?.querySelector('[data-builder-workspace-current-project="true"]')?.textContent)
+      .toContain('Current project - site-source');
+    expect(picker?.textContent).not.toContain('No saved projects yet.');
+    expect(picker?.textContent).toContain('New project');
+    expect(onOpenProject).not.toHaveBeenCalled();
+    expect(onCreateProject).not.toHaveBeenCalled();
   });
 
   it('opens the composer project picker when build needs a workspace', async () => {

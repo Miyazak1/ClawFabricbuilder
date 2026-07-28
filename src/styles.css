@@ -633,6 +633,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 8px;
 }
 
+.cf-builder-workspace-project-row-current {
+  border-color: color-mix(in srgb, var(--cf-primary) 28%, var(--cf-border));
+  background: color-mix(in srgb, var(--cf-primary) 6%, var(--cf-surface));
+  cursor: default;
+}
+
 .cf-builder-workspace-new-project {
   grid-template-columns: 18px minmax(0, 1fr);
   min-height: 34px;

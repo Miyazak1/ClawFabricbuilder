@@ -1398,6 +1398,17 @@ export function BuilderPage({
   const newProjectTitle = workspacePickerState.title;
   const canCreateProjectFromPicker = typeof onCreateProject === 'function' && newProjectTitle.trim().length > 0;
   const normalizedWorkspaceSearch = workspaceSearch.trim().toLocaleLowerCase('en-US');
+  const workingProjectFolderLabel = workingProject?.source_folders[0]?.name ?? 'Source folder selected';
+  const showCurrentWorkingProject = workingProject !== null
+    && saved === null
+    && (
+      normalizedWorkspaceSearch.length === 0
+      || [
+        workingProject.project_id,
+        workingProject.title,
+        ...workingProject.source_folders.map((folder) => folder.name),
+      ].some((value) => value.toLocaleLowerCase('en-US').includes(normalizedWorkspaceSearch))
+    );
   const visibleWorkspaceProjects = normalizedWorkspaceSearch.length === 0
     ? catalogProjects
     : catalogProjects.filter((project) => [
@@ -2040,10 +2051,26 @@ export function BuilderPage({
                       Loading projects...
                     </p>
                   ) : null}
-                  {!catalogBusy && visibleWorkspaceProjects.length === 0 ? (
+                  {!catalogBusy && visibleWorkspaceProjects.length === 0 && !showCurrentWorkingProject ? (
                     <p className="cf-builder-workspace-picker-empty">
                       {catalogProjects.length === 0 ? 'No saved projects yet.' : 'No matching projects.'}
                     </p>
+                  ) : null}
+                  {!catalogBusy && showCurrentWorkingProject ? (
+                    <div
+                      aria-selected="true"
+                      className="cf-builder-workspace-project-row cf-builder-workspace-project-row-current"
+                      data-builder-workspace-current-project="true"
+                      role="option"
+                    >
+                      <FolderOpen aria-hidden="true" className="size-3.5" />
+                      <span className="min-w-0">
+                        <span className="cf-builder-workspace-project-title">{workingProject.title}</span>
+                        <span className="cf-builder-workspace-project-summary">
+                          Current project - {workingProjectFolderLabel}
+                        </span>
+                      </span>
+                    </div>
                   ) : null}
                   {!catalogBusy && visibleWorkspaceProjects.map((project) => (
                 <button
