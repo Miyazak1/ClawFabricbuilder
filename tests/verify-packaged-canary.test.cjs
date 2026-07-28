@@ -533,6 +533,8 @@ class FakePage {
     this.reviewTextOverride = null;
     this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
+      [SELECTORS.conversationActivity, { x: 360, y: 96, width: 860, height: 112 }],
+      [SELECTORS.userMessage, { x: 760, y: 104, width: 460, height: 64 }],
       [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 116 }],
       [SELECTORS.reviewOpenChanges, { x: 760, y: 286, width: 112, height: 32 }],
       [SELECTORS.discardDraft, { x: 880, y: 286, width: 128, height: 32 }],
@@ -1976,6 +1978,8 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.reviewOpenChanges,
       SELECTORS.discardDraft,
       SELECTORS.saveVersion,
+      SELECTORS.conversationActivity,
+      SELECTORS.userMessage,
       SELECTORS.changesFlow,
       SELECTORS.changesPanel,
       SELECTORS.changeCard,
@@ -1987,6 +1991,22 @@ test('observes draft review diff before Save without leaking internal evidence',
     inspectDraftReviewDiffViaUi(page),
     (error) => error.code === 'canary_review_diff_failed',
   );
+});
+
+test('rejects conversation activity that overlaps the draft review checkpoint', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.conversationActivity, { x: 360, y: 168, width: 860, height: 96 });
+  page.reviewLayoutBoxes.set(SELECTORS.userMessage, { x: 760, y: 184, width: 460, height: 64 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
 });
 
 test('rejects squeezed draft review actions before Save', async () => {

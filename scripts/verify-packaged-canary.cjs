@@ -54,6 +54,7 @@ const SELECTORS = Object.freeze({
   changesDisclosure: '[data-builder-changes-disclosure="true"]',
   changesSummaryToggle: '[data-builder-changes-disclosure="true"] > summary',
   changesSummary: '[data-builder-changes-summary="true"]',
+  conversationActivity: '[data-builder-activity="true"]',
   addSourceFolder: '[data-builder-add-source-folder="true"]',
   currentVersion: '[data-builder-current-version="true"]',
   historyPreview: '[data-builder-history-preview="true"]',
@@ -68,6 +69,7 @@ const SELECTORS = Object.freeze({
   questionAnswer: '[data-builder-activity-card="Assistant"]',
   toolActivityRequested: '[data-builder-tool-activity="requested"]',
   toolActivitySucceeded: '[data-builder-tool-activity="succeeded"]',
+  userMessage: '[data-builder-activity-card="You"]',
   versionSavedActivity: '[data-builder-activity-card="Version saved"]',
   versionHistory: '[data-builder-version-history="true"]',
   workspaceChip: '[data-builder-workspace-chip="true"]',
@@ -1828,6 +1830,23 @@ function boxContains(container, child) {
     && boxBottom(child) <= boxBottom(container) + 1;
 }
 
+async function assertConversationActivityBeforeReviewViaUi(page, review) {
+  await page.locator(SELECTORS.conversationActivity).waitFor({ state: 'visible' });
+  await page.locator(SELECTORS.userMessage).waitFor({ state: 'visible' });
+  const activity = await boundedBox(page.locator(SELECTORS.conversationActivity));
+  const userMessage = await boundedBox(page.locator(SELECTORS.userMessage));
+  if (
+    activity.width < 560
+    || userMessage.width < 88
+    || activity.y > review.y + 1
+    || userMessage.y > review.y + 1
+    || boxBottom(activity) > review.y + 1
+    || boxBottom(userMessage) > review.y + 1
+    || boxesOverlap(activity, review)
+    || boxesOverlap(userMessage, review)
+  ) fail('canary_review_diff_failed');
+}
+
 async function assertDraftReviewLayoutViaUi(page) {
   const review = await boundedBox(page.locator(SELECTORS.reviewCheckpoint));
   const actions = [
@@ -1892,6 +1911,7 @@ async function inspectDraftReviewDiffViaUi(page) {
     ) fail('canary_review_diff_failed');
 
     const reviewBox = await assertDraftReviewLayoutViaUi(page);
+    await assertConversationActivityBeforeReviewViaUi(page, reviewBox);
     await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.reviewOpenChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
