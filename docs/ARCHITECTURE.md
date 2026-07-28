@@ -168,16 +168,16 @@ follow-up read for overlapping hints, and grants no renderer-side work,
 review, Save, Git, provider, source, or revision authority. Tool-output
 streaming and arbitrary execution still require separate protocols.
 
-Continuing from an unsaved draft requires its own main-only admission before it
-can become a visible composer behavior. The current draft-continuation admission
-is now prepared by the Generation main service from a revalidated pending draft.
-It binds only a pending draft id, candidate id/digest, resulting tree digest,
-and Conversation head digest. It explicitly requires the later draft-to-draft
-generation service to reverify the current Conversation head and the pending
-Review state before any replacement Run or provider dispatch. Preparing the
-admission itself starts no Run, releases no prior candidate, dispatches no
-provider/tool, exposes no source, creates no Git evidence, accepts no Review,
-saves no Project Revision, and has no IPC/preload/renderer authority.
+Continuing from an unsaved draft is a controlled visible composer behavior, but
+the renderer can request it only with a pending `draft_id` and new instruction.
+The Generation main service first prepares a draft-continuation admission from a
+revalidated pending draft. It binds only a pending draft id, candidate
+id/digest, resulting tree digest, and Conversation head digest. The service then
+reverifies the current selected project, Conversation head, and pending Review
+state before any replacement Run or provider dispatch. Preparing the admission
+itself starts no Run, releases no prior candidate, dispatches no provider/tool,
+exposes no source, creates no Git evidence, accepts no Review, and saves no
+Project Revision.
 After that admission, Generation main can prepare a separate main-only pending
 candidate base from verified Git candidate evidence. That base may contain the
 verified source tree and parent candidate commit/tree OIDs for the future
@@ -191,7 +191,7 @@ Conversation head is still current, and the recorded candidate digest/tree
 evidence matches the admission. It appends a new work Turn and Run to describe
 the requested replacement work, but it still dispatches no provider/tool, reads
 no source, mutates no Git state, creates no new candidate, accepts no Review,
-saves no Project Revision, and exposes no IPC/preload/renderer command.
+saves no Project Revision, and exposes no renderer-safe source or receipt.
 
 Generation main service can now use that private admission and verified pending
 candidate base for a main-only draft-to-draft generation path. The provider
@@ -204,7 +204,8 @@ pretending a pending candidate is a saved Version. The path starts a fresh
 Conversation work Run, records the same fixed progress stages, persists a new
 unsaved Git candidate, and records the candidate result in Conversation, but it
 does not save, accept Review, update `main`, create a Project Revision, expose
-source/receipts/provider data to the renderer, or open IPC/preload authority.
+source/receipts/provider data to the renderer, or let the renderer provide a
+project id, request digest, source tree, Save receipt, actor, time, or authority.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

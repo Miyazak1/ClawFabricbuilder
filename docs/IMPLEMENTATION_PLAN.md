@@ -532,16 +532,15 @@ Evidence requirements:
   read-only projection only: it adds no tool dispatch, raw-output exposure,
   provider call, source mutation, Git evidence, Save authority, or Project
   Revision authority;
-- the current main-only draft-continuation service checkpoint prepares the
-  clean path toward "continue modifying this unsaved draft" without exposing
-  that behavior yet. Generation main service can prepare a draft-continuation
-  admission from a revalidated pending draft, verifying the pending
-  draft/candidate identity and resulting tree digest while recording that the
-  current Conversation head and pending Review state must be reverified before
-  use. Preparing this admission starts no replacement Run, releases no prior
-  candidate, dispatches no provider or tool, exposes no source tree or source
-  text, mutates no Git or SQLite Project Revision fact, accepts no Review, and
-  opens no IPC/preload/renderer command. Generation main service can also
+- the current draft-continuation checkpoint lets the visible single composer
+  keep modifying an unsaved draft without saving or discarding it first. The
+  renderer can request this only with a pending `draft_id` and new instruction;
+  main revalidates the selected project, pending draft/candidate identity,
+  resulting tree digest, current Conversation head, and pending Review state
+  before replacement generation. Preparing the admission starts no replacement
+  Run, releases no prior candidate, dispatches no provider or tool, exposes no
+  source tree or source text, mutates no Git or SQLite Project Revision fact,
+  and accepts no Review. Generation main service can also
   prepare a separate pending-candidate base from verified Git candidate
   evidence: it can read the verified source tree and parent candidate
   commit/tree OIDs for future draft-to-draft generation, while explicitly
@@ -562,10 +561,11 @@ Evidence requirements:
   preserves Save/History/SQLite semantics by not treating a pending candidate as
   a saved Project Revision. The path records a fresh Conversation work Run,
   fixed progress stages, a new unsaved Git candidate, and a candidate result,
-  but still exposes no IPC/preload command, renderer source, receipt, provider
-  envelope, credential, Save authority, Project Revision authority, or `main`
-  projection. The next slice may add the controlled IPC/frontend affordance for
-  continuing an unsaved draft from the single composer;
+  but still exposes no renderer source, receipt, provider envelope, credential,
+  Save authority, Project Revision authority, or `main` projection. The IPC and
+  preload affordance accepts only `{ draft_id, instruction }`; the renderer does
+  not provide project id, request digest, source tree, Save receipt, actor, time,
+  or authority;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

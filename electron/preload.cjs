@@ -11,6 +11,7 @@ const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current'
 const LIST_WORKSPACES_CHANNEL = 'clawfabric-builder:project-workspace:list-workspaces';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const CONTINUE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:continue-draft';
 const GENERATE_APPROVED_PLAN_CHANNEL = 'clawfabric-builder:code-generator:generate-approved-plan';
 const PROPOSE_PLAN_CHANNEL = 'clawfabric-builder:code-generator:propose-plan';
 const PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL =
@@ -42,7 +43,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v16',
+  bridgeVersion: 'builder-preload.v17',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -75,6 +76,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     generate(request) {
       return ipcRenderer.invoke(GENERATE_CHANNEL, request);
+    },
+    continueDraft(request) {
+      return ipcRenderer.invoke(CONTINUE_DRAFT_CHANNEL, request);
     },
     generateApprovedPlan(request) {
       return ipcRenderer.invoke(GENERATE_APPROVED_PLAN_CHANNEL, request);

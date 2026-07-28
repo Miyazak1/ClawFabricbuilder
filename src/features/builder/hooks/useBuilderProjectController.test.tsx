@@ -165,6 +165,9 @@ async function renderHook(
     preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
     approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
     generate,
+    continueDraft: async (request: Readonly<{ instruction: string }>) => createGenerationDraft(
+      await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+    ),
     retry,
     answer,
     restoreDraft,

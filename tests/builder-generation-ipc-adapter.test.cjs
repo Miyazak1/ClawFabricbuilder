@@ -7,6 +7,7 @@ const test = require('node:test');
 
 const {
   GENERATE_CHANNEL,
+  CONTINUE_DRAFT_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
@@ -37,6 +38,10 @@ function adapter(overrides = {}) {
     generate: async (request) => {
       calls.push(['generate', request]);
       return { result: 'generated' };
+    },
+    continueDraft: async (request) => {
+      calls.push(['continueDraft', request]);
+      return { result: 'continued' };
     },
     generateApprovedPlan: async (request) => {
       calls.push(['generateApprovedPlan', request]);
@@ -107,6 +112,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   assert.equal(value.preload_namespace, 'window.clawfabricBuilder.codeGenerator');
   assert.deepEqual(value.exposed_methods, [
     'generate',
+    'continueDraft',
     'generateApprovedPlan',
     'proposePlan',
     'preparePlanSourceReadApproval',
@@ -125,6 +131,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     Object.values(value.channels).map(({ channel }) => channel),
     [
       GENERATE_CHANNEL,
+      CONTINUE_DRAFT_CHANNEL,
       GENERATE_APPROVED_PLAN_CHANNEL,
       PROPOSE_PLAN_CHANNEL,
       PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
@@ -146,6 +153,17 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       version: GENERATE_RESULT_VERSION,
       ok: true,
       result: { result: 'generated' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.continueDraft.invoke({ sender: windowRef.webContents }, {
+      draft_id: `builder-generation-draft:${'e'.repeat(64)}`,
+      instruction: 'Keep refining.',
+    }),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'continued' },
     },
   );
   assert.deepEqual(
@@ -249,6 +267,10 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   );
   assert.deepEqual(calls, [
     ['generate', request],
+    ['continueDraft', {
+      draft_id: `builder-generation-draft:${'e'.repeat(64)}`,
+      instruction: 'Keep refining.',
+    }],
     ['generateApprovedPlan', request],
     ['proposePlan', request],
     ['preparePlanSourceReadApproval', request],
@@ -290,6 +312,15 @@ test('rejects inactive renderers and argument-count drift before invoking host a
   );
   await assert.rejects(
     value.channels.generate.invoke({ sender: windowRef.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
+    value.channels.continueDraft.invoke({ sender: {} }, { marker }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && !error.message.includes(marker),
+  );
+  await assert.rejects(
+    value.channels.continueDraft.invoke({ sender: windowRef.webContents }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
@@ -387,6 +418,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     modified.stack = 'modified-private-stack';
     const known = createBuilderGenerationIpcAdapter({
       generate: () => { throw modified; },
+      continueDraft: () => { throw modified; },
       generateApprovedPlan: () => { throw modified; },
       proposePlan: () => { throw modified; },
       preparePlanSourceReadApproval: () => { throw modified; },
@@ -413,6 +445,12 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     assert.doesNotMatch(JSON.stringify(result), /modified-private-marker|modified-private-stack/u);
     const retried = await known.channels.retry.invoke({ sender: windowRef.webContents }, {});
     assert.deepEqual(retried, {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code, retryable },
+    });
+    const continued = await known.channels.continueDraft.invoke({ sender: windowRef.webContents }, {});
+    assert.deepEqual(continued, {
       version: GENERATE_RESULT_VERSION,
       ok: false,
       error: { code, retryable },
@@ -454,6 +492,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       const error = new Error('unknown-private-marker');
       error.code = 'unknown_private_code';
       error.raw_body = 'raw-private-body';
+      throw error;
+    },
+    continueDraft: () => {
+      const error = new Error('continue-draft-private-marker');
+      error.code = 'builder_generation_timeout';
       throw error;
     },
     generateApprovedPlan: () => {
@@ -545,6 +588,14 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     },
   );
   assert.deepEqual(
+    await hostile.channels.continueDraft.invoke({ sender: windowRef.webContents }, {}),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code: 'builder_generation_timeout', retryable: true },
+    },
+  );
+  assert.deepEqual(
     await hostile.channels.answer.invoke({ sender: windowRef.webContents }, {}),
     {
       version: GENERATE_RESULT_VERSION,
@@ -597,6 +648,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
 
   const generateOnlyCode = createBuilderGenerationIpcAdapter({
     generate: async () => ({}),
+    continueDraft: async () => ({}),
     generateApprovedPlan: async () => ({}),
     proposePlan: async () => ({}),
     preparePlanSourceReadApproval: async () => ({}),
@@ -642,6 +694,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
   });
   const paired = createBuilderGenerationIpcAdapter({
     generate: () => pending,
+    continueDraft: async () => ({}),
     generateApprovedPlan: async () => ({}),
     proposePlan: async () => ({}),
     preparePlanSourceReadApproval: async () => ({}),
@@ -683,6 +736,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
         error.code = code;
         throw error;
       },
+      continueDraft: async () => ({}),
       generateApprovedPlan: async () => ({}),
       proposePlan: async () => ({}),
       preparePlanSourceReadApproval: async () => ({}),
@@ -721,6 +775,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
   for (const result of [new Proxy({ result: 'proxy-private-marker' }, {}), accessor, symbolic, polluted]) {
     const value = createBuilderGenerationIpcAdapter({
       generate: async () => result,
+      continueDraft: async () => result,
       generateApprovedPlan: async () => result,
       proposePlan: async () => result,
       preparePlanSourceReadApproval: async () => result,
@@ -774,6 +829,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
   for (const result of [sparse, cyclic, deep, nodeHeavy, entryHeavy, byteHeavy]) {
     const value = createBuilderGenerationIpcAdapter({
       generate: async () => result,
+      continueDraft: async () => result,
       generateApprovedPlan: async () => result,
       proposePlan: async () => result,
       preparePlanSourceReadApproval: async () => result,
@@ -804,6 +860,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
   let trapCalls = 0;
   const valid = {
     generate: async () => ({}),
+    continueDraft: async () => ({}),
     generateApprovedPlan: async () => ({}),
     proposePlan: async () => ({}),
     preparePlanSourceReadApproval: async () => ({}),

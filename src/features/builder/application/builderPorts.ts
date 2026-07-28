@@ -107,6 +107,7 @@ export function trustedBuilderGenerationDiagnosticCode(
 export interface BuilderCodeGeneratorPort {
   submit(request: BuilderGenerationRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
+  continueDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<unknown>;
   proposePlan(request: BuilderGenerationRequest): Promise<unknown>;
   preparePlanSourceReadApproval(

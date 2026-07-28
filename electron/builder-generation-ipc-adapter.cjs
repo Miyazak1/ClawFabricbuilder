@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
+const CONTINUE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:continue-draft';
 const GENERATE_APPROVED_PLAN_CHANNEL = 'clawfabric-builder:code-generator:generate-approved-plan';
 const PROPOSE_PLAN_CHANNEL = 'clawfabric-builder:code-generator:propose-plan';
 const PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL =
@@ -28,6 +29,7 @@ const MAX_PLAIN_DATA_UTF8_BYTES = 1024 * 1024;
 const MAX_PLAIN_DATA_DEPTH = 64;
 const OPTION_KEYS = Object.freeze([
   'generate',
+  'continueDraft',
   'generateApprovedPlan',
   'proposePlan',
   'preparePlanSourceReadApproval',
@@ -302,6 +304,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.generate);
         },
       }),
+      continueDraft: Object.freeze({
+        channel: CONTINUE_DRAFT_CHANNEL,
+        method: 'continueDraft',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.continueDraft);
+        },
+      }),
       generateApprovedPlan: Object.freeze({
         channel: GENERATE_APPROVED_PLAN_CHANNEL,
         method: 'generateApprovedPlan',
@@ -396,6 +405,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
     }),
     exposed_methods: Object.freeze([
       'generate',
+      'continueDraft',
       'generateApprovedPlan',
       'proposePlan',
       'preparePlanSourceReadApproval',
@@ -424,6 +434,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   GENERATE_CHANNEL,
+  CONTINUE_DRAFT_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,

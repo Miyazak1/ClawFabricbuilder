@@ -33,6 +33,7 @@ describe('routeBuilderComposerIntent', () => {
     '把导航移到右边',
     '实现功能',
     'Make a timer.',
+    'Make it responsive.',
     'Build a compact local project dashboard.',
     'Add a pause button.',
     'Fix the preview layout.',

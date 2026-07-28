@@ -65,6 +65,7 @@ function createLocalProjectSelection({
 function setup(options: {
   submit?: BuilderCodeGeneratorPort['submit'];
   generate?: BuilderCodeGeneratorPort['generate'];
+  continueDraft?: BuilderCodeGeneratorPort['continueDraft'];
   generateApprovedPlan?: BuilderCodeGeneratorPort['generateApprovedPlan'];
   proposePlan?: BuilderCodeGeneratorPort['proposePlan'];
   preparePlanSourceReadApproval?: BuilderCodeGeneratorPort['preparePlanSourceReadApproval'];
@@ -85,6 +86,10 @@ function setup(options: {
 } = {}) {
   const submit = vi.fn(options.submit ?? (async (request) => createGenerationDraft(request)));
   const generate = vi.fn(options.generate ?? (async (request) => createGenerationDraft(request)));
+  const continueDraft = vi.fn(options.continueDraft ?? (async (request) => {
+    const hostRequest = await createBuilderGenerationRequest(request.instruction, PROJECT_ID);
+    return createGenerationDraft(hostRequest);
+  }));
   const generateApprovedPlan = vi.fn(options.generateApprovedPlan ?? (async () => (
     createGenerationDraft(await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID))
   )));
@@ -183,6 +188,7 @@ function setup(options: {
     generator: {
       submit,
       generate,
+      continueDraft,
       generateApprovedPlan,
       proposePlan,
       preparePlanSourceReadApproval,
@@ -203,6 +209,7 @@ function setup(options: {
   return {
     answer,
     cancel,
+    continueDraft,
     controller,
     generate,
     generateApprovedPlan,
@@ -540,6 +547,46 @@ describe('Builder project controller v2', () => {
     expect(result.answer).toBeNull();
   });
 
+  it('continues an unsaved draft through draft-id-only generation', async () => {
+    const { continueDraft, controller, generate, saveDraft, submit } = setup();
+    await controller.open(PROJECT_ID);
+    await controller.submit('Make a timer.');
+    submit.mockClear();
+
+    const result = await controller.submit('Make it responsive.');
+
+    expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: DRAFT_ID,
+      instruction: 'Make it responsive.',
+    });
+    expect(continueDraft.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(continueDraft.mock.calls[0][0]).not.toHaveProperty('existing_project_id');
+    expect(continueDraft.mock.calls[0][0]).not.toHaveProperty('request_digest');
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.project_id).toBe(PROJECT_ID);
+  });
+
+  it('answers while keeping the current unsaved draft review available', async () => {
+    const { answer, continueDraft, controller, saveDraft } = setup();
+    await controller.open(PROJECT_ID);
+    await controller.submit('Make a timer.');
+
+    const result = await controller.answer('Why is the preview blank?');
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      instruction: 'Why is the preview blank?',
+      existing_project_id: PROJECT_ID,
+    }));
+    expect(continueDraft).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
+    expect(result.answer?.result_kind).toBe('explanation');
+  });
+
   it('submits one composer turn that can produce an answer without saving', async () => {
     const { answer, controller, generate, saveDraft, submit } = setup({
       submit: async (request) => createGenerationAnswer(request),
@@ -597,7 +644,7 @@ describe('Builder project controller v2', () => {
     let listener!: Parameters<NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>>[0];
     let resolveSubmit!: (value: unknown) => void;
     const unsubscribe = vi.fn();
-    const { controller } = setup({
+    const { controller, submit } = setup({
       subscribeStarted(next) {
         listener = next;
         return unsubscribe;
@@ -610,6 +657,9 @@ describe('Builder project controller v2', () => {
 
     const operation = controller.submit('Make a timer.');
     for (let attempt = 0; attempt < 20 && controller.getSnapshot().status !== 'submitting'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    for (let attempt = 0; attempt < 20 && submit.mock.calls.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     const request = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);

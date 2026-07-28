@@ -125,6 +125,7 @@ export type BuilderPageProps = {
 const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'new',
   'ready',
+  'draft_ready',
   'answer_failed',
   'submit_failed',
   'generation_failed',
@@ -1305,7 +1306,6 @@ export function BuilderPage({
     && (status === 'answering' || status === 'generating' || status === 'submitting');
   const canSubmit = typeof onSubmitInstruction === 'function'
     && GENERATABLE_STATUSES.has(status)
-    && !hasUnsavedDraft
     && !viewingHistory
     && instruction.trim().length > 0;
   const canSubmitComposer = canSubmit || (canAddContext && instruction.trim().length > 0);
@@ -1314,7 +1314,6 @@ export function BuilderPage({
   const canCancel = typeof onCancel === 'function'
     && (status === 'answering' || status === 'generating' || status === 'submitting');
   const canEditInstruction = typeof onInstructionChange === 'function'
-    && !hasUnsavedDraft
     && !viewingHistory
     && (!busy || canAddContext);
   const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
@@ -1687,16 +1686,16 @@ export function BuilderPage({
     if (status === 'answering') return 'Answering';
     if (status === 'restoring') return 'Restoring draft';
     if (viewingHistory) return 'Viewing a saved version';
-    if (hasUnsavedDraft) return 'Review draft before continuing';
+    if (hasUnsavedDraft) return 'Continue this draft';
     return saved ? 'Continue this project' : 'Start from an idea';
   })();
   const composerPlaceholder = (() => {
-    if (hasUnsavedDraft) return 'Save or discard this draft before sending another request...';
+    if (hasUnsavedDraft) return 'Describe the next change to this draft...';
     if (canAddContext) return 'Add context for the current work...';
     if (busy) return 'Working on your request...';
     return 'Describe what you want to build or change...';
   })();
-  const composerValue = hasUnsavedDraft ? '' : instruction;
+  const composerValue = instruction;
   const conversationNotice = (() => {
     if (
       visibleLiveOutput !== null
@@ -1980,7 +1979,7 @@ export function BuilderPage({
       aria-label="Conversation command"
       className="cf-builder-composer-card"
       data-builder-composer="true"
-      data-builder-composer-state={hasUnsavedDraft ? 'draft-review-gated' : 'ready'}
+      data-builder-composer-state={hasUnsavedDraft ? 'draft-ready' : 'ready'}
     >
       <div className="cf-builder-composer-shell">
         <textarea
@@ -2044,7 +2043,7 @@ export function BuilderPage({
                 <StopCircle aria-hidden="true" className="size-4" />
               </button>
             ) : null}
-            {hasUnsavedDraft || (busy && !canAddContext) ? null : (
+            {busy && !canAddContext ? null : (
               <button
                 aria-label={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
@@ -2065,7 +2064,7 @@ export function BuilderPage({
             data-builder-composer-review-gate="true"
             role="status"
           >
-            <span>Save or discard this draft before sending the next request.</span>
+            <span>Keep revising here, or review and save this version when ready.</span>
             <button
               className="cf-builder-composer-review-link"
               data-builder-composer-review-focus="true"

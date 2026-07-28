@@ -149,6 +149,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>)');
     expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
     expect(ports).toContain('submit(request: BuilderGenerationRequest)');
+    expect(ports).toContain('continueDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
     expect(ports).toMatch(/preparePlanSourceReadApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);
@@ -171,6 +172,8 @@ describe('Builder v2 architecture boundary', () => {
       /commit\(|source_tree.*Promise|[Rr]evision.*Promise|(?:accept|delete|replace|restore|save|select|set).*Revision/u,
     );
     expect(controller).toContain("saveDraft({ draft_id: draft.draft_id })");
+    expect(controller).toContain("continueDraft({");
+    expect(controller).toContain("draft_id: retainedDraft.draft_id");
     expect(controller).toContain("restoreDraft({ draft_id: draftId })");
     expect(controller).toContain("rejectDraft({ draft_id: draft.draft_id })");
     expect(controller).not.toContain('repository.commit');
@@ -179,6 +182,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(workspacePort).toContain('createLocalProject(request');
     expect(workspacePort).not.toMatch(/projectRevisions|\bprojectCatalog\b|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
+    expect(generationPort).toContain('continueDraft: methods.continueDraft');
     expect(generationPort).toContain('submit: methods.submit');
     expect(generationPort).toMatch(/preparePlanSourceReadApproval:\s*methods\.preparePlanSourceReadApproval/u);
     expect(generationPort).toMatch(/approvePlanSourceRead:\s*methods\.approvePlanSourceRead/u);

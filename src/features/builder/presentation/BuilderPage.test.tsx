@@ -110,6 +110,13 @@ async function snapshots() {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
       },
+      async continueDraft(request) {
+        draft = await createGenerationDraft(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+          readWire.source_tree,
+        );
+        return draft;
+      },
       async generateApprovedPlan() {
         return draft;
       },
@@ -200,6 +207,13 @@ async function workingProjectSnapshot() {
       },
       async generate(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
+        return draft;
+      },
+      async continueDraft(request) {
+        draft = await createGenerationDraft(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+          readWire.source_tree,
+        );
         return draft;
       },
       async generateApprovedPlan() {
@@ -700,6 +714,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async generate() {
         return draft;
       },
+      async continueDraft() {
+        return draft;
+      },
       async generateApprovedPlan() {
         return draft;
       },
@@ -790,6 +807,12 @@ async function inspectedHistorySnapshot() {
       },
       async generate(request) {
         return createGenerationDraft(request, currentTree);
+      },
+      async continueDraft(request) {
+        return createGenerationDraft(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+          currentTree,
+        );
       },
       async generateApprovedPlan() {
         return createGenerationDraft(
@@ -1370,6 +1393,9 @@ describe('BuilderPage v2', () => {
         generate: async () => {
           throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
         },
+        continueDraft: async () => {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        },
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -1424,6 +1450,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
+        continueDraft: async () => null,
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -1477,6 +1504,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async () => null,
         generate: async () => null,
+        continueDraft: async () => null,
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -1539,6 +1567,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
+        continueDraft: async () => null,
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -1590,6 +1619,7 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async () => null,
         generate: async () => new Promise(() => undefined),
+        continueDraft: async () => null,
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -1658,6 +1688,9 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async (request) => createGenerationDraft(request),
         generate: async (request) => createGenerationDraft(request),
+        continueDraft: async (request) => createGenerationDraft(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+        ),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -1728,24 +1761,24 @@ describe('BuilderPage v2', () => {
       .toContain('Unsaved draft');
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
-    expect(container.textContent).toContain('Review draft before continuing');
+    expect(container.textContent).toContain('Continue this draft');
     expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Static preview is ready');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('HTML and CSS are shown here');
     expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-composer-state'))
-      .toBe('draft-review-gated');
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+      .toBe('draft-ready');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Add a timer.');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
-      .toBe('Save or discard this draft before sending another request...');
+      .toBe('Describe the next change to this draft...');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.readOnly).toBe(true);
     expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
-      .toContain('Save or discard this draft before sending the next request.');
+      .toContain('Keep revising here, or review and save this version when ready.');
     expect(container.querySelector('[data-builder-composer-review-focus="true"]')?.textContent)
       .toContain('Review draft');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
-      .toBeUndefined();
+      .toBe(true);
     expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
       .not.toBeNull();
     expect(container.querySelector('[data-builder-discard-draft="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
@@ -1763,9 +1796,10 @@ describe('BuilderPage v2', () => {
     expect(onSave).toHaveBeenCalledOnce();
   });
 
-  it('uses the draft-gated composer to return to Review without sending or saving', async () => {
+  it('uses the draft composer review shortcut without sending or saving', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
+    const onInstructionChange = vi.fn();
     const onSubmitInstruction = vi.fn();
     const onSave = vi.fn();
     const onRejectDraft = vi.fn();
@@ -1776,6 +1810,7 @@ describe('BuilderPage v2', () => {
           activeFile={null}
           conversationSnapshot={activity}
           instruction="Add a timer."
+          onInstructionChange={onInstructionChange}
           onRejectDraft={onRejectDraft}
           onSave={onSave}
           onSubmitInstruction={onSubmitInstruction}
@@ -1787,8 +1822,8 @@ describe('BuilderPage v2', () => {
       const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
       expect(review).not.toBeNull();
       expect(review?.tabIndex).toBe(-1);
-      expect(textarea?.value).toBe('');
-      expect(textarea?.readOnly).toBe(true);
+      expect(textarea?.value).toBe('Add a timer.');
+      expect(textarea?.readOnly).toBe(false);
 
       click(container, '[data-builder-composer-review-focus="true"]');
 
@@ -1802,7 +1837,7 @@ describe('BuilderPage v2', () => {
     }
   });
 
-  it('does not bind Enter to saving or discarding an unsaved draft', async () => {
+  it('binds Enter to continuing an unsaved draft without saving or discarding', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
     const onSubmitInstruction = vi.fn();
@@ -1822,10 +1857,10 @@ describe('BuilderPage v2', () => {
 
     const event = keyDown(container, '#builder-idea', { key: 'Enter' });
 
-    expect(event.defaultPrevented).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
     expect(container.querySelector('#builder-idea')?.getAttribute('aria-keyshortcuts'))
-      .toBeNull();
-    expect(onSubmitInstruction).not.toHaveBeenCalled();
+      .toBe('Enter');
+    expect(onSubmitInstruction).toHaveBeenCalledOnce();
     expect(onSave).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
   });
@@ -3092,6 +3127,12 @@ describe('BuilderPage v2', () => {
           });
           throw error;
         },
+        continueDraft: async () => {
+          const error = Object.assign(new Error(), {
+            code: 'builder_generation_provider_unavailable',
+          });
+          throw error;
+        },
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
@@ -3136,6 +3177,9 @@ describe('BuilderPage v2', () => {
       generator: {
         submit: async (request) => createGenerationDraft(request),
         generate: async (request) => createGenerationDraft(request),
+        continueDraft: async (request) => createGenerationDraft(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+        ),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,

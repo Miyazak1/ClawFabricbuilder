@@ -10,6 +10,7 @@ const {
   AVAILABILITY_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
+  CONTINUE_DRAFT_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
@@ -106,6 +107,7 @@ const REQUIRED_OPTION_KEYS = Object.freeze([
 ]);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const REQUEST_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -235,6 +237,20 @@ function publicInstruction(rawRequest) {
       throw new Error();
     }
     return descriptor.value;
+  } catch {
+    throw new BuilderGenerationKernelError('builder_generation_request_invalid');
+  }
+}
+
+function draftContinuationRequest(rawRequest) {
+  try {
+    const descriptors = exactDataDescriptors(rawRequest, ['draft_id', 'instruction']);
+    const draftId = descriptors.draft_id.value;
+    if (typeof draftId !== 'string' || !DRAFT_ID_PATTERN.test(draftId)) throw new Error();
+    return Object.freeze({
+      draft_id: draftId,
+      instruction: descriptors.instruction.value,
+    });
   } catch {
     throw new BuilderGenerationKernelError('builder_generation_request_invalid');
   }
@@ -1001,6 +1017,36 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.generate);
     }
 
+    async function trackedContinueDraft(rawRequest) {
+      const continuationRequest = draftContinuationRequest(rawRequest);
+      if (selectionPending) fail();
+      if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
+      const projectId = selectedProjectId;
+      const request = createBuilderGenerationRequest({
+        instruction: continuationRequest.instruction,
+        existing_project_id: projectId,
+      });
+      const requestId = request.request_digest;
+      const admission = await service.prepare_draft_continuation({
+        draft_id: continuationRequest.draft_id,
+      });
+      if (
+        !isPlainObject(admission)
+        || Object.getOwnPropertyDescriptor(admission, 'project_id')?.value !== projectId
+      ) fail();
+      activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
+      try {
+        return await service.generate_draft_continuation({
+          draft_id: continuationRequest.draft_id,
+          instruction: request.instruction,
+        });
+      } finally {
+        const remaining = (activeRequests.get(requestId) ?? 1) - 1;
+        if (remaining === 0) activeRequests.delete(requestId);
+        else activeRequests.set(requestId, remaining);
+      }
+    }
+
     function trackedGenerateApprovedPlan(rawRequest) {
       if (selectionPending) fail();
       const request = approvedPlanGenerationRequest(rawRequest);
@@ -1135,6 +1181,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
+      continueDraft: trackedContinueDraft,
       generateApprovedPlan: trackedGenerateApprovedPlan,
       proposePlan: trackedProposePlan,
       preparePlanSourceReadApproval: planSourceReadApprovalStatus,
@@ -1316,6 +1363,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
   const handlers = Object.freeze([
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
+    Object.freeze({ channel: CONTINUE_DRAFT_CHANNEL, invoke: adapter.channels.continueDraft.invoke }),
     Object.freeze({ channel: GENERATE_APPROVED_PLAN_CHANNEL, invoke: adapter.channels.generateApprovedPlan.invoke }),
     Object.freeze({ channel: PROPOSE_PLAN_CHANNEL, invoke: adapter.channels.proposePlan.invoke }),
     Object.freeze({

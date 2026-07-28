@@ -156,6 +156,20 @@ async function setup(options: Readonly<{
       result: latestDraft,
     };
   });
+  const continueDraft = vi.fn(async (request: unknown) => {
+    expect(request).toEqual({
+      draft_id: latestDraft.draft_id,
+      instruction: (request as { instruction: string }).instruction,
+    });
+    const instruction = (request as { instruction: string }).instruction;
+    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    latestDraft = await createDraftForCurrentProject(hostRequest);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: latestDraft,
+    };
+  });
   const answer = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
@@ -513,6 +527,7 @@ async function setup(options: Readonly<{
     codeGenerator: {
       submit,
       generate,
+      continueDraft,
       generateApprovedPlan,
       proposePlan,
       preparePlanSourceReadApproval,
@@ -583,6 +598,7 @@ async function setup(options: Readonly<{
     container,
     answer,
     cancel,
+    continueDraft,
     createLocalProject,
     generate,
     generateApprovedPlan,
@@ -959,6 +975,54 @@ describe('BuilderApp v2', () => {
     });
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+  });
+
+  it('continues an unsaved draft from the same composer without saving first', async () => {
+    const { container, continueDraft, generate, saveDraft, submit } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, 'Make a timer.');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(continueDraft).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
+      .toBe('Describe the next change to this draft...');
+
+    const draftTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    act(() => {
+      if (draftTextarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(draftTextarea, 'Make it responsive.');
+        draftTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        draftTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        instruction: 'Make it responsive.',
+      });
+    });
+    expect(submit).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
   });

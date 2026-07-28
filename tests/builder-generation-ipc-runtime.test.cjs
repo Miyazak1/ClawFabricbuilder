@@ -13,6 +13,7 @@ const {
   AVAILABILITY_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
+  CONTINUE_DRAFT_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATE_RESULT_VERSION,
@@ -151,6 +152,7 @@ function runtimeWithService(service, probes = {}) {
       if (specifier === './builder-generation-ipc-adapter.cjs') {
         return {
           ANSWER_CHANNEL,
+          CONTINUE_DRAFT_CHANNEL,
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
           PROPOSE_PLAN_CHANNEL,
@@ -169,6 +171,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
+              continueDraft: { invoke: (_event, body) => options.continueDraft(body) },
               generateApprovedPlan: { invoke: (_event, body) => options.generateApprovedPlan(body) },
               proposePlan: { invoke: (_event, body) => options.proposePlan(body) },
               preparePlanSourceReadApproval: {
@@ -618,6 +621,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(runtime.runtime_version, 'builder-generation-ipc-runtime.v2');
   assert.deepEqual(runtime.channels, [
     GENERATE_CHANNEL,
+    CONTINUE_DRAFT_CHANNEL,
     GENERATE_APPROVED_PLAN_CHANNEL,
     PROPOSE_PLAN_CHANNEL,
     PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
@@ -877,6 +881,19 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(SUBMIT_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
+    (error) => error.code === 'builder_generation_request_invalid'
+      && !`${error.message}:${error.stack}`.includes('marker'),
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)({ sender: {} }, {
+      draft_id: `builder-generation-draft:${'2'.repeat(64)}`,
+      instruction: 'Keep refining.',
+    }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
     (error) => error.code === 'builder_generation_request_invalid'
       && !`${error.message}:${error.stack}`.includes('marker'),
   );
@@ -1454,6 +1471,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
     PROPOSE_PLAN_CHANNEL,
     GENERATE_APPROVED_PLAN_CHANNEL,
+    CONTINUE_DRAFT_CHANNEL,
     GENERATE_CHANNEL,
   ]);
   assert.equal(runtime.dispose(), false);
@@ -1470,6 +1488,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.equal(removalFailure.handlers.has(GENERATE_CHANNEL), true);
+  assert.equal(removalFailure.handlers.has(CONTINUE_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(GENERATE_APPROVED_PLAN_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(APPROVE_PLAN_SOURCE_READ_CHANNEL), false);
@@ -1932,6 +1951,8 @@ test('registers a draft rejection channel backed by generation service', async (
 
 test('keeps selected project identity in main and accepts only instruction over generation IPC', async (t) => {
   const generated = [];
+  const continuedDrafts = [];
+  const draftContinuationAdmissions = [];
   const approvedPlanGenerated = [];
   const submitted = [];
   const retried = [];
@@ -1971,6 +1992,18 @@ test('keeps selected project identity in main and accepts only instruction over 
     submit(body) {
       submitted.push(body);
       return Promise.resolve({ request_id: body.request_digest });
+    },
+    prepare_draft_continuation(body) {
+      draftContinuationAdmissions.push(body);
+      runtimeModule.context.__draftContinuationProjectId = PROJECT_ID;
+      return Promise.resolve(vm.runInContext(
+        '({ project_id: __draftContinuationProjectId })',
+        runtimeModule.context,
+      ));
+    },
+    generate_draft_continuation(body) {
+      continuedDrafts.push(body);
+      return Promise.resolve({ request_id: hostRequestDigest(body.instruction, PROJECT_ID) });
     },
     retry_generate(body) {
       retried.push(body);
@@ -2024,6 +2057,21 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(submitted[0].existing_project_id, PROJECT_ID);
   assert.equal(submitted[0].instruction, 'Continue selected project.');
   assert.equal(submitted[0].request_digest, hostRequestDigest('Continue selected project.', PROJECT_ID));
+  await ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      draft_id: "builder-generation-draft:${'2'.repeat(64)}",
+      instruction: "Keep refining the unsaved draft."
+    })`, runtimeModule.context),
+  );
+  assert.equal(draftContinuationAdmissions.length, 1);
+  assert.equal(draftContinuationAdmissions[0].draft_id, `builder-generation-draft:${'2'.repeat(64)}`);
+  assert.equal(continuedDrafts.length, 1);
+  assert.equal(continuedDrafts[0].draft_id, `builder-generation-draft:${'2'.repeat(64)}`);
+  assert.equal(continuedDrafts[0].instruction, 'Keep refining the unsaved draft.');
+  assert.equal(Object.hasOwn(continuedDrafts[0], 'existing_project_id'), false);
+  assert.equal(Object.hasOwn(continuedDrafts[0], 'request_digest'), false);
+  assert.equal(Object.hasOwn(continuedDrafts[0], 'source_tree'), false);
   await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Plan this saved-project change." })', runtimeModule.context),
@@ -2144,6 +2192,17 @@ test('keeps selected project identity in main and accepts only instruction over 
     { code: 'builder_generation_request_invalid' },
   );
   await assert.rejects(
+    async () => ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        draft_id: "builder-generation-draft:${'2'.repeat(64)}",
+        instruction: "forged continuation",
+        existing_project_id: ${JSON.stringify(PROJECT_ID)}
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_request_invalid' },
+  );
+  await assert.rejects(
     async () => ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)(
       { sender: mainWindow.webContents },
       vm.runInContext(`({
@@ -2163,6 +2222,60 @@ test('keeps selected project identity in main and accepts only instruction over 
     ),
     { code: 'builder_generation_request_invalid' },
   );
+  runtime.dispose();
+});
+
+test('rejects draft continuation admission for a different selected project before generation', async (t) => {
+  const draftContinuationAdmissions = [];
+  const continuedDrafts = [];
+  let runtimeModule;
+  const service = {
+    prepare_draft_continuation(body) {
+      draftContinuationAdmissions.push(body);
+      runtimeModule.context.__draftContinuationProjectId =
+        'builder-project:123e4567-e89b-42d3-a456-426614174999';
+      return Promise.resolve(vm.runInContext(
+        '({ project_id: __draftContinuationProjectId })',
+        runtimeModule.context,
+      ));
+    },
+    generate_draft_continuation(body) {
+      continuedDrafts.push(body);
+      return Promise.resolve({ request_id: hostRequestDigest(body.instruction, PROJECT_ID) });
+    },
+  };
+  runtimeModule = runtimeWithService(service);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(
+      `({ project_id: ${JSON.stringify(PROJECT_ID)} })`,
+      runtimeModule.context,
+    ),
+  );
+  await assert.rejects(
+    async () => ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        draft_id: "builder-generation-draft:${'3'.repeat(64)}",
+        instruction: "Reject a mismatched continuation admission."
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
+  assert.equal(draftContinuationAdmissions.length, 1);
+  assert.equal(draftContinuationAdmissions[0].draft_id, `builder-generation-draft:${'3'.repeat(64)}`);
+  assert.deepEqual(continuedDrafts, []);
   runtime.dispose();
 });
 

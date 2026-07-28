@@ -504,7 +504,6 @@ export function createBuilderProjectController(
       || (target.requestId !== null && target.requestId !== event.request_id)
       || (target.requestId === null && target.projectId !== event.project_id)
       || !current.busy
-      || current.draft !== null
       || current.inspectedRevision !== null
       || (current.savedProject !== null && current.savedProject.target.project_id !== event.project_id)
     ) return;
@@ -746,27 +745,35 @@ export function createBuilderProjectController(
     if (
       disposed
       || current.busy
-      || current.draft !== null
       || current.inspectedRevision !== null
-      || !['new', 'ready', 'answer_failed', 'submit_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
+      || ![
+        'new',
+        'ready',
+        'draft_ready',
+        'answer_failed',
+        'submit_failed',
+        'generation_failed',
+        'preview_unavailable',
+      ].includes(current.status)
     ) return current;
     const retained = current.savedProject;
+    const retainedDraft = current.draft;
     const retainedPreview = current.preview;
-    const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
+    const targetProjectId = retainedDraft?.project_id ?? retained?.target.project_id ?? current.workingProjectId;
     retryableGeneration = null;
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
       publish(snapshot(
         'answering',
         retained,
-        null,
+        retainedDraft,
         retainedPreview,
         null,
         null,
         null,
         false,
-        unsavedWorkingProjectId(retained, null, targetProjectId),
-        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+        unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
+        unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
       ));
       let requestId: string | null = null;
       try {
@@ -787,16 +794,18 @@ export function createBuilderProjectController(
         clearActiveGeneration(request.request_digest, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
-          settledStatus(retained, retainedPreview, targetProjectId),
+          retainedDraft === null
+            ? settledStatus(retained, retainedPreview, targetProjectId)
+            : retainedPreview === null ? 'preview_unavailable' : 'draft_ready',
           retained,
-          null,
+          retainedDraft,
           retainedPreview,
           null,
           answered,
           null,
           false,
-          unsavedWorkingProjectId(retained, null, targetProjectId),
-          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+          unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
+          unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
@@ -804,14 +813,14 @@ export function createBuilderProjectController(
         return publish(snapshot(
           'answer_failed',
           retained,
-          null,
+          retainedDraft,
           retainedPreview,
           sanitizeTrustedBuilderGenerationDiagnostic(error),
           null,
           null,
           false,
-          unsavedWorkingProjectId(retained, null, targetProjectId),
-          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+          unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
+          unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
         ));
       }
     });
@@ -821,15 +830,23 @@ export function createBuilderProjectController(
     if (
       disposed
       || current.busy
-      || current.draft !== null
       || current.inspectedRevision !== null
-      || !['new', 'ready', 'answer_failed', 'submit_failed', 'generation_failed', 'preview_unavailable'].includes(current.status)
+      || ![
+        'new',
+        'ready',
+        'draft_ready',
+        'answer_failed',
+        'submit_failed',
+        'generation_failed',
+        'preview_unavailable',
+      ].includes(current.status)
     ) return current;
     const retained = current.savedProject;
+    const retainedDraft = current.draft;
     const retainedPreview = current.preview;
     retryableGeneration = null;
     return run(async (operationEpoch) => {
-      let targetProjectId = retained?.target.project_id ?? current.workingProjectId;
+      let targetProjectId = retainedDraft?.project_id ?? retained?.target.project_id ?? current.workingProjectId;
       if (targetProjectId === null) {
         targetProjectId = await bindProjectForBuild(
           'submit_failed',
@@ -842,14 +859,14 @@ export function createBuilderProjectController(
       publish(snapshot(
         'submitting',
         retained,
-        null,
+        retainedDraft,
         retainedPreview,
         null,
         null,
         null,
         false,
-        unsavedWorkingProjectId(retained, null, targetProjectId),
-        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+        unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
+        unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
       ));
       let requestId: string | null = null;
       let request: BuilderGenerationRequest | null = null;
@@ -864,27 +881,37 @@ export function createBuilderProjectController(
           projectId: targetProjectId,
           requestId,
         });
-        const result = await dependencies.generator.submit(request);
+        const result = retainedDraft === null
+          ? await dependencies.generator.submit(request)
+          : await dependencies.generator.continueDraft({
+            draft_id: retainedDraft.draft_id,
+            instruction: request.instruction,
+          });
         if (isExplanationResult(result)) {
           const answered = await sanitizeBuilderGenerationAnswer(result, request);
           clearActiveGeneration(request.request_digest, operationEpoch);
           if (disposed || operationEpoch !== epoch) return current;
           return publish(snapshot(
-            settledStatus(retained, retainedPreview, targetProjectId),
+            retainedDraft === null
+              ? settledStatus(retained, retainedPreview, targetProjectId)
+              : retainedPreview === null ? 'preview_unavailable' : 'draft_ready',
             retained,
-            null,
+            retainedDraft,
             retainedPreview,
             null,
             answered,
             null,
             false,
-            unsavedWorkingProjectId(retained, null, targetProjectId),
-            unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+            unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
+            unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
           ));
         }
         const draft = await sanitizeBuilderGenerationDraft(result, request);
         clearActiveGeneration(request.request_digest, operationEpoch);
-        if (!draftMatchesSavedBase(draft, retained)) throw new Error();
+        if (
+          !draftMatchesSavedBase(draft, retained)
+          || (retainedDraft !== null && draft.project_id !== retainedDraft.project_id)
+        ) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
         return withPreview('draft_ready', retained, draft, operationEpoch);
       } catch (error) {
@@ -893,14 +920,14 @@ export function createBuilderProjectController(
         return publish(snapshot(
           'submit_failed',
           retained,
-          null,
+          retainedDraft,
           retainedPreview,
           sanitizeTrustedBuilderGenerationDiagnostic(error),
           null,
           null,
           false,
-          unsavedWorkingProjectId(retained, null, targetProjectId),
-          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+          unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
+          unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
         ));
       }
     });

@@ -13,6 +13,7 @@ export type BuilderGenerationDiagnosticCode = ApplicationBuilderGenerationDiagno
 type BuilderCodeGeneratorBridge = Readonly<{
   submit(request: unknown): Promise<unknown>;
   generate(request: unknown): Promise<unknown>;
+  continueDraft(request: unknown): Promise<unknown>;
   generateApprovedPlan(request: unknown): Promise<unknown>;
   proposePlan(request: unknown): Promise<unknown>;
   preparePlanSourceReadApproval(request: unknown): Promise<unknown>;
@@ -32,6 +33,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
 const BRIDGE_KEYS = new Set([
   'submit',
   'generate',
+  'continueDraft',
   'generateApprovedPlan',
   'proposePlan',
   'preparePlanSourceReadApproval',
@@ -194,6 +196,7 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
     return Object.freeze({
       submit: methods.submit as BuilderCodeGeneratorBridge['submit'],
       generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
+      continueDraft: methods.continueDraft as BuilderCodeGeneratorBridge['continueDraft'],
       generateApprovedPlan: methods.generateApprovedPlan as BuilderCodeGeneratorBridge['generateApprovedPlan'],
       proposePlan: methods.proposePlan as BuilderCodeGeneratorBridge['proposePlan'],
       preparePlanSourceReadApproval:
@@ -272,6 +275,13 @@ function safeProjectId(value: unknown): string {
 
 function safeDigest(value: unknown): string {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) throw portError();
+  return value;
+}
+
+function safeDraftId(value: unknown): string {
+  if (typeof value !== 'string' || !/^builder-generation-draft:[0-9a-f]{64}$/u.test(value)) {
+    throw portError();
+  }
   return value;
 }
 
@@ -446,6 +456,12 @@ export function createBuilderDesktopCodeGeneratorPort(
   return Object.freeze({
     generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
       return callBridge(bridge, bridge.generate, [{
+        instruction: request.instruction,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    continueDraft(request: Parameters<BuilderCodeGeneratorPort['continueDraft']>[0]) {
+      return callBridge(bridge, bridge.continueDraft, [{
+        draft_id: safeDraftId(request.draft_id),
         instruction: request.instruction,
       }]).then(unwrapGenerationEnvelope);
     },

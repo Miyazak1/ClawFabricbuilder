@@ -16,6 +16,7 @@ const CLEAR_BUILD_PATTERNS = Object.freeze([
   /\bchange\b/u,
   /\bmake\s+(?:me\s+)?(?:a|an|the)\s+[\w-]+/u,
   /\bmake\s+(?:this|it|the)\s+(?:button|page|site|app|layout|screen|form|dashboard|preview)\b/u,
+  /\bmake\s+(?:this|it)\s+responsive\b/u,
 ]);
 
 function normalizeComposerInstruction(instruction: string): string {

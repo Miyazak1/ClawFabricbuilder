@@ -233,6 +233,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  continueDraft(request: Parameters<BuilderCodeGeneratorPort['continueDraft']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -478,6 +482,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       generateApprovedPlan(request: Parameters<BuilderCodeGeneratorPort['generateApprovedPlan']>[0]) {
         return ports.generator.generateApprovedPlan(request);
+      },
+      continueDraft(request: Parameters<BuilderCodeGeneratorPort['continueDraft']>[0]) {
+        return ports.generator.continueDraft(request);
       },
       proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
         return ports.generator.proposePlan(request);
