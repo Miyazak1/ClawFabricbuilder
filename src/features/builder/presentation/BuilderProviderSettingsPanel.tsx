@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, KeyRound, Loader2, Save } from 'lucide-react';
+import { AlertCircle, CheckCircle2, KeyRound, Loader2, Save, Sparkles } from 'lucide-react';
 
 export type BuilderProviderSettingsPanelStatus =
   | 'unconfigured'
@@ -48,6 +48,13 @@ const EMPTY_FIELD_ERRORS: BuilderProviderSettingsPanelFieldErrors = Object.freez
   timeoutMs: null,
   temperature: null,
   maxTokens: null,
+});
+const DEEPSEEK_V4_PRESET = Object.freeze({
+  baseUrl: 'https://api.deepseek.com/v1',
+  maxTokens: '8192',
+  model: 'deepseek-v4-flash',
+  temperature: '0.2',
+  timeoutMs: '120000',
 });
 
 function updateValue(
@@ -107,6 +114,15 @@ export function BuilderProviderSettingsPanel({
     onValuesChange(updateValue(values, key, value));
   }
 
+  function applyDeepSeekPreset(): void {
+    if (!editable) return;
+    onValuesChange(Object.freeze({
+      ...values,
+      ...DEEPSEEK_V4_PRESET,
+      apiKey: values.apiKey,
+    }));
+  }
+
   const baseUrlError = fieldError('builder-provider-base-url', fieldErrors.baseUrl);
   const modelError = fieldError('builder-provider-model', fieldErrors.model);
   const apiKeyError = fieldError('builder-provider-api-key', fieldErrors.apiKey);
@@ -152,6 +168,15 @@ export function BuilderProviderSettingsPanel({
             <h3 className="text-sm font-semibold">Connection</h3>
             <p className="mt-1 text-xs text-muted-foreground">Use the provider endpoint and model for Builder projects.</p>
           </header>
+          <button
+            className="cf-builder-secondary-button cf-builder-command-button inline-flex min-h-9 w-fit items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!editable}
+            onClick={applyDeepSeekPreset}
+            type="button"
+          >
+            <Sparkles aria-hidden="true" className="size-3.5" />
+            Use DeepSeek V4
+          </button>
           <label className="grid gap-1 text-sm font-medium" htmlFor="builder-provider-base-url">
             Base URL
             <input

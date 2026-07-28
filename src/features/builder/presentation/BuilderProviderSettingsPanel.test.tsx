@@ -109,6 +109,7 @@ describe('BuilderProviderSettingsPanel', () => {
     expect(container.querySelector('.cf-builder-settings-actions')).not.toBeNull();
     expect(container.querySelector('h2')?.textContent).toBe('AI provider');
     expect(container.textContent).toContain('Connect an AI provider before making projects.');
+    expect(buttonWithText(container, 'Use DeepSeek V4')?.disabled).toBe(false);
     expect(input(container, 'builder-provider-base-url').value).toBe('https://provider.example/v1');
     expect(input(container, 'builder-provider-base-url').placeholder).toBe('https://api.example.com/v1');
     expect(input(container, 'builder-provider-base-url').className).toContain('cf-builder-input');
@@ -141,6 +142,38 @@ describe('BuilderProviderSettingsPanel', () => {
     });
     expect(onValuesChange.mock.calls[0][0]).not.toBe(original);
     expect(Object.isFrozen(onValuesChange.mock.calls[0][0])).toBe(true);
+  });
+
+  it('applies the DeepSeek V4 preset without touching the API key or saving', () => {
+    const onValuesChange = vi.fn();
+    const onSave = vi.fn();
+    const original = values({
+      apiKey: 'keep-this-key',
+      baseUrl: 'https://provider.example/v1',
+      maxTokens: '',
+      model: 'builder-model',
+      temperature: '',
+      timeoutMs: '30000',
+    });
+    const container = render(<BuilderProviderSettingsPanel {...props({
+      values: original,
+      onSave,
+      onValuesChange,
+    })} />);
+
+    act(() => buttonWithText(container, 'Use DeepSeek V4')?.click());
+
+    expect(onValuesChange).toHaveBeenCalledExactlyOnceWith({
+      ...original,
+      baseUrl: 'https://api.deepseek.com/v1',
+      maxTokens: '8192',
+      model: 'deepseek-v4-flash',
+      temperature: '0.2',
+      timeoutMs: '120000',
+    });
+    expect(onValuesChange.mock.calls[0][0].apiKey).toBe('keep-this-key');
+    expect(Object.isFrozen(onValuesChange.mock.calls[0][0])).toBe(true);
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('never echoes an already saved API key from saved or unconfigured state', () => {
@@ -246,6 +279,7 @@ describe('BuilderProviderSettingsPanel', () => {
       'Provider settings are unavailable right now.',
     );
     expect(buttonWithText(unavailable, 'Save provider')?.disabled).toBe(true);
+    expect(buttonWithText(unavailable, 'Use DeepSeek V4')?.disabled).toBe(true);
   });
 
   it('renders error status without exposing any credential text', () => {
