@@ -24,6 +24,35 @@ function styleBlock(source: string, selector: string): string {
 }
 
 describe('Builder desktop layout styles', () => {
+  it('pins the desktop shell and lets only the conversation body scroll', () => {
+    const source = styles();
+    const root = styleBlock(source, 'html,\nbody,\n#root');
+    const desktopShell = styleBlock(source, '.cf-builder-desktop-shell');
+    const builderShell = styleBlock(source, '.cf-builder-shell');
+    const workbenchFrame = styleBlock(source, '.cf-builder-workbench-frame');
+    const surfaceBody = styleBlock(source, '.cf-builder-surface-body');
+    const chatMain = styleBlock(source, '.cf-builder-chat-main');
+    const chatScroll = styleBlock(source, '.cf-builder-chat-scroll');
+
+    expect(root).toContain('height: 100%;');
+    expect(root).toContain('overflow: hidden;');
+    expect(desktopShell).toContain('height: 100vh;');
+    expect(desktopShell).toContain('overflow: hidden;');
+    expect(builderShell).toContain('height: 100%;');
+    expect(builderShell).toContain('overflow: hidden;');
+    expect(workbenchFrame).toContain('height: 100%;');
+    expect(workbenchFrame).toContain('overflow: hidden;');
+    expect(surfaceBody).toContain('overflow: hidden;');
+    expect(surfaceBody).not.toContain('overflow: auto;');
+    expect(chatMain).toContain('grid-template-rows: minmax(0, 1fr) auto;');
+    expect(chatMain).toContain('overflow: hidden;');
+    expect(chatScroll).toContain('display: flex;');
+    expect(chatScroll).toContain('flex-direction: column;');
+    expect(chatScroll).toContain('align-items: center;');
+    expect(chatScroll).toContain('overflow: auto;');
+    expect(chatScroll).not.toContain('display: grid;');
+  });
+
   it('keeps the desktop review sidebar compact and out of unsaved draft changes', () => {
     const source = styles();
 
@@ -95,19 +124,28 @@ describe('Builder desktop layout styles', () => {
     expect(source).not.toMatch(/\.cf-builder-review-actions \{[\s\S]*?padding-left: 38px/u);
   });
 
-  it('keeps the conversation refresh control from taking a full toolbar row', () => {
+  it('keeps conversation activity in normal layout flow above review and changes', () => {
     const source = styles();
     const activityPanel = styleBlock(source, '.cf-builder-activity-panel');
     const activityToolbar = styleBlock(source, '.cf-builder-activity-toolbar');
+    const activityBody = styleBlock(source, '.cf-builder-activity-body-wrap');
+    const activityList = styleBlock(source, '.cf-builder-activity-list');
 
+    expect(activityPanel).toContain('display: block;');
     expect(activityPanel).toContain('position: relative;');
-    expect(activityToolbar).toContain('position: absolute;');
-    expect(activityToolbar).toContain('inset-inline-end: 0;');
+    expect(activityToolbar).toContain('display: flex;');
     expect(activityToolbar).toContain('min-height: 0;');
+    expect(activityToolbar).toContain('margin-bottom: 6px;');
+    expect(activityToolbar).not.toContain('position: absolute;');
     expect(activityToolbar).not.toContain('min-height: 32px;');
-    expect(source).toMatch(
-      /(?:^|\n)\.cf-builder-activity-body-wrap \{[\s\S]*?padding: 0 40px 0 0;/u,
-    );
+    expect(activityBody).toContain('display: block;');
+    expect(activityBody).toContain('overflow: visible;');
+    expect(activityBody).toContain('padding: 0;');
+    expect(activityList).toContain('display: flex;');
+    expect(activityList).toContain('flex-direction: column;');
+    expect(activityList).toContain('margin: 0;');
+    expect(activityList).toContain('padding: 0;');
+    expect(activityList).toContain('list-style: none;');
   });
 
   it('keeps the result flow unframed so preview is not nested inside another card', () => {

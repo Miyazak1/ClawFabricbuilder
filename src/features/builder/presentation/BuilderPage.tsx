@@ -1354,7 +1354,7 @@ export function BuilderPage({
     const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     if (disclosure === null) return;
     pendingChangesFocusRef.current = false;
-    disclosure.focus();
+    disclosure.focus({ preventScroll: true });
   }, [showChangesPanel]);
 
   function updateChatFollowState(): void {
@@ -1411,10 +1411,10 @@ export function BuilderPage({
     if (disclosure !== null) {
       pendingChangesFocusRef.current = false;
       disclosure.open = true;
-      disclosure.focus();
+      disclosure.focus({ preventScroll: true });
       return;
     }
-    document.getElementById('builder-tool-changes')?.focus();
+    document.getElementById('builder-tool-changes')?.focus({ preventScroll: true });
   }
 
   function submitPrimaryComposerCommand(event: KeyboardEvent<HTMLTextAreaElement>): void {

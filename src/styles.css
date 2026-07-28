@@ -52,7 +52,17 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
 button, input, textarea { font: inherit; }
 button { letter-spacing: 0; }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
@@ -65,6 +75,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-desktop-shell {
   display: grid;
   grid-template-rows: 44px minmax(0, 1fr);
+  height: 100vh;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -141,6 +153,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-shell {
   display: grid;
   grid-template-columns: 72px 276px minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -234,6 +247,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-workbench-frame {
   position: relative;
+  height: 100%;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -295,7 +309,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   flex: 1;
   grid-template-rows: minmax(0, 1fr);
   gap: 10px;
-  overflow: auto;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -461,10 +475,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-chat-scroll {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
-  align-content: start;
+  align-items: center;
   gap: 12px;
   overflow: auto;
   padding: 14px;
@@ -480,18 +495,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-chat-notice {
-  justify-self: center;
+  align-self: center;
 }
 
 .cf-builder-chat-tail {
+  flex: 0 0 auto;
   min-height: 1px;
   width: 1px;
-  justify-self: center;
+  align-self: center;
 }
 
 .cf-builder-chat-flow-surface {
+  flex: 0 0 auto;
   width: min(860px, 100%);
-  justify-self: center;
+  align-self: center;
 }
 
 .cf-builder-review-sidebar {
@@ -1012,11 +1029,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-activity-panel {
-  display: grid;
+  display: block;
   position: relative;
   min-height: 0;
   min-width: 0;
-  gap: 8px;
   color: var(--cf-text-soft);
 }
 
@@ -1026,10 +1042,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   grid-template-rows: auto minmax(0, 1fr);
   color: var(--cf-text-soft);
-}
-
-.cf-builder-chat-scroll .cf-builder-activity-body-wrap {
-  overflow: visible;
 }
 
 .cf-builder-version-panel {
@@ -1057,24 +1069,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-activity-toolbar {
   display: flex;
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline-end: 0;
-  z-index: 1;
   min-height: 0;
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
+  margin-bottom: 6px;
 }
 
 .cf-builder-activity-body-wrap {
-  display: grid;
+  display: block;
   min-height: 0;
   min-width: 0;
-  align-content: start;
-  gap: 8px;
-  overflow: auto;
-  padding: 0 40px 0 0;
+  overflow: visible;
+  padding: 0;
 }
 
 .cf-builder-version-body-wrap {
@@ -1088,9 +1095,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-activity-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .cf-builder-version-list {
