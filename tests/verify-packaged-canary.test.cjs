@@ -22,6 +22,8 @@ const {
   assertTaskStreamCandidateFacts,
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
+  assertTaskStreamPlanFacts,
+  approvePlanViaUi,
   askProjectQuestionViaUi,
   captureSavedActivityEvidence,
   capturePreviewEvidence,
@@ -37,6 +39,7 @@ const {
   networkRecorder,
   openProjectFromCatalogById,
   parseCanaryInput,
+  proposePlanViaUi,
   readStdin,
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
@@ -234,6 +237,33 @@ class FakeLocator {
       return;
     }
     if (
+      this.selector === SELECTORS.planProposed
+      || this.selector === SELECTORS.planReviewActions
+      || this.selector === SELECTORS.approvePlan
+    ) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.planTurns > this.page.approvedPlanReviews,
+        options?.state ?? 'visible',
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.planApproved) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.approvedPlanReviews > 0,
+        options?.state ?? 'visible',
+      );
+      return;
+    }
+    if (
+      this.selector === SELECTORS.toolActivityRequested
+      || this.selector === SELECTORS.toolActivitySucceeded
+    ) {
+      this.page.assertSelectorVisibility(this.selector, this.page.planTurns > 0, options?.state ?? 'visible');
+      return;
+    }
+    if (
       this.selector === SELECTORS.changesPanel
       || this.selector === SELECTORS.changesSummary
       || this.selector === SELECTORS.changeCard
@@ -274,6 +304,8 @@ class FakeRole {
       if (/[?\uFF1F]\s*$/u.test(instruction)) this.page.recordQuestion();
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
     }
+    if (this.name === 'Plan first') this.page.recordPlanAttempt();
+    if (this.name === 'Approve plan') this.page.recordPlanApproval();
     if (this.name === 'Retry') this.page.retryCandidateAttempt();
     if (this.name === 'Back to current') {
       this.page.historyViewingRevision = null;
@@ -346,6 +378,8 @@ class FakePage {
     this.draftFailuresRemaining = 0;
     this.keepPasswordValue = false;
     this.lastFailedDraftTarget = null;
+    this.approvedPlanReviews = 0;
+    this.planTurns = 0;
     this.previewVisible = true;
     this.projectStatus = 'ready';
     this.questionTurns = 0;
@@ -406,6 +440,14 @@ class FakePage {
     };
     this.recordQuestion = () => {
       this.questionTurns += 1;
+    };
+    this.recordPlanAttempt = () => {
+      this.planTurns += 1;
+    };
+    this.recordPlanApproval = () => {
+      if (this.planTurns <= this.approvedPlanReviews) throw new Error('plan unavailable');
+      this.approvedPlanReviews += 1;
+      this.recordCandidateAttempt(Math.max(this.savedRevision + 1, this.candidateTurns + 1, 1));
     };
   }
 
@@ -603,7 +645,14 @@ function revisionEvidence(selectedProjectId, revisionNumber) {
   return { candidate, current, receipt, sourceTree, verification };
 }
 
-function taskStreamConversation(selectedProjectId, savedRevision, candidateTurns, questionTurns = 0) {
+function taskStreamConversation(
+  selectedProjectId,
+  savedRevision,
+  candidateTurns,
+  questionTurns = 0,
+  planTurns = 0,
+  approvedPlanReviews = 0,
+) {
   const items = [];
   const userMessageIds = [
     'builder-message:10101010-1010-4010-8010-101010101010',
@@ -626,6 +675,27 @@ function taskStreamConversation(selectedProjectId, savedRevision, candidateTurns
   ];
   const questionRunIds = [
     'builder-run:18181818-1818-4818-8818-181818181818',
+  ];
+  const planUserMessageIds = [
+    'builder-message:24242424-2424-4242-8424-242424242424',
+  ];
+  const planAssistantMessageIds = [
+    'builder-message:25252525-2525-4252-8525-252525252525',
+  ];
+  const planTurnIds = [
+    'builder-turn:26262626-2626-4262-8626-262626262626',
+  ];
+  const planTaskIds = [
+    'builder-task:27272727-2727-4272-8727-272727272727',
+  ];
+  const planRunIds = [
+    'builder-run:28282828-2828-4282-8828-282828282828',
+  ];
+  const planStepIds = [
+    'builder-run-step:29292929-2929-4292-8929-292929292929',
+  ];
+  const planToolCallIds = [
+    'builder-tool-call:30303030-3030-4030-8030-303030303030',
   ];
   let sequence = 0;
   function takeSequence() {
@@ -757,11 +827,121 @@ function taskStreamConversation(selectedProjectId, savedRevision, candidateTurns
       },
     );
   }
+  function pushPlanTurn(index) {
+    const turnId = planTurnIds[index - 1];
+    const taskId = planTaskIds[index - 1];
+    const runId = planRunIds[index - 1];
+    const stepId = planStepIds[index - 1];
+    const toolCallId = planToolCallIds[index - 1];
+    items.push(
+      {
+        item_kind: 'user_message',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        message: {
+          message_id: planUserMessageIds[index - 1],
+          text: 'After reopening, add a compact completed-state summary below the timer.',
+        },
+        message_kind: 'submitted',
+        mode: 'work',
+        task: {
+          task_id: taskId,
+          title: 'Add completed-state summary',
+        },
+      },
+      {
+        item_kind: 'run_started',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        task_id: taskId,
+        attempt_number: 1,
+        retry_of_run_id: null,
+        recorded_state: 'started',
+      },
+      {
+        item_kind: 'tool_call_requested',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        step_id: stepId,
+        tool_call_id: toolCallId,
+        tool_label: 'Read project file',
+        action: 'filesystem.read',
+        resource: { resource_kind: 'filesystem' },
+        lifecycle: {
+          permission_admission: 'verified_allowed',
+          dispatch_admission: 'not_started',
+          execution_admission: 'not_performed',
+          result_admission: 'not_recorded',
+        },
+        recorded_state: 'requested',
+      },
+      {
+        item_kind: 'tool_call_result_recorded',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        step_id: stepId,
+        tool_call_id: toolCallId,
+        tool_label: 'Read project file',
+        action: 'filesystem.read',
+        resource: { resource_kind: 'filesystem' },
+        result: {
+          status: 'succeeded',
+          summary_code: 'completed_without_raw_output',
+          display_summary: 'This step completed. Details were not kept.',
+        },
+        lifecycle: {
+          result_admission: 'fixed_summary_code_recorded',
+          raw_output_admission: 'not_included',
+          revision_admission: 'not_created',
+        },
+        recorded_state: 'recorded',
+      },
+      {
+        item_kind: 'run_completed',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        terminal_status: 'succeeded',
+        result_kind: 'plan',
+        assistant_message: {
+          message_id: planAssistantMessageIds[index - 1],
+          text: 'I will add a small completed-state section and keep the current timer intact.',
+        },
+        candidate: null,
+      },
+      {
+        item_kind: 'turn_completed',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        outcome: 'plan_proposed',
+      },
+    );
+    if (index <= approvedPlanReviews) {
+      items.push({
+        item_kind: 'plan_reviewed',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        decision: 'approved',
+        plan_state: 'approved',
+      });
+    }
+  }
   if (candidateTurns >= 1) pushCandidateTurn(1);
   for (let question = 1; question <= questionTurns; question += 1) {
     pushQuestionTurn(question);
   }
-  for (let revision = 2; revision <= candidateTurns; revision += 1) {
+  for (let revision = 2; revision <= Math.min(candidateTurns, 2); revision += 1) {
+    pushCandidateTurn(revision);
+  }
+  for (let plan = 1; plan <= planTurns; plan += 1) {
+    pushPlanTurn(plan);
+  }
+  for (let revision = 3; revision <= candidateTurns; revision += 1) {
     pushCandidateTurn(revision);
   }
   return {
@@ -784,6 +964,8 @@ function bridgeEvidence(
   revisionNumber = 1,
   candidateTurns = revisionNumber,
   questionTurns = 0,
+  planTurns = 0,
+  approvedPlanReviews = 0,
 ) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
@@ -804,7 +986,14 @@ function bridgeEvidence(
       stream_version: 'builder-task-stream-read-result.v1',
       project_id: projectId,
       conversation: saved
-        ? taskStreamConversation(selectedProjectId, revisionNumber, candidateTurns, questionTurns)
+        ? taskStreamConversation(
+          selectedProjectId,
+          revisionNumber,
+          candidateTurns,
+          questionTurns,
+          planTurns,
+          approvedPlanReviews,
+        )
         : null,
       authority: {
         conversation: 'sqlite_canonical_event_replay_or_absent',
@@ -993,6 +1182,8 @@ function installBridge(page) {
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
           page.questionTurns,
+          page.planTurns,
+          page.approvedPlanReviews,
         ).current;
       },
       async listCurrent() {
@@ -1002,6 +1193,8 @@ function installBridge(page) {
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
           page.questionTurns,
+          page.planTurns,
+          page.approvedPlanReviews,
         ).catalog;
       },
       async loadCurrent(request) {
@@ -1011,6 +1204,8 @@ function installBridge(page) {
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
           page.questionTurns,
+          page.planTurns,
+          page.approvedPlanReviews,
         ).current;
       },
       async loadRevision(request) {
@@ -1021,6 +1216,8 @@ function installBridge(page) {
             Math.max(1, page.savedRevision),
             Math.max(1, page.savedRevision, page.candidateTurns),
             page.questionTurns,
+            page.planTurns,
+            page.approvedPlanReviews,
           ).current,
           operation: 'revision_loaded',
         };
@@ -1032,6 +1229,8 @@ function installBridge(page) {
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
           page.questionTurns,
+          page.planTurns,
+          page.approvedPlanReviews,
         );
         const current = evidence.current?.current ?? null;
         const receipt = evidence.current?.product_revision_receipt ?? null;
@@ -1079,6 +1278,8 @@ function installBridge(page) {
           Math.max(1, page.savedRevision),
           Math.max(1, page.savedRevision, page.candidateTurns),
           page.questionTurns,
+          page.planTurns,
+          page.approvedPlanReviews,
         )
           .task_stream;
       },
@@ -1093,7 +1294,13 @@ function installBridge(page) {
 }
 
 function fakeElectron(page) {
-  const durableStore = { candidateTurns: 0, questionTurns: 0, revision: 0 };
+  const durableStore = {
+    approvedPlanReviews: 0,
+    candidateTurns: 0,
+    planTurns: 0,
+    questionTurns: 0,
+    revision: 0,
+  };
   const fake = {
     appEvents: [],
     launches: [],
@@ -1103,6 +1310,8 @@ function fakeElectron(page) {
       const activePage = fake.launches.length === 1 ? page : new FakePage();
       activePage.candidateTurns = durableStore.candidateTurns;
       activePage.changesPanelVisible = false;
+      activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
+      activePage.planTurns = durableStore.planTurns;
       activePage.questionTurns = durableStore.questionTurns;
       activePage.savedRevision = durableStore.revision;
       activePage.savedActivityRevision = durableStore.revision;
@@ -1128,6 +1337,16 @@ function fakeElectron(page) {
       activePage.recordQuestion = () => {
         durableStore.questionTurns += 1;
         activePage.questionTurns = durableStore.questionTurns;
+      };
+      activePage.recordPlanAttempt = () => {
+        durableStore.planTurns += 1;
+        activePage.planTurns = durableStore.planTurns;
+      };
+      activePage.recordPlanApproval = () => {
+        if (durableStore.planTurns <= durableStore.approvedPlanReviews) throw new Error('plan unavailable');
+        durableStore.approvedPlanReviews += 1;
+        activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
+        activePage.recordCandidateAttempt(Math.max(durableStore.revision + 1, durableStore.candidateTurns + 1, 1));
       };
       fake.pages.push(activePage);
       const requestListeners = [];
@@ -1155,6 +1374,8 @@ function fakeElectron(page) {
               Math.max(1, durableStore.revision),
               Math.max(1, durableStore.revision, durableStore.candidateTurns),
               durableStore.questionTurns,
+              durableStore.planTurns,
+              durableStore.approvedPlanReviews,
             );
           };
           activePage.artifactsAllowed = true;
@@ -1705,6 +1926,47 @@ test('rejects explanations that are not bound to a taskless question turn', () =
   assert.throws(
     () => assertTaskStreamExplanationFacts(taskedExplanation, expectedRevision, 1, 1),
     (error) => error.code === 'canary_question_evidence_failed',
+  );
+});
+
+test('proposes and approves a saved-project plan before creating a draft', async (t) => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+  page.draftSaved = true;
+  page.savedRevision = 2;
+  page.candidateTurns = 2;
+  page.questionTurns = 1;
+  page.versionLabel = 'Version 2';
+
+  const currentRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+  const plan = await proposePlanViaUi(page, currentRevision, 'Add a completed summary.', 2, 1, 1);
+
+  assert.equal(page.planTurns, 1);
+  assert.equal(page.approvedPlanReviews, 0);
+  assert.equal(page.candidateTurns, 2);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.deepEqual(
+    assertTaskStreamPlanFacts(bridgeEvidence(projectId, true, 2, 2, 1, 1, 0), currentRevision, 2, 1, 1),
+    plan.task_stream,
+  );
+
+  const draft = await approvePlanViaUi(page, currentRevision, 3, 1, 1);
+
+  assert.equal(page.approvedPlanReviews, 1);
+  assert.equal(page.candidateTurns, 3);
+  assert.equal(page.unsavedDraftVisible, true);
+  assert.deepEqual(draft, {
+    approved_plan_continued: true,
+    approved_plan_task_stream_verified: true,
+    previous_revision_verified_before_save: true,
+    review_diff: reviewDiffEvidence(),
+    unsaved_draft_observed: true,
+  });
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['Plan first', 'Approve plan'],
   );
 });
 
@@ -2606,6 +2868,8 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       unsaved_draft_observed: true,
     },
     restart_continuation: {
+      approved_plan_continued: true,
+      approved_plan_task_stream_verified: true,
       previous_revision_verified_before_save: true,
       review_diff: reviewDiffEvidence(),
       unsaved_draft_observed: true,
@@ -2662,6 +2926,33 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(result.preview.updated.script_src, 'none');
   assert.equal(result.preview.restart_continuation.sandbox, 'empty');
   assert.equal(result.preview.restart_continuation.script_src, 'none');
+  assert.deepEqual(result.plan, {
+    restart_continuation: {
+      approve_plan_visible: true,
+      plan_review_actions_visible: true,
+      saved_revision_unchanged: true,
+      task_stream: {
+        answer_count: 1,
+        accepted_review_count: 2,
+        candidate_ready_count: 2,
+        candidate_reviewed_count: 2,
+        candidate_result_count: 2,
+        explanation_result_count: 1,
+        head_sequence: 20,
+        item_count: 20,
+        latest_plan_review: 'pending',
+        plan_ready_count: 1,
+        plan_result_count: 1,
+        plan_reviewed_count: 0,
+        revision_unchanged: true,
+        run_progress_count: 0,
+        tool_request_count: 1,
+        tool_result_count: 1,
+        tool_result_succeeded_count: 1,
+      },
+      tool_activity_visible: true,
+    },
+  });
   assert.deepEqual(result.question, {
     after_initial_save: {
       saved_revision_unchanged: true,
@@ -2793,15 +3084,21 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       candidate_reviewed_count: 2,
       candidate_result_count: 3,
       explanation_result_count: 1,
-      head_sequence: 18,
-      item_count: 18,
+      head_sequence: 25,
+      item_count: 25,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
+      latest_plan_review: 'approved',
+      plan_approved_count: 1,
+      plan_ready_count: 1,
+      plan_result_count: 1,
+      plan_reviewed_count: 1,
       run_progress_count: 0,
       saved_revision_number: 2,
       source_availability: 'not_loaded',
-      tool_request_count: 0,
-      tool_result_count: 0,
+      tool_request_count: 1,
+      tool_result_count: 1,
+      tool_result_succeeded_count: 1,
     },
     pending_update_advanced_candidate_count: true,
     question_did_not_advance_candidate_count: true,
@@ -2964,6 +3261,9 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.preview.pending_update_restart_srcdoc_unchanged, true);
   assert.equal(result.preview.restart_continuation_changed_srcdoc, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
+  assert.equal(result.plan.restart_continuation.plan_review_actions_visible, true);
+  assert.equal(result.plan.restart_continuation.tool_activity_visible, true);
+  assert.equal(result.plan.restart_continuation.task_stream.plan_ready_count, 1);
   assert.equal(result.question.after_initial_save.saved_revision_unchanged, true);
   assert.equal(result.question.after_initial_save.ui_answer_observed, true);
   assert.equal(result.task_stream.question_did_not_advance_candidate_count, true);
@@ -2996,7 +3296,8 @@ test('copies only saved provider profile files and runs without provider input o
     'Send',
     'Save version',
     'Back to current',
-    'Send',
+    'Plan first',
+    'Approve plan',
   ]);
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
@@ -3571,7 +3872,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v12/u);
+  assert.match(source, /builder-packaged-canary-result\.v13/u);
   assert.match(source, /run_progress_recorded/u);
   assert.match(source, /tool_call_requested/u);
   assert.match(source, /tool_call_result_recorded/u);
