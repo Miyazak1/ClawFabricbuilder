@@ -869,6 +869,48 @@ external-network permissions inside generated projects.
   as local visual evidence only. This screenshot is not a real-provider or
   DeepSeek canary.
 
+## 2026-07-29 DeepSeek Preset Package Refresh Check
+
+This addendum records package and desktop visual evidence for checkpoint
+`4f4412f`, after the provider settings surface gained a DeepSeek V4 preset
+button. It extends local desktop package evidence only; it does not extend the
+prior real-provider DeepSeek canary, installer evidence, code-signing status,
+mobile evidence, generated-code execution, arbitrary runtime/tool execution,
+or external-network permissions inside generated projects.
+
+- The provider settings UI now offers `Use DeepSeek V4`, which fills the
+  OpenAI-compatible DeepSeek endpoint, model, timeout, temperature, and token
+  budget fields while preserving the existing API key field. The preset does
+  not save settings by itself, does not change the provider bridge, and does
+  not move credentials into renderer-readable evidence.
+- Focused provider settings validation passed for
+  `src\features\builder\presentation\BuilderProviderSettingsPanel.test.tsx`
+  and
+  `src\features\builder\presentation\BuilderProviderSettingsRouteAdapter.test.tsx`.
+  Full renderer validation passed through typecheck, lint, build, and
+  `npm.cmd run test:unit`; the command reported 430 passing Vitest tests.
+- `npm.cmd run pack` passed for the same source tree. Package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The current local package remains
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- A packaged fresh-workspace screenshot using an isolated canary profile was
+  captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-latest-ui-1785277812768.png`.
+  The observed page scroll height equaled the viewport height, the composer
+  remained in the main chat workspace, and only the chat scroll region owned
+  overflow.
+- A packaged generated-draft review screenshot using a temporary local
+  OpenAI-compatible provider was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-generated-review-1785278051044.png`.
+  The generated Review checkpoint, Changes panel, and Review buttons had
+  non-overlapping boxes; the page still had no window-level scroll, and the
+  chat region remained the only overflowing workspace area. This screenshot is
+  local visual evidence only and is not a real-provider or DeepSeek canary.
+- A new real DeepSeek V4 canary was not rerun for this checkpoint because the
+  default app profile locations on this machine did not contain a saved
+  provider profile/key during the refresh.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
