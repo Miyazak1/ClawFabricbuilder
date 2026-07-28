@@ -1754,6 +1754,18 @@ describe('BuilderPage v2', () => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
       expect(Boolean(review!.compareDocumentPosition(result!) & Node.DOCUMENT_POSITION_FOLLOWING))
         .toBe(true);
+
+      spy.mockClear();
+      click(container, '[data-builder-review-open-changes="true"]');
+      const changes = container.querySelector('[data-builder-changes-flow="true"]');
+      const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
+      expect(changes).not.toBeNull();
+      expect(changesDisclosure).not.toBeNull();
+      expect(changesDisclosure?.open).toBe(true);
+      expect(document.activeElement).toBe(changesDisclosure);
+      expect(spy).not.toHaveBeenCalled();
+      expect(Boolean(review!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING))
+        .toBe(true);
     } finally {
       restore();
     }

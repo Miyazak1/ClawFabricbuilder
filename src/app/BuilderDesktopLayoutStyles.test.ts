@@ -84,9 +84,16 @@ describe('Builder desktop layout styles', () => {
     const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
     const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
-    const changesFlow = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
+    const changesFlow = styleBlock(source, '.cf-builder-changes-flow');
+    const changesPanel = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
 
-    expect(changesFlow).toContain('border-radius: 8px;');
+    expect(changesFlow).toContain('position: relative;');
+    expect(changesFlow).toContain('z-index: 0;');
+    expect(changesFlow).toContain('margin-top: 2px;');
+    expect(changesFlow).toContain('scroll-margin-block-start: 12px;');
+    expect(changesFlow).not.toContain('position: absolute;');
+    expect(changesFlow).not.toContain('margin-top: -');
+    expect(changesPanel).toContain('border-radius: 8px;');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
     expect(summaryMain).toContain('display: grid;');
     expect(summaryText).toContain('overflow: hidden;');
@@ -98,23 +105,33 @@ describe('Builder desktop layout styles', () => {
   it('keeps draft review actions stable as a desktop conversation checkpoint', () => {
     const source = styles();
     const review = styleBlock(source, '.cf-builder-review-checkpoint');
+    const copy = styleBlock(source, '.cf-builder-review-copy');
+    const copyBody = styleBlock(source, '.cf-builder-review-copy > .min-w-0');
     const actions = styleBlock(source, '.cf-builder-review-actions');
     const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
 
+    expect(review).toContain('position: relative;');
+    expect(review).toContain('z-index: 1;');
     expect(review).toContain('grid-template-columns: minmax(0, 1fr);');
     expect(review).toContain('align-items: start;');
     expect(review).toContain('row-gap: 12px;');
     expect(review).toContain('border-top: 1px solid var(--cf-border);');
     expect(review).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(review).toContain('margin-block: 4px 2px;');
+    expect(review).toContain('overflow: visible;');
     expect(review).not.toContain('border-radius: 8px;');
     expect(review).not.toContain('minmax(320px, 360px)');
+    expect(copy).toContain('align-items: start;');
+    expect(copyBody).toContain('display: grid;');
+    expect(copyBody).toContain('gap: 2px;');
     expect(actions).toContain('display: flex;');
     expect(actions).toContain('flex-wrap: wrap;');
     expect(actions).toContain('align-self: start;');
     expect(actions).toContain('justify-self: start;');
     expect(actions).toContain('justify-content: flex-start;');
     expect(actions).toContain('padding-left: 0;');
+    expect(actions).toContain('row-gap: 8px;');
     expect(actions).not.toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
     expect(actionButtons).toContain('flex: 0 1 auto;');
     expect(actionButtons).toContain('width: auto;');

@@ -1423,6 +1423,7 @@ export function BuilderPage({
   useEffect(() => {
     if (!hasUnsavedDraft) return;
     const landingTarget = draftReviewRef.current ?? (showResultFlow ? resultFlowRef.current : null);
+    shouldFollowChatRef.current = false;
     landingTarget?.scrollIntoView?.({ block: 'start' });
   }, [draft?.draft_id, hasUnsavedDraft, showResultFlow]);
 
@@ -1531,6 +1532,7 @@ export function BuilderPage({
 
   function openChangesPanel(): void {
     pendingChangesFocusRef.current = true;
+    shouldFollowChatRef.current = false;
     setChangesPanelOpen(true);
     const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     if (disclosure !== null) {
