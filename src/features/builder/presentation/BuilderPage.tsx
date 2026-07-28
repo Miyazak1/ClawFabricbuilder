@@ -1422,6 +1422,7 @@ export function BuilderPage({
     search: '',
     title: 'New project',
   }));
+  const [workspacePickerDismissedBuildPrompt, setWorkspacePickerDismissedBuildPrompt] = useState(false);
   const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
   const workspacePickerOpen = workspacePickerState.open || pendingWorkspacePickerRequest;
   const workspacePickerBuildPrompt = workspacePickerState.buildPrompt || pendingWorkspacePickerRequest;
@@ -1545,9 +1546,15 @@ export function BuilderPage({
   }
 
   function closeWorkspacePicker(
-    options: Readonly<{ keepPendingBuild?: boolean }> = Object.freeze({}),
+    options: Readonly<{
+      keepPendingBuild?: boolean;
+      showDismissedBuildNote?: boolean;
+    }> = Object.freeze({}),
   ): void {
     if (options.keepPendingBuild !== true) onDismissWorkspacePicker?.();
+    if (workspacePickerBuildPrompt && options.showDismissedBuildNote === true) {
+      setWorkspacePickerDismissedBuildPrompt(true);
+    }
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
@@ -1559,17 +1566,22 @@ export function BuilderPage({
 
   function toggleWorkspacePicker(): void {
     if (busy && !canAddContext) return;
-    if (workspacePickerOpen) onDismissWorkspacePicker?.();
+    if (workspacePickerOpen) {
+      closeWorkspacePicker({ showDismissedBuildNote: true });
+      return;
+    }
+    setWorkspacePickerDismissedBuildPrompt(false);
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
       creating: false,
-      open: !workspacePickerOpen,
+      open: true,
       request: workspacePickerRequest,
     }));
   }
 
   function showNewProjectPanel(): void {
+    setWorkspacePickerDismissedBuildPrompt(false);
     setWorkspacePickerState((picker) => ({
       ...picker,
       creating: true,
@@ -1587,13 +1599,20 @@ export function BuilderPage({
   function createProjectFromPicker(): void {
     if (!canCreateProjectFromPicker) return;
     const projectTitle = newProjectTitle.trim();
+    setWorkspacePickerDismissedBuildPrompt(false);
     closeWorkspacePicker({ keepPendingBuild: true });
     void onCreateProject?.(projectTitle);
   }
 
   function openProjectFromPicker(projectId: string): void {
+    setWorkspacePickerDismissedBuildPrompt(false);
     closeWorkspacePicker();
     void onOpenProject?.(projectId);
+  }
+
+  function changeInstruction(value: string): void {
+    setWorkspacePickerDismissedBuildPrompt(false);
+    onInstructionChange?.(value);
   }
 
   function selectFile(path: string): boolean {
@@ -1940,7 +1959,7 @@ export function BuilderPage({
           disabled={busy && !canAddContext}
           id="builder-idea"
           maxLength={4000}
-          onChange={(event) => onInstructionChange?.(event.currentTarget.value)}
+          onChange={(event) => changeInstruction(event.currentTarget.value)}
           onKeyDown={submitPrimaryComposerCommand}
           placeholder={canAddContext
             ? 'Add context for the current work...'
@@ -2175,6 +2194,15 @@ export function BuilderPage({
               </>
             )}
           </div>
+        ) : null}
+        {workspacePickerDismissedBuildPrompt ? (
+          <p
+            className="cf-builder-composer-note"
+            data-builder-workspace-dismissed-build-note="true"
+            role="status"
+          >
+            Choose a project folder when you're ready to build. Your text is still here.
+          </p>
         ) : null}
       </div>
     </section>

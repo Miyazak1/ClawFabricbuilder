@@ -1030,6 +1030,7 @@ describe('BuilderPage v2', () => {
     expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
     expect(onCreateProject).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
   });
 
   it('keeps the current source folder visible in the project picker before first save', async () => {
@@ -1133,6 +1134,75 @@ describe('BuilderPage v2', () => {
 
     expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('New project');
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+  });
+
+  it('explains a dismissed build workspace picker without sending work', async () => {
+    const { fresh } = await snapshots();
+    const onCreateProject = vi.fn();
+    const onDismissWorkspacePicker = vi.fn();
+    const onInstructionChange = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCreateProject={onCreateProject}
+        onDismissWorkspacePicker={onDismissWorkspacePicker}
+        onInstructionChange={onInstructionChange}
+        projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
+        snapshot={fresh}
+        workspacePickerRequest={1}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).not.toBeNull();
+    click(container, '[data-builder-workspace-chip="true"]');
+
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    const note = container.querySelector('[data-builder-workspace-dismissed-build-note="true"]');
+    expect(note?.textContent).toContain("Choose a project folder when you're ready to build.");
+    expect(note?.textContent).toContain('Your text is still here.');
+    expect(onDismissWorkspacePicker).toHaveBeenCalledOnce();
+    expect(onCreateProject).not.toHaveBeenCalled();
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, 'Make a clock.');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    expect(onInstructionChange).toHaveBeenCalledWith('Make a clock.');
+    expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
+  });
+
+  it('does not show the dismissed build note after choosing an existing project', async () => {
+    const { fresh } = await snapshots();
+    const onDismissWorkspacePicker = vi.fn();
+    const onOpenProject = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onDismissWorkspacePicker={onDismissWorkspacePicker}
+        onOpenProject={onOpenProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot()}
+        snapshot={fresh}
+        workspacePickerRequest={1}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+      .toContain('Choose or create a project before I build.');
+    click(container, `[data-builder-workspace-project="${PROJECT_ID}"]`);
+
+    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
+    expect(onDismissWorkspacePicker).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
   });
 
   it('keeps explicit activity loading and failure states visible without empty placeholders', async () => {

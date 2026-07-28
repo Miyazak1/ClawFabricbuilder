@@ -392,6 +392,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 8px 10px 10px 14px;
 }
 
+.cf-builder-composer-note {
+  margin: -2px 14px 10px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .cf-builder-composer-tools {
   display: inline-flex;
   min-width: 0;
