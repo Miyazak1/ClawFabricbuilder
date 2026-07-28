@@ -979,6 +979,7 @@ describe('BuilderPage v2', () => {
     expect(workspace?.getAttribute('data-builder-review-sidebar-visible'))
       .toBe('false');
     expect(workspace?.classList.contains('border')).toBe(false);
+    expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-version-history="true"]')).toBeNull();
@@ -1805,6 +1806,7 @@ describe('BuilderPage v2', () => {
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
     const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
     const conversation = container.querySelector('[data-builder-conversation-workspace="true"]');
+    const draftLanding = container.querySelector('[data-builder-draft-landing="true"]');
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const composer = container.querySelector('[data-builder-composer="true"]');
     const preview = container.querySelector('[data-builder-preview-flow="true"]');
@@ -1816,6 +1818,7 @@ describe('BuilderPage v2', () => {
     expect(workspace?.getAttribute('data-builder-review-sidebar-mode')).toBe('hidden');
     expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
     expect(conversation).not.toBeNull();
+    expect(draftLanding).not.toBeNull();
     expect(review).not.toBeNull();
     expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(composer).not.toBeNull();
@@ -1824,8 +1827,11 @@ describe('BuilderPage v2', () => {
     expect(source).toBeNull();
     expect(draftActions).not.toBeNull();
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(draftLanding?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
+    expect(preview?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
     expect(conversation?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(review?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(preview?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
@@ -2033,13 +2039,17 @@ describe('BuilderPage v2', () => {
       act(() => setSnapshot(draftReady));
 
       const result = container.querySelector('[data-builder-result-flow="true"]');
+      const landing = container.querySelector('[data-builder-draft-landing="true"]');
       const review = container.querySelector('[data-builder-review-checkpoint="true"]');
       expect(result).not.toBeNull();
+      expect(landing).not.toBeNull();
       expect(review).not.toBeNull();
       expect(spy).toHaveBeenCalled();
-      expect(spy.mock.contexts.at(-1)).toBe(review);
+      expect(spy.mock.contexts.at(-1)).toBe(landing);
       expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
+      expect(result?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
       expect(Boolean(review!.compareDocumentPosition(result!) & Node.DOCUMENT_POSITION_FOLLOWING))
         .toBe(true);
 
@@ -2379,8 +2389,11 @@ describe('BuilderPage v2', () => {
     );
 
     const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
+    const landing = container.querySelector('[data-builder-draft-landing="true"]');
     expect(reviewStrip).not.toBeNull();
+    expect(landing).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(reviewStrip?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
     expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
@@ -2566,6 +2579,9 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-result-flow="true"]')?.closest('[data-builder-draft-landing="true"]'))
+      .toBeNull();
   });
 
   it('shows read-only saved version history without exposing receipt or Git evidence', async () => {

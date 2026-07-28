@@ -1364,6 +1364,7 @@ export function BuilderPage({
   const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
   const showResultFlow = preview !== null || showPreviewUnavailableResult;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
+  const draftLandingRef = useRef<HTMLDivElement | null>(null);
   const draftReviewRef = useRef<HTMLElement | null>(null);
   const resultFlowRef = useRef<HTMLElement | null>(null);
   const pendingChangesFocusRef = useRef(false);
@@ -1502,7 +1503,9 @@ export function BuilderPage({
 
   useEffect(() => {
     if (!hasUnsavedDraft) return;
-    const landingTarget = draftReviewRef.current ?? (showResultFlow ? resultFlowRef.current : null);
+    const landingTarget = draftLandingRef.current
+      ?? draftReviewRef.current
+      ?? (showResultFlow ? resultFlowRef.current : null);
     shouldFollowChatRef.current = false;
     landingTarget?.scrollIntoView?.({ block: 'start' });
   }, [draft?.draft_id, hasUnsavedDraft, showResultFlow]);
@@ -2290,20 +2293,47 @@ export function BuilderPage({
 
               {planSourceReadApprovalCard}
 
-              {draftReview}
+              {hasUnsavedDraft ? (
+                <div
+                  className="cf-builder-draft-landing"
+                  data-builder-draft-landing="true"
+                  ref={draftLandingRef}
+                >
+                  {draftReview}
 
-              {showChangesPanel ? (
-                <div className="cf-builder-chat-flow-surface cf-builder-changes-flow" data-builder-changes-flow="true">
-                  <ChangesPanel
-                    changes={changes}
-                    onOpenChange={setChangesPanelOpen}
-                    onOpenFile={openChangedFile}
-                    open={changesPanelOpen}
-                  />
+                  {showChangesPanel ? (
+                    <div className="cf-builder-chat-flow-surface cf-builder-changes-flow" data-builder-changes-flow="true">
+                      <ChangesPanel
+                        changes={changes}
+                        onOpenChange={setChangesPanelOpen}
+                        onOpenFile={openChangedFile}
+                        open={changesPanelOpen}
+                      />
+                    </div>
+                  ) : null}
+
+                  {showResultFlow ? (
+                    <section
+                      aria-label="Project result"
+                      className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"
+                      data-builder-preview-flow="true"
+                      data-builder-result-flow="true"
+                      id="builder-tool-preview"
+                      ref={resultFlowRef}
+                    >
+                      <div className="cf-builder-result-toolbar">
+                        <Eye aria-hidden="true" className="size-4" />
+                        Result
+                      </div>
+                      <div className="cf-builder-flow-card-body">
+                        <BuilderStaticPreview projection={preview} />
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
               ) : null}
 
-              {showResultFlow ? (
+              {!hasUnsavedDraft && showResultFlow ? (
                 <section
                   aria-label="Project result"
                   className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"

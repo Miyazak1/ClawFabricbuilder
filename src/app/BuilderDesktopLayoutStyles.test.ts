@@ -81,12 +81,22 @@ describe('Builder desktop layout styles', () => {
 
   it('keeps on-demand change summaries compact inside the conversation flow', () => {
     const source = styles();
+    const draftLanding = styleBlock(source, '.cf-builder-draft-landing');
+    const draftLandingSurfaces = styleBlock(source, '.cf-builder-draft-landing > .cf-builder-chat-flow-surface');
     const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
     const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
     const changesFlow = styleBlock(source, '.cf-builder-changes-flow');
     const changesPanel = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
 
+    expect(draftLanding).toContain('display: flex;');
+    expect(draftLanding).toContain('width: min(860px, 100%);');
+    expect(draftLanding).toContain('flex-direction: column;');
+    expect(draftLanding).toContain('gap: 12px;');
+    expect(draftLanding).toContain('scroll-margin-block-start: 12px;');
+    expect(draftLanding).not.toContain('border:');
+    expect(draftLanding).not.toContain('border-radius');
+    expect(draftLandingSurfaces).toContain('width: 100%;');
     expect(changesFlow).toContain('position: relative;');
     expect(changesFlow).toContain('z-index: 0;');
     expect(changesFlow).toContain('margin-top: 2px;');
@@ -170,6 +180,7 @@ describe('Builder desktop layout styles', () => {
     const result = styleBlock(source, '.cf-builder-result-card');
     const toolbar = styleBlock(source, '.cf-builder-result-toolbar');
     const body = styleBlock(source, '.cf-builder-result-card .cf-builder-flow-card-body');
+    const previewFrame = styleBlock(source, '.cf-builder-static-preview .cf-builder-preview-frame');
 
     expect(result).toContain('border: 0;');
     expect(result).toContain('border-radius: 0;');
@@ -177,6 +188,8 @@ describe('Builder desktop layout styles', () => {
     expect(toolbar).toContain('border-bottom: 0;');
     expect(toolbar).toContain('background: transparent;');
     expect(body).toContain('padding: 0;');
+    expect(previewFrame).toContain('min-height: clamp(260px, 34vh, 420px);');
+    expect(previewFrame).not.toContain('48vh');
   });
 
   it('uses lightweight preview explanation instead of another nested card', () => {
