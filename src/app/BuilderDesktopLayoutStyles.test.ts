@@ -204,4 +204,19 @@ describe('Builder desktop layout styles', () => {
     expect(unavailable).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(unavailable).not.toContain('border-radius');
   });
+
+  it('keeps the draft-gated composer as a lightweight status row', () => {
+    const source = styles();
+    const reviewGate = styleBlock(source, '.cf-builder-composer-review-gate');
+    const reviewLink = styleBlock(source, '.cf-builder-composer-review-link');
+
+    expect(reviewGate).toContain('display: flex;');
+    expect(reviewGate).toContain('justify-content: space-between;');
+    expect(reviewGate).toContain('color: var(--cf-text-muted);');
+    expect(reviewGate).not.toContain('border:');
+    expect(reviewGate).not.toContain('border-radius');
+    expect(reviewLink).toContain('border: 0;');
+    expect(reviewLink).toContain('background: transparent;');
+    expect(reviewLink).toContain('color: var(--cf-primary-text);');
+  });
 });

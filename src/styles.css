@@ -399,6 +399,45 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.4;
 }
 
+.cf-builder-composer-review-gate {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 0 14px 10px;
+}
+
+.cf-builder-composer-review-gate > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cf-builder-composer-review-link {
+  display: inline-flex;
+  min-height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--cf-primary-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 0;
+}
+
+.cf-builder-composer-review-link:hover,
+.cf-builder-composer-review-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .cf-builder-composer-tools {
   display: inline-flex;
   min-width: 0;

@@ -1655,6 +1655,14 @@ export function BuilderPage({
     document.getElementById('builder-tool-changes')?.focus({ preventScroll: true });
   }
 
+  function focusDraftReview(): void {
+    shouldFollowChatRef.current = false;
+    const review = draftReviewRef.current;
+    if (review === null) return;
+    review.scrollIntoView?.({ block: 'start' });
+    review.focus({ preventScroll: true });
+  }
+
   function submitPrimaryComposerCommand(event: KeyboardEvent<HTMLTextAreaElement>): void {
     if (
       event.key !== 'Enter'
@@ -1682,6 +1690,13 @@ export function BuilderPage({
     if (hasUnsavedDraft) return 'Review draft before continuing';
     return saved ? 'Continue this project' : 'Start from an idea';
   })();
+  const composerPlaceholder = (() => {
+    if (hasUnsavedDraft) return 'Save or discard this draft before sending another request...';
+    if (canAddContext) return 'Add context for the current work...';
+    if (busy) return 'Working on your request...';
+    return 'Describe what you want to build or change...';
+  })();
+  const composerValue = hasUnsavedDraft ? '' : instruction;
   const conversationNotice = (() => {
     if (
       visibleLiveOutput !== null
@@ -1856,6 +1871,7 @@ export function BuilderPage({
       data-builder-review-layout="desktop-stacked-actions"
       data-builder-review-checkpoint="true"
       ref={draftReviewRef}
+      tabIndex={-1}
     >
       <div className="cf-builder-review-copy">
         <div className="cf-builder-review-icon" aria-hidden="true">
@@ -1960,7 +1976,12 @@ export function BuilderPage({
   );
 
   const composer = (
-    <section aria-label="Conversation command" className="cf-builder-composer-card" data-builder-composer="true">
+    <section
+      aria-label="Conversation command"
+      className="cf-builder-composer-card"
+      data-builder-composer="true"
+      data-builder-composer-state={hasUnsavedDraft ? 'draft-review-gated' : 'ready'}
+    >
       <div className="cf-builder-composer-shell">
         <textarea
           aria-label="What do you want to build?"
@@ -1970,14 +1991,10 @@ export function BuilderPage({
           maxLength={4000}
           onChange={(event) => changeInstruction(event.currentTarget.value)}
           onKeyDown={submitPrimaryComposerCommand}
-          placeholder={canAddContext
-            ? 'Add context for the current work...'
-            : busy
-              ? 'Working on your request...'
-              : 'Describe what you want to build or change...'}
+          placeholder={composerPlaceholder}
           readOnly={!canEditInstruction}
           aria-keyshortcuts={canSubmitComposer ? 'Enter' : undefined}
-          value={instruction}
+          value={composerValue}
         />
         <footer className="cf-builder-composer-footer">
           <div className="cf-builder-composer-tools">
@@ -2042,6 +2059,24 @@ export function BuilderPage({
             )}
           </div>
         </footer>
+        {hasUnsavedDraft ? (
+          <div
+            className="cf-builder-composer-review-gate"
+            data-builder-composer-review-gate="true"
+            role="status"
+          >
+            <span>Save or discard this draft before sending the next request.</span>
+            <button
+              className="cf-builder-composer-review-link"
+              data-builder-composer-review-focus="true"
+              onClick={focusDraftReview}
+              type="button"
+            >
+              <GitCompareArrows aria-hidden="true" className="size-3.5" />
+              Review draft
+            </button>
+          </div>
+        ) : null}
         {workspacePickerOpen ? (
           <div
             aria-label="Choose project"

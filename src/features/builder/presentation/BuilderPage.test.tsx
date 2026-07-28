@@ -1734,6 +1734,16 @@ describe('BuilderPage v2', () => {
       .toContain('Static preview is ready');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('HTML and CSS are shown here');
+    expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-composer-state'))
+      .toBe('draft-review-gated');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
+      .toBe('Save or discard this draft before sending another request...');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.readOnly).toBe(true);
+    expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
+      .toContain('Save or discard this draft before sending the next request.');
+    expect(container.querySelector('[data-builder-composer-review-focus="true"]')?.textContent)
+      .toContain('Review draft');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBeUndefined();
     expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-review-checkpoint="true"]'))
@@ -1751,6 +1761,45 @@ describe('BuilderPage v2', () => {
     expect(onSave).not.toHaveBeenCalled();
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('uses the draft-gated composer to return to Review without sending or saving', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const onSubmitInstruction = vi.fn();
+    const onSave = vi.fn();
+    const onRejectDraft = vi.fn();
+    const { restore, spy } = installScrollIntoViewSpy();
+    try {
+      const container = render(
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction="Add a timer."
+          onRejectDraft={onRejectDraft}
+          onSave={onSave}
+          onSubmitInstruction={onSubmitInstruction}
+          snapshot={draftReady}
+        />,
+      );
+
+      const review = container.querySelector<HTMLElement>('[data-builder-review-checkpoint="true"]');
+      const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+      expect(review).not.toBeNull();
+      expect(review?.tabIndex).toBe(-1);
+      expect(textarea?.value).toBe('');
+      expect(textarea?.readOnly).toBe(true);
+
+      click(container, '[data-builder-composer-review-focus="true"]');
+
+      expect(spy).toHaveBeenCalledWith({ block: 'start' });
+      expect(document.activeElement).toBe(review);
+      expect(onSubmitInstruction).not.toHaveBeenCalled();
+      expect(onSave).not.toHaveBeenCalled();
+      expect(onRejectDraft).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
   });
 
   it('does not bind Enter to saving or discarding an unsaved draft', async () => {
