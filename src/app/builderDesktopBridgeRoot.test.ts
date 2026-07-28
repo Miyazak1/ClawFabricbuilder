@@ -20,8 +20,8 @@ function bridge() {
   };
 }
 
-describe('Builder desktop bridge root v10', () => {
-  it('accepts the exact v10 namespaces and returns a fresh frozen root', () => {
+describe('Builder desktop bridge root v11', () => {
+  it('accepts the exact v11 namespaces and returns a fresh frozen root', () => {
     const input = bridge();
     const result = sanitizeBuilderDesktopBridgeRoot(input);
     expect(result).toEqual(input);

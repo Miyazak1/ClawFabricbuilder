@@ -481,8 +481,8 @@ evidence.
 This addendum records the source-context/plan-progress runtime wiring checkpoint
 after the desktop conversation layout fixes. It is not release-ready evidence:
 the real DeepSeek packaged canary still fails closed before plan source-context
-tool activity because there is no visible permission grant path for bounded
-filesystem-read approval.
+tool activity because there is no visible, local-project-folder-bound approval
+flow for bounded filesystem-read permission.
 
 - The current local package was rebuilt at
   `release\win-unpacked\ClawFabric Builder.exe`; package verification reported
@@ -496,15 +496,15 @@ filesystem-read approval.
   collector backed by the project workspace authority, Conversation service,
   and deny-by-default Permission facts evaluator. Renderer still sends only
   bounded instruction text and cannot send source content, resource ids,
-  permission grants, provider config, credentials, Git evidence, or Save
-  authority.
+  permission grants through generation requests, provider config, credentials,
+  Git evidence, or Save authority.
 - Plan-first proposal work now records the same fixed progress stages as
   generation/explanation and carries the advanced Conversation head through the
   source-context result before terminal plan admission.
 - A real saved-profile DeepSeek V4 packaged canary was run against the rebuilt
   app. It failed at `plan_before_context` with
   `canary_plan_before_context_failed`, confirming the remaining blocker is the
-  missing explicit permission approval/grant path rather than a renderer grant
+  missing visible folder-bound approval flow rather than a renderer grant
   fallback. The app must not be presented as fully usable for continuous
   chat-style project work until that approval path is implemented and the
   packaged canary passes.

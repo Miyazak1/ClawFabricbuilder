@@ -82,7 +82,7 @@ function adapter(overrides = {}) {
   return { authority, calls, value };
 }
 
-test('permission adapter exposes only the evaluate-only permission decision channel', async () => {
+test('permission adapter exposes evaluate channel without fact readback or grant authority', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.adapter_id, 'builder_permission.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'builderPermission');
@@ -155,7 +155,6 @@ test('permission adapter maps authority and output failures to fixed redacted er
       && error.retryable === true
       && !`${error.message}:${error.stack}`.includes('private permission marker'),
   );
-
   const drift = adapter({
     evaluatePermission: async () => decision({
       resource: { resource_kind: 'project', project_id: PROJECT_ID, resource_id: 'project:other' },
@@ -209,7 +208,9 @@ test('permission adapter fails closed on hostile output without invoking proxy t
 test('permission adapter rejects malformed options without invoking getters or proxy traps', () => {
   const authority = windowAuthority();
   let getterCalls = 0;
-  const accessorOptions = { evaluatePermission: async () => allowedDecision() };
+  const accessorOptions = {
+    evaluatePermission: async () => allowedDecision(),
+  };
   Object.defineProperty(accessorOptions, 'mainWindowRef', {
     enumerable: true,
     get() {
@@ -220,7 +221,11 @@ test('permission adapter rejects malformed options without invoking getters or p
   for (const invalid of [
     null,
     {},
-    { evaluatePermission: async () => allowedDecision(), mainWindowRef: authority.mainWindowRef, extra: true },
+    {
+      evaluatePermission: async () => allowedDecision(),
+      mainWindowRef: authority.mainWindowRef,
+      extra: true,
+    },
     accessorOptions,
     new Proxy({}, { getPrototypeOf() { throw new Error('private proxy marker'); } }),
   ]) {
@@ -248,6 +253,6 @@ test('permission adapter source has no registration, storage, grant command, pro
   assert.match(source, /actor_authority:\s*'main_bound_local_user'/u);
   assert.doesNotMatch(
     source,
-    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-|builder-permission-fact-store|node:sqlite|better-sqlite|fetch\s*\(|https?:|saveDraft|generate|record_grant|record_revocation|persist_candidate_commit|write_current|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+    /GRANT_PERMISSION_CHANNEL|clawfabric-builder:permissions:grant|require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-|builder-permission-fact-store|node:sqlite|better-sqlite|fetch\s*\(|https?:|saveDraft|generate|record_grant|record_revocation|persist_candidate_commit|write_current|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
   );
 });

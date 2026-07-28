@@ -205,8 +205,12 @@ Evidence requirements:
   are bound;
 - UI selection cannot substitute for a persisted grant;
 - the first implementation checkpoint owns durable grant/revocation facts in
-  main-only SQLite, exposes only an evaluate-only permission decision IPC, and
-  sanitizes that decision through a renderer-side port before any future UI/tool use;
+  main-only SQLite, exposes only a sanitized evaluate IPC/renderer port, adds a
+  main-only explicit grant primitive for a future approval flow, and keeps
+  permission facts, revocation authority, source content, provider state, Git
+  evidence, grant commands, and Save authority out of the renderer;
+- visible approval must be bound to a selected local project folder/workspace
+  before build, plan-source-context, or later tool use can consume the grant;
 - the second checkpoint emits a main-side tool admission receipt only after a
   current permission decision allows the action, without executing the tool;
 - secret access, filesystem, network, process, publication, and destructive
@@ -452,9 +456,10 @@ Evidence requirements:
   Conversation context head and appear in the read-only Task Stream as
   lightweight status rows, but they carry no provider envelope, prompt, token
   delta, credential, source, Git, Save, or Project Revision authority. Real
-  plan-first source context remains blocked until a visible permission approval
-  path can record durable allowed filesystem-read grant facts; generation must
-  not silently create those grants from renderer selection or a composer submit;
+  plan-first source context remains blocked until a visible, local-project-folder
+  bound permission approval path can consume the main-only grant primitive to
+  record durable allowed filesystem-read facts; generation must not silently
+  create those grants from renderer selection or a composer submit;
 - the current main-only steering fact checkpoint records a bounded user
   steering message against the currently trusted active Run context, advances the
   SQLite Conversation event head, and exposes only the renderer-safe

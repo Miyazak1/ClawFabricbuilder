@@ -682,12 +682,16 @@ assert.doesNotMatch(
 assert.match(packagedPermissionIpcRuntime, /builder-permission-ipc-runtime\.v1/u);
 assert.match(packagedPermissionIpcRuntime, /createBuilderPermissionIpcAdapter/u);
 assert.match(packagedPermissionIpcRuntime, /createBuilderPermissionFactStore/u);
+assert.match(packagedPermissionIpcRuntime, /createBuilderPermissionGrantRecord/u);
+assert.match(packagedPermissionIpcRuntime, /grantForExplicitApproval/u);
 assert.match(packagedPermissionIpcRuntime, /LOCAL_BUILDER_USER_ACTOR_ID/u);
 assert.match(packagedPermissionIpcRuntime, /PERMISSION_DIRECTORY = 'builder-permissions-v1'/u);
 assert.match(packagedPermissionIpcRuntime, /PERMISSION_DATABASE = 'permissions\.sqlite'/u);
+assert.match(packagedPermissionIpcRuntime, /record_grant/u);
+assert.doesNotMatch(packagedPermissionIpcRuntime, /GRANT_PERMISSION_CHANNEL|clawfabric-builder:permissions:grant/u);
 assert.doesNotMatch(
   packagedPermissionIpcRuntime,
-  /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_grant|record_revocation|grant_command|revoke_command/iu,
+  /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_revocation|revoke_command/iu,
 );
 assert.match(packagedProjectMainAuthority, /createBuilderToolProjectWorkspaceAuthority/u);
 assert.match(packagedProjectMainAuthority, /project_workspace_authority/u);

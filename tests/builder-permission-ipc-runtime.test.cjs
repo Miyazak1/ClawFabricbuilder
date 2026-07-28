@@ -93,7 +93,7 @@ function grant(overrides = {}) {
   });
 }
 
-test('registers the evaluate-only permission channel and denies by default from main-owned facts', async (t) => {
+test('registers evaluate IPC and keeps explicit grants main-only with deny-by-default facts', async (t) => {
   const userDataPath = temporaryUserData(t);
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
@@ -106,6 +106,10 @@ test('registers the evaluate-only permission channel and denies by default from 
 
   assert.equal(runtime.runtime_version, BUILDER_PERMISSION_IPC_RUNTIME_VERSION);
   assert.deepEqual(runtime.channels, [EVALUATE_PERMISSION_CHANNEL]);
+  await assert.rejects(
+    runtime.grantForExplicitApproval(evaluateRequest()),
+    { code: 'builder_permission_ipc_runtime_unavailable' },
+  );
   assert.equal(fs.existsSync(path.join(userDataPath, PERMISSION_DIRECTORY)), true);
   assert.equal(fs.existsSync(permissionDatabasePath(userDataPath)), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v4')), false);
@@ -114,6 +118,7 @@ test('registers the evaluate-only permission channel and denies by default from 
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
   assert.deepEqual([...ipcMain.handlers.keys()], runtime.channels);
+  assert.equal(ipcMain.handlers.has('clawfabric-builder:permissions:grant'), false);
 
   const decision = await ipcMain.handlers.get(EVALUATE_PERMISSION_CHANNEL)(
     { sender: mainWindow.webContents },
@@ -126,9 +131,42 @@ test('registers the evaluate-only permission channel and denies by default from 
   assert.equal(Object.hasOwn(decision, 'grants'), false);
   assert.equal(Object.hasOwn(decision, 'revocations'), false);
 
+  const granted = await runtime.grantForExplicitApproval(evaluateRequest());
+  assert.equal(granted.result_version, 'builder-permission-grant-result.v1');
+  assert.equal(granted.operation, 'grant_recorded');
+  assert.equal(granted.project_id, PROJECT_ID);
+  assert.equal(granted.action, 'project.edit');
+  assert.deepEqual(granted.resource, {
+    resource_kind: 'project',
+    project_id: PROJECT_ID,
+    resource_id: 'project:self',
+  });
+  assert.match(granted.permission_id, /^builder-permission:[0-9a-f]{64}$/u);
+  assert.equal(granted.granted_at_ms, 30);
+  assert.equal(granted.permission_authority, 'builder_permission_facts_deny_by_default_v1');
+  assert.equal(granted.ui_selection_authority, 'main_owned_explicit_user_approval_required');
+  assert.equal(granted.preload_exposure, false);
+  assert.equal(Object.hasOwn(granted, 'grant'), false);
+  assert.equal(Object.hasOwn(granted, 'permission_evidence'), false);
+
+  const allowed = await ipcMain.handlers.get(EVALUATE_PERMISSION_CHANNEL)(
+    { sender: mainWindow.webContents },
+    evaluateRequest(),
+  );
+  assert.equal(allowed.decision, 'allowed');
+  assert.equal(allowed.permission_id, granted.permission_id);
+
+  const replayed = await runtime.grantForExplicitApproval(evaluateRequest());
+  assert.equal(replayed.operation, 'grant_existing');
+  assert.equal(replayed.permission_id, granted.permission_id);
+
   assert.equal(runtime.dispose(), true);
   assert.equal(runtime.dispose(), false);
   assert.deepEqual([...ipcMain.handlers.keys()], []);
+  await assert.rejects(
+    runtime.grantForExplicitApproval(evaluateRequest()),
+    { code: 'builder_permission_ipc_runtime_unavailable' },
+  );
   assert.throws(() => runtime.register(), {
     code: 'builder_permission_ipc_runtime_unavailable',
   });
@@ -197,6 +235,12 @@ test('keeps active renderer and payload validation inside the controlled permiss
     ),
     (error) => error.code === 'builder_permission_request_invalid',
   );
+  await assert.rejects(runtime.grantForExplicitApproval({ ...evaluateRequest(), project_id: 'bad' }), {
+    code: 'builder_permission_ipc_runtime_unavailable',
+  });
+  await assert.rejects(runtime.grantForExplicitApproval({ ...evaluateRequest(), extra: true }), {
+    code: 'builder_permission_ipc_runtime_unavailable',
+  });
   runtime.dispose();
 });
 
@@ -263,12 +307,16 @@ test('permission runtime source wires only permission facts and no provider, Git
   );
   assert.match(source, /createBuilderPermissionIpcAdapter/u);
   assert.match(source, /createBuilderPermissionFactStore/u);
+  assert.match(source, /createBuilderPermissionGrantRecord/u);
   assert.match(source, /LOCAL_BUILDER_USER_ACTOR_ID/u);
   assert.match(source, /PERMISSION_DIRECTORY = 'builder-permissions-v1'/u);
   assert.match(source, /PERMISSION_DATABASE = 'permissions\.sqlite'/u);
   assert.match(source, /EVALUATE_PERMISSION_CHANNEL/u);
+  assert.match(source, /grantForExplicitApproval/u);
+  assert.match(source, /record_grant/u);
+  assert.doesNotMatch(source, /GRANT_PERMISSION_CHANNEL|clawfabric-builder:permissions:grant/u);
   assert.doesNotMatch(
     source,
-    /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_grant|record_revocation|grant_command|revoke_command/iu,
+    /require\(['"]electron['"]\)|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|builder-project-main-authority|fetch\s*\(|https?:|Authorization|Bearer|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta|record_revocation|revoke_command/iu,
   );
 });

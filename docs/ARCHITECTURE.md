@@ -18,9 +18,9 @@ The desktop application owns six narrow authorities:
 1. Builder provider settings and encrypted credentials.
 2. Bounded code-generation transport.
 3. Git-backed project worktrees and SQLite product metadata.
-4. Main-owned, deny-by-default Permission facts with an evaluate-only IPC
-   surface, renderer-side decision sanitizer, and main-side tool admission
-   receipt before future tool dispatch.
+4. Main-owned, deny-by-default Permission facts with an evaluate-only renderer
+   IPC surface, a main-only explicit grant primitive, renderer-side decision
+   sanitizer, and main-side tool admission receipt before future tool dispatch.
 5. Main-owned local Agent Definition/Version/lifecycle records without visible
    Agent activation, assignment, supervision, tool dispatch, or IPC/preload.
 6. A controlled renderer bridge exposing only Builder operations.
@@ -110,9 +110,12 @@ replayed before the renderer-safe Task Stream exposes it as a status item. The
 projection contains no provider envelope, prompt, token delta, credential,
 source content, Git evidence, Save authority, or Project Revision authority.
 This is durable work visibility, not a token-streaming or tool-execution
-protocol. Plan-first source context remains fail-closed until an explicit
-permission grant path has recorded allowed filesystem-read facts for the bounded
-main-selected project resources.
+protocol. A controlled main-only permission grant primitive can record durable
+allowed filesystem-read facts, but it is not exposed through preload or a
+renderer port. Plan-first source context therefore remains fail-closed until a
+visible approval flow binds the selected local project folder, the bounded
+main-selected project resources, and the user's explicit approval before calling
+that main-only primitive.
 
 The OpenAI-compatible provider transport also has a streaming observer path.
 When the Generation host supplies an internal observer, the request uses a
