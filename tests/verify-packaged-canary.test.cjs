@@ -219,7 +219,7 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.previewLimitation) {
       if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
-      return 'Preview may look blank The files were generated, but interactive code is not running here. If this draft uses 3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or backend code, this preview can look blank. Review Changes or Source before saving.';
+      return 'Static preview The files were generated and the visible HTML/CSS is shown here. Interactive JavaScript is disabled in this preview, so controls or animations may need live preview support before saving.';
     }
     if (this.selector === SELECTORS.previewUnavailable) {
       if (this.page.previewUnavailableTextOverride !== null) return this.page.previewUnavailableTextOverride;

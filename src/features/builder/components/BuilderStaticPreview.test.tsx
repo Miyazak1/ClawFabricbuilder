@@ -43,15 +43,14 @@ describe('BuilderStaticPreview', () => {
     expect(container.textContent).toContain('Static preview');
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
     expect(limitation?.getAttribute('role')).toBe('status');
-    expect(limitation?.textContent).toContain('Preview may look blank');
-    expect(limitation?.textContent).toContain('interactive code is not running here');
+    expect(limitation?.textContent).toContain('Static preview');
+    expect(limitation?.textContent).toContain('visible HTML/CSS is shown here');
+    expect(limitation?.textContent).toContain('Interactive JavaScript is disabled');
     expect(limitation?.textContent).toContain('files were generated');
     expect(limitation?.textContent)
-      .toContain('3D/WebGL');
+      .toContain('live preview support');
     expect(limitation?.textContent)
-      .toContain('this preview can look blank');
-    expect(limitation?.textContent)
-      .toContain('Review Changes or Source before saving');
+      .not.toContain('Preview may look blank');
     expect(limitation?.textContent)
       .toContain('This draft includes JavaScript that the safe preview does not run.');
     expect(container.textContent).not.toContain('Safe preview');

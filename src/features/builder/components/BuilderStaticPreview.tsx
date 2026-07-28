@@ -103,11 +103,11 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
               data-builder-preview-limitation="true"
               role="status"
             >
-              <h3 className="cf-builder-preview-runtime-title">Preview may look blank</h3>
+              <h3 className="cf-builder-preview-runtime-title">Static preview</h3>
               <p className="cf-builder-preview-note">
-                The files were generated, but interactive code is not running here. If this draft uses
-                3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or
-                backend code, this preview can look blank. Review Changes or Source before saving.
+                The files were generated and the visible HTML/CSS is shown here. Interactive
+                JavaScript is disabled in this preview, so controls or animations may need live
+                preview support before saving.
               </p>
               {projection.preview_runtime_limitations.length > 0 ? (
                 <ul className="cf-builder-preview-limitation-list">
