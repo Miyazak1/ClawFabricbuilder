@@ -801,6 +801,41 @@ inside generated projects.
   `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-packaged-current.png`
   as local visual evidence only.
 
+## 2026-07-29 Source Folder Build Continuation Check
+
+This addendum records focused desktop package evidence for checkpoint
+`2311cdd`, after the composer project picker was tightened so a gated build can
+continue smoothly only through the same explicit user-sent instruction. It
+extends desktop package evidence only; it does not extend installer evidence,
+code-signing status, mobile evidence, arbitrary runtime/tool execution
+readiness, generated-code execution, or external-network permissions inside
+generated projects.
+
+- Build-like composer turns without a bound local workspace still open the
+  project picker before any submit, generation, draft save, Git candidate, or
+  Project Revision work.
+- Choosing New project and adding a source folder continues the same frozen
+  instruction that the user already sent, then clears the composer after the
+  accepted submit path. The source-folder action itself cannot submit newly
+  edited composer text that the user has not sent.
+- Closing the project picker clears the pending build continuation. Reopening
+  the picker and creating a project later binds the workspace only; it does not
+  auto-send stale text.
+- Selecting an existing bound-but-unsaved workspace from the gated build picker
+  opens that workspace and preserves the composer text for explicit user
+  confirmation instead of auto-submitting into the selected folder.
+- Focused desktop validation passed through
+  `npm.cmd exec vitest run src\app\BuilderApp.test.tsx src\features\builder\presentation\BuilderPage.test.tsx src\features\builder\application\builderComposerIntent.test.ts`;
+  the command reported 115 passing Vitest tests.
+- `npm.cmd run lint`, `npm.cmd run build`, and `npm.cmd run test` passed for
+  the same source tree. The full test command reported 419 passing Vitest tests
+  and 597 passing Node boundary tests.
+- `npm.cmd run pack` passed for the same source tree. Package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 751 ASAR
+  entries. The current local package remains
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
