@@ -2397,8 +2397,9 @@ describe('BuilderPage v2', () => {
     expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
-    expect(reviewStrip?.textContent).toContain('Preview may be unavailable here');
-    expect(reviewStrip?.textContent).toContain('JavaScript');
+    expect(reviewStrip?.textContent).toContain('Static preview is ready');
+    expect(reviewStrip?.textContent).toContain('JavaScript is disabled in this preview');
+    expect(reviewStrip?.textContent).not.toContain('Preview may be unavailable here');
     expect(reviewStrip?.textContent).not.toMatch(
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
     );
@@ -2468,9 +2469,10 @@ describe('BuilderPage v2', () => {
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
     const blocked = container.querySelector('[data-builder-preview-runtime-blocked="true"]');
-    expect(review?.textContent).toContain('Preview may be unavailable here');
+    expect(review?.textContent).toContain('Preview may need live support here');
     expect(review?.textContent).toContain('Three.js/WebGL');
     expect(review?.textContent).toContain('canvas animation');
+    expect(review?.textContent).toContain('open Changes before saving');
     expect(blocked).not.toBeNull();
     expect(limitation?.textContent).toContain('Preview unavailable here');
     expect(limitation?.textContent).toContain('needs live preview support');

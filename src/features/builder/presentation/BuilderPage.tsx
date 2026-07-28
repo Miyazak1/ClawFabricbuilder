@@ -588,11 +588,17 @@ function changesSummary(changes: BuilderSourceTreeChanges): string {
 
 function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null, hasContent: boolean): string {
   if (preview !== null) {
-    const labels = previewLimitationLabels(preview.preview_runtime_limitations);
-    if (labels.length > 0) {
-      return `Preview may be unavailable here: interactive code is not running (${labels.join(', ')}). The files may still be ready; open Changes or Source before saving.`;
+    const runtimeOnlyLimitations = preview.preview_runtime_limitations.filter(
+      (limitation) => limitation !== 'javascript_removed',
+    );
+    const runtimeOnlyLabels = previewLimitationLabels(runtimeOnlyLimitations);
+    if (runtimeOnlyLabels.length > 0) {
+      return `Preview may need live support here: ${runtimeOnlyLabels.join(', ')} cannot run in the static preview. The files may still be ready; open Changes before saving.`;
     }
-    return 'Static preview is ready. HTML and CSS are shown here; interactive code is not running in this preview.';
+    if (preview.preview_runtime_limitations.includes('javascript_removed')) {
+      return 'Static preview is ready. HTML and CSS are shown here; JavaScript is disabled in this preview.';
+    }
+    return 'Static preview is ready. HTML and CSS are shown here.';
   }
   return hasContent
     ? 'Preview unavailable. JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code need live preview support.'
