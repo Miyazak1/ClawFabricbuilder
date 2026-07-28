@@ -657,9 +657,7 @@ function createBuilderConversationMainService(rawOptions) {
   }
 
   function projectCreatedAt(projectId, baseRevision, now, loadedState) {
-    if (baseRevision === null) {
-      return loadedState === null ? now : safeTimestamp(loadedState.conversation.created_at_ms);
-    }
+    if (loadedState !== null) return safeTimestamp(loadedState.conversation.created_at_ms);
     try {
       const loaded = Reflect.apply(options.loadProjectIdentity, options.metadataAuthority, [{
         project_id: projectId,
@@ -678,6 +676,7 @@ function createBuilderConversationMainService(rawOptions) {
       if (valueAt(project, 'project_id') !== projectId) fail();
       return safeTimestamp(valueAt(project, 'created_at_ms'));
     } catch {
+      if (baseRevision === null) return now;
       fail();
     }
   }

@@ -596,6 +596,31 @@ test('notifies task stream readers after durable conversation appends', () => {
   }
 });
 
+test('begins work for a bound local project before any saved revision exists', () => {
+  const item = fixture(1, 9_000);
+  try {
+    item.database.bind_project_workspace({
+      project_id: PROJECT_ID,
+      project_title: 'Local dashboard',
+      project_root_path: item.root,
+      source_folder_name: path.basename(item.root),
+      created_at_ms: 4_200,
+      bound_at_ms: 4_300,
+    });
+
+    const context = begin(item.service);
+
+    assert.equal(context.project.created_at_ms, 4_200);
+    assert.equal(context.conversation.created_at_ms, 4_200);
+    assert.equal(context.events[0].payload.base_revision, null);
+    assert.equal(context.events[0].payload.task.title, 'Create Builder project');
+    assert.equal(context.start_head.sequence, 2);
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+  } finally {
+    item.close();
+  }
+});
+
 test('records a question explanation without creating task, candidate, or revision facts', () => {
   const item = fixture();
   let restartedDatabase = null;

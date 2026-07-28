@@ -873,6 +873,80 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   });
 });
 
+test('generates first draft for a bound local project before any saved revision exists', async () => {
+  const currentReads = [];
+  const identityReads = [];
+  const transportInputs = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(input) {
+          currentReads.push(input);
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          identityReads.push(input);
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          summary: 'Created the first local project draft.',
+        })),
+      };
+    },
+  });
+  const raw = request({
+    instruction: 'Build a compact local dashboard.',
+    existingProjectId: PROJECT_ID,
+  });
+
+  const result = await service.generate(raw);
+
+  assert.deepEqual(currentReads, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(identityReads, [{ project_id: PROJECT_ID }]);
+  assert.equal(transportInputs.length, 1);
+  assert.match(transportInputs[0].messages[1].content, /Build a compact local dashboard/u);
+  assert.doesNotMatch(transportInputs[0].messages[1].content, /private-main-service-marker/u);
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, PROJECT_ID);
+  assert.equal(result.base_revision_evidence, null);
+  assert.equal(result.summary, 'Created the first local project draft.');
+  assert.equal(result.admissions.conversation, 'sqlite_recorded');
+  assert.equal(result.restart_restore, 'not_persisted');
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.begin[0].base_revision, null);
+  assert.equal(lifecycle.calls.candidate[0].context.events[0].payload.task.title, 'Create Builder project');
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(git.receipts[0].expected_base_oid, null);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /provider_config|provider_secret|credential_secret|credential_value|secret_ref|provider\.example|builder-model|git_candidate_receipt|operations|conversation_events|private-main-service-marker/iu,
+  );
+});
+
 test('observes display-safe provider output deltas through a redacted main-only envelope', async () => {
   const observed = [];
   const lifecycle = conversationService();

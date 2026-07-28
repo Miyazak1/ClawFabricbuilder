@@ -25,6 +25,7 @@ const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
 const SESSION_DATA_DIRECTORY_NAME = 'session-data';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const CANARY_PLAN_PROPOSAL_TIMEOUT_MS = 120_000;
+const CANARY_PROJECT_READY_TIMEOUT_MS = 15_000;
 const STDIN_MAX_BYTES = 128 * 1024;
 const LOCAL_STATE_MAX_BYTES = 2 * 1024 * 1024;
 const PROVIDER_CONFIG_MAX_BYTES = 128 * 1024;
@@ -1645,6 +1646,8 @@ async function bindNewProjectWorkspaceViaUi(page) {
     await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.addSourceFolder).click();
     await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
+    await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`)
+      .waitFor({ state: 'visible', timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_new_project_failed');
