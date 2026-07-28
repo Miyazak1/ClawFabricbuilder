@@ -237,8 +237,12 @@ unless explicitly sent through the dedicated Builder provider authority.
   separate planning panel.
 - Ordinary chat and explanations may work before a local project folder is
   selected. Build/draft/save flows must not use a logical New project as a
-  hidden write target; until the visible folder binding flow exists, clear build
-  intent without an opened project fails closed with user-facing guidance.
+  hidden write target. Clear build intent without an opened/saved project enters
+  the main-owned folder-selection flow; cancellation fails closed with
+  user-facing guidance, while successful selection creates a working local
+  project identity. The renderer receives only that Project identity, not the
+  folder path or any write authority. The project remains unsaved until the user
+  explicitly accepts a verified candidate as a Version.
 - Source/preview tools stay accessible without dominating the conversation.
 
 Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`
