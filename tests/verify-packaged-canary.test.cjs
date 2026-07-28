@@ -60,10 +60,13 @@ const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs'
 
 function reviewDiffEvidence() {
   return {
+    changes_diff_nested_in_panel: true,
+    changes_panel_follows_review: true,
     changes_panel_visible: true,
     inline_diff_visible: true,
     internal_evidence_hidden: true,
     review_actions_layout_stable: true,
+    review_changes_do_not_overlap: true,
     review_checkpoint_visible: true,
   };
 }
@@ -457,6 +460,10 @@ class FakePage {
       [SELECTORS.reviewOpenChanges, { x: 760, y: 286, width: 112, height: 32 }],
       [SELECTORS.discardDraft, { x: 880, y: 286, width: 128, height: 32 }],
       [SELECTORS.saveVersion, { x: 1016, y: 286, width: 120, height: 32 }],
+      [SELECTORS.changesFlow, { x: 360, y: 340, width: 860, height: 320 }],
+      [SELECTORS.changesPanel, { x: 360, y: 340, width: 860, height: 320 }],
+      [SELECTORS.changeCard, { x: 380, y: 390, width: 820, height: 240 }],
+      [SELECTORS.changeDiff, { x: 400, y: 440, width: 780, height: 160 }],
     ]);
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
@@ -1842,7 +1849,13 @@ test('observes draft review diff before Save without leaking internal evidence',
   )), true);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'first').map((event) => event[1]),
-    [SELECTORS.changeCard, SELECTORS.changeDiff, SELECTORS.changeDiffLine],
+    [
+      SELECTORS.changeCard,
+      SELECTORS.changeDiff,
+      SELECTORS.changeDiffLine,
+      SELECTORS.changeCard,
+      SELECTORS.changeDiff,
+    ],
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'boundingBox').map((event) => event[1]),
@@ -1851,6 +1864,10 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.reviewOpenChanges,
       SELECTORS.discardDraft,
       SELECTORS.saveVersion,
+      SELECTORS.changesFlow,
+      SELECTORS.changesPanel,
+      SELECTORS.changeCard,
+      SELECTORS.changeDiff,
     ],
   );
   page.reviewTextOverride = 'Review before saving sha256:secret';
@@ -1873,6 +1890,33 @@ test('rejects squeezed draft review actions before Save', async () => {
     event[0] === 'click'
     && event[1] === SELECTORS.reviewOpenChanges
   )), false);
+});
+
+test('rejects draft changes panels that overlap the review checkpoint', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.changesFlow, { x: 360, y: 300, width: 860, height: 320 });
+  page.reviewLayoutBoxes.set(SELECTORS.changesPanel, { x: 360, y: 300, width: 860, height: 320 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), true);
+});
+
+test('rejects draft diffs rendered outside the changes panel', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.changeDiff, { x: 1224, y: 440, width: 200, height: 160 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
 });
 
 test('retries a failed draft through visible UI without saving or leaking write authority', async (t) => {
