@@ -631,6 +631,15 @@ Current checkpoint:
   tool, reads no credentials or source, writes no files, runs no process or
   tests, mutates no Git or Project Revision facts, and creates no
   Review/Artifact authority.
+- the current Agent budget audit contract adds a pure main-side receipt for
+  checking an active assignment's budget before the next supervised Agent
+  action. It binds the assignment budget snapshot, active status, supervision
+  lease, Project/Conversation/Task/Run identity, current usage counters, and
+  requested next action; emits only fixed allowed/denied outcomes and redacted
+  summaries; and performs no next action. It opens no IPC/preload path, shows no
+  Agents UI, dispatches no provider/model or tool, reads no credentials or
+  source, writes no files, runs no process or tests, mutates no Git or Project
+  Revision facts, and creates no Review/Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
