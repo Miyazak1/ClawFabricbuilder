@@ -1738,12 +1738,9 @@ async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
 
     await page.locator(SELECTORS.addSourceFolder).click();
     await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
-    await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`)
-      .waitFor({ state: 'visible', timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
-    const preservedAfterBinding = await page.locator(SELECTORS.idea).inputValue();
-    if (preservedAfterBinding !== idea) fail('canary_build_workspace_required_failed');
     return Object.freeze({
       build_without_workspace_blocked: true,
+      build_continued_after_workspace_bound: true,
       composer_text_preserved_until_workspace_bound: true,
       source_folder_required: true,
       workspace_picker_visible: true,
@@ -1767,7 +1764,6 @@ async function generateProjectViaUi(page, idea) {
     fail('canary_new_project_failed');
   }
   try {
-    await clickByRole(page, 'button', 'Send');
     liveOutput = await captureGenerationLiveOutputViaUi(page, 'canary_generation_terminal_failed');
     await waitForGenerationTerminal(page);
   } catch (error) {
@@ -1857,9 +1853,10 @@ function boxContains(container, child) {
 
 async function assertConversationActivityBeforeReviewViaUi(page, review) {
   await page.locator(SELECTORS.conversationActivity).waitFor({ state: 'visible' });
-  await page.locator(SELECTORS.userMessage).waitFor({ state: 'visible' });
+  const latestUserMessage = page.locator(SELECTORS.userMessage).last();
+  await latestUserMessage.waitFor({ state: 'visible' });
   const activity = await boundedBox(page.locator(SELECTORS.conversationActivity));
-  const userMessage = await boundedBox(page.locator(SELECTORS.userMessage));
+  const userMessage = await boundedBox(latestUserMessage);
   if (
     activity.width < 560
     || userMessage.width < 88
@@ -2168,10 +2165,15 @@ async function approvePlanViaUi(
   try {
     await clickByRole(page, 'button', 'Approve plan');
     await page.locator(SELECTORS.planApproved).waitFor({ state: 'visible' });
-    await waitForGenerationTerminal(page);
-    await page.locator(SELECTORS.unsavedDraft)
+    const draftReady = page.locator(SELECTORS.unsavedDraft)
       .getByText('Unsaved draft', { exact: true })
-      .waitFor({ state: 'visible' });
+      .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
+      .then(() => 'draft_ready', () => 'draft_timeout');
+    const alert = page.getByRole('alert')
+      .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
+      .then(() => 'alert', () => 'alert_timeout');
+    const outcome = await Promise.race([draftReady, alert]);
+    if (outcome !== 'draft_ready') fail('canary_plan_review_failed');
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
   } catch (error) {

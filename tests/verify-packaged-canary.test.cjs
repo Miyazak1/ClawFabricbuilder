@@ -76,6 +76,7 @@ function reviewDiffEvidence() {
 function workspaceGateEvidence() {
   return {
     build_without_workspace_blocked: true,
+    build_continued_after_workspace_bound: true,
     composer_text_preserved_until_workspace_bound: true,
     source_folder_required: true,
     workspace_picker_visible: true,
@@ -141,6 +142,11 @@ class FakeLocator {
       this.page.forceWorkspaceGateForNextBuild = false;
       this.page.workspacePickerVisible = false;
       this.page.newProjectPanelVisible = false;
+      if (this.page.pendingWorkspaceGateInstruction !== null) {
+        this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
+        this.page.values.set(SELECTORS.idea, '');
+        this.page.pendingWorkspaceGateInstruction = null;
+      }
     }
     if (this.selector === SELECTORS.approvePlanSourceRead) {
       if (this.page.planSourceReadApprovalVisible !== true) throw new Error('plan source read approval unavailable');
@@ -233,6 +239,11 @@ class FakeLocator {
 
   first() {
     this.page.events.push(['first', this.selector]);
+    return new FakeLocator(this.page, this.selector, this.filterText);
+  }
+
+  last() {
+    this.page.events.push(['last', this.selector]);
     return new FakeLocator(this.page, this.selector, this.filterText);
   }
 
@@ -453,6 +464,7 @@ class FakeRole {
         )
       ) {
         this.page.workspacePickerVisible = true;
+        this.page.pendingWorkspaceGateInstruction = instruction;
       }
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
     }
@@ -539,6 +551,7 @@ class FakePage {
     this.liveOutputVisible = false;
     this.approvedPlanReviews = 0;
     this.planTurns = 0;
+    this.pendingWorkspaceGateInstruction = null;
     this.planSourceReadApprovalVisible = false;
     this.previewVisible = true;
     this.previewRuntimeBlocked = false;
@@ -1915,7 +1928,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     workspace_gate: workspaceGateEvidence(),
   });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Send', 'Send']);
+  assert.deepEqual(roleClicks, ['New project', 'Send']);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'click').map((event) => event[1]).slice(0, 2),
     [SELECTORS.workspaceNewProject, SELECTORS.addSourceFolder],
@@ -1930,10 +1943,8 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     event[0] === 'click'
     && event[1] === SELECTORS.addSourceFolder
   ));
-  const secondSend = page.events.findLastIndex((event) => event[0] === 'roleClick' && event[2] === 'Send');
   assert.ok(firstSend >= 0 && firstSend < pickerVisible);
   assert.ok(pickerVisible < sourceFolderClick);
-  assert.ok(sourceFolderClick < secondSend);
   const liveOutputVisible = page.events.findIndex((event) => (
     event[0] === 'waitFor'
     && event[1] === SELECTORS.liveOutput
@@ -1948,7 +1959,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     && event[1] === SELECTORS.preview
     && event[2] === 'visible'
   ));
-  assert.ok(secondSend < liveOutputVisible);
+  assert.ok(sourceFolderClick < liveOutputVisible);
   assert.ok(liveOutputVisible < liveOutputText);
   assert.ok(liveOutputText < terminalPreview);
   const saveScroll = page.events.findIndex(
@@ -2198,7 +2209,7 @@ test('answers a saved-project question without creating a draft or revision', as
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send', 'Send'],
+    ['New project', 'Send', 'Send'],
   );
 });
 
@@ -2355,7 +2366,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send', 'Send'],
+    ['New project', 'Send', 'Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
@@ -2416,7 +2427,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send', 'Send'],
+    ['New project', 'Send', 'Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
@@ -3764,7 +3775,6 @@ test('copies only saved provider profile files and runs without provider input o
     .map((event) => event[2]);
   assert.deepEqual(roleClicks, [
     'New project',
-    'Send',
     'Send',
     'Send',
     'Send',

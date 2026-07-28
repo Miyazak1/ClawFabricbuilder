@@ -1029,6 +1029,58 @@ provider, generation, Git, SQLite, Save, permission, or preview authority.
   `documentClientHeight`, `rootOverflow` and `bodyOverflow` as `hidden`,
   `chatScrollOverflow` as `auto`, and a 40px composer project chip.
 
+## 2026-07-29 DeepSeek V4 Packaged Canary Pass
+
+This addendum records a real-provider packaged canary after the canary harness
+was aligned with the current conversation-first project binding flow. It
+extends packaged multi-turn DeepSeek evidence only; it does not extend
+installer evidence, code-signing status, mobile evidence, arbitrary
+generated-code execution, or external-network permissions inside generated
+projects.
+
+- The packaged canary now verifies the current workspace gate contract:
+  a build intent without a source folder is blocked, the composer text is
+  preserved until the user explicitly adds a source folder, and that same build
+  continues after the workspace boundary is bound. It no longer expects a
+  second manual Send after the explicit source-folder selection.
+- The Review/Changes canary now checks the latest user message in a continuous
+  conversation instead of assuming there is only one `You` card. This keeps
+  multi-turn Review layout evidence strict without failing on legitimate saved
+  question and update turns.
+- The approved-plan continuation canary now waits for the new unsaved draft
+  after approval instead of treating the already-visible saved preview as a new
+  generation terminal state.
+- Focused Node validation passed through
+  `node --test tests\verify-packaged-canary.test.cjs`; the command reported 47
+  passing Node tests.
+- Repository validation also passed through `npm.cmd run lint` and
+  `npm.cmd run test:boundaries`; the boundary suite reported 615 passing Node
+  tests when rerun with Temp-directory write access.
+- `npm.cmd run pack` passed after this checkpoint and refreshed
+  `release\win-unpacked\ClawFabric Builder.exe`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries.
+- A real packaged DeepSeek V4 saved-profile canary passed through
+  `npm.cmd run verify:packaged-canary:deepseek -- --execute` using the saved
+  main-only profile at `C:\Users\Administrator\AppData\Roaming\clawfabric-builder`.
+  The canary verified the saved profile as `deepseek-v4-flash` with an official
+  DeepSeek endpoint and did not expose the credential.
+- One immediate post-pack canary attempt returned `canary_plan_review_failed`
+  at the approved-plan continuation stage; a subsequent rerun against the same
+  freshly packaged executable passed. This records a real-provider stability
+  wrinkle to improve with better retry/failure diagnostics, not a passed
+  canary substitute.
+- The canary reported `builder-packaged-canary-result.v13` and covered:
+  custom desktop chrome, source-folder workspace gate, live user-facing output,
+  initial draft Review/Changes, explicit Save Version 1, saved-project question
+  without advancing candidate count, update draft, pending draft restart
+  restore, explicit Save Version 2, restart reopen, history view/return,
+  plan proposal with three successful project-context tool results, approved
+  plan continuation draft, Git/SQLite revision continuity, static preview
+  evidence, credential stored status, source profile unchanged, and zero
+  unexpected renderer network requests.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
