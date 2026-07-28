@@ -27,6 +27,20 @@ function limitationText(limitation: BuilderSourceTreePreviewRuntimeLimitation): 
   return 'It includes app or server code that needs a local live preview.';
 }
 
+function hasReadableStaticBody(srcDoc: string): boolean {
+  try {
+    const document = new DOMParser().parseFromString(srcDoc, 'text/html');
+    return (document.body.textContent ?? '').trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function shouldShowRuntimeUnavailable(projection: BuilderSourceTreePreviewProjection): boolean {
+  if (hasReadableStaticBody(projection.src_doc)) return false;
+  return projection.preview_runtime_limitations.some((limitation) => limitation !== 'javascript_removed');
+}
+
 export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
   if (!isTrustedBuilderSourceTreePreviewProjection(projection)) {
     return (
@@ -59,18 +73,18 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
         <h2 className="text-sm font-semibold">{projection.title}</h2>
         <span className="text-xs text-muted-foreground">Static preview</span>
       </header>
-      {projection.preview_script_admission === 'not_authorized' ? (
+      {shouldShowRuntimeUnavailable(projection) ? (
         <section
-          aria-label="Static preview limitation"
-          className="cf-builder-preview-runtime-notice"
+          aria-label="Static preview unavailable"
+          className="cf-builder-preview-runtime-notice cf-builder-preview-runtime-blocked"
           data-builder-preview-limitation="true"
+          data-builder-preview-runtime-blocked="true"
           role="status"
         >
-          <h3 className="cf-builder-preview-runtime-title">Preview may look blank</h3>
+          <h3 className="cf-builder-preview-runtime-title">Preview unavailable here</h3>
           <p className="cf-builder-preview-note">
-            The files were generated, but interactive code is not running here. If this draft uses
-            3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or
-            backend code, this preview can look blank. Review Changes or Source before saving.
+            The files were generated, but this draft needs live preview support before it can be
+            shown here. Review Changes or Source before saving.
           </p>
           {projection.preview_runtime_limitations.length > 0 ? (
             <ul className="cf-builder-preview-limitation-list">
@@ -80,14 +94,39 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
             </ul>
           ) : null}
         </section>
-      ) : null}
-      <iframe
-        className="cf-builder-preview-frame min-h-80 w-full"
-        referrerPolicy="no-referrer"
-        sandbox=""
-        srcDoc={projection.src_doc}
-        title={`${projection.title} preview`}
-      />
+      ) : (
+        <>
+          {projection.preview_script_admission === 'not_authorized' ? (
+            <section
+              aria-label="Static preview limitation"
+              className="cf-builder-preview-runtime-notice"
+              data-builder-preview-limitation="true"
+              role="status"
+            >
+              <h3 className="cf-builder-preview-runtime-title">Preview may look blank</h3>
+              <p className="cf-builder-preview-note">
+                The files were generated, but interactive code is not running here. If this draft uses
+                3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, or
+                backend code, this preview can look blank. Review Changes or Source before saving.
+              </p>
+              {projection.preview_runtime_limitations.length > 0 ? (
+                <ul className="cf-builder-preview-limitation-list">
+                  {projection.preview_runtime_limitations.map((limitation) => (
+                    <li key={limitation}>{limitationText(limitation)}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
+          <iframe
+            className="cf-builder-preview-frame min-h-80 w-full"
+            referrerPolicy="no-referrer"
+            sandbox=""
+            srcDoc={projection.src_doc}
+            title={`${projection.title} preview`}
+          />
+        </>
+      )}
     </section>
   );
 }

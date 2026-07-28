@@ -1895,7 +1895,7 @@ describe('BuilderPage v2', () => {
     expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
-    expect(reviewStrip?.textContent).toContain('Preview may be incomplete');
+    expect(reviewStrip?.textContent).toContain('Preview may be unavailable here');
     expect(reviewStrip?.textContent).toContain('JavaScript');
     expect(reviewStrip?.textContent).not.toMatch(
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
@@ -1965,13 +1965,18 @@ describe('BuilderPage v2', () => {
 
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
-    expect(review?.textContent).toContain('If it looks blank');
+    const blocked = container.querySelector('[data-builder-preview-runtime-blocked="true"]');
+    expect(review?.textContent).toContain('Preview may be unavailable here');
     expect(review?.textContent).toContain('Three.js/WebGL');
     expect(review?.textContent).toContain('canvas animation');
+    expect(blocked).not.toBeNull();
+    expect(limitation?.textContent).toContain('Preview unavailable here');
+    expect(limitation?.textContent).toContain('needs live preview support');
     expect(limitation?.textContent).toContain('JavaScript modules');
     expect(limitation?.textContent).toContain('Three.js or WebGL');
     expect(limitation?.textContent).toContain('canvas or animation');
     expect(limitation?.textContent).toContain('external assets or requests');
+    expect(container.querySelector('[data-builder-static-preview="true"] iframe')).toBeNull();
     expect(container.textContent).not.toContain('model.glb');
     expect(container.textContent).not.toContain('src/scene.js');
     expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|receipt/iu);

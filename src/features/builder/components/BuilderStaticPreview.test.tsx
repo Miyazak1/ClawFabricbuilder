@@ -64,7 +64,7 @@ describe('BuilderStaticPreview', () => {
     expect(frame?.getAttribute('srcdoc')).not.toContain('<script>bad()');
   });
 
-  it('explains detected runtime-only reasons when the static preview may look blank', async () => {
+  it('replaces runtime-only blank previews with an unavailable explanation', async () => {
     const projection = await createBuilderSourceTreePreview({
       project_id: PROJECT_ID,
       title: '3D scene',
@@ -76,7 +76,11 @@ describe('BuilderStaticPreview', () => {
     });
     const container = render(<BuilderStaticPreview projection={projection} />);
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
+    const blocked = container.querySelector('[data-builder-preview-runtime-blocked="true"]');
 
+    expect(blocked).not.toBeNull();
+    expect(limitation?.textContent).toContain('Preview unavailable here');
+    expect(limitation?.textContent).toContain('needs live preview support');
     expect(limitation?.textContent).toContain('JavaScript modules');
     expect(limitation?.textContent).toContain('Three.js or WebGL');
     expect(limitation?.textContent).toContain('canvas or animation');
@@ -84,6 +88,7 @@ describe('BuilderStaticPreview', () => {
     expect(limitation?.textContent).toContain('local live preview');
     expect(limitation?.textContent).not.toContain('model.glb');
     expect(limitation?.textContent).not.toContain('express().listen');
+    expect(container.querySelector('iframe')).toBeNull();
   });
 
   it('fails closed for typed projection forgeries', () => {

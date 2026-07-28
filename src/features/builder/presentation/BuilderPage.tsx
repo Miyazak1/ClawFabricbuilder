@@ -539,7 +539,7 @@ function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null,
   if (preview !== null) {
     const labels = previewLimitationLabels(preview.preview_runtime_limitations);
     if (labels.length > 0) {
-      return `Preview may be incomplete: interactive code is not running here (${labels.join(', ')}). If it looks blank, the files may still be ready; open Changes or Source before saving.`;
+      return `Preview may be unavailable here: interactive code is not running (${labels.join(', ')}). The files may still be ready; open Changes or Source before saving.`;
     }
     return 'Static preview is ready. HTML and CSS are shown here; interactive code is not running in this preview.';
   }
