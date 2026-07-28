@@ -12,6 +12,7 @@ const {
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_WORKSPACES_CHANNEL,
   LIST_HISTORY_CHANNEL,
   BuilderProjectWorkspaceIpcError,
   createBuilderProjectWorkspaceIpcAdapter,
@@ -77,6 +78,14 @@ function adapter(overrides = {}) {
       calls.push(['list']);
       return { result_version: 'builder-project-read-result.v1', projects: [] };
     }),
+    listWorkspaces: overrides.listWorkspaces ?? (async () => {
+      calls.push(['listWorkspaces']);
+      return {
+        result_version: 'builder-product-metadata-result.v4',
+        operation: 'project_workspaces_listed',
+        workspaces: [],
+      };
+    }),
     listHistory: overrides.listHistory ?? (async (request) => {
       calls.push(['history', request]);
       return { result_version: 'builder-project-read-result.v1', operation: 'history_listed', project_id: request.project_id };
@@ -89,14 +98,15 @@ function adapter(overrides = {}) {
 test('workspace adapter exposes only open, save, verified reads, and catalog commands', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.namespace, 'builderProjectWorkspace');
-  assert.deepEqual(value.exposed_methods, ['open', 'createLocalProject', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
-  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'createLocalProject', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
+  assert.deepEqual(value.exposed_methods, ['open', 'createLocalProject', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listWorkspaces', 'listHistory']);
+  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'createLocalProject', 'loadCurrent', 'loadRevision', 'listCurrent', 'listWorkspaces', 'listHistory']);
   assert.equal(value.channels.open.channel, OPEN_PROJECT_CHANNEL);
   assert.equal(value.channels.createLocalProject.channel, CREATE_LOCAL_PROJECT_CHANNEL);
   assert.equal(value.channels.saveDraft.channel, SAVE_DRAFT_CHANNEL);
   assert.equal(value.channels.loadCurrent.channel, LOAD_CURRENT_CHANNEL);
   assert.equal(value.channels.loadRevision.channel, LOAD_REVISION_CHANNEL);
   assert.equal(value.channels.listCurrent.channel, LIST_CURRENT_CHANNEL);
+  assert.equal(value.channels.listWorkspaces.channel, LIST_WORKSPACES_CHANNEL);
   assert.equal(value.channels.listHistory.channel, LIST_HISTORY_CHANNEL);
 
   const selected = await value.channels.open.invoke(authority.event, {
@@ -117,6 +127,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
     revision_receipt_digest: REVISION_DIGEST,
   });
   const listed = await value.channels.listCurrent.invoke(authority.event);
+  const listedWorkspaces = await value.channels.listWorkspaces.invoke(authority.event);
   const history = await value.channels.listHistory.invoke(authority.event, {
     project_id: PROJECT_ID,
     limit: 32,
@@ -127,6 +138,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   assert.equal(loaded.result_version, 'builder-project-read-result.v1');
   assert.equal(revision.operation, 'revision_loaded');
   assert.deepEqual(listed.projects, []);
+  assert.deepEqual(listedWorkspaces.workspaces, []);
   assert.equal(history.operation, 'history_listed');
   assert.deepEqual(calls, [
     ['open', { project_id: null }],
@@ -135,6 +147,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
     ['load', { project_id: PROJECT_ID }],
     ['revision', { project_id: PROJECT_ID, revision_receipt_digest: REVISION_DIGEST }],
     ['list'],
+    ['listWorkspaces'],
     ['history', { project_id: PROJECT_ID, limit: 32 }],
   ]);
   assert.equal(Object.isFrozen(saved), true);
@@ -153,6 +166,11 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
   );
   await assert.rejects(
     value.channels.listCurrent.invoke(authority.event, {}),
+    (error) => error instanceof BuilderProjectWorkspaceIpcError
+      && error.code === 'builder_project_workspace_invalid',
+  );
+  await assert.rejects(
+    value.channels.listWorkspaces.invoke(authority.event, {}),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_invalid',
   );

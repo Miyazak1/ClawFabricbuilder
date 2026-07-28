@@ -23,6 +23,30 @@ export type BuilderProjectCatalogResult = Readonly<{
   }>;
 }>;
 
+export type BuilderProjectWorkspaceCatalogItem = Readonly<{
+  project_id: string;
+  title: string;
+  source_folders: readonly Readonly<{
+    name: string;
+    status: 'selected';
+  }>[];
+  bound_at_ms: number;
+  has_current_revision: boolean;
+  current_revision_number: number;
+}>;
+
+export type BuilderProjectWorkspaceCatalogResult = Readonly<{
+  result_version: 'builder-product-metadata-result.v4';
+  operation: 'project_workspaces_listed';
+  workspaces: readonly BuilderProjectWorkspaceCatalogItem[];
+  metadata_evidence: Readonly<{
+    product_authority: 'sqlite_project_workspace_binding';
+    code_authority: 'not_read_for_workspace_list';
+    source_read_admission: 'not_requested';
+    path_disclosure: 'folder_name_only';
+  }>;
+}>;
+
 export class BuilderProjectCatalogError extends Error {
   readonly code = 'builder_project_catalog_invalid';
 
@@ -48,6 +72,22 @@ const EVIDENCE_KEYS = Object.freeze([
   'code_authority',
   'source_read_admission',
   'current_selection',
+]);
+const WORKSPACE_RESULT_KEYS = Object.freeze(['result_version', 'operation', 'workspaces', 'metadata_evidence']);
+const WORKSPACE_ITEM_KEYS = Object.freeze([
+  'project_id',
+  'title',
+  'source_folders',
+  'bound_at_ms',
+  'has_current_revision',
+  'current_revision_number',
+]);
+const WORKSPACE_SOURCE_FOLDER_KEYS = Object.freeze(['name', 'status']);
+const WORKSPACE_EVIDENCE_KEYS = Object.freeze([
+  'product_authority',
+  'code_authority',
+  'source_read_admission',
+  'path_disclosure',
 ]);
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -139,6 +179,39 @@ function item(value: unknown): BuilderProjectCatalogItem {
   });
 }
 
+function workspaceSourceFolder(value: unknown): BuilderProjectWorkspaceCatalogItem['source_folders'][number] {
+  const source = exactRecord(value, WORKSPACE_SOURCE_FOLDER_KEYS);
+  if (source.status !== 'selected') throw invalid();
+  return Object.freeze({
+    name: displayText(source.name, 120),
+    status: 'selected',
+  });
+}
+
+function workspaceItem(value: unknown): BuilderProjectWorkspaceCatalogItem {
+  const source = exactRecord(value, WORKSPACE_ITEM_KEYS);
+  if (
+    typeof source.project_id !== 'string'
+    || !PROJECT_ID_PATTERN.test(source.project_id)
+    || !Number.isSafeInteger(source.bound_at_ms)
+    || Number(source.bound_at_ms) < 0
+    || typeof source.has_current_revision !== 'boolean'
+    || !Number.isSafeInteger(source.current_revision_number)
+    || Number(source.current_revision_number) < 0
+    || (source.has_current_revision === false && Number(source.current_revision_number) !== 0)
+  ) throw invalid();
+  const folders = denseArray(source.source_folders).map(workspaceSourceFolder);
+  if (folders.length !== 1) throw invalid();
+  return Object.freeze({
+    project_id: source.project_id,
+    title: displayText(source.title, 80),
+    source_folders: Object.freeze(folders),
+    bound_at_ms: Number(source.bound_at_ms),
+    has_current_revision: source.has_current_revision,
+    current_revision_number: Number(source.current_revision_number),
+  });
+}
+
 export function sanitizeBuilderProjectCatalogResult(value: unknown): BuilderProjectCatalogResult {
   const source = exactRecord(value, RESULT_KEYS);
   if (
@@ -165,6 +238,40 @@ export function sanitizeBuilderProjectCatalogResult(value: unknown): BuilderProj
       code_authority: 'not_read_for_catalog',
       source_read_admission: 'not_requested',
       current_selection: 'sqlite_current_project_revision',
+    }),
+  });
+}
+
+export function sanitizeBuilderProjectWorkspaceCatalogResult(
+  value: unknown,
+): BuilderProjectWorkspaceCatalogResult {
+  const source = exactRecord(value, WORKSPACE_RESULT_KEYS);
+  if (
+    source.result_version !== 'builder-product-metadata-result.v4'
+    || source.operation !== 'project_workspaces_listed'
+  ) throw invalid();
+  const workspaces = denseArray(source.workspaces).map(workspaceItem);
+  const seen = new Set<string>();
+  for (const workspace of workspaces) {
+    if (seen.has(workspace.project_id)) throw invalid();
+    seen.add(workspace.project_id);
+  }
+  const evidence = exactRecord(source.metadata_evidence, WORKSPACE_EVIDENCE_KEYS);
+  if (
+    evidence.product_authority !== 'sqlite_project_workspace_binding'
+    || evidence.code_authority !== 'not_read_for_workspace_list'
+    || evidence.source_read_admission !== 'not_requested'
+    || evidence.path_disclosure !== 'folder_name_only'
+  ) throw invalid();
+  return Object.freeze({
+    result_version: 'builder-product-metadata-result.v4',
+    operation: 'project_workspaces_listed',
+    workspaces: Object.freeze(workspaces),
+    metadata_evidence: Object.freeze({
+      product_authority: 'sqlite_project_workspace_binding',
+      code_authority: 'not_read_for_workspace_list',
+      source_read_admission: 'not_requested',
+      path_disclosure: 'folder_name_only',
     }),
   });
 }

@@ -36,6 +36,7 @@ const {
   sha256Canonical,
   sanitizeLoadCurrentRequest,
   sanitizeBindProjectWorkspaceRequest,
+  sanitizeListProjectWorkspacesRequest,
   sanitizeLoadProjectRevisionRequest,
   sanitizeListProjectRevisionsRequest,
   sanitizeListCurrentProjectRevisionsRequest,
@@ -46,6 +47,8 @@ const {
 
 const DATABASE_ID = 'builder-product-metadata-database.v3';
 const MAX_REVISION_CHAIN_DEPTH = 1024;
+const PROJECT_ID_PATTERN =
+  /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ERROR_MESSAGES = Object.freeze({
   builder_product_metadata_invalid: 'Builder product metadata could not be verified.',
   builder_product_metadata_not_found: 'Builder product metadata is unavailable.',
@@ -1203,6 +1206,60 @@ function workspaceResult(db, workspace) {
   });
 }
 
+function workspaceCatalogItem(row) {
+  if (
+    !row
+    || typeof row.project_id !== 'string'
+    || !PROJECT_ID_PATTERN.test(row.project_id)
+    || typeof row.project_title !== 'string'
+    || row.project_title.length === 0
+    || row.project_title.length > 80
+    || typeof row.source_folder_name !== 'string'
+    || row.source_folder_name.length === 0
+    || row.source_folder_name.length > 120
+    || row.source_folder_count !== 1
+    || !Number.isSafeInteger(row.bound_at_ms)
+    || row.bound_at_ms < 0
+    || row.binding_status !== 'bound'
+    || !Number.isSafeInteger(row.current_revision_number)
+    || row.current_revision_number < 0
+    || (row.current_revision_receipt_digest === null) !== (row.current_revision_number === 0)
+  ) fail('builder_product_metadata_integrity_failed');
+  return frozen({
+    project_id: row.project_id,
+    title: row.project_title,
+    source_folders: [
+      {
+        name: row.source_folder_name,
+        status: 'selected',
+      },
+    ],
+    bound_at_ms: row.bound_at_ms,
+    has_current_revision: row.current_revision_receipt_digest !== null,
+    current_revision_number: row.current_revision_number,
+  });
+}
+
+function workspaceListResult(db, workspaces) {
+  return frozen({
+    result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+    operation: 'project_workspaces_listed',
+    workspaces,
+    metadata_evidence: {
+      database_id: DATABASE_ID,
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
+      runtime_pragmas: runtimePragmas(db),
+      transaction: 'project_workspace_list_readback',
+      git_object_verification: 'not_performed_by_metadata_database',
+      source_bytes_stored: false,
+      credential_storage: 'not_present',
+      ui_state_storage: 'not_present',
+    },
+  });
+}
+
 function bindProjectWorkspace(db, rawRequest) {
   const request = sanitizeBindProjectWorkspaceRequest(rawRequest);
   db.exec('BEGIN IMMEDIATE');
@@ -1256,6 +1313,23 @@ function loadProjectWorkspace(db, rawRequest) {
     bound_at_ms: row.bound_at_ms,
     binding_status: 'bound',
   }));
+}
+
+function listProjectWorkspaces(db, rawRequest) {
+  const request = sanitizeListProjectWorkspacesRequest(rawRequest);
+  const rows = all(
+    db,
+    `SELECT w.project_id, w.project_title, w.source_folder_name,
+      w.source_folder_count, w.bound_at_ms, w.binding_status,
+      p.current_revision_receipt_digest, p.current_revision_number
+      FROM project_workspaces w
+      INNER JOIN projects p ON p.project_id = w.project_id
+      WHERE w.binding_status = 'bound'
+      ORDER BY w.bound_at_ms DESC, w.project_id ASC
+      LIMIT ?`,
+    [request.limit],
+  );
+  return workspaceListResult(db, rows.map(workspaceCatalogItem));
 }
 
 function loadCurrent(db, rawRequest) {
@@ -1449,6 +1523,12 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     bind_project_workspace(rawRequest) {
       try { return bindProjectWorkspace(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    list_project_workspaces(rawRequest) {
+      try { return listProjectWorkspaces(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

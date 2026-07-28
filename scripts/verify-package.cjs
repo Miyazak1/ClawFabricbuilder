@@ -269,6 +269,7 @@ const channels = [
   'clawfabric-builder:project-workspace:load-current',
   'clawfabric-builder:project-workspace:load-revision',
   'clawfabric-builder:project-workspace:list-current',
+  'clawfabric-builder:project-workspace:list-workspaces',
   'clawfabric-builder:project-workspace:list-history',
 ];
 const generationChannels = [
@@ -410,7 +411,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v15');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v16');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -425,6 +426,7 @@ exactObjectKeys(workspaceBridge, [
   'loadCurrent',
   'loadRevision',
   'listCurrent',
+  'listWorkspaces',
   'listHistory',
 ]);
 exactObjectKeys(generationBridge, [
@@ -451,6 +453,7 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -529,7 +532,8 @@ assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[2]);
 assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[3]);
 assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[4]);
 assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[5]);
-assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[6]);
+assert.equal(preloadConstants.get('LIST_WORKSPACES_CHANNEL'), channels[6]);
+assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[7]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('GENERATE_APPROVED_PLAN_CHANNEL'), generationChannels[1]);
 assert.equal(preloadConstants.get('PROPOSE_PLAN_CHANNEL'), generationChannels[2]);
@@ -562,6 +566,7 @@ exactInvokeMethod(workspaceBridge, 'saveDraft', 'SAVE_DRAFT_CHANNEL', ['request'
 exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadRevision', 'LOAD_REVISION_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
+exactInvokeMethod(workspaceBridge, 'listWorkspaces', 'LIST_WORKSPACES_CHANNEL', []);
 exactInvokeMethod(workspaceBridge, 'listHistory', 'LIST_HISTORY_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'submit', 'SUBMIT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
@@ -1045,7 +1050,9 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 31);
+assert.match(packagedPreload, /listWorkspaces/u);
+assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 32);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

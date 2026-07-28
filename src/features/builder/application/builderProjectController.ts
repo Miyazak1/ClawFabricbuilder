@@ -675,16 +675,32 @@ export function createBuilderProjectController(
     return run(async (operationEpoch) => {
       publish(snapshot('opening', null, null, null, null));
       try {
-        const saved = await sanitizeBuilderProjectReadSnapshot(
-          await dependencies.workspace.open({ project_id: projectId }),
-        );
-        if (
-          disposed
-          || operationEpoch !== epoch
-          || saved.operation !== 'current_loaded'
-          || saved.target.project_id !== projectId
-        ) return current;
-        return withPreview('ready', saved, null, operationEpoch);
+        const opened = await dependencies.workspace.open({ project_id: projectId });
+        try {
+          const saved = await sanitizeBuilderProjectReadSnapshot(opened);
+          if (
+            disposed
+            || operationEpoch !== epoch
+            || saved.operation !== 'current_loaded'
+            || saved.target.project_id !== projectId
+          ) return current;
+          return withPreview('ready', saved, null, operationEpoch);
+        } catch {
+          const workingProject = sanitizeLocalProject(opened);
+          if (disposed || operationEpoch !== epoch || workingProject.project_id !== projectId) return current;
+          return publish(snapshot(
+            'ready',
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
+            workingProject.project_id,
+            workingProject,
+          ));
+        }
       } catch {
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot('unavailable', null, null, null, 'unavailable'));

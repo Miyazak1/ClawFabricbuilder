@@ -7,7 +7,7 @@ import {
   useBuilderProjectCatalogController,
   type UseBuilderProjectCatalogControllerResult,
 } from './useBuilderProjectCatalogController';
-import { PROJECT_ID, createCatalogWire } from '../../../test/builderV2Fixtures';
+import { PROJECT_ID, createCatalogWire, createWorkspaceCatalogWire } from '../../../test/builderV2Fixtures';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -35,11 +35,14 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-async function renderHook(listCurrent: () => Promise<unknown>) {
+async function renderHook(
+  listCurrent: () => Promise<unknown>,
+  listWorkspaces: () => Promise<unknown> = async () => createWorkspaceCatalogWire(),
+) {
   let latest: UseBuilderProjectCatalogControllerResult | null = null;
 
   function Harness() {
-    const result = useBuilderProjectCatalogController({ listCurrent });
+    const result = useBuilderProjectCatalogController({ listCurrent, listWorkspaces });
     useEffect(() => {
       latest = result;
     }, [result]);
@@ -59,14 +62,17 @@ async function renderHook(listCurrent: () => Promise<unknown>) {
 describe('useBuilderProjectCatalogController v2', () => {
   it('loads one verified catalog on mount', async () => {
     const listCurrent = vi.fn(async () => createCatalogWire());
-    const hook = await renderHook(listCurrent);
+    const listWorkspaces = vi.fn(async () => createWorkspaceCatalogWire());
+    const hook = await renderHook(listCurrent, listWorkspaces);
     expect(listCurrent).toHaveBeenCalledOnce();
+    expect(listWorkspaces).toHaveBeenCalledOnce();
     await waitFor(() => {
       expect(hook.current().snapshot.status).toBe('ready');
     });
     expect(hook.current().snapshot).toMatchObject({
       status: 'ready',
       projects: [{ project_id: PROJECT_ID }],
+      workspaceProjects: [],
     });
   });
 

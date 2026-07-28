@@ -647,6 +647,7 @@ test('binds a logical project to one local workspace root without creating a rev
   const replayed = metadata.bind_project_workspace(requestValue);
   const identity = metadata.load_project_identity({ project_id: PROJECT_ID });
   const loaded = metadata.load_project_workspace({ project_id: PROJECT_ID });
+  const listed = metadata.list_project_workspaces({ limit: 256 });
 
   assert.equal(bound.operation, 'project_workspace_bound');
   assert.deepEqual(bound.workspace, {
@@ -661,6 +662,19 @@ test('binds a logical project to one local workspace root without creating a rev
     binding_status: 'bound',
   });
   assert.deepEqual(replayed.workspace, bound.workspace);
+  assert.deepEqual(listed.workspaces, [{
+    project_id: PROJECT_ID,
+    title: 'Focus timer',
+    source_folders: [{
+      name: path.basename(projectRoot),
+      status: 'selected',
+    }],
+    bound_at_ms: 456,
+    has_current_revision: false,
+    current_revision_number: 0,
+  }]);
+  assert.equal(JSON.stringify(listed.workspaces).includes(projectRoot), false);
+  assert.equal(listed.metadata_evidence.transaction, 'project_workspace_list_readback');
   assert.deepEqual(identity.project, {
     project_id: PROJECT_ID,
     created_at_ms: 123,
@@ -675,6 +689,7 @@ test('binds a logical project to one local workspace root without creating a rev
     restarted.load_project_workspace({ project_id: PROJECT_ID }).workspace,
     bound.workspace,
   );
+  assert.deepEqual(restarted.list_project_workspaces({ limit: 256 }).workspaces, listed.workspaces);
   restarted.close();
 });
 
@@ -1540,6 +1555,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
     'close',
     'list_current_project_revisions',
     'list_project_revisions',
+    'list_project_workspaces',
     'load_conversation',
     'load_conversation_candidate_by_draft',
     'load_current_project_revision',

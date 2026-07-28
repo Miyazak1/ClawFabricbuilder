@@ -189,6 +189,7 @@ async function renderHook(
     loadCurrent,
     loadRevision,
     listCurrent: async () => ({ projects: [] }),
+    listWorkspaces: async () => ({ workspaces: [] }),
     listHistory: async () => ({ revisions: [] }),
   };
 

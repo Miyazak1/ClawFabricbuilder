@@ -6,13 +6,14 @@ import {
 } from './builderDesktopProjectWorkspacePort';
 
 describe('createBuilderDesktopProjectWorkspacePort', () => {
-  it('forwards only the seven v2 workspace methods with fresh plain data', async () => {
+  it('forwards only the eight v2 workspace methods with fresh plain data', async () => {
     const open = vi.fn(async (request: unknown) => ({ operation: 'project_opened', request }));
     const createLocalProject = vi.fn(async (request: unknown) => ({ operation: 'local_project_bound', request }));
     const saveDraft = vi.fn(async (request: unknown) => ({ operation: 'draft_saved', request }));
     const loadCurrent = vi.fn(async (request: unknown) => ({ operation: 'current_loaded', request }));
     const loadRevision = vi.fn(async (request: unknown) => ({ operation: 'revision_loaded', request }));
     const listCurrent = vi.fn(async () => ({ operation: 'current_listed', projects: [] }));
+    const listWorkspaces = vi.fn(async () => ({ operation: 'project_workspaces_listed', workspaces: [] }));
     const listHistory = vi.fn(async (request: unknown) => ({ operation: 'history_listed', request }));
     const port = createBuilderDesktopProjectWorkspacePort({
       open,
@@ -21,6 +22,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       loadCurrent,
       loadRevision,
       listCurrent,
+      listWorkspaces,
       listHistory,
     });
 
@@ -53,6 +55,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     } as unknown as Readonly<{ project_id: string; revision_receipt_digest: string }>;
     const revisionResult = await port.loadRevision(revisionRequest);
     const catalogResult = await port.listCurrent();
+    const workspaceCatalogResult = await port.listWorkspaces();
     const historyRequest = {
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
       limit: 32,
@@ -87,6 +90,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     });
     expect(loadRevision.mock.calls[0][0]).not.toBe(revisionRequest);
     expect(listCurrent).toHaveBeenCalledOnce();
+    expect(listWorkspaces).toHaveBeenCalledOnce();
     expect(listHistory).toHaveBeenCalledOnce();
     expect(listHistory.mock.calls[0][0]).toEqual({
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
@@ -99,6 +103,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     expect(Object.isFrozen(loadResult)).toBe(true);
     expect(Object.isFrozen(revisionResult)).toBe(true);
     expect(Object.isFrozen(catalogResult)).toBe(true);
+    expect(Object.isFrozen(workspaceCatalogResult)).toBe(true);
     expect(Object.isFrozen(historyResult)).toBe(true);
   });
 
@@ -112,6 +117,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       loadCurrent: async (): Promise<unknown> => null,
       loadRevision: async (): Promise<unknown> => null,
       listCurrent: async (): Promise<unknown> => null,
+      listWorkspaces: async (): Promise<unknown> => null,
     },
     {
       open: async (): Promise<unknown> => null,
@@ -120,6 +126,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       loadCurrent: async (): Promise<unknown> => null,
       loadRevision: async (): Promise<unknown> => null,
       listCurrent: async (): Promise<unknown> => null,
+      listWorkspaces: async (): Promise<unknown> => null,
       listHistory: async (): Promise<unknown> => null,
       commit: async (): Promise<unknown> => null,
     },
@@ -152,6 +159,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       loadCurrent: async () => null,
       loadRevision: async () => null,
       listCurrent: async () => null,
+      listWorkspaces: async () => null,
       listHistory: async () => null,
     });
 

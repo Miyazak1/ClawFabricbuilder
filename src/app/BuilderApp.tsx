@@ -211,6 +211,9 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
   listCurrent() {
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
+  listWorkspaces() {
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
+  },
   listHistory(request: Parameters<BuilderProjectWorkspacePort['listHistory']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
@@ -527,6 +530,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return ports.workspace.loadRevision(request);
       },
       listCurrent() { return ports.workspace.listCurrent(); },
+      listWorkspaces() { return ports.workspace.listWorkspaces(); },
       listHistory(request: Parameters<BuilderProjectWorkspacePort['listHistory']>[0]) {
         return ports.workspace.listHistory(request);
       },

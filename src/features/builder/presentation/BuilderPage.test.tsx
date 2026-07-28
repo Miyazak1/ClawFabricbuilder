@@ -19,6 +19,7 @@ import {
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
   createCatalogWire,
+  createWorkspaceCatalogWire,
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
@@ -174,6 +175,9 @@ async function snapshots() {
       async listCurrent() {
         return { projects: [] };
       },
+      async listWorkspaces() {
+        return { workspaces: [] };
+      },
       async listHistory() {
         return { revisions: [] };
       },
@@ -262,6 +266,9 @@ async function workingProjectSnapshot() {
       },
       async listCurrent() {
         return { projects: [] };
+      },
+      async listWorkspaces() {
+        return { workspaces: [] };
       },
       async listHistory() {
         return { revisions: [] };
@@ -650,7 +657,10 @@ async function changedDraftSnapshot() {
   return draftSnapshotFromSourceTrees(baseTree, draftTree);
 }
 
-async function trustedCatalogSnapshot(projects: 'empty' | 'saved' = 'saved') {
+async function trustedCatalogSnapshot(
+  projects: 'empty' | 'saved' = 'saved',
+  workspaceProjects: readonly unknown[] = [],
+) {
   const wire = await createCatalogWire();
   const catalog = createBuilderProjectCatalogController({
     listCurrent: async () => ({
@@ -664,6 +674,7 @@ async function trustedCatalogSnapshot(projects: 'empty' | 'saved' = 'saved') {
           revision_number: 2,
         })),
     }),
+    listWorkspaces: async () => createWorkspaceCatalogWire(workspaceProjects),
   });
   return catalog.load();
 }
@@ -746,6 +757,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       },
       async listCurrent() {
         return { projects: [] };
+      },
+      async listWorkspaces() {
+        return { workspaces: [] };
       },
       async listHistory() {
         return { revisions: [] };
@@ -847,6 +861,9 @@ async function inspectedHistorySnapshot() {
       },
       async listCurrent() {
         return { projects: [] };
+      },
+      async listWorkspaces() {
+        return { workspaces: [] };
       },
       async listHistory() {
         return { revisions: [] };
@@ -1047,6 +1064,42 @@ describe('BuilderPage v2', () => {
     expect(onCreateProject).not.toHaveBeenCalled();
   });
 
+  it('shows restart-restored bound workspaces in the composer project picker before first save', async () => {
+    const { fresh } = await snapshots();
+    const onCreateProject = vi.fn();
+    const onOpenProject = vi.fn();
+    const workspaceOnlyProjectId = 'builder-project:22222222-2222-4222-8222-222222222222';
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCreateProject={onCreateProject}
+        onOpenProject={onOpenProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot('empty', [{
+          project_id: workspaceOnlyProjectId,
+          title: 'Unsaved dashboard',
+          source_folders: [{ name: 'site-source', status: 'selected' }],
+          bound_at_ms: 20,
+          has_current_revision: false,
+          current_revision_number: 0,
+        }])}
+        snapshot={fresh}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-chip="true"]');
+
+    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
+    expect(picker?.textContent).toContain('Unsaved dashboard');
+    expect(picker?.textContent).toContain('Not saved yet - site-source');
+    expect(picker?.textContent).not.toContain('No projects yet.');
+
+    click(container, `[data-builder-workspace-bound-project="${workspaceOnlyProjectId}"]`);
+
+    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(workspaceOnlyProjectId);
+    expect(onCreateProject).not.toHaveBeenCalled();
+  });
+
   it('opens the composer project picker when build needs a workspace', async () => {
     const { fresh } = await snapshots();
     const onCreateProject = vi.fn();
@@ -1064,7 +1117,7 @@ describe('BuilderPage v2', () => {
     const picker = container.querySelector('[data-builder-workspace-picker="true"]');
     expect(picker).not.toBeNull();
     expect(picker?.textContent).toContain('Choose or create a project before I build.');
-    expect(picker?.textContent).toContain('No saved projects yet.');
+    expect(picker?.textContent).toContain('No projects yet.');
 
     click(container, '[data-builder-workspace-new-project="true"]');
 
@@ -1265,6 +1318,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });
@@ -1318,6 +1372,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });
@@ -1370,6 +1425,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });
@@ -1431,6 +1487,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });
@@ -1481,6 +1538,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });
@@ -1550,6 +1608,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });
@@ -2915,6 +2974,7 @@ describe('BuilderPage v2', () => {
         loadCurrent: async () => null,
         loadRevision: async () => null,
         listCurrent: async () => null,
+        listWorkspaces: async () => null,
         listHistory: async () => null,
       },
     });
@@ -2969,6 +3029,7 @@ describe('BuilderPage v2', () => {
         },
         loadRevision: async () => null,
         listCurrent: async () => ({ projects: [] }),
+        listWorkspaces: async () => ({ workspaces: [] }),
         listHistory: async () => ({ revisions: [] }),
       },
     });

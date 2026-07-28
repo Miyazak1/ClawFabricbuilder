@@ -70,7 +70,8 @@ export function useBuilderProjectController(
   );
 
   useLayoutEffect(() => {
-    const selectedProjectId = controller.getSnapshot().savedProject?.target.project_id;
+    const current = controller.getSnapshot();
+    const selectedProjectId = current.savedProject?.target.project_id ?? current.workingProjectId;
     if (projectId !== undefined && selectedProjectId === projectId) return;
     void controller.open(projectId).catch(() => undefined);
   }, [controller, projectId]);

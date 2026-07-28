@@ -1,10 +1,12 @@
 import {
   sanitizeBuilderProjectCatalogResult,
+  sanitizeBuilderProjectWorkspaceCatalogResult,
   type BuilderProjectCatalogItem,
+  type BuilderProjectWorkspaceCatalogItem,
 } from '../domain/builderProjectCatalog';
 import type { BuilderProjectWorkspacePort } from './builderPorts';
 
-export type BuilderProjectCatalogPort = Pick<BuilderProjectWorkspacePort, 'listCurrent'>;
+export type BuilderProjectCatalogPort = Pick<BuilderProjectWorkspacePort, 'listCurrent' | 'listWorkspaces'>;
 
 export type BuilderProjectCatalogStatus =
   | 'loading'
@@ -16,6 +18,7 @@ export type BuilderProjectCatalogStatus =
 export type BuilderProjectCatalogSnapshot = Readonly<{
   status: BuilderProjectCatalogStatus;
   projects: readonly BuilderProjectCatalogItem[];
+  workspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
   busy: boolean;
 }>;
 
@@ -31,14 +34,17 @@ export type BuilderProjectCatalogController = Readonly<{
 
 const TRUSTED_SNAPSHOTS = new WeakSet<object>();
 const EMPTY_PROJECTS = Object.freeze([]) as readonly BuilderProjectCatalogItem[];
+const EMPTY_WORKSPACE_PROJECTS = Object.freeze([]) as readonly BuilderProjectWorkspaceCatalogItem[];
 
 function snapshot(
   status: BuilderProjectCatalogStatus,
   projects: readonly BuilderProjectCatalogItem[],
+  workspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[] = EMPTY_WORKSPACE_PROJECTS,
 ): BuilderProjectCatalogSnapshot {
   const result = Object.freeze({
     status,
     projects,
+    workspaceProjects,
     busy: status === 'loading' || status === 'refreshing',
   });
   TRUSTED_SNAPSHOTS.add(result);
@@ -54,7 +60,7 @@ export function isTrustedBuilderProjectCatalogSnapshot(
 export function createBuilderProjectCatalogController(
   port: BuilderProjectCatalogPort,
 ): BuilderProjectCatalogController {
-  let current = snapshot('loading', EMPTY_PROJECTS);
+  let current = snapshot('loading', EMPTY_PROJECTS, EMPTY_WORKSPACE_PROJECTS);
   let generation = 0;
   let disposed = false;
   let activeAuthority = true;
@@ -75,23 +81,35 @@ export function createBuilderProjectCatalogController(
     if (active) return active;
     const operationGeneration = ++generation;
     const retained = current.projects;
+    const retainedWorkspaceProjects = current.workspaceProjects;
     const retainsSnapshot = mode === 'refresh' && (current.status === 'ready' || current.status === 'stale');
-    publish(snapshot(retainsSnapshot ? 'refreshing' : 'loading', retained));
+    publish(snapshot(
+      retainsSnapshot ? 'refreshing' : 'loading',
+      retained,
+      retainedWorkspaceProjects,
+    ));
     const running = Promise.resolve()
-      .then(() => port.listCurrent())
-      .then((raw) => (
+      .then(() => Promise.all([port.listCurrent(), port.listWorkspaces()]))
+      .then(([rawCurrent, rawWorkspaces]) => (
         disposed || !activeAuthority || operationGeneration !== generation
           ? null
-          : sanitizeBuilderProjectCatalogResult(raw)
+          : Object.freeze({
+            projects: sanitizeBuilderProjectCatalogResult(rawCurrent).projects,
+            workspaceProjects: sanitizeBuilderProjectWorkspaceCatalogResult(rawWorkspaces).workspaces,
+          })
       ))
       .then((result) => (
         result === null || disposed || !activeAuthority || operationGeneration !== generation
           ? current
-          : publish(snapshot('ready', result.projects))
+          : publish(snapshot('ready', result.projects, result.workspaceProjects))
       ))
       .catch(() => {
         if (disposed || !activeAuthority || operationGeneration !== generation) return current;
-        return publish(snapshot(retainsSnapshot ? 'stale' : 'unavailable', retained));
+        return publish(snapshot(
+          retainsSnapshot ? 'stale' : 'unavailable',
+          retained,
+          retainedWorkspaceProjects,
+        ));
       });
     active = running;
     void running.finally(() => {

@@ -45,7 +45,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v15/u);
+  assert.match(preload, /builder-preload\.v16/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /createLocalProject/u);
@@ -54,6 +54,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /loadRevision/u);
   assert.match(preload, /clawfabric-builder:project-workspace:load-revision/u);
   assert.match(preload, /listCurrent/u);
+  assert.match(preload, /listWorkspaces/u);
+  assert.match(preload, /clawfabric-builder:project-workspace:list-workspaces/u);
   assert.match(preload, /listHistory/u);
   assert.match(preload, /codeGenerator/u);
   assert.match(preload, /\bsubmit\b/u);
@@ -102,7 +104,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 31);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 32);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')

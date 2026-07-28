@@ -8,6 +8,7 @@ const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
 const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revision';
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
+const LIST_WORKSPACES_CHANNEL = 'clawfabric-builder:project-workspace:list-workspaces';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -20,6 +21,7 @@ const OPTION_KEYS = Object.freeze([
   'loadCurrent',
   'loadRevision',
   'listCurrent',
+  'listWorkspaces',
   'listHistory',
   'mainWindowRef',
 ]);
@@ -29,6 +31,7 @@ const REQUIRED_OPTION_KEYS = Object.freeze([
   'loadCurrent',
   'loadRevision',
   'listCurrent',
+  'listWorkspaces',
   'listHistory',
   'mainWindowRef',
 ]);
@@ -260,6 +263,7 @@ function safeOptions(value) {
       loadCurrent: stableMethod(value, 'loadCurrent'),
       loadRevision: stableMethod(value, 'loadRevision'),
       listCurrent: stableMethod(value, 'listCurrent'),
+      listWorkspaces: stableMethod(value, 'listWorkspaces'),
       listHistory: stableMethod(value, 'listHistory'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
     });
@@ -416,6 +420,13 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.listCurrent, 0);
         },
       }),
+      listWorkspaces: Object.freeze({
+        channel: LIST_WORKSPACES_CHANNEL,
+        method: 'listWorkspaces',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.listWorkspaces, 0);
+        },
+      }),
       listHistory: Object.freeze({
         channel: LIST_HISTORY_CHANNEL,
         method: 'listHistory',
@@ -431,6 +442,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
       'loadCurrent',
       'loadRevision',
       'listCurrent',
+      'listWorkspaces',
       'listHistory',
     ]),
     authority: Object.freeze({
@@ -451,6 +463,7 @@ module.exports = Object.freeze({
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_WORKSPACES_CHANNEL,
   LIST_HISTORY_CHANNEL,
   BuilderProjectWorkspaceIpcError,
   createBuilderProjectWorkspaceIpcAdapter,

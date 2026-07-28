@@ -135,6 +135,7 @@ export interface BuilderProjectWorkspacePort {
   loadCurrent(request: Readonly<{ project_id: string }>): Promise<unknown>;
   loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>): Promise<unknown>;
   listCurrent(): Promise<unknown>;
+  listWorkspaces(): Promise<unknown>;
   listHistory(request: Readonly<{ project_id: string; limit: number }>): Promise<unknown>;
 }
 

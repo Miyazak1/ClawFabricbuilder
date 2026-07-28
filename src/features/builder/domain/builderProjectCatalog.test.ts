@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   BuilderProjectCatalogError,
   sanitizeBuilderProjectCatalogResult,
+  sanitizeBuilderProjectWorkspaceCatalogResult,
 } from './builderProjectCatalog';
-import { PROJECT_ID, createCatalogWire } from '../../../test/builderV2Fixtures';
+import { PROJECT_ID, createCatalogWire, createWorkspaceCatalogWire } from '../../../test/builderV2Fixtures';
 
 describe('sanitizeBuilderProjectCatalogResult', () => {
   it('projects only SQLite-selected current revisions and Git identity evidence', async () => {
@@ -67,6 +68,70 @@ describe('sanitizeBuilderProjectCatalogResult', () => {
       },
     ]) {
       expect(() => sanitizeBuilderProjectCatalogResult(forged)).toThrow(
+        BuilderProjectCatalogError,
+      );
+    }
+  });
+});
+
+describe('sanitizeBuilderProjectWorkspaceCatalogResult', () => {
+  it('projects bound workspaces without leaking local paths', () => {
+    const wire = createWorkspaceCatalogWire([{
+      project_id: PROJECT_ID,
+      title: 'Unsaved dashboard',
+      source_folders: [{ name: 'site-source', status: 'selected' }],
+      bound_at_ms: 20,
+      has_current_revision: false,
+      current_revision_number: 0,
+    }]) as {
+      workspaces: readonly Record<string, unknown>[];
+      metadata_evidence: Record<string, unknown>;
+    };
+    const result = sanitizeBuilderProjectWorkspaceCatalogResult(structuredClone(wire));
+
+    expect(result).toEqual(wire);
+    expect(result.workspaces[0]).toMatchObject({
+      project_id: PROJECT_ID,
+      title: 'Unsaved dashboard',
+      source_folders: [{ name: 'site-source', status: 'selected' }],
+      has_current_revision: false,
+      current_revision_number: 0,
+    });
+    expect(JSON.stringify(result)).not.toMatch(/[A-Z]:\\\\|project_root_path|commit_oid|tree_oid|sha256/iu);
+    expect(Object.isFrozen(result.workspaces)).toBe(true);
+  });
+
+  it('fails closed on workspace path disclosure or authority drift', () => {
+    const wire = createWorkspaceCatalogWire([{
+      project_id: PROJECT_ID,
+      title: 'Unsaved dashboard',
+      source_folders: [{ name: 'site-source', status: 'selected' }],
+      bound_at_ms: 20,
+      has_current_revision: false,
+      current_revision_number: 0,
+    }]) as {
+      workspaces: readonly Record<string, unknown>[];
+      metadata_evidence: Record<string, unknown>;
+    };
+    const workspaceItem = wire.workspaces[0] as Record<string, unknown>;
+    for (const forged of [
+      {
+        ...wire,
+        workspaces: [{ ...workspaceItem, project_root_path: 'D:\\\\secret' }],
+      },
+      {
+        ...wire,
+        metadata_evidence: {
+          ...wire.metadata_evidence,
+          path_disclosure: 'absolute_path',
+        },
+      },
+      {
+        ...wire,
+        workspaces: [{ ...workspaceItem, source_folders: [] }],
+      },
+    ]) {
+      expect(() => sanitizeBuilderProjectWorkspaceCatalogResult(forged)).toThrow(
         BuilderProjectCatalogError,
       );
     }

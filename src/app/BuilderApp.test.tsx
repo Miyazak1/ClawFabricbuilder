@@ -16,6 +16,7 @@ import {
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
   createCatalogWire,
+  createWorkspaceCatalogWire,
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
@@ -82,6 +83,7 @@ async function setup(options: Readonly<{
   restoreAvailable?: boolean;
   runningActivity?: boolean;
   validHistoryPreview?: boolean;
+  workspaceOnlyCatalog?: boolean;
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
     ? await createReadWire(await createSourceTree([
@@ -424,13 +426,26 @@ async function setup(options: Readonly<{
   });
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
-    return request.project_id === null
-      ? {
+    if (request.project_id === null) {
+      return {
         result_version: 'builder-project-selection-result.v1',
         operation: 'new_selected',
         project_id: null,
-      }
-      : readWire;
+      };
+    }
+    if (options.workspaceOnlyCatalog === true && !saved) {
+      return {
+        result_version: 'builder-project-selection-result.v1',
+        operation: 'local_project_bound',
+        project_id: request.project_id,
+        project_title: 'Unsaved dashboard',
+        source_folders: [{
+          name: 'site-source',
+          status: 'selected',
+        }],
+      };
+    }
+    return readWire;
   });
   const createLocalProject = vi.fn(async (request: Readonly<{ project_id: string | null; project_title: string }>) => {
     const projectId = request.project_id ?? PROJECT_ID;
@@ -450,6 +465,18 @@ async function setup(options: Readonly<{
   });
   const listCurrent = vi.fn(async () => (
     saved ? catalogWire : { ...catalogWire, projects: [] }
+  ));
+  const listWorkspaces = vi.fn(async () => createWorkspaceCatalogWire(
+    options.workspaceOnlyCatalog === true
+      ? [{
+        project_id: PROJECT_ID,
+        title: 'Unsaved dashboard',
+        source_folders: [{ name: 'site-source', status: 'selected' }],
+        bound_at_ms: 20,
+        has_current_revision: false,
+        current_revision_number: 0,
+      }]
+      : [],
   ));
   const listHistory = vi.fn(async (request: unknown) => (
     options.validHistoryPreview === true && historicalWire !== null
@@ -511,6 +538,7 @@ async function setup(options: Readonly<{
       loadCurrent,
       loadRevision,
       listCurrent,
+      listWorkspaces,
       listHistory,
     },
     providerSettings: {},
@@ -564,6 +592,7 @@ async function setup(options: Readonly<{
     listHistory,
     loadRevision,
     listCurrent,
+    listWorkspaces,
     loadCurrent,
     open,
     readTaskStream,
@@ -855,6 +884,50 @@ describe('BuilderApp v2', () => {
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+  });
+
+  it('reopens a bound unsaved workspace from the composer picker after restart', async () => {
+    const { container, createLocalProject, listCurrent, listWorkspaces, open, submit } = await setup({
+      workspaceOnlyCatalog: true,
+    });
+
+    await waitFor(() => {
+      expect(listCurrent).toHaveBeenCalled();
+      expect(listWorkspaces).toHaveBeenCalled();
+    });
+    click(container, '[data-builder-workspace-chip="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Unsaved dashboard');
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Not saved yet - site-source');
+    });
+
+    click(container, `[data-builder-workspace-bound-project="${PROJECT_ID}"]`);
+
+    await waitFor(() => {
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('Unsaved dashboard');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('site-source');
+    });
+
+    expect(createLocalProject).not.toHaveBeenCalled();
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, 'Make a timer.');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledOnce();
+    });
   });
 
   it('keeps chat-first project identity when a later build turn binds source folders', async () => {

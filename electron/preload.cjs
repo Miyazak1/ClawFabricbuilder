@@ -8,6 +8,7 @@ const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
 const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revision';
 const LIST_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:list-current';
+const LIST_WORKSPACES_CHANNEL = 'clawfabric-builder:project-workspace:list-workspaces';
 const LIST_HISTORY_CHANNEL = 'clawfabric-builder:project-workspace:list-history';
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const GENERATE_APPROVED_PLAN_CHANNEL = 'clawfabric-builder:code-generator:generate-approved-plan';
@@ -41,7 +42,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v15',
+  bridgeVersion: 'builder-preload.v16',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -60,6 +61,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     listCurrent() {
       return ipcRenderer.invoke(LIST_CURRENT_CHANNEL);
+    },
+    listWorkspaces() {
+      return ipcRenderer.invoke(LIST_WORKSPACES_CHANNEL);
     },
     listHistory(request) {
       return ipcRenderer.invoke(LIST_HISTORY_CHANNEL, request);

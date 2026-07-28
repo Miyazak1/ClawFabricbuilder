@@ -40,6 +40,7 @@ const {
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_WORKSPACES_CHANNEL,
   LIST_HISTORY_CHANNEL,
   createBuilderProjectWorkspaceIpcAdapter,
 } = require('./builder-project-workspace-ipc-adapter.cjs');
@@ -114,6 +115,9 @@ const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 const MAX_PLAN_CONTEXT_RESOURCES = 8;
 const MAX_PROJECT_RESOURCE_ID_LENGTH = 128;
 const PLAN_RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
+const PRODUCT_METADATA_DATABASE_ID = 'builder-product-metadata-database.v3';
+const PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v6';
+const PRODUCT_METADATA_USER_VERSION = 6;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -185,6 +189,37 @@ function exactDataValue(value, keys, key) {
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
   }
   return descriptors[key].value;
+}
+
+function exactDataDescriptors(value, keys) {
+  if (!isPlainObject(value)) fail();
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.length !== keys.length
+    || ownKeys.some((ownKey) => typeof ownKey !== 'string' || !keys.includes(ownKey))
+  ) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const expectedKey of keys) {
+    const descriptor = descriptors[expectedKey];
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return descriptors;
+}
+
+function denseDataArray(value, maximum) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > maximum) fail();
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== value.length + 1
+    || keys.some((key) => typeof key === 'symbol')
+    || !keys.includes('length')
+  ) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return value;
 }
 
 function publicInstruction(rawRequest) {
@@ -351,6 +386,170 @@ function workspaceBoundProjectId(value, expectedProjectId) {
     || status.value !== 'bound'
   ) fail();
   return expectedProjectId;
+}
+
+function safeOwnErrorCode(error) {
+  try {
+    if (error === null || (typeof error !== 'object' && typeof error !== 'function') || utilTypes.isProxy(error)) {
+      return null;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    return descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string'
+      ? descriptor.value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function localProjectSelectionFromWorkspace(value, expectedProjectId) {
+  if (!isPlainObject(value)) fail();
+  const operation = Object.getOwnPropertyDescriptor(value, 'operation');
+  const workspace = Object.getOwnPropertyDescriptor(value, 'workspace');
+  if (
+    !operation
+    || operation.value !== 'project_workspace_bound'
+    || !workspace
+    || !isPlainObject(workspace.value)
+  ) fail();
+  const projectId = Object.getOwnPropertyDescriptor(workspace.value, 'project_id');
+  const title = Object.getOwnPropertyDescriptor(workspace.value, 'project_title');
+  const folders = Object.getOwnPropertyDescriptor(workspace.value, 'source_folders');
+  const status = Object.getOwnPropertyDescriptor(workspace.value, 'binding_status');
+  if (
+    !projectId
+    || projectId.value !== expectedProjectId
+    || !title
+    || !folders
+    || !Array.isArray(folders.value)
+    || folders.value.length !== 1
+    || !status
+    || status.value !== 'bound'
+  ) fail();
+  const folder = folders.value[0];
+  if (!isPlainObject(folder)) fail();
+  const folderName = Object.getOwnPropertyDescriptor(folder, 'name');
+  const folderStatus = Object.getOwnPropertyDescriptor(folder, 'status');
+  if (!folderName || !folderStatus || folderStatus.value !== 'selected') fail();
+  return Object.freeze({
+    result_version: 'builder-project-selection-result.v1',
+    operation: 'local_project_bound',
+    project_id: expectedProjectId,
+    project_title: safePublicWorkspaceText(title.value, 80),
+    source_folders: Object.freeze([
+      Object.freeze({
+        name: safePublicWorkspaceText(folderName.value, 120),
+        status: 'selected',
+      }),
+    ]),
+  });
+}
+
+function workspaceCatalogItemFromMetadata(value) {
+  const descriptors = exactDataDescriptors(value, [
+    'project_id',
+    'title',
+    'source_folders',
+    'bound_at_ms',
+    'has_current_revision',
+    'current_revision_number',
+  ]);
+  const projectId = descriptors.project_id.value;
+  const folders = denseDataArray(descriptors.source_folders.value, 1);
+  if (
+    typeof projectId !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId)
+    || folders.length !== 1
+    || !Number.isSafeInteger(descriptors.bound_at_ms.value)
+    || descriptors.bound_at_ms.value < 0
+    || typeof descriptors.has_current_revision.value !== 'boolean'
+    || !Number.isSafeInteger(descriptors.current_revision_number.value)
+    || descriptors.current_revision_number.value < 0
+    || (descriptors.has_current_revision.value === false && descriptors.current_revision_number.value !== 0)
+  ) fail();
+  const folderDescriptors = exactDataDescriptors(folders[0], ['name', 'status']);
+  if (folderDescriptors.status.value !== 'selected') fail();
+  return Object.freeze({
+    project_id: projectId,
+    title: safePublicWorkspaceText(descriptors.title.value, 80),
+    source_folders: Object.freeze([
+      Object.freeze({
+        name: safePublicWorkspaceText(folderDescriptors.name.value, 120),
+        status: 'selected',
+      }),
+    ]),
+    bound_at_ms: descriptors.bound_at_ms.value,
+    has_current_revision: descriptors.has_current_revision.value,
+    current_revision_number: descriptors.current_revision_number.value,
+  });
+}
+
+function assertWorkspaceCatalogMetadataEvidence(value) {
+  const descriptors = exactDataDescriptors(value, [
+    'database_id',
+    'schema_fingerprint_digest',
+    'schema_version',
+    'user_version',
+    'runtime_pragmas',
+    'transaction',
+    'git_object_verification',
+    'source_bytes_stored',
+    'credential_storage',
+    'ui_state_storage',
+  ]);
+  const pragmas = exactDataDescriptors(descriptors.runtime_pragmas.value, [
+    'foreign_keys',
+    'journal_mode',
+    'synchronous',
+    'trusted_schema',
+  ]);
+  if (
+    descriptors.database_id.value !== PRODUCT_METADATA_DATABASE_ID
+    || descriptors.schema_version.value !== PRODUCT_METADATA_SCHEMA_VERSION
+    || descriptors.user_version.value !== PRODUCT_METADATA_USER_VERSION
+    || typeof descriptors.schema_fingerprint_digest.value !== 'string'
+    || !REQUEST_DIGEST_PATTERN.test(descriptors.schema_fingerprint_digest.value)
+    || descriptors.transaction.value !== 'project_workspace_list_readback'
+    || descriptors.git_object_verification.value !== 'not_performed_by_metadata_database'
+    || descriptors.source_bytes_stored.value !== false
+    || descriptors.credential_storage.value !== 'not_present'
+    || descriptors.ui_state_storage.value !== 'not_present'
+    || pragmas.foreign_keys.value !== 'on'
+    || pragmas.journal_mode.value !== 'wal'
+    || pragmas.synchronous.value !== 'full'
+    || pragmas.trusted_schema.value !== 'off'
+  ) fail();
+}
+
+function workspaceCatalogFromMetadata(value) {
+  const descriptors = exactDataDescriptors(value, [
+    'result_version',
+    'operation',
+    'workspaces',
+    'metadata_evidence',
+  ]);
+  if (
+    descriptors.result_version.value !== 'builder-product-metadata-result.v4'
+    || descriptors.operation.value !== 'project_workspaces_listed'
+  ) fail();
+  assertWorkspaceCatalogMetadataEvidence(descriptors.metadata_evidence.value);
+  const workspaces = denseDataArray(descriptors.workspaces.value, 256).map(workspaceCatalogItemFromMetadata);
+  const seen = new Set();
+  for (const workspace of workspaces) {
+    if (seen.has(workspace.project_id)) fail();
+    seen.add(workspace.project_id);
+  }
+  return Object.freeze({
+    result_version: 'builder-product-metadata-result.v4',
+    operation: 'project_workspaces_listed',
+    workspaces: Object.freeze(workspaces),
+    metadata_evidence: Object.freeze({
+      product_authority: 'sqlite_project_workspace_binding',
+      code_authority: 'not_read_for_workspace_list',
+      source_read_admission: 'not_requested',
+      path_disclosure: 'folder_name_only',
+    }),
+  });
 }
 
 function sameFilesystemPath(left, right) {
@@ -969,6 +1168,24 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
           project_id: projectId,
         });
       } catch (error) {
+        if (safeOwnErrorCode(error) === 'builder_project_read_not_found') {
+          try {
+            result = localProjectSelectionFromWorkspace(
+              await projectMainAuthority.metadata_authority.load_project_workspace({
+                project_id: projectId,
+              }),
+              projectId,
+            );
+            if (operationEpoch === selectionEpoch) {
+              selectedProjectId = projectId;
+              selectionPending = false;
+            }
+            return result;
+          } catch {
+            if (operationEpoch === selectionEpoch) selectionPending = false;
+            throw error;
+          }
+        }
         if (operationEpoch === selectionEpoch) selectionPending = false;
         throw error;
       }
@@ -1076,6 +1293,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       loadCurrent: projectMainAuthority.project_read_authority.load_current,
       loadRevision: projectMainAuthority.project_read_authority.load_revision,
       listCurrent: () => projectMainAuthority.project_read_authority.list_current({ limit: 256 }),
+      listWorkspaces: async () => workspaceCatalogFromMetadata(
+        await projectMainAuthority.metadata_authority.list_project_workspaces({ limit: 256 }),
+      ),
       listHistory: projectMainAuthority.project_read_authority.list_history,
       mainWindowRef: options.mainWindowRef,
     });
@@ -1124,6 +1344,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: LOAD_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.loadCurrent.invoke }),
     Object.freeze({ channel: LOAD_REVISION_CHANNEL, invoke: workspaceAdapter.channels.loadRevision.invoke }),
     Object.freeze({ channel: LIST_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.listCurrent.invoke }),
+    Object.freeze({ channel: LIST_WORKSPACES_CHANNEL, invoke: workspaceAdapter.channels.listWorkspaces.invoke }),
     Object.freeze({ channel: LIST_HISTORY_CHANNEL, invoke: workspaceAdapter.channels.listHistory.invoke }),
     Object.freeze({ channel: READ_TASK_STREAM_CHANNEL, invoke: taskStreamAdapter.channels.read.invoke }),
     Object.freeze({ channel: REVIEW_PLAN_CHANNEL, invoke: planReviewAdapter.channels.review.invoke }),

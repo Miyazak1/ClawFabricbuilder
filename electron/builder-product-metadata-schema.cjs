@@ -807,6 +807,11 @@ function sanitizeListCurrentProjectRevisionsRequest(value) {
   return freezeDeep({ limit: safeLimit(valueAt(value, 'limit')) });
 }
 
+function sanitizeListProjectWorkspacesRequest(value) {
+  exactObject(value, ['limit']);
+  return freezeDeep({ limit: safeLimit(valueAt(value, 'limit')) });
+}
+
 function sanitizeLoadConversationCandidateByDraftRequest(value) {
   exactObject(value, ['draft_id']);
   return freezeDeep({ draft_id: safeDraftId(valueAt(value, 'draft_id')) });
@@ -892,6 +897,7 @@ module.exports = Object.freeze({
   sanitizeLoadCurrentRequest: safeBoundary(sanitizeLoadCurrentRequest),
   sanitizeLoadProjectRevisionRequest: safeBoundary(sanitizeLoadProjectRevisionRequest),
   sanitizeBindProjectWorkspaceRequest: safeBoundary(sanitizeBindProjectWorkspaceRequest),
+  sanitizeListProjectWorkspacesRequest: safeBoundary(sanitizeListProjectWorkspacesRequest),
   sanitizeListProjectRevisionsRequest: safeBoundary(sanitizeListProjectRevisionsRequest),
   sanitizeListCurrentProjectRevisionsRequest: safeBoundary(sanitizeListCurrentProjectRevisionsRequest),
   sanitizeLoadConversationCandidateByDraftRequest:

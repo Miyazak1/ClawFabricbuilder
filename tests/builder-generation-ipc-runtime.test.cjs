@@ -34,6 +34,7 @@ const {
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,
   LIST_CURRENT_CHANNEL,
+  LIST_WORKSPACES_CHANNEL,
   LIST_HISTORY_CHANNEL,
 } = require('../electron/builder-project-workspace-ipc-adapter.cjs');
 const {
@@ -292,6 +293,7 @@ function runtimeWithService(service, probes = {}) {
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
               loadRevision: { invoke: (_event, body) => options.loadRevision(body) },
               listCurrent: { invoke: () => options.listCurrent() },
+              listWorkspaces: { invoke: () => options.listWorkspaces() },
               listHistory: { invoke: (_event, body) => options.listHistory(body) },
             },
           }),
@@ -483,6 +485,32 @@ function runtimeWithService(service, probes = {}) {
                     }
                   })`, context);
                 },
+                list_project_workspaces() {
+                  probes.listProjectWorkspacesRequests ??= [];
+                  probes.listProjectWorkspacesRequests.push({ limit: 256 });
+                  return vm.runInContext(`({
+                    result_version: "builder-product-metadata-result.v4",
+                    operation: "project_workspaces_listed",
+                    workspaces: [],
+                    metadata_evidence: {
+                      database_id: "builder-product-metadata-database.v3",
+                      schema_fingerprint_digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                      schema_version: "builder-product-metadata-schema.v6",
+                      user_version: 6,
+                      runtime_pragmas: {
+                        foreign_keys: "on",
+                        journal_mode: "wal",
+                        synchronous: "full",
+                        trusted_schema: "off"
+                      },
+                      transaction: "project_workspace_list_readback",
+                      git_object_verification: "not_performed_by_metadata_database",
+                      source_bytes_stored: false,
+                      credential_storage: "not_present",
+                      ui_state_storage: "not_present"
+                    }
+                  })`, context);
+                },
                 record_project_revision_receipt() {},
               },
               project_read_authority: {
@@ -609,6 +637,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     LOAD_CURRENT_CHANNEL,
     LOAD_REVISION_CHANNEL,
     LIST_CURRENT_CHANNEL,
+    LIST_WORKSPACES_CHANNEL,
     LIST_HISTORY_CHANNEL,
     READ_TASK_STREAM_CHANNEL,
     REVIEW_PLAN_CHANNEL,
@@ -682,6 +711,28 @@ test('binds one selected empty folder as the main-owned local project workspace'
   assert.equal(dialogCalls[0].windowRef, mainWindow);
   assert.deepEqual(dialogCalls[0].dialogOptions.properties, ['openDirectory', 'createDirectory']);
 
+  const listedWorkspaces = await ipcMain.handlers.get(LIST_WORKSPACES_CHANNEL)(
+    { sender: mainWindow.webContents },
+  );
+  assert.equal(listedWorkspaces.operation, 'project_workspaces_listed');
+  assert.deepEqual(Array.from(listedWorkspaces.workspaces, (workspace) => ({
+    project_id: workspace.project_id,
+    title: workspace.title,
+    source_folders: Array.from(workspace.source_folders),
+    has_current_revision: workspace.has_current_revision,
+    current_revision_number: workspace.current_revision_number,
+  })), [{
+    project_id: selected.project_id,
+    title: 'Focus timer',
+    source_folders: [{
+      name: path.basename(selectedProjectRootPath),
+      status: 'selected',
+    }],
+    has_current_revision: false,
+    current_revision_number: 0,
+  }]);
+  assert.equal(JSON.stringify(listedWorkspaces).includes(selectedProjectRootPath), false);
+
   runtime.dispose();
   const metadata = createBuilderProductMetadataDatabase(
     path.join(userDataPath, 'builder-product-metadata-v6', 'builder.sqlite'),
@@ -702,6 +753,36 @@ test('binds one selected empty folder as the main-owned local project workspace'
   assert.equal(identity.project.current_revision_receipt_digest, null);
   assert.equal(identity.project.current_revision_number, 0);
   metadata.close();
+
+  const restartedWindow = activeWindow();
+  const restartedIpcMain = fakeIpcMain();
+  const restarted = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain: restartedIpcMain,
+    mainWindowRef: () => restartedWindow,
+    userDataPath,
+    showOpenDialog: async () => {
+      throw new Error('restart open must not show a folder dialog');
+    },
+  });
+  restarted.register();
+  const reopened = await restartedIpcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: restartedWindow.webContents },
+    { project_id: selected.project_id },
+  );
+  assert.deepEqual(reopened, {
+    result_version: 'builder-project-selection-result.v1',
+    operation: 'local_project_bound',
+    project_id: selected.project_id,
+    project_title: 'Focus timer',
+    source_folders: [{
+      name: path.basename(selectedProjectRootPath),
+      status: 'selected',
+    }],
+  });
+  assert.equal(JSON.stringify(reopened).includes(selectedProjectRootPath), false);
+  restarted.dispose();
 });
 
 test('binds source folders to an existing logical project identity over workspace IPC', async (t) => {
@@ -931,6 +1012,10 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(LIST_HISTORY_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_project_workspace_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(LIST_WORKSPACES_CHANNEL)({ sender: mainWindow.webContents }, {}),
     (error) => error.code === 'builder_project_workspace_invalid',
   );
   await assert.rejects(
@@ -2315,12 +2400,13 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
     path.join(__dirname, '..', 'electron', 'builder-generation-ipc-runtime.cjs'),
     'utf8',
   );
+  const sourceWithoutFixedMetadataAbsenceField = source.replace(/credential_storage/gu, '');
   for (const forbidden of [
     /ipcRenderer|contextBridge|BrowserWindow|require\(['"]electron['"]\)|\bnet\b/u,
     /write_current|credential|safeStorage|providerSettings/u,
     /builder-project-revision-repository|builder-project-revisions-v1|projectRevisionRepository/u,
     /local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/u,
-  ]) assert.doesNotMatch(source, forbidden);
+  ]) assert.doesNotMatch(sourceWithoutFixedMetadataAbsenceField, forbidden);
   assert.match(source, /createBuilderProjectMainAuthority/u);
   assert.doesNotMatch(source, /createDefaultBuilderGitProjectRepository/u);
   assert.doesNotMatch(source, /createBuilderProductMetadataDatabase/u);

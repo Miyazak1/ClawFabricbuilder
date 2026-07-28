@@ -176,6 +176,7 @@ function setup(options: {
     loadCurrent,
     loadRevision,
     listCurrent: async () => ({ projects: [] }),
+    listWorkspaces: async () => ({ workspaces: [] }),
     listHistory: async () => ({ revisions: [] }),
   };
   const controller = createBuilderProjectController({
@@ -267,6 +268,32 @@ describe('Builder project controller v2', () => {
     expect(result.preview?.version).toBe('builder-source-tree-static-preview.v3');
     expect(result.preview?.preview_runtime_limitations).toEqual([]);
     expect(isTrustedBuilderProjectControllerSnapshot(result)).toBe(true);
+  });
+
+  it('opens a restart-restored bound workspace before the first saved version', async () => {
+    const { controller, open } = setup({
+      open: async () => createLocalProjectSelection({
+        projectId: PROJECT_ID,
+        title: 'Unsaved dashboard',
+        sourceFolderName: 'site-source',
+      }),
+    });
+
+    const result = await controller.open(PROJECT_ID);
+
+    expect(open).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(result.status).toBe('ready');
+    expect(result.savedProject).toBeNull();
+    expect(result.draft).toBeNull();
+    expect(result.workingProjectId).toBe(PROJECT_ID);
+    expect(result.workingProject).toEqual({
+      project_id: PROJECT_ID,
+      title: 'Unsaved dashboard',
+      source_folders: [{
+        name: 'site-source',
+        status: 'selected',
+      }],
+    });
   });
 
   it('keeps generation blocked when no local project folder is bound', async () => {

@@ -7,6 +7,7 @@ type BuilderProjectWorkspaceBridge = Readonly<{
   loadCurrent(request: unknown): Promise<unknown>;
   loadRevision(request: unknown): Promise<unknown>;
   listCurrent(): Promise<unknown>;
+  listWorkspaces(): Promise<unknown>;
   listHistory(request: unknown): Promise<unknown>;
 }>;
 
@@ -17,6 +18,7 @@ const BRIDGE_KEYS = Object.freeze([
   'loadCurrent',
   'loadRevision',
   'listCurrent',
+  'listWorkspaces',
   'listHistory',
 ]);
 const OPEN_REQUEST_KEYS = Object.freeze(['project_id']);
@@ -77,6 +79,7 @@ function sanitizeBridge(value: unknown): BuilderProjectWorkspaceBridge {
       loadCurrent: methods.loadCurrent,
       loadRevision: methods.loadRevision,
       listCurrent: methods.listCurrent,
+      listWorkspaces: methods.listWorkspaces,
       listHistory: methods.listHistory,
     });
   } catch {
@@ -214,6 +217,9 @@ export function createBuilderDesktopProjectWorkspacePort(
     },
     listCurrent() {
       return call(bridge, bridge.listCurrent, []);
+    },
+    listWorkspaces() {
+      return call(bridge, bridge.listWorkspaces, []);
     },
     listHistory(request: Readonly<{ project_id: string; limit: number }>) {
       return call(bridge, bridge.listHistory, [requestFields(request, LIST_HISTORY_REQUEST_KEYS)]);

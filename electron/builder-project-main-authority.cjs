@@ -165,6 +165,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
     const metadataAuthority = methodFacade(metadataDatabase, [
       'append_conversation_events',
       'bind_project_workspace',
+      'list_project_workspaces',
       'load_conversation',
       'load_conversation_candidate_by_draft',
       'load_project_identity',

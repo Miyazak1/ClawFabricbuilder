@@ -1277,6 +1277,7 @@ export function BuilderPage({
     ? projectCatalogSnapshot
     : null;
   const catalogProjects = catalog?.projects ?? [];
+  const catalogWorkspaceProjects = catalog?.workspaceProjects ?? [];
   const catalogBusy = catalog?.status === 'loading' || catalog?.status === 'refreshing';
   const workspaceLabel = saved !== null
     ? saved.target.title
@@ -1444,6 +1445,17 @@ export function BuilderPage({
       project.summary,
       project.project_id,
     ].some((value) => value.toLocaleLowerCase('en-US').includes(normalizedWorkspaceSearch)));
+  const savedProjectIds = new Set(catalogProjects.map((project) => project.project_id));
+  const visibleBoundWorkspaceProjects = catalogWorkspaceProjects.filter((project) => {
+    if (savedProjectIds.has(project.project_id)) return false;
+    if (workingProject !== null && workingProject.project_id === project.project_id) return false;
+    if (normalizedWorkspaceSearch.length === 0) return true;
+    return [
+      project.project_id,
+      project.title,
+      ...project.source_folders.map((folder) => folder.name),
+    ].some((value) => value.toLocaleLowerCase('en-US').includes(normalizedWorkspaceSearch));
+  });
   const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
   const showReviewSidebar = saved !== null && !hasUnsavedDraft;
   const activityFollowCursor = (() => {
@@ -2079,9 +2091,14 @@ export function BuilderPage({
                       Loading projects...
                     </p>
                   ) : null}
-                  {!catalogBusy && visibleWorkspaceProjects.length === 0 && !showCurrentWorkingProject ? (
+                  {!catalogBusy
+                    && visibleWorkspaceProjects.length === 0
+                    && visibleBoundWorkspaceProjects.length === 0
+                    && !showCurrentWorkingProject ? (
                     <p className="cf-builder-workspace-picker-empty">
-                      {catalogProjects.length === 0 ? 'No saved projects yet.' : 'No matching projects.'}
+                      {catalogProjects.length === 0 && catalogWorkspaceProjects.length === 0
+                        ? 'No projects yet.'
+                        : 'No matching projects.'}
                     </p>
                   ) : null}
                   {!catalogBusy && showCurrentWorkingProject ? (
@@ -2115,6 +2132,25 @@ export function BuilderPage({
                     <span className="cf-builder-workspace-project-title">{project.title}</span>
                     <span className="cf-builder-workspace-project-summary">
                       Version {project.revision_number} - {project.summary}
+                    </span>
+                  </span>
+                </button>
+                  ))}
+                  {!catalogBusy && visibleBoundWorkspaceProjects.map((project) => (
+                <button
+                  className="cf-builder-workspace-project-row"
+                  data-builder-workspace-bound-project={project.project_id}
+                  disabled={typeof onOpenProject !== 'function'}
+                  key={project.project_id}
+                  onClick={() => openProjectFromPicker(project.project_id)}
+                  role="option"
+                  type="button"
+                >
+                  <FolderOpen aria-hidden="true" className="size-3.5" />
+                  <span className="min-w-0">
+                    <span className="cf-builder-workspace-project-title">{project.title}</span>
+                    <span className="cf-builder-workspace-project-summary">
+                      Not saved yet - {project.source_folders[0]?.name ?? 'Source folder selected'}
                     </span>
                   </span>
                 </button>

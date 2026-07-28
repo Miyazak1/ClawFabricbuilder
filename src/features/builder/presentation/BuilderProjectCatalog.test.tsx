@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBuilderProjectCatalogController } from '../application/builderProjectCatalogController';
 import { BuilderProjectCatalog } from './BuilderProjectCatalog';
-import { PROJECT_ID, createCatalogWire } from '../../../test/builderV2Fixtures';
+import { PROJECT_ID, createCatalogWire, createWorkspaceCatalogWire } from '../../../test/builderV2Fixtures';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -37,6 +37,7 @@ describe('BuilderProjectCatalog v2', () => {
   it('renders only safe project summaries and explicit commands', async () => {
     const controller = createBuilderProjectCatalogController({
       listCurrent: async () => createCatalogWire(),
+      listWorkspaces: async () => createWorkspaceCatalogWire(),
     });
     const snapshot = await controller.load();
     const onCreateProject = vi.fn();
@@ -64,6 +65,7 @@ describe('BuilderProjectCatalog v2', () => {
     const wire = await createCatalogWire();
     const controller = createBuilderProjectCatalogController({
       listCurrent: async () => ({ ...wire, projects: [] }),
+      listWorkspaces: async () => createWorkspaceCatalogWire(),
     });
     const container = render(
       <BuilderProjectCatalog snapshot={await controller.load()} />,
@@ -76,7 +78,10 @@ describe('BuilderProjectCatalog v2', () => {
     const listCurrent = vi.fn()
       .mockResolvedValueOnce(await createCatalogWire())
       .mockRejectedValueOnce(new Error('private'));
-    const controller = createBuilderProjectCatalogController({ listCurrent });
+    const controller = createBuilderProjectCatalogController({
+      listCurrent,
+      listWorkspaces: async () => createWorkspaceCatalogWire(),
+    });
     await controller.load();
     const stale = await controller.refresh();
     const container = render(<BuilderProjectCatalog snapshot={stale} />);
@@ -97,6 +102,7 @@ describe('BuilderProjectCatalog v2', () => {
         tree_oid: 'b'.repeat(40),
         selected_at_ms: 1,
       }],
+      workspaceProjects: [],
       busy: false,
     }} />);
     expect(container.textContent).toContain('Saved projects are unavailable.');

@@ -340,6 +340,22 @@ export async function createCatalogWire() {
   };
 }
 
+export function createWorkspaceCatalogWire(
+  workspaces: readonly unknown[] = [],
+) {
+  return {
+    result_version: 'builder-product-metadata-result.v4',
+    operation: 'project_workspaces_listed',
+    workspaces,
+    metadata_evidence: {
+      product_authority: 'sqlite_project_workspace_binding',
+      code_authority: 'not_read_for_workspace_list',
+      source_read_admission: 'not_requested',
+      path_disclosure: 'folder_name_only',
+    },
+  };
+}
+
 export async function createHistoryWire(projectId = PROJECT_ID, revisionCount: 1 | 2 = 2) {
   const firstReceiptDigest = await digest({ history: 'one', project_id: projectId });
   const secondReceiptDigest = await digest({

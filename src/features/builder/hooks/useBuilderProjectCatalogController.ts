@@ -21,9 +21,10 @@ export function useBuilderProjectCatalogController(
   port: BuilderProjectCatalogPort,
 ): UseBuilderProjectCatalogControllerResult {
   const listCurrent = port.listCurrent;
+  const listWorkspaces = port.listWorkspaces;
   const controller = useMemo(
-    () => createBuilderProjectCatalogController({ listCurrent }),
-    [listCurrent],
+    () => createBuilderProjectCatalogController({ listCurrent, listWorkspaces }),
+    [listCurrent, listWorkspaces],
   );
   const activeController = useRef<typeof controller | null>(null);
   const lifecycleToken = useRef<object | null>(null);
