@@ -613,6 +613,15 @@ Current checkpoint:
   failures. It opens no IPC/preload path, shows no Agents UI, starts no
   provider/tool execution, reads no credentials or source, grants no permissions,
   and mutates no Git, Project Revision, Review, or Artifact authority.
+- the current Agent project work result contract adds a pure main-side receipt
+  for a supervised active assignment lease returning either a project edit
+  candidate or project test/check plan to owner review. It binds the result to
+  the Agent version, Assignment, active status, lease, Project/Conversation/
+  Task/Run identity, and lease time window; records only fixed review summaries;
+  and keeps materialization behind explicit owner review. It opens no IPC/preload
+  path, shows no Agents UI, dispatches no provider or model call, reads no
+  credentials or source, writes no files, runs no process or tests, mutates no
+  Git or Project Revision facts, and creates no Review/Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
