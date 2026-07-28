@@ -49,6 +49,9 @@ const {
 const {
   createBuilderApprovedPlanContinuationAdmission,
 } = require('./builder-approved-plan-continuation-admission.cjs');
+const {
+  sanitizeBuilderDraftContinuationAdmission,
+} = require('./builder-draft-continuation-admission.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -480,6 +483,15 @@ function sanitizeApprovedPlanWorkRequest(value) {
   });
 }
 
+function sanitizeDraftContinuationWorkRequest(value) {
+  exactObject(value, ['admission', 'instruction', 'request_digest']);
+  return freezeDeep({
+    admission: sanitizeBuilderDraftContinuationAdmission(valueAt(value, 'admission')),
+    instruction: safeText(valueAt(value, 'instruction'), 12_000, 48_000),
+    request_digest: safeDigest(valueAt(value, 'request_digest')),
+  });
+}
+
 function sanitizeAcceptCandidateRequest(value) {
   exactObject(value, ['draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'revision']);
   return freezeDeep({
@@ -891,7 +903,7 @@ function createBuilderConversationMainService(rawOptions) {
       && left.event_digest === right.event_digest;
   }
 
-  function approvedPlanWorkIds() {
+  function createContinuationWorkIds() {
     const taskId = newId(options.createUuid, 'builder-task');
     return freezeDeep({
       turn_command_id: newId(options.createUuid, 'builder-command'),
@@ -936,7 +948,7 @@ function createBuilderConversationMainService(rawOptions) {
         conversation_id: request.conversation_id,
         created_at_ms: state.conversation.created_at_ms,
       });
-      const ids = approvedPlanWorkIds();
+      const ids = createContinuationWorkIds();
       const first = eventAt({
         projectId: request.project_id,
         conversationId: request.conversation_id,
@@ -993,6 +1005,129 @@ function createBuilderConversationMainService(rawOptions) {
         run_terminal_failure_code: null,
         ids,
         cancel_requested: false,
+      });
+      TRUSTED_CONTEXTS.add(context);
+      return context;
+    } catch {
+      fail();
+    }
+  }
+
+  function assertDraftContinuationAdmissionMatches(admission, draft, state) {
+    const receipt = draft.candidate_result.git_candidate_receipt;
+    const turn = state.snapshot.turns.find((item) => item.turn_id === draft.turn_id) ?? null;
+    const run = turn?.runs.find((item) => item.run_id === draft.run_id) ?? null;
+    if (
+      admission.project_id !== draft.project_id
+      || admission.conversation_id !== draft.conversation_id
+      || admission.draft_id !== draft.draft_id
+      || admission.previous_turn_id !== draft.turn_id
+      || admission.previous_task_id !== draft.task_id
+      || admission.previous_run_id !== draft.run_id
+      || admission.candidate_id !== receipt.candidate_id
+      || admission.candidate_digest !== receipt.candidate_digest
+      || admission.resulting_tree_digest !== receipt.resulting_tree_digest
+      || !sameHead(admission.conversation_head, draft.conversation_head)
+      || !sameHead(admission.conversation_head, state.head)
+      || turn === null
+      || turn.task === null
+      || turn.task.task_id !== draft.task_id
+      || run === null
+      || (
+        admission.previous_request_digest !== null
+        && run.input_digest !== admission.previous_request_digest
+      )
+      || run.candidate_review !== null
+    ) fail();
+  }
+
+  function beginDraftContinuationWork(rawRequest) {
+    try {
+      const request = sanitizeDraftContinuationWorkRequest(rawRequest);
+      const admission = request.admission;
+      const draft = readCandidateDraft({ draft_id: admission.draft_id });
+      const state = load(admission.project_id, admission.conversation_id);
+      if (
+        state === null
+        || state.snapshot.active_turn_id !== null
+        || !sameHead(state.head, admission.conversation_head)
+      ) fail();
+      assertDraftContinuationAdmissionMatches(admission, draft, state);
+      const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+      const project = freezeDeep({
+        project_id: admission.project_id,
+        created_at_ms: projectCreatedAt(admission.project_id, draft.base_revision, recordedAtMs, state),
+      });
+      const conversation = freezeDeep({
+        project_id: admission.project_id,
+        conversation_id: admission.conversation_id,
+        created_at_ms: state.conversation.created_at_ms,
+      });
+      const ids = createContinuationWorkIds();
+      const first = eventAt({
+        projectId: admission.project_id,
+        conversationId: admission.conversation_id,
+        sequence: state.head.sequence + 1,
+        commandId: ids.turn_command_id,
+        eventType: 'turn_submitted',
+        previous: state.head,
+        payload: {
+          message: {
+            message_id: ids.message_id,
+            text: request.instruction,
+          },
+          turn_id: ids.turn_id,
+          mode: 'work',
+          task: {
+            task_id: ids.task_id,
+            title: 'Revise unsaved draft',
+          },
+          base_revision: draft.base_revision,
+        },
+      });
+      const second = eventAt({
+        projectId: admission.project_id,
+        conversationId: admission.conversation_id,
+        sequence: first.sequence + 1,
+        commandId: ids.run_command_id,
+        eventType: 'run_started',
+        previous: eventHead(first),
+        payload: {
+          turn_id: ids.turn_id,
+          run_id: ids.run_id,
+          task_id: ids.task_id,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          input_digest: request.request_digest,
+        },
+      });
+      const appended = append({
+        project,
+        conversation,
+        expectedHead: state.head,
+        events: [first, second],
+        recordedAtMs,
+      });
+      const context = freezeDeep({
+        context_version: 'builder-conversation-run-context.v1',
+        mode: 'work',
+        project,
+        conversation,
+        request_digest: request.request_digest,
+        start_head: { ...appended.head },
+        attempt_number: 1,
+        events: appended.events,
+        run_terminal_failure_code: null,
+        ids,
+        cancel_requested: false,
+        draft_continuation: {
+          admission_digest: admission.admission_digest,
+          draft_id: admission.draft_id,
+          previous_turn_id: admission.previous_turn_id,
+          previous_task_id: admission.previous_task_id,
+          previous_run_id: admission.previous_run_id,
+          previous_candidate_digest: admission.candidate_digest,
+        },
       });
       TRUSTED_CONTEXTS.add(context);
       return context;
@@ -2219,6 +2354,7 @@ function createBuilderConversationMainService(rawOptions) {
     record_run_progress: recordRunProgress,
     retry_after_failure: retryAfterFailure,
     begin_approved_plan_work: beginApprovedPlanWork,
+    begin_draft_continuation_work: beginDraftContinuationWork,
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,
     complete_plan: completePlan,
@@ -2257,6 +2393,7 @@ function createBuilderConversationMainService(rawOptions) {
       approved_plan_read: 'main_only_current_head_approval_gate',
       approved_plan_continuation_admission: 'main_only_fresh_approved_plan_no_execution',
       approved_plan_work_start: 'main_only_current_head_approved_plan_starts_new_work_run',
+      draft_continuation_work_start: 'main_only_pending_draft_current_head_starts_new_work_run',
       task_stream_change_notification: 'project_id_only_after_append',
     }),
   });

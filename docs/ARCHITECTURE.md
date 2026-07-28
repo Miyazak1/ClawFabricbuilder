@@ -185,6 +185,13 @@ draft-to-draft generator, but it is explicitly not a Project Revision, Save
 receipt, or renderer-safe payload. Preparing it still starts no Run, dispatches
 no provider/tool, performs no source mutation, creates no new Git candidate, and
 opens no IPC/preload/renderer command.
+The Conversation main service can now consume the draft-continuation admission
+only after replay proves the pending candidate is still unreviewed, the
+Conversation head is still current, and the recorded candidate digest/tree
+evidence matches the admission. It appends a new work Turn and Run to describe
+the requested replacement work, but it still dispatches no provider/tool, reads
+no source, mutates no Git state, creates no new candidate, accepts no Review,
+saves no Project Revision, and exposes no IPC/preload/renderer command.
 
 The code authority is a normal project directory with a standard Git
 repository. Git commit, tree, and parent object IDs are the durable code facts.

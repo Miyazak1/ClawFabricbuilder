@@ -548,9 +548,14 @@ Evidence requirements:
   marking that base as not a Project Revision, not a Save receipt, and not a
   renderer-safe payload. Preparing that base still starts no replacement Run,
   dispatches no provider/tool, mutates no source, and creates no new Git
-  candidate. The next slice must add the Conversation head/pending Review
-  revalidation and main-only draft-to-draft generation service before any
-  visible composer affordance is enabled;
+  candidate. Conversation main service now consumes the admission only after it
+  revalidates the current Conversation head, the unreviewed pending candidate,
+  and the matching candidate digest/tree evidence, then appends a new work
+  Turn/Run for the requested replacement. That start gate still dispatches no
+  provider/tool, reads no source, mutates no Git, creates no candidate, accepts
+  no Review, creates no Save/Project Revision, and opens no IPC/preload/renderer
+  command. The next slice must add the main-only draft-to-draft generation
+  service before any visible composer affordance is enabled;
 - cancellation and restart semantics;
 - no arbitrary generated-code execution through the renderer;
 - only a reviewed Git commit plus Project Revision receipt changes project

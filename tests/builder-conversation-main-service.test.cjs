@@ -54,11 +54,15 @@ const {
   BUILDER_APPROVED_PLAN_CONTINUATION_ADMISSION_VERSION,
   sanitizeBuilderApprovedPlanContinuationAdmission,
 } = require('../electron/builder-approved-plan-continuation-admission.cjs');
+const {
+  createBuilderDraftContinuationAdmission,
+} = require('../electron/builder-draft-continuation-admission.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
 const QUESTION_DIGEST = `sha256:${'0'.repeat(64)}`;
 const CANDIDATE_DIGEST = `sha256:${'2'.repeat(64)}`;
+const DRAFT_CONTINUATION_REQUEST_DIGEST = `sha256:${'d'.repeat(64)}`;
 const TOOL_ACTOR_ID = 'builder-user:11111111-1111-4111-8111-111111111112';
 const TOOL_CALL_ID = 'builder-tool-call:11111111-1111-4111-8111-111111111113';
 const TOOL_STEP_ID = 'builder-run-step:11111111-1111-4111-8111-111111111114';
@@ -166,6 +170,40 @@ function candidateResult(context) {
       replay: false,
     },
   };
+}
+
+function draftContinuationAdmission(context, terminal, candidate, overrides = {}) {
+  return createBuilderDraftContinuationAdmission({
+    pending_draft: {
+      result_version: 'builder-generation-pending-draft.v2',
+      draft_id: candidate.draft_id,
+      restart_restore: 'not_persisted',
+      conversation_event_admission: 'sqlite_recorded',
+      git_request_id: candidate.git_candidate_receipt.request_id,
+      title: candidate.title,
+      summary: candidate.summary,
+      conversation_head: terminal.head,
+      candidate_proof: {
+        proof_version: 'builder-generation-pending-candidate-proof.v1',
+        project_id: PROJECT_ID,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        request_digest: context.request_digest,
+        git_request_id: candidate.git_candidate_receipt.request_id,
+        candidate_id: candidate.git_candidate_receipt.candidate_id,
+        candidate_digest: candidate.git_candidate_receipt.candidate_digest,
+        resulting_tree_digest: candidate.git_candidate_receipt.resulting_tree_digest,
+        expected_base_oid: candidate.git_candidate_receipt.expected_base_oid,
+        base_revision: context.events[0].payload.base_revision,
+      },
+      ...overrides.pending_draft,
+    },
+    continuation_id: 'builder-draft-continuation:00000000-0000-4000-8000-000000000950',
+    admitted_at_ms: 9_500,
+    ...overrides.input,
+  });
 }
 
 function sourceContextAuthority() {
@@ -1777,6 +1815,138 @@ test('restores a main-only candidate draft proof after a real database restart',
   }
 });
 
+test('starts draft continuation work only from the current pending candidate head', () => {
+  const item = fixture();
+  try {
+    const context = begin(item.service);
+    const candidate = candidateResult(context);
+    const terminal = item.service.complete_candidate({
+      context,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const admission = draftContinuationAdmission(context, terminal, candidate);
+
+    const continuation = item.service.begin_draft_continuation_work({
+      admission,
+      instruction: 'Make the timer more compact before saving.',
+      request_digest: DRAFT_CONTINUATION_REQUEST_DIGEST,
+    });
+
+    assert.equal(continuation.context_version, 'builder-conversation-run-context.v1');
+    assert.equal(continuation.mode, 'work');
+    assert.equal(continuation.request_digest, DRAFT_CONTINUATION_REQUEST_DIGEST);
+    assert.equal(continuation.start_head.sequence, 6);
+    assert.equal(continuation.events.at(-2).event_type, 'turn_submitted');
+    assert.equal(continuation.events.at(-2).previous_event.sequence, 4);
+    assert.equal(continuation.events.at(-2).payload.message.text, 'Make the timer more compact before saving.');
+    assert.equal(continuation.events.at(-2).payload.task.title, 'Revise unsaved draft');
+    assert.equal(continuation.events.at(-2).payload.base_revision, null);
+    assert.equal(continuation.events.at(-1).event_type, 'run_started');
+    assert.equal(continuation.events.at(-1).payload.input_digest, DRAFT_CONTINUATION_REQUEST_DIGEST);
+    assert.deepEqual(continuation.draft_continuation, {
+      admission_digest: admission.admission_digest,
+      draft_id: candidate.draft_id,
+      previous_turn_id: context.ids.turn_id,
+      previous_task_id: context.ids.task_id,
+      previous_run_id: context.ids.run_id,
+      previous_candidate_digest: CANDIDATE_DIGEST,
+    });
+    assert.deepEqual(item.service.read_stream({ project_id: PROJECT_ID }).conversation.items.slice(-2).map((entry) => entry.item_kind), [
+      'user_message',
+      'run_started',
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify({
+        draft_continuation: continuation.draft_continuation,
+        events: continuation.events.slice(-2),
+      }),
+      /git_candidate_receipt|commit_oid|tree_oid|provider|credential|source_tree|revision_receipt|save_admission/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
+test('rejects draft continuation work after head drift or candidate review', () => {
+  const staleItem = fixture();
+  const rejectedItem = fixture(300, 3_000);
+  const acceptedItem = fixture(600, 6_000);
+  try {
+    const staleContext = begin(staleItem.service);
+    const staleCandidate = candidateResult(staleContext);
+    const staleTerminal = staleItem.service.complete_candidate({
+      context: staleContext,
+      candidate_result: staleCandidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const staleAdmission = draftContinuationAdmission(staleContext, staleTerminal, staleCandidate);
+    staleItem.service.begin_question({
+      project_id: PROJECT_ID,
+      question: 'What does this draft do?',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+    });
+    assert.throws(
+      () => staleItem.service.begin_draft_continuation_work({
+        admission: staleAdmission,
+        instruction: 'Make the draft smaller.',
+        request_digest: DRAFT_CONTINUATION_REQUEST_DIGEST,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+
+    const rejectedContext = begin(rejectedItem.service);
+    const rejectedCandidate = candidateResult(rejectedContext);
+    const rejectedTerminal = rejectedItem.service.complete_candidate({
+      context: rejectedContext,
+      candidate_result: rejectedCandidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const rejectedAdmission = draftContinuationAdmission(rejectedContext, rejectedTerminal, rejectedCandidate);
+    rejectedItem.service.reject_candidate({ draft_id: rejectedCandidate.draft_id });
+    assert.throws(
+      () => rejectedItem.service.begin_draft_continuation_work({
+        admission: rejectedAdmission,
+        instruction: 'Make the rejected draft smaller.',
+        request_digest: DRAFT_CONTINUATION_REQUEST_DIGEST,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+
+    const acceptedContext = begin(acceptedItem.service);
+    const acceptedCandidate = candidateResult(acceptedContext);
+    const acceptedTerminal = acceptedItem.service.complete_candidate({
+      context: acceptedContext,
+      candidate_result: acceptedCandidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const acceptedAdmission = draftContinuationAdmission(acceptedContext, acceptedTerminal, acceptedCandidate);
+    acceptedItem.service.accept_candidate({
+      draft_id: acceptedCandidate.draft_id,
+      review_id: 'builder-review:00000000-0000-4000-8000-000000000951',
+      reviewer_id: 'builder-user:00000000-0000-4000-8000-000000000952',
+      reviewed_at_ms: 9_520,
+      revision: {
+        revision_receipt_digest: `sha256:${'e'.repeat(64)}`,
+        revision_number: 1,
+      },
+    });
+    assert.throws(
+      () => acceptedItem.service.begin_draft_continuation_work({
+        admission: acceptedAdmission,
+        instruction: 'Make the saved draft smaller.',
+        request_digest: DRAFT_CONTINUATION_REQUEST_DIGEST,
+      }),
+      { code: 'builder_conversation_main_service_unavailable' },
+    );
+  } finally {
+    staleItem.close();
+    rejectedItem.close();
+    acceptedItem.close();
+  }
+});
+
 test('records durable candidate rejection and does not restore or verify it afterward', () => {
   const item = fixture();
   let restartedDatabase = null;
@@ -2361,9 +2531,11 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
   assert.match(source, /read_approved_plan/u);
   assert.match(source, /admit_approved_plan_continuation/u);
   assert.match(source, /begin_approved_plan_work/u);
+  assert.match(source, /begin_draft_continuation_work/u);
   assert.match(source, /main_only_current_head_approval_gate/u);
   assert.match(source, /main_only_fresh_approved_plan_no_execution/u);
   assert.match(source, /main_only_current_head_approved_plan_starts_new_work_run/u);
+  assert.match(source, /main_only_pending_draft_current_head_starts_new_work_run/u);
   assert.doesNotMatch(
     source,
     /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit|builder-git-project-repository/iu,
