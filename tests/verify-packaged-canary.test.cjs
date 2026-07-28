@@ -25,6 +25,7 @@ const {
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
   assertTaskStreamPlanFacts,
+  approvePlanSourceReadIfRequested,
   approvePlanViaUi,
   askProjectQuestionViaUi,
   captureSavedActivityEvidence,
@@ -131,6 +132,12 @@ class FakeLocator {
       this.page.forceWorkspaceGateForNextBuild = false;
       this.page.workspacePickerVisible = false;
       this.page.newProjectPanelVisible = false;
+    }
+    if (this.selector === SELECTORS.approvePlanSourceRead) {
+      if (this.page.planSourceReadApprovalVisible !== true) throw new Error('plan source read approval unavailable');
+      this.page.planSourceReadApprovalVisible = false;
+      this.page.requirePlanSourceReadApproval = false;
+      this.page.recordPlanAttempt();
     }
     if (this.selector === SELECTORS.reviewOpenChanges) {
       this.page.changesPanelVisible = true;
@@ -329,6 +336,10 @@ class FakeLocator {
       );
       return;
     }
+    if (this.selector === SELECTORS.planSourceReadApproval) {
+      this.page.assertSelectorVisibility(this.selector, this.page.planSourceReadApprovalVisible, state);
+      return;
+    }
     if (this.selector === SELECTORS.planApproved) {
       this.page.assertSelectorVisibility(
         this.selector,
@@ -428,7 +439,10 @@ class FakeRole {
       }
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
     }
-    if (this.name === 'Plan first') this.page.recordPlanAttempt();
+    if (this.name === 'Plan first') {
+      if (this.page.requirePlanSourceReadApproval === true) this.page.planSourceReadApprovalVisible = true;
+      else this.page.recordPlanAttempt();
+    }
     if (this.name === 'Approve plan') this.page.recordPlanApproval();
     if (this.name === 'Retry') this.page.retryCandidateAttempt();
     if (this.name === 'Back to current') {
@@ -506,6 +520,7 @@ class FakePage {
     this.lastFailedDraftTarget = null;
     this.approvedPlanReviews = 0;
     this.planTurns = 0;
+    this.planSourceReadApprovalVisible = false;
     this.previewVisible = true;
     this.previewRuntimeBlocked = false;
     this.previewUnavailable = false;
@@ -514,6 +529,7 @@ class FakePage {
     this.questionTurns = 0;
     this.newProjectPanelVisible = false;
     this.retryDraftVisible = false;
+    this.requirePlanSourceReadApproval = false;
     this.reviewTextOverride = null;
     this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
@@ -2132,6 +2148,48 @@ test('rejects explanations that are not bound to a taskless question turn', () =
   assert.throws(
     () => assertTaskStreamExplanationFacts(taskedExplanation, expectedRevision, 1, 1),
     (error) => error.code === 'canary_question_evidence_failed',
+  );
+});
+
+test('skips plan source-read approval when no prompt is visible', async () => {
+  const page = new FakePage();
+
+  assert.equal(await approvePlanSourceReadIfRequested(page), false);
+  assert.equal(page.planTurns, 0);
+  assert.equal(page.planSourceReadApprovalVisible, false);
+});
+
+test('approves visible plan source-read prompt before waiting for a plan', async (t) => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+  page.draftSaved = true;
+  page.savedRevision = 2;
+  page.candidateTurns = 2;
+  page.questionTurns = 1;
+  page.requirePlanSourceReadApproval = true;
+  page.versionLabel = 'Version 2';
+
+  const currentRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+  const plan = await proposePlanViaUi(page, currentRevision, 'Add a completed summary.', 2, 1, 1);
+
+  assert.equal(page.planSourceReadApprovalVisible, false);
+  assert.equal(page.planTurns, 1);
+  assert.equal(page.approvedPlanReviews, 0);
+  assert.equal(page.candidateTurns, 2);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.deepEqual(
+    assertTaskStreamPlanFacts(bridgeEvidence(projectId, true, 2, 2, 1, 1, 0), currentRevision, 2, 1, 1),
+    plan.task_stream,
+  );
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['Plan first'],
+  );
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
+    [SELECTORS.approvePlanSourceRead],
   );
 });
 

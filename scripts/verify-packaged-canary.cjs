@@ -25,6 +25,7 @@ const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
 const SESSION_DATA_DIRECTORY_NAME = 'session-data';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const CANARY_PLAN_PROPOSAL_TIMEOUT_MS = 120_000;
+const CANARY_PLAN_SOURCE_READ_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PROJECT_READY_TIMEOUT_MS = 15_000;
 const STDIN_MAX_BYTES = 128 * 1024;
 const LOCAL_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -59,9 +60,11 @@ const SELECTORS = Object.freeze({
   idea: '#builder-idea',
   newProjectPanel: '[data-builder-new-project-panel="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
+  approvePlanSourceRead: '[data-builder-approve-plan-source-read="true"]',
   planApproved: '[data-builder-activity-card="Plan approved"]',
   planProposed: '[data-builder-activity-card="Plan proposed"]',
   planReviewActions: '[data-builder-plan-review-actions="true"]',
+  planSourceReadApproval: '[data-builder-plan-source-read-approval="true"]',
   questionAnswer: '[data-builder-activity-card="Assistant"]',
   toolActivityRequested: '[data-builder-tool-activity="requested"]',
   toolActivitySucceeded: '[data-builder-tool-activity="succeeded"]',
@@ -131,6 +134,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_plan_provider_unavailable_failed: 'Packaged canary plan provider was unavailable.',
   canary_plan_renderer_sanitizer_failed: 'Packaged canary plan succeeded in main but was rejected by the renderer.',
   canary_plan_request_invalid_failed: 'Packaged canary plan request was rejected.',
+  canary_plan_source_read_approval_failed: 'Packaged canary plan source read approval failed.',
   canary_plan_structured_response_failed: 'Packaged canary plan response could not be prepared.',
   canary_plan_timeout_failed: 'Packaged canary plan proposal timed out.',
   canary_plan_review_failed: 'Packaged canary plan approval did not continue.',
@@ -1609,6 +1613,29 @@ async function waitForPlanProposalVisible(page, projectId = null) {
   fail('canary_plan_failed');
 }
 
+async function approvePlanSourceReadIfRequested(page) {
+  try {
+    await page.locator(SELECTORS.planSourceReadApproval).waitFor({
+      state: 'visible',
+      timeout: CANARY_PLAN_SOURCE_READ_APPROVAL_TIMEOUT_MS,
+    });
+  } catch {
+    return false;
+  }
+
+  try {
+    await page.locator(SELECTORS.approvePlanSourceRead).click();
+    await page.locator(SELECTORS.planSourceReadApproval).waitFor({
+      state: 'hidden',
+      timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_plan_source_read_approval_failed');
+  }
+}
+
 async function fillProviderSettingsViaUi(page, provider, gate) {
   try {
     await clickByRole(page, 'button', 'Settings');
@@ -2042,6 +2069,7 @@ async function proposePlanViaUi(
   }
 
   try {
+    await approvePlanSourceReadIfRequested(page);
     await waitForPlanProposalVisible(page, currentProject.project_id);
     await page.locator(SELECTORS.planProposed).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.approvePlan).waitFor({ state: 'visible' });
@@ -2052,7 +2080,6 @@ async function proposePlanViaUi(
   }
 
   try {
-    await page.locator(SELECTORS.toolActivityRequested).first().waitFor({ state: 'visible' });
     await page.locator(SELECTORS.toolActivitySucceeded).first().waitFor({ state: 'visible' });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
@@ -4697,6 +4724,7 @@ module.exports = {
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
   assertTaskStreamPlanFacts,
+  approvePlanSourceReadIfRequested,
   approvePlanViaUi,
   askProjectQuestionViaUi,
   captureGuardedUserDataRoot,

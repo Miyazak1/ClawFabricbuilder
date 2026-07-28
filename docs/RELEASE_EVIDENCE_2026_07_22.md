@@ -572,6 +572,44 @@ evidence, or arbitrary runtime/tool-execution readiness.
   network-denying CSP, app id `com.clawfabric.builder`, product name
   `ClawFabric Builder`, and 747 ASAR entries.
 
+## 2026-07-28 DeepSeek Source-Read Packaged Canary
+
+This addendum records the real saved-profile DeepSeek V4 packaged canary after
+the packaged canary verifier was updated to follow the visible Plan first
+source-read approval prompt and to assert the folded tool result row rather
+than a transient request row. It extends desktop packaged canary evidence only;
+it does not extend installer evidence, code-signing status, mobile evidence, or
+arbitrary runtime/tool-execution readiness.
+
+- Focused verifier validation passed through
+  `node --test tests\verify-packaged-canary.test.cjs`; the command reported 46
+  passing subtests, including the new no-prompt and visible source-read approval
+  paths.
+- `npm run pack` passed after the verifier update. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 751 ASAR
+  entries.
+- The real canary launched
+  `release\win-unpacked\ClawFabric Builder.exe` with the saved DeepSeek profile
+  path, copied only guarded provider config/secret files into temporary
+  user-data, did not accept provider material through stdin, argv, env, logs, or
+  renderer-readable evidence, and left the source profile unchanged.
+- The canary exercised the desktop Builder UI through the source-folder
+  workspace gate, initial draft generation, explicit Version 1 Save, saved
+  project question answer without creating a draft or revision, unsaved update
+  draft, pending-draft restart restore with Save still explicit, explicit
+  Version 2 Save, saved history inspection, restart restore, Plan first after
+  restart, visible project-read approval, approved-plan continuation, and a new
+  pending restart-continuation draft.
+- The Plan first task-stream evidence included three bounded tool requests,
+  three tool results, and three succeeded tool results; the UI assertion now
+  matches the conversation surface by requiring the visible succeeded tool
+  activity result instead of the folded request row.
+- Static preview evidence stayed nonblank with a script-denying preview policy,
+  visible runtime-limit explanation, zero unexpected renderer network requests,
+  and changed/unchanged preview digests where expected across save, restart, and
+  continuation.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
