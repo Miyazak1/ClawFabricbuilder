@@ -1039,6 +1039,8 @@ describe('BuilderPage v2', () => {
 
     expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
       .toContain('Choose project');
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+      .toContain('Chat only until you choose a folder');
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
 
     click(container, '[data-builder-workspace-chip="true"]');
@@ -1142,6 +1144,7 @@ describe('BuilderPage v2', () => {
     const picker = container.querySelector('[data-builder-workspace-picker="true"]');
     expect(picker).not.toBeNull();
     expect(picker?.textContent).toContain('Choose or create a project before I build.');
+    expect(picker?.textContent).toContain('Add a source folder so Builder knows where it can work.');
     expect(picker?.textContent).toContain('No projects yet.');
 
     click(container, '[data-builder-workspace-new-project="true"]');
@@ -1151,6 +1154,7 @@ describe('BuilderPage v2', () => {
     expect(newProjectPanel?.textContent).toContain('Project name');
     expect(newProjectPanel?.textContent).toContain('Source folders');
     expect(newProjectPanel?.textContent).toContain('No source folder selected.');
+    expect(newProjectPanel?.textContent).toContain('Choose the local folder Builder can read and edit for this project.');
     const title = container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]');
     expect(title?.value).toBe('New project');
 

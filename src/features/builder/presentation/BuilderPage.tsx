@@ -1297,7 +1297,7 @@ export function BuilderPage({
     ? `Version ${saved.target.revision_number}`
     : workingProject !== null
       ? workingProject.source_folders[0]?.name ?? 'Source folder selected'
-      : 'Chat without a project';
+      : 'Chat only until you choose a folder';
   const version = saved?.target.revision_number ?? null;
   const canAddContext = typeof onSteerInstruction === 'function'
     && busy
@@ -2114,7 +2114,7 @@ export function BuilderPage({
                 <section className="cf-builder-source-folders-box" aria-label="Source folders">
                   <div>
                     <h3>Source folders</h3>
-                    <p>No source folder selected.</p>
+                    <p>No source folder selected. Choose the local folder Builder can read and edit for this project.</p>
                   </div>
                   <button
                     className="cf-builder-workspace-new-project"
@@ -2132,7 +2132,7 @@ export function BuilderPage({
               <>
                 {workspacePickerBuildPrompt ? (
                   <p className="cf-builder-workspace-picker-note" role="status">
-                    Choose or create a project before I build.
+                    Choose or create a project before I build. Add a source folder so Builder knows where it can work.
                   </p>
                 ) : null}
                 <label className="cf-builder-workspace-search">
