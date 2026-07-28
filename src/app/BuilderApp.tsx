@@ -458,6 +458,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
+  const [approvedPlanContinuationFailure, setApprovedPlanContinuationFailure] =
+    useState<BuilderPlanReviewInFlight | null>(null);
   const [workspacePickerRequest, setWorkspacePickerRequest] = useState(0);
   const [planSourceReadApproval, setPlanSourceReadApproval] =
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
@@ -630,6 +632,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     planSourceReadApprovalRef.current = null;
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
+    setApprovedPlanContinuationFailure(null);
     setPlanSourceReadApproval(null);
     publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
@@ -780,6 +783,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (submitInFlightRef.current || idea.trim().length === 0) return;
     const submittedIdea = idea;
     const route = routeBuilderComposerIntent(submittedIdea);
+    setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
     if (route === 'build' && !hasBuildWorkspace(projectSnapshotRef.current)) {
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
@@ -837,6 +841,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const submittedIdea = idea;
     const fallbackProjectId = currentSnapshot.savedProject.target.project_id;
     submitInFlightRef.current = true;
+    setApprovedPlanContinuationFailure(null);
     setLiveOutput(null);
     try {
       const approval = await ports.generator.preparePlanSourceReadApproval({
@@ -909,6 +914,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setLiveOutput(null);
     const result = await project.retryGenerate();
     if (workspaceEpochRef.current !== commandEpoch) return;
+    if (result.status !== 'generation_failed') {
+      setApprovedPlanContinuationFailure(null);
+    }
     if (shouldClearSubmittedIdea(result)) setIdea('');
     await readActivityAfterTerminal(result, commandEpoch);
     setLiveOutput(null);
@@ -959,6 +967,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const inFlightKey = planReviewInFlightKey(inFlight);
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
+    setApprovedPlanContinuationFailure(null);
     publishPlanReviewInFlight(inFlight);
     const commandEpoch = workspaceEpochRef.current;
     let reviewed = false;
@@ -1013,6 +1022,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
     if (workspaceEpochRef.current !== commandEpoch) return;
+    setApprovedPlanContinuationFailure(result.status === 'generation_failed' ? inFlight : null);
     await readActivityAfterTerminal(result, commandEpoch, request.project_id);
     setLiveOutput(null);
   }, [conversation, ports.planReview, project, publishPlanReviewInFlight, readActivityAfterTerminal]);
@@ -1211,6 +1221,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           ) : (
             <BuilderPage
               activeFile={activeFile}
+              approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               instruction={idea}
               liveOutput={liveOutput}
               planReviewFailure={planReviewFailure}

@@ -426,6 +426,52 @@ describe('Builder project controller v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
+  it('retries approved-plan continuation through the approved-plan generator only', async () => {
+    let attempts = 0;
+    const { controller, generate, generateApprovedPlan, retry, saveDraft } = setup({
+      generateApprovedPlan: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        }
+        return createGenerationDraft(
+          await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID),
+        );
+      },
+    });
+    await controller.open(PROJECT_ID);
+
+    const failed = await controller.generateApprovedPlan({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    expect(failed).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_provider_http_error',
+      retryableGeneration: true,
+      draft: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
+    });
+
+    const result = await controller.retryGenerate();
+
+    expect(generateApprovedPlan).toHaveBeenCalledTimes(2);
+    expect(generateApprovedPlan).toHaveBeenNthCalledWith(2, {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    expect(result.status).toBe('draft_ready');
+    expect(result.retryableGeneration).toBe(false);
+    expect(result.draft?.existing_project_id).toBe(PROJECT_ID);
+    expect(generate).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('proposes a plan for a saved project without creating a draft or saving', async () => {
     const { controller, generate, proposePlan, saveDraft } = setup();
     const saved = await controller.open(PROJECT_ID);

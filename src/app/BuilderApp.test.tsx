@@ -66,6 +66,7 @@ async function setup(options: Readonly<{
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
+  failApprovedPlanGenerateOnce?: boolean;
   failPlanReview?: boolean;
   failTaskStreamAfterPlanReview?: boolean;
   deferredPlanReview?: boolean;
@@ -106,6 +107,7 @@ async function setup(options: Readonly<{
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveGenerate: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
+  let approvedPlanGenerateAttempts = 0;
   let planReviewRecorded = false;
   async function createDraftForCurrentProject(
     hostRequest: Awaited<ReturnType<typeof createBuilderGenerationRequest>>,
@@ -328,6 +330,17 @@ async function setup(options: Readonly<{
       turn_id: TURN_ID,
       run_id: RUN_ID,
     });
+    approvedPlanGenerateAttempts += 1;
+    if (options.failApprovedPlanGenerateOnce === true && approvedPlanGenerateAttempts === 1) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_provider_http_error',
+          retryable: true,
+        },
+      };
+    }
     const hostRequest = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
     if (options.deferredApprovedPlanGenerate === true) {
       return new Promise<unknown>((resolve) => {
@@ -1809,6 +1822,57 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('keeps approved plan continuation retryable when the draft is not created', async () => {
+    const {
+      container,
+      generateApprovedPlan,
+      readTaskStream,
+      retry,
+      reviewPlan,
+      saveDraft,
+    } = await setup({
+      failApprovedPlanGenerateOnce: true,
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+
+    click(container, 'Approve plan');
+
+    await waitFor(() => {
+      expect(reviewPlan).toHaveBeenCalledOnce();
+      expect(generateApprovedPlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
+        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-conversation-notice="generation_failed"]')?.textContent)
+        .toContain('The plan was approved, but the draft could not be created. Retry to continue from that plan.');
+      expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
+    });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(retry).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    click(container, '[data-builder-retry-draft="true"]');
+
+    await waitFor(() => {
+      expect(generateApprovedPlan).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(retry).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
     );
   });
 

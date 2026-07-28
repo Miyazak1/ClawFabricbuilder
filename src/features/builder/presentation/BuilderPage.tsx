@@ -89,6 +89,7 @@ export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
 export type BuilderPageProps = {
   instruction: string;
   liveOutput?: BuilderLiveOutputSnapshot | null;
+  approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
@@ -646,6 +647,18 @@ function failedStatusMessage(
   if (error === 'builder_generation_provider_http_error') return 'The AI service could not make this draft. Try again.';
   if (error === 'builder_generation_structured_response_invalid') return 'The draft could not be prepared. Try again.';
   return 'The draft could not be made. Try again.';
+}
+
+function approvedPlanContinuationFailureMessage(
+  error: BuilderProjectControllerSnapshot['error'],
+): string {
+  if (error === 'builder_generation_provider_unavailable') {
+    return 'The plan was approved, but AI generation is not configured yet.';
+  }
+  if (error === 'builder_generation_timeout') {
+    return 'The plan was approved, but making the draft took too long. Retry to continue from that plan.';
+  }
+  return 'The plan was approved, but the draft could not be created. Retry to continue from that plan.';
 }
 
 function changeLabel(change: BuilderSourceTreeChange): string {
@@ -1259,6 +1272,7 @@ export function BuilderPage({
   historySnapshot,
   snapshot,
   activeFile,
+  approvedPlanContinuationFailure = null,
   liveOutput = null,
   planReviewFailure = null,
   planReviewInFlight = null,
@@ -1347,6 +1361,12 @@ export function BuilderPage({
     && planReviewRecorded.conversation_id === planReviewTarget.conversation_id
     && planReviewRecorded.turn_id === planReviewTarget.turn_id
     && planReviewRecorded.run_id === planReviewTarget.run_id;
+  const approvedPlanContinuationFailed = status === 'generation_failed'
+    && approvedPlanContinuationFailure !== null
+    && saved !== null
+    && approvedPlanContinuationFailure.project_id === saved.target.project_id
+    && approvedPlanContinuationFailure.conversation_id === saved.target.conversation_id
+    && !hasUnsavedDraft;
   const canReviewPlan = typeof onReviewPlan === 'function'
     && planReviewTarget !== null
     && !planReviewBusy
@@ -1785,7 +1805,11 @@ export function BuilderPage({
           data-builder-conversation-notice={status}
           role="alert"
         >
-          <p>{failedStatusMessage(status, current?.error ?? null)}</p>
+          <p>
+            {approvedPlanContinuationFailed
+              ? approvedPlanContinuationFailureMessage(current?.error ?? null)
+              : failedStatusMessage(status, current?.error ?? null)}
+          </p>
           {canOpenSettings ? (
             <button
               className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center px-3 text-sm font-medium"

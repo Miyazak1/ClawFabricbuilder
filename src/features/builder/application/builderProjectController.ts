@@ -89,6 +89,10 @@ export type BuilderProjectControllerDependencies = Readonly<{
   createPreview?: typeof createBuilderSourceTreePreview;
 }>;
 
+type RetryableGeneration =
+  | Readonly<{ kind: 'generation'; request: BuilderGenerationRequest }>
+  | Readonly<{ kind: 'approved_plan'; request: BuilderApprovedPlanGenerationRequest }>;
+
 export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
@@ -494,7 +498,7 @@ export function createBuilderProjectController(
     projectId: string | null;
     requestId: string | null;
   }> | null = null;
-  let retryableGeneration: Readonly<{ request: BuilderGenerationRequest }> | null = null;
+  let retryableGeneration: RetryableGeneration | null = null;
   const listeners = new Set<() => void>();
   const unsubscribeStarted = dependencies.generator.subscribeStarted?.((event) => {
     const target = activeGeneration;
@@ -614,7 +618,23 @@ export function createBuilderProjectController(
       && trustedCode !== null
       && BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY[trustedCode]
     ) {
-      retryableGeneration = Object.freeze({ request });
+      retryableGeneration = Object.freeze({ kind: 'generation', request });
+    } else {
+      retryableGeneration = null;
+    }
+    return trustedCode ?? sanitizeTrustedBuilderGenerationDiagnostic(error);
+  }
+
+  function approvedPlanGenerationFailureDiagnostic(
+    error: unknown,
+    request: BuilderApprovedPlanGenerationRequest,
+  ): BuilderGenerationDiagnosticCode {
+    const trustedCode = trustedBuilderGenerationDiagnosticCode(error);
+    if (
+      trustedCode !== null
+      && BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY[trustedCode]
+    ) {
+      retryableGeneration = Object.freeze({ kind: 'approved_plan', request });
     } else {
       retryableGeneration = null;
     }
@@ -1071,6 +1091,56 @@ export function createBuilderProjectController(
       || retryableGeneration === null
     ) return current;
     const retained = current.savedProject;
+    const retryable = retryableGeneration;
+    if (retryable.kind === 'approved_plan') {
+      if (
+        retained === null
+        || retained.target.project_id !== retryable.request.project_id
+        || retained.target.conversation_id !== retryable.request.conversation_id
+      ) return current;
+      const before = current;
+      return run(async (operationEpoch) => {
+        publish(snapshot(
+          'generating',
+          retained,
+          null,
+          current.preview,
+          null,
+          null,
+          null,
+          false,
+        ));
+        activeGeneration = Object.freeze({
+          before,
+          projectId: retryable.request.project_id,
+          requestId: null,
+        });
+        try {
+          const draft = await sanitizeBuilderApprovedPlanGenerationDraft(
+            await dependencies.generator.generateApprovedPlan(retryable.request),
+            retryable.request,
+          );
+          clearProjectGeneration(retryable.request.project_id, operationEpoch);
+          if (!draftMatchesSavedBase(draft, retained)) throw new Error();
+          if (disposed || operationEpoch !== epoch) return current;
+          retryableGeneration = null;
+          return withPreview('draft_ready', retained, draft, operationEpoch);
+        } catch (error) {
+          clearProjectGeneration(retryable.request.project_id, operationEpoch);
+          if (disposed || operationEpoch !== epoch) return current;
+          return publish(snapshot(
+            'generation_failed',
+            retained,
+            null,
+            current.preview,
+            approvedPlanGenerationFailureDiagnostic(error, retryable.request),
+            null,
+            null,
+            retryableGeneration !== null,
+          ));
+        }
+      });
+    }
     const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
     if (targetProjectId === null) {
       retryableGeneration = null;
@@ -1083,7 +1153,7 @@ export function createBuilderProjectController(
       ));
     }
     const before = current;
-    const request = retryableGeneration.request;
+    const request = retryable.request;
     if (targetProjectId !== request.existing_project_id) return current;
     return run(async (operationEpoch) => {
       publish(snapshot(
@@ -1163,6 +1233,7 @@ export function createBuilderProjectController(
         clearProjectGeneration(request.project_id, operationEpoch);
         if (!draftMatchesSavedBase(draft, retained)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
+        retryableGeneration = null;
         return withPreview('draft_ready', retained, draft, operationEpoch);
       } catch (error) {
         clearProjectGeneration(request.project_id, operationEpoch);
@@ -1172,10 +1243,10 @@ export function createBuilderProjectController(
           retained,
           null,
           current.preview,
-          sanitizeTrustedBuilderGenerationDiagnostic(error),
+          approvedPlanGenerationFailureDiagnostic(error, request),
           null,
           null,
-          false,
+          retryableGeneration !== null,
         ));
       }
     });
