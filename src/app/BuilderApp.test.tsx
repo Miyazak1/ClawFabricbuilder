@@ -898,6 +898,71 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('shows live AI output for the first build after a source folder is bound', async () => {
+    const {
+      container,
+      createLocalProject,
+      emitGenerationOutput,
+      emitGenerationStarted,
+      resolveGenerate,
+      submit,
+    } = await setup({ deferredGenerate: true });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value',
+        )?.set;
+        setter?.call(textarea, 'Make a timer.');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Choose or create a project before I build.');
+    });
+
+    click(container, '[data-builder-workspace-new-project="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
+        .toContain('Source folders');
+    });
+    click(container, '[data-builder-add-source-folder="true"]');
+
+    await waitFor(() => {
+      expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+        project_id: null,
+        project_title: 'New project',
+      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    expect(emitGenerationOutput(expected.request_digest, 'Building the first project draft.', PROJECT_ID))
+      .toBeGreaterThan(0);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain('Building the first project draft.');
+    });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+      .not.toMatch(/request_id|provider|credential|source_tree|commit_oid|tree_oid/iu);
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+  });
+
   it('does not keep a gated build pending after the workspace picker is closed', async () => {
     const { container, createLocalProject, generate, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
