@@ -492,6 +492,71 @@ test('projects provider plan into a proposed record without creating source chan
   );
 });
 
+test('keeps generated plan step titles aligned with the proposal record bounds', () => {
+  const rawRequest = request({ instruction: 'Plan a settings panel update.', existingProjectId: PROJECT_ID });
+  const sourceContext = planSourceContextResult(rawRequest);
+  const bounded = projectBuilderPlanProposalResult({
+    request: rawRequest,
+    source_context_result: sourceContext,
+    proposed_at_ms: 100,
+    generated_text: generatedPlanText({
+      steps: [{
+        title: 'T'.repeat(120),
+        purpose: 'Keep the next step reviewable before editing.',
+        expected_change: 'No source files change during planning.',
+      }],
+    }),
+  });
+
+  assert.equal(bounded.steps[0].title.length, 120);
+  expectKernelError(
+    () => projectBuilderPlanProposalResult({
+      request: rawRequest,
+      source_context_result: sourceContext,
+      proposed_at_ms: 100,
+      generated_text: generatedPlanText({
+        steps: [{
+          title: 'T'.repeat(121),
+          purpose: 'Keep the next step reviewable before editing.',
+          expected_change: 'No source files change during planning.',
+        }],
+      }),
+    }),
+    'builder_generation_structured_response_invalid',
+  );
+});
+
+test('accepts generated JSON with provider outer whitespace while preserving exact inner contracts', () => {
+  const rawCandidateRequest = request();
+  const rawProjectRequest = request({ existingProjectId: PROJECT_ID });
+  const common = {
+    request: rawCandidateRequest,
+    base_revision_evidence: null,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents({ requestDigest: rawCandidateRequest.request_digest }),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+  };
+  const candidate = projectBuilderGenerationResult({
+    ...common,
+    generated_text: `\n  ${generatedText()}  \n`,
+  });
+  const explanation = projectBuilderExplanationResult({
+    request: rawProjectRequest,
+    generated_text: `\n${generatedExplanationText()}\n`,
+  });
+  const plan = projectBuilderPlanProposalResult({
+    request: rawProjectRequest,
+    source_context_result: planSourceContextResult(rawProjectRequest),
+    proposed_at_ms: 100,
+    generated_text: `  ${generatedPlanText()}  `,
+  });
+
+  assert.equal(candidate.result_kind, 'candidate');
+  assert.equal(explanation.result_kind, 'explanation');
+  assert.equal(plan.result_kind, 'plan');
+});
+
 test('rejects provider output when it belongs to the other generation route', () => {
   const rawRequest = request({ instruction: 'Explain or change this project.' });
   const candidateContext = {
@@ -620,8 +685,6 @@ test('classifies malformed generated text and rejects forged provider authority'
   };
   for (const generated_text of [
     '',
-    ` ${generatedText()}`,
-    `${generatedText()}\n`,
     `\`\`\`json\n${generatedText()}\n\`\`\``,
     '{',
     'null',

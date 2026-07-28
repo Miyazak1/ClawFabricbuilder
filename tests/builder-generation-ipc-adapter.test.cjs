@@ -310,6 +310,7 @@ test('rejects inactive renderers and argument-count drift before invoking host a
 test('returns only fixed plain-data diagnostics for known and unknown generate failures', async () => {
   const windowRef = activeWindow();
   for (const [code, retryable] of [
+    ['builder_generation_base_unavailable', true],
     ['builder_generation_parent_unavailable', true],
     ['builder_generation_provider_unavailable', false],
     ['builder_generation_timeout', true],

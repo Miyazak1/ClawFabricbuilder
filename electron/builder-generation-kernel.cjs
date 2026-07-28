@@ -33,6 +33,8 @@ const MAX_INSTRUCTION_UTF8_BYTES = 16 * 1024;
 const MAX_EXPLANATION_CODE_POINTS = 4000;
 const MAX_EXPLANATION_UTF8_BYTES = 16 * 1024;
 const MAX_PLAN_STEP_COUNT = 12;
+const MAX_PLAN_STEP_TITLE_CODE_POINTS = 120;
+const MAX_PLAN_STEP_TITLE_UTF8_BYTES = 512;
 const MAX_PLAN_STEP_TEXT_CODE_POINTS = 360;
 const MAX_PLAN_STEP_TEXT_UTF8_BYTES = 1536;
 const MAX_GENERATED_TEXT_BYTES = MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES;
@@ -137,6 +139,9 @@ const PLAN_SYSTEM_INSTRUCTION = [
   `Set kind to ${BUILDER_GENERATED_PLAN_KIND}.`,
   `Example JSON object: ${PLAN_OUTPUT_EXAMPLE}`,
   'steps is an array of 1 to 12 plan steps. Each step uses exactly title, purpose, and expected_change.',
+  'Keep title and each step title at 120 characters or fewer.',
+  'Keep summary at 1200 characters or fewer.',
+  'Keep each step purpose and expected_change at 360 characters or fewer.',
   'Do not include source-change operations, complete file content, host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
@@ -611,8 +616,8 @@ function sanitizeGeneratedPlanSteps(value, requestDigest) {
     assertExactObject(rawStep, RAW_PLAN_STEP_KEYS, 'builder_generation_structured_response_invalid');
     const title = safeText(
       valueAt(rawStep, 'title', 'builder_generation_structured_response_invalid'),
-      MAX_PLAN_STEP_TEXT_CODE_POINTS,
-      MAX_PLAN_STEP_TEXT_UTF8_BYTES,
+      MAX_PLAN_STEP_TITLE_CODE_POINTS,
+      MAX_PLAN_STEP_TITLE_UTF8_BYTES,
       false,
       'builder_generation_structured_response_invalid',
     );
@@ -699,15 +704,15 @@ function parseProviderOutputText(value, requestDigest = '') {
   if (
     typeof value !== 'string'
     || value.length === 0
-    || value.trim() !== value
     || value.length > MAX_GENERATED_TEXT_BYTES
     || Buffer.byteLength(value, 'utf8') > MAX_GENERATED_TEXT_BYTES
     || hasUnpairedSurrogate(value)
-    || value.startsWith('```')
   ) fail('builder_generation_structured_response_invalid');
+  const text = value.trim();
+  if (text.length === 0 || text.startsWith('```')) fail('builder_generation_structured_response_invalid');
   let parsed;
   try {
-    parsed = JSON.parse(value);
+    parsed = JSON.parse(text);
   } catch {
     fail('builder_generation_structured_response_invalid');
   }

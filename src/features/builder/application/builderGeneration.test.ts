@@ -308,6 +308,44 @@ describe('Builder generation v2', () => {
     expect(Object.isFrozen(result.steps)).toBe(true);
   });
 
+  it('accepts the main-owned public plan bounds for title, summary, step title, and step count', async () => {
+    const request = await createBuilderGenerationRequest('Plan the saved project change.', PROJECT_ID);
+    const result = await sanitizeBuilderGenerationPlan({
+      version: 'builder-generation-result.v2',
+      result_kind: 'plan',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      title: 'T'.repeat(120),
+      summary: 'S'.repeat(1200),
+      steps: Array.from({ length: 12 }, () => ({
+        title: 'T'.repeat(120),
+        purpose: 'Keep this planning step bounded to the saved project context.',
+        expected_change: 'No source files change while the plan is only proposed.',
+        status: 'proposed',
+      })),
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+        revision: 'not_created',
+        review: 'not_recorded',
+      },
+      conversation_head: {
+        sequence: 3,
+        event_id: `builder-conversation-event:${'1'.repeat(64)}`,
+        event_digest: `sha256:${'2'.repeat(64)}`,
+      },
+    }, request);
+
+    expect(result.title).toHaveLength(120);
+    expect(result.summary).toHaveLength(1200);
+    expect(result.steps).toHaveLength(12);
+    expect(result.steps[0]?.title).toHaveLength(120);
+  });
+
   it('rejects plan result authority drift and generated source fields', async () => {
     const request = await createBuilderGenerationRequest('Plan the saved project change.', PROJECT_ID);
     const plan = {

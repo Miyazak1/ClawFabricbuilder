@@ -77,6 +77,7 @@ const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[8
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 const MAX_PLAN_CONTEXT_RESOURCES = 8;
 const MAX_PROJECT_RESOURCE_ID_LENGTH = 128;
+const PLAN_RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -90,6 +91,10 @@ class BuilderGenerationIpcRuntimeError extends Error {
 
 function fail() {
   throw new BuilderGenerationIpcRuntimeError();
+}
+
+function failGenerationBaseUnavailable() {
+  throw new BuilderGenerationKernelError('builder_generation_base_unavailable');
 }
 
 function isPlainObject(value) {
@@ -260,7 +265,11 @@ function sourceTreeResourceIds(readResult) {
       || !Object.hasOwn(pathDescriptor, 'value')
     ) fail();
     const resourceId = `project:/${safeProjectSourcePath(pathDescriptor.value)}`;
-    if (resourceId.length > MAX_PROJECT_RESOURCE_ID_LENGTH || seen.has(resourceId)) fail();
+    if (
+      resourceId.length > MAX_PROJECT_RESOURCE_ID_LENGTH
+      || !PLAN_RESOURCE_ID_PATTERN.test(resourceId)
+    ) continue;
+    if (seen.has(resourceId)) fail();
     seen.add(resourceId);
     resourceIds.push(resourceId);
   }
@@ -569,7 +578,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
 
     async function trackedProposePlan(rawRequest) {
-      if (selectionPending || selectedProjectId === null) fail();
+      if (selectionPending || selectedProjectId === null) failGenerationBaseUnavailable();
       const projectId = selectedProjectId;
       const request = createBuilderGenerationRequest({
         instruction: publicInstruction(rawRequest),
@@ -578,11 +587,18 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const requestId = request.request_digest;
       activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
       try {
-        const currentProject = await projectMainAuthority.project_read_authority.load_current({ project_id: projectId });
-        if (readResultProjectId(currentProject) !== projectId) fail();
+        let currentProject;
+        let resourceIds;
+        try {
+          currentProject = await projectMainAuthority.project_read_authority.load_current({ project_id: projectId });
+          if (readResultProjectId(currentProject) !== projectId) fail();
+          resourceIds = sourceTreeResourceIds(currentProject);
+        } catch {
+          failGenerationBaseUnavailable();
+        }
         return await service.propose_plan({
           request,
-          resource_ids: sourceTreeResourceIds(currentProject),
+          resource_ids: resourceIds,
         });
       } finally {
         const remaining = (activeRequests.get(requestId) ?? 1) - 1;

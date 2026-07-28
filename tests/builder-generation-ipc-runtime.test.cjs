@@ -14,6 +14,7 @@ const {
   CANCEL_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
+  GENERATE_RESULT_VERSION,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
@@ -508,6 +509,20 @@ test('keeps active-renderer and request validation inside the controlled adapter
     ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)({ sender: mainWindow.webContents }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
+  assert.deepEqual(
+    await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+      { sender: mainWindow.webContents },
+      { instruction: 'Plan this change.' },
+    ),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: {
+        code: 'builder_generation_base_unavailable',
+        retryable: true,
+      },
+    },
+  );
   await assert.rejects(
     ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)({ sender: {} }, { instruction: 'Retry.' }),
     (error) => error.code === 'builder_generation_forbidden'
@@ -618,6 +633,89 @@ test('keeps active-renderer and request validation inside the controlled adapter
       revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
     }),
     (error) => error.code === 'builder_project_workspace_invalid',
+  );
+  runtime.dispose();
+});
+
+test('selects only currently supported plan context resources from the saved source tree', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    generate_approved_plan() { throw new Error('unexpected approved plan generate'); },
+    async propose_plan(body) {
+      probes.proposePlanBody = body;
+      return { result_kind: 'plan' };
+    },
+    submit() { throw new Error('unexpected submit'); },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
+    steer() { return { request_id: hostRequestDigest(), steered: false }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: true,
+        reason: 'ready',
+        supports_cancel: true,
+      };
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  probes.loadCurrent = (body) => {
+    harness.context.__readProjectId = body.project_id;
+    return vm.runInContext(
+      `({
+        product_revision_receipt: { project_id: __readProjectId },
+        source_tree: {
+          files: [
+            { path: "src/App.jsx" },
+            { path: "index.html" },
+            { path: "README.md" },
+            { path: "src/main.jsx" },
+            { path: "package.json" }
+          ]
+        }
+      })`,
+      harness.context,
+    );
+  };
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  const openRequest = vm.runInContext(
+    `({ project_id: "${PROJECT_ID}" })`,
+    harness.context,
+  );
+  const planRequest = vm.runInContext(
+    '({ instruction: "Plan a saved React project update." })',
+    harness.context,
+  );
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)({ sender: mainWindow.webContents }, openRequest);
+  assert.deepEqual(
+    await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+      { sender: mainWindow.webContents },
+      planRequest,
+    ),
+    { result_kind: 'plan' },
+  );
+  assert.deepEqual(Array.from(probes.proposePlanBody.resource_ids), [
+    'project:/index.html',
+    'project:/package.json',
+    'project:/src/main.jsx',
+  ]);
+  assert.equal(probes.proposePlanBody.request.existing_project_id, PROJECT_ID);
+  assert.equal(
+    probes.proposePlanBody.request.request_digest,
+    hostRequestDigest('Plan a saved React project update.', PROJECT_ID),
   );
   runtime.dispose();
 });

@@ -630,6 +630,38 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     });
   });
 
+  it('maps source context unavailability to a fixed retryable diagnostic', async () => {
+    const request = await createBuilderGenerationRequest('Plan the saved project change.', PROJECT_ID);
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      proposePlan: async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_base_unavailable',
+          retryable: true,
+        },
+      }),
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      restoreDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    await expect(port.proposePlan(request)).rejects.toMatchObject({
+      code: 'builder_generation_base_unavailable',
+      retryable: true,
+      message: 'The current project source is unavailable.',
+    });
+  });
+
   it.each([
     null,
     {},

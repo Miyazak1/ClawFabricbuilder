@@ -105,12 +105,36 @@ class FakeLocator {
     if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
     if (this.selector === SELECTORS.reviewOpenChanges) {
       this.page.changesPanelVisible = true;
+      this.page.changesDisclosureOpen = true;
+    }
+    if (this.selector === SELECTORS.changesSummaryToggle) {
+      this.page.changesDisclosureOpen = false;
+    }
+    if (this.selector === SELECTORS.saveVersion && this.page.persistSave) {
+      const revision = await this.page.commitSave();
+      this.page.draftSaved = revision > 0;
+      this.page.savedRevision = revision;
+      this.page.savedActivityRevision = revision;
+      this.page.versionLabel = `Version ${revision}`;
     }
     const historyMatch = /\[data-builder-view-version="Version ([1-9][0-9]*)"\]/u.exec(this.selector);
     if (historyMatch !== null) {
       this.page.historyViewingRevision = Number(historyMatch[1]);
       this.page.versionLabel = `Version ${this.page.savedRevision}`;
     }
+  }
+
+  async evaluate(fn) {
+    this.page.events.push(['locatorEvaluate', this.selector, String(fn)]);
+    const node = {
+      open: this.selector === SELECTORS.changesDisclosure
+        ? this.page.changesDisclosureOpen
+        : undefined,
+      scrollIntoView: (options) => {
+        this.page.events.push(['scrollIntoView', this.selector, options]);
+      },
+    };
+    return fn(node);
   }
 
   async fill(value) {
@@ -360,6 +384,7 @@ class FakePage {
     this.alertVisible = false;
     this.candidateTurns = 0;
     this.changesPanelVisible = false;
+    this.changesDisclosureOpen = false;
     this.changesTextOverride = null;
     this.draftSaved = false;
     this.persistSave = true;
@@ -1721,7 +1746,18 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     unsaved_draft_observed: true,
   });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Send', 'Save version']);
+  assert.deepEqual(roleClicks, ['New project', 'Send']);
+  const saveScroll = page.events.findIndex(
+    (event) => event[0] === 'scrollIntoView' && event[1] === SELECTORS.saveVersion,
+  );
+  const changesCollapse = page.events.findIndex(
+    (event) => event[0] === 'click' && event[1] === SELECTORS.changesSummaryToggle,
+  );
+  const saveClickBySelector = page.events.findIndex(
+    (event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion,
+  );
+  assert.ok(changesCollapse >= 0 && changesCollapse < saveScroll);
+  assert.ok(saveScroll >= 0 && saveScroll < saveClickBySelector);
   assert.equal(page.events.some((event) => event[0] === 'roleFirst'), false);
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
@@ -1739,13 +1775,14 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   );
   const preSaveRead = page.events.findIndex((event) => event[0] === 'evaluate');
   const saveClick = page.events.findIndex(
-    (event) => event[0] === 'roleClick' && event[2] === 'Save version',
+    (event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion,
   );
   const versionWait = page.events.findIndex(
     (event) => event[0] === 'textContent' && event[1] === SELECTORS.currentVersion,
   );
   assert.ok(unsavedWait >= 0 && unsavedWait < preSaveRead);
-  assert.ok(preSaveRead < saveClick);
+  assert.ok(preSaveRead < changesCollapse);
+  assert.ok(changesCollapse < saveClick);
   assert.ok(saveClick < versionWait);
 });
 
@@ -1902,7 +1939,7 @@ test('answers a saved-project question without creating a draft or revision', as
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Save version', 'Send'],
+    ['New project', 'Send', 'Send'],
   );
 });
 
@@ -2016,7 +2053,11 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Save version', 'Send', 'Save version'],
+    ['New project', 'Send', 'Send'],
+  );
+  assert.equal(
+    page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
+    2,
   );
 });
 
@@ -2072,7 +2113,11 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Save version', 'Send', 'Save version'],
+    ['New project', 'Send', 'Send'],
+  );
+  assert.equal(
+    page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
+    2,
   );
 });
 
@@ -2232,7 +2277,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       run: async () => {
         const page = new FakePage();
         installBridge(page);
-        page.failRoleClicks.add('button:Save version');
+        page.failClicks.add(SELECTORS.saveVersion);
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'save',
@@ -2377,7 +2422,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         installBridge(page);
         page.draftSaved = true;
         page.savedRevision = 1;
-        page.failRoleClicks.add('button:Save version');
+        page.failClicks.add(SELECTORS.saveVersion);
         const first = bridgeEvidence(
           'builder-project:11111111-1111-4111-8111-111111111111',
           true,
@@ -3291,14 +3336,18 @@ test('copies only saved provider profile files and runs without provider input o
   assert.deepEqual(roleClicks, [
     'New project',
     'Send',
-    'Save version',
     'Send',
     'Send',
-    'Save version',
     'Back to current',
     'Plan first',
     'Approve plan',
   ]);
+  assert.equal(
+    electron.pages
+      .flatMap((candidate) => candidate.events)
+      .filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
+    2,
+  );
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), false);
@@ -3864,11 +3913,13 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
   assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|proposePlan|retry|answer|rejectDraft|steer)|projectWorkspace\.saveDraft/u);
+  assert.doesNotMatch(source, /generator\.proposePlan/u);
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Send['"]\)/u);
-  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save version['"]\)/u);
+  assert.match(source, /node\.scrollIntoView\(\{\s*block:\s*['"]center['"],\s*inline:\s*['"]nearest['"]\s*\}\)/u);
+  assert.match(source, /page\.locator\(SELECTORS\.saveVersion\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);

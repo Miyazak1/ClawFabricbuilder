@@ -55,6 +55,17 @@ const RUN_PROGRESS_STAGES = Object.freeze([
   'provider_response_received',
   'result_preparing',
 ]);
+const PLAN_REPAIR_USER_INSTRUCTION = [
+  'The previous plan response could not be verified.',
+  'Return one JSON object only.',
+  'Use exactly kind, title, summary, and steps.',
+  'Set kind to builder_project_plan_proposal.',
+  'steps must contain 1 to 12 objects, each with exactly title, purpose, and expected_change.',
+  'Keep title and each step title at 120 characters or fewer.',
+  'Keep summary at 1200 characters or fewer.',
+  'Keep each step purpose and expected_change at 360 characters or fewer.',
+  'Do not use markdown fences or add any other fields.',
+].join(' ');
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_base_unavailable: 'The current project source is unavailable.',
@@ -214,6 +225,20 @@ function mapKernelError(error) {
   if (code === 'builder_generation_structured_response_invalid') fail('builder_generation_structured_response_invalid');
   if (code === 'builder_generation_request_invalid') fail('builder_generation_request_invalid');
   fail('builder_generation_failed');
+}
+
+function kernelErrorCode(error) {
+  try {
+    if (error === null || (typeof error !== 'object' && typeof error !== 'function') || utilTypes.isProxy(error)) {
+      return null;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    return descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string'
+      ? descriptor.value
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function createBuilderGenerationHostAdapter(options = {}) {
@@ -466,37 +491,53 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
-    let transportResult;
-    try {
-      transportResult = await Reflect.apply(transport, undefined, [{
-        base_url: config.base_url,
-        model: config.model,
-        credential,
-        messages: [
-          { role: 'system', content: descriptor.system_instruction },
-          { role: 'user', content: descriptor.user_instruction },
-        ],
-        timeout_ms: config.timeout_ms,
-        ...(config.temperature === null ? {} : { temperature: config.temperature }),
-        ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
-      }, {
-        signal: controller.signal,
-        ...(onOutputDelta === null
-          ? {}
-          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
-      }]);
-    } catch (error) {
-      mapTransportError(error, controller.signal);
+    async function requestPlanTransport(repair = false) {
+      let transportResult;
+      try {
+        transportResult = await Reflect.apply(transport, undefined, [{
+          base_url: config.base_url,
+          model: config.model,
+          credential,
+          messages: [
+            { role: 'system', content: descriptor.system_instruction },
+            { role: 'user', content: descriptor.user_instruction },
+            ...(repair ? [{ role: 'user', content: PLAN_REPAIR_USER_INSTRUCTION }] : []),
+          ],
+          timeout_ms: config.timeout_ms,
+          ...(config.temperature === null ? {} : { temperature: config.temperature }),
+          ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
+        }, {
+          signal: controller.signal,
+          ...(onOutputDelta === null
+            ? {}
+            : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+        }]);
+      } catch (error) {
+        mapTransportError(error, controller.signal);
+      }
+      if (controller.signal.aborted) fail('builder_generation_cancelled');
+      return sanitizeTransportResult(transportResult);
     }
-    if (controller.signal.aborted) fail('builder_generation_cancelled');
-    const generatedText = sanitizeTransportResult(transportResult);
-    try {
-      const plan = projectBuilderPlanProposalResult({
+    function buildPlanResult(generatedText) {
+      return projectBuilderPlanProposalResult({
         request,
         source_context_result: ownValue(context, 'source_context_result', 'builder_generation_base_unavailable'),
         proposed_at_ms: ownValue(context, 'proposed_at_ms', 'builder_generation_base_unavailable'),
         generated_text: generatedText,
       });
+    }
+    const generatedText = await requestPlanTransport(false);
+    try {
+      const plan = buildPlanResult(generatedText);
+      return Object.freeze({ ...plan, context });
+    } catch (error) {
+      if (kernelErrorCode(error) !== 'builder_generation_structured_response_invalid') {
+        mapKernelError(error);
+      }
+    }
+    const repairedText = await requestPlanTransport(true);
+    try {
+      const plan = buildPlanResult(repairedText);
       return Object.freeze({ ...plan, context });
     } catch (error) {
       mapKernelError(error);

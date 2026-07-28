@@ -506,6 +506,51 @@ test('generates a bounded plan proposal from source context without creating Git
   );
 });
 
+test('repairs a malformed plan response once while keeping the final plan exact', async () => {
+  const rawRequest = request({ instruction: 'Plan a compact update.', existingProjectId: PROJECT_ID });
+  const sourceContext = planSourceContextResult(rawRequest, [
+    { path: 'src/app.tsx', content: 'export const App = () => null;\n' },
+  ]);
+  const transportInputs = [];
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildPlanContext: (raw) => planContextFor(raw, { source_context_result: sourceContext }),
+    transport: async (...args) => {
+      transportInputs.push(args);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: transportInputs.length === 1
+          ? '{}'
+          : JSON.stringify(providerPlan({ title: 'Repaired plan' })),
+      };
+    },
+  }));
+
+  const result = await adapter.plan(rawRequest);
+
+  assert.equal(result.result_kind, 'plan');
+  assert.equal(result.title, 'Repaired plan');
+  assert.equal(transportInputs.length, 2);
+  assert.equal(transportInputs[0][0].messages.length, 2);
+  assert.equal(transportInputs[1][0].messages.length, 3);
+  assert.match(transportInputs[1][0].messages[2].content, /previous plan response could not be verified/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /120 characters or fewer/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /1200 characters or fewer/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /360 characters or fewer/iu);
+  assert.doesNotMatch(
+    JSON.stringify({
+      version: result.version,
+      result_kind: result.result_kind,
+      request_id: result.request_id,
+      title: result.title,
+      summary: result.summary,
+      steps: result.steps,
+      plan_proposal_record: result.plan_proposal_record,
+      admissions: result.admissions,
+    }),
+    /"\{\}"|"operations"|"private_source_context"|credential_value|credential_secret|"secret_ref"|api[_-]?key|provider\.example|builder_code_change_operations/iu,
+  );
+});
+
 test('passes verified current source into the prompt for an existing project', async () => {
   const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Add a pause button.' });
   const base = sourceTree([{ path: 'src/app.js', content: 'export const before = true;\n' }]);

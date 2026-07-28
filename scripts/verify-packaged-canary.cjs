@@ -12,7 +12,7 @@ const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
 const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v13';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
-const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'After reopening, add a compact completed-state summary below the timer.';
+const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state summary below the timer before changing files.';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
@@ -22,6 +22,7 @@ const PROVIDER_CONFIG_CURRENT_FILE_NAME = 'current.json';
 const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
 const SESSION_DATA_DIRECTORY_NAME = 'session-data';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
+const CANARY_PLAN_PROPOSAL_TIMEOUT_MS = 120_000;
 const STDIN_MAX_BYTES = 128 * 1024;
 const LOCAL_STATE_MAX_BYTES = 2 * 1024 * 1024;
 const PROVIDER_CONFIG_MAX_BYTES = 128 * 1024;
@@ -43,7 +44,10 @@ const SELECTORS = Object.freeze({
   changeCard: '[data-builder-change-card]',
   changeDiff: '[data-builder-change-diff]',
   changeDiffLine: '[data-builder-change-diff-line-kind]',
+  chatScroll: '[data-builder-chat-scroll="true"]',
   changesPanel: '[data-builder-changes-panel="true"]',
+  changesDisclosure: '[data-builder-changes-disclosure="true"]',
+  changesSummaryToggle: '[data-builder-changes-disclosure="true"] > summary',
   changesSummary: '[data-builder-changes-summary="true"]',
   currentVersion: '[data-builder-current-version="true"]',
   historyPreview: '[data-builder-history-preview="true"]',
@@ -102,8 +106,24 @@ const ERROR_MESSAGES = Object.freeze({
   canary_settings_save_failed: 'Packaged canary settings save failed.',
   canary_saved_profile_failed: 'Packaged canary saved profile setup failed.',
   canary_new_project_failed: 'Packaged canary new project failed.',
+  canary_plan_alert_failed: 'Packaged canary plan proposal showed an app error.',
+  canary_plan_after_context_failed: 'Packaged canary plan failed after reading project context.',
+  canary_plan_base_unavailable_failed: 'Packaged canary plan source context was unavailable.',
+  canary_plan_before_context_failed: 'Packaged canary plan failed before reading project context.',
+  canary_plan_bridge_invoke_failed: 'Packaged canary plan bridge diagnostic failed.',
+  canary_plan_bridge_shape_failed: 'Packaged canary plan bridge diagnostic returned an unexpected envelope.',
+  canary_plan_bridge_unavailable_failed: 'Packaged canary plan bridge diagnostic was unavailable.',
   canary_plan_failed: 'Packaged canary plan proposal failed.',
+  canary_plan_evidence_failed: 'Packaged canary plan evidence failed.',
+  canary_plan_provider_http_failed: 'Packaged canary plan provider request failed.',
+  canary_plan_provider_unavailable_failed: 'Packaged canary plan provider was unavailable.',
+  canary_plan_renderer_sanitizer_failed: 'Packaged canary plan succeeded in main but was rejected by the renderer.',
+  canary_plan_request_invalid_failed: 'Packaged canary plan request was rejected.',
+  canary_plan_structured_response_failed: 'Packaged canary plan response could not be prepared.',
+  canary_plan_timeout_failed: 'Packaged canary plan proposal timed out.',
   canary_plan_review_failed: 'Packaged canary plan approval did not continue.',
+  canary_plan_tool_activity_failed: 'Packaged canary plan tool activity was not visible.',
+  canary_plan_tool_result_failed: 'Packaged canary plan project context read failed.',
   canary_question_failed: 'Packaged canary question did not produce a visible answer.',
   canary_question_evidence_failed: 'Packaged canary question evidence failed.',
   canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
@@ -148,8 +168,24 @@ const ERROR_STAGES = Object.freeze({
   canary_settings_save_failed: 'settings_save',
   canary_saved_profile_failed: 'saved_profile',
   canary_new_project_failed: 'new_project',
+  canary_plan_alert_failed: 'plan_alert',
+  canary_plan_after_context_failed: 'plan_after_context',
+  canary_plan_base_unavailable_failed: 'plan_base_unavailable',
+  canary_plan_before_context_failed: 'plan_before_context',
+  canary_plan_bridge_invoke_failed: 'plan_bridge_invoke',
+  canary_plan_bridge_shape_failed: 'plan_bridge_shape',
+  canary_plan_bridge_unavailable_failed: 'plan_bridge_unavailable',
   canary_plan_failed: 'plan',
+  canary_plan_evidence_failed: 'plan_evidence',
+  canary_plan_provider_http_failed: 'plan_provider_http',
+  canary_plan_provider_unavailable_failed: 'plan_provider_unavailable',
+  canary_plan_renderer_sanitizer_failed: 'plan_renderer_sanitizer',
+  canary_plan_request_invalid_failed: 'plan_request_invalid',
+  canary_plan_structured_response_failed: 'plan_structured_response',
+  canary_plan_timeout_failed: 'plan_timeout',
   canary_plan_review_failed: 'plan_review',
+  canary_plan_tool_activity_failed: 'plan_tool_activity',
+  canary_plan_tool_result_failed: 'plan_tool_result',
   canary_question_failed: 'question',
   canary_question_evidence_failed: 'question_evidence',
   canary_generation_terminal_failed: 'generation_terminal',
@@ -184,7 +220,6 @@ const ERROR_STAGES = Object.freeze({
   canary_evidence_failed: 'evidence',
   canary_cleanup_failed: 'cleanup',
 });
-
 const BRIDGE_CONTRACT_KEYS = Object.freeze([
   'bridge_version',
   'legacy_namespaces_absent',
@@ -1427,6 +1462,25 @@ async function clickByRole(page, role, name) {
   await locator.click();
 }
 
+async function clickSaveVersionViaUi(page) {
+  const save = page.locator(SELECTORS.saveVersion);
+  await save.waitFor({ state: 'visible' });
+  try {
+    const changesOpen = await page.locator(SELECTORS.changesDisclosure).evaluate((node) => node.open === true);
+    if (changesOpen) {
+      await page.locator(SELECTORS.changesSummaryToggle).click({ timeout: 5000 });
+    }
+  } catch {
+    // Saving remains explicit even when the optional Changes disclosure is not mounted.
+  }
+  await save.evaluate((node) => {
+    if (typeof node.scrollIntoView === 'function') {
+      node.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  });
+  await save.click();
+}
+
 async function waitForGenerationTerminal(page) {
   const preview = page.locator(SELECTORS.preview).waitFor({ state: 'visible' })
     .then(() => 'preview', () => 'preview_timeout');
@@ -1436,6 +1490,100 @@ async function waitForGenerationTerminal(page) {
   if (outcome === 'preview') return;
   if (outcome === 'alert') fail('canary_generation_terminal_failed');
   fail('canary_preview_failed');
+}
+
+function planStreamFailureCode(value) {
+  try {
+    if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (descriptors.diagnostic?.value !== 'stream_summary') return null;
+    const failedRun = descriptors.failed_run?.value;
+    const toolRequested = descriptors.tool_requested_count?.value;
+    const toolSucceeded = descriptors.tool_succeeded_count?.value;
+    const toolFailed = descriptors.tool_failed_count?.value;
+    if (
+      typeof failedRun !== 'boolean'
+      || !Number.isSafeInteger(toolRequested)
+      || !Number.isSafeInteger(toolSucceeded)
+      || !Number.isSafeInteger(toolFailed)
+      || toolRequested < 0
+      || toolRequested > 16
+      || toolSucceeded < 0
+      || toolSucceeded > 16
+      || toolFailed < 0
+      || toolFailed > 16
+    ) return null;
+    if (!failedRun) return null;
+    if (toolFailed > 0) return 'canary_plan_tool_result_failed';
+    if (toolSucceeded > 0) return 'canary_plan_after_context_failed';
+    if (toolRequested > 0) return 'canary_plan_tool_activity_failed';
+    return 'canary_plan_before_context_failed';
+  } catch {
+    return null;
+  }
+}
+
+async function diagnosePlanTaskStream(page, projectId) {
+  if (projectId === null) return null;
+  try {
+    const summary = await page.evaluate(async (sourceProjectId) => {
+      const root = globalThis.window?.clawfabricBuilder;
+      const stream = await root?.taskStream?.read?.({ project_id: sourceProjectId });
+      const items = stream?.conversation?.items;
+      if (!Array.isArray(items)) return { diagnostic: 'stream_unavailable' };
+      let firstRecent = Math.max(0, items.length - 12);
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const item = items[index];
+        if (item?.item_kind === 'user_message' && item?.message_kind === 'submitted' && item?.mode === 'work') {
+          firstRecent = index;
+          break;
+        }
+      }
+      let failedRun = false;
+      let toolRequestedCount = 0;
+      let toolSucceededCount = 0;
+      let toolFailedCount = 0;
+      for (const item of items.slice(firstRecent)) {
+        if (item?.item_kind === 'run_completed' && item?.terminal_status === 'failed') {
+          failedRun = true;
+        } else if (item?.item_kind === 'tool_call_requested') {
+          toolRequestedCount += 1;
+        } else if (item?.item_kind === 'tool_call_result_recorded') {
+          if (item?.result?.status === 'succeeded') toolSucceededCount += 1;
+          else toolFailedCount += 1;
+        }
+      }
+      return {
+        diagnostic: 'stream_summary',
+        failed_run: failedRun,
+        tool_requested_count: toolRequestedCount,
+        tool_succeeded_count: toolSucceededCount,
+        tool_failed_count: toolFailedCount,
+      };
+    }, projectId);
+    return planStreamFailureCode(summary);
+  } catch {
+    return null;
+  }
+}
+
+async function diagnosePlanAlert(page, projectId = null) {
+  const streamCode = await diagnosePlanTaskStream(page, projectId);
+  if (streamCode !== null) return streamCode;
+  return 'canary_plan_alert_failed';
+}
+
+async function waitForPlanProposalVisible(page, projectId = null) {
+  const plan = page.locator(SELECTORS.planReviewActions)
+    .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
+    .then(() => 'plan', () => 'plan_timeout');
+  const failed = page.locator(`${SELECTORS.projectPage}[data-builder-project-status="submit_failed"]`)
+    .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
+    .then(() => 'failed', () => 'failure_timeout');
+  const outcome = await Promise.race([plan, failed]);
+  if (outcome === 'plan') return;
+  if (outcome === 'failed') fail(await diagnosePlanAlert(page, projectId));
+  fail('canary_plan_failed');
 }
 
 async function fillProviderSettingsViaUi(page, provider, gate) {
@@ -1502,7 +1650,7 @@ async function generateProjectViaUi(page, idea) {
     fail('canary_draft_failed');
   }
   try {
-    await clickByRole(page, 'button', 'Save version');
+    await clickSaveVersionViaUi(page);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_save_failed');
@@ -1767,15 +1915,27 @@ async function proposePlanViaUi(
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
     await clickByRole(page, 'button', 'Plan first');
-    await page.locator(SELECTORS.toolActivityRequested).first().waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.toolActivitySucceeded).first().waitFor({ state: 'visible' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_plan_failed');
+  }
+
+  try {
+    await waitForPlanProposalVisible(page, currentProject.project_id);
     await page.locator(SELECTORS.planProposed).waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.planReviewActions).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.approvePlan).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_plan_failed');
+  }
+
+  try {
+    await page.locator(SELECTORS.toolActivityRequested).first().waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.toolActivitySucceeded).first().waitFor({ state: 'visible' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_plan_tool_activity_failed');
   }
 
   try {
@@ -1796,7 +1956,7 @@ async function proposePlanViaUi(
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_plan_failed');
+    fail('canary_plan_evidence_failed');
   }
 }
 
@@ -1851,7 +2011,7 @@ async function approvePlanViaUi(
 
 async function saveUpdateDraftViaUi(page, currentProject) {
   try {
-    await clickByRole(page, 'button', 'Save version');
+    await clickSaveVersionViaUi(page);
   } catch {
     fail('canary_update_save_failed');
   }

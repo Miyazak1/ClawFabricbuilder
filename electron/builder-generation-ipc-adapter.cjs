@@ -37,6 +37,7 @@ const OPTION_KEYS = Object.freeze([
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_forbidden: 'AI project generation is unavailable.',
   builder_generation_request_invalid: 'This project request could not be verified.',
+  builder_generation_base_unavailable: 'The current project source is unavailable.',
   builder_generation_parent_unavailable: 'The current project version is unavailable.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_cancelled: 'AI project generation was cancelled.',
@@ -47,6 +48,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_failed: 'The project draft could not be generated.',
 });
 const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
+  builder_generation_base_unavailable: true,
   builder_generation_parent_unavailable: true,
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
@@ -63,6 +65,7 @@ const RETRYABLE_CODES = new Set(
 const CONTROL_ERROR_CODES = new Set([
   'builder_generation_forbidden',
   'builder_generation_request_invalid',
+  'builder_generation_base_unavailable',
   'builder_generation_parent_unavailable',
   'builder_generation_provider_unavailable',
   'builder_generation_cancelled',

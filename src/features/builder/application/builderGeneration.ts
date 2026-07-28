@@ -5,6 +5,11 @@ import {
 
 export const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2' as const;
 export const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2' as const;
+const MAX_PLAN_STEP_COUNT = 12;
+const MAX_PLAN_TITLE_CODE_POINTS = 120;
+const MAX_PLAN_SUMMARY_CODE_POINTS = 1200;
+const MAX_PLAN_STEP_TITLE_CODE_POINTS = 120;
+const MAX_PLAN_STEP_TEXT_CODE_POINTS = 360;
 
 export type BuilderGenerationRequest = Readonly<{
   version: typeof BUILDER_GENERATION_REQUEST_PROTOCOL;
@@ -709,7 +714,7 @@ function sanitizeConversationHead(value: unknown): BuilderGenerationPlan['conver
 }
 
 function sanitizePlanSteps(value: unknown): BuilderGenerationPlan['steps'] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 8) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_PLAN_STEP_COUNT) {
     throw invalid('invalid_generated_plan');
   }
   const keys = Reflect.ownKeys(value);
@@ -720,9 +725,9 @@ function sanitizePlanSteps(value: unknown): BuilderGenerationPlan['steps'] {
     const source = exactRecord(step, PLAN_STEP_KEYS, 'invalid_generated_plan');
     if (source.status !== 'proposed') throw invalid('invalid_generated_plan');
     return {
-      title: safeDisplayText(source.title, 360, 'invalid_generated_plan'),
-      purpose: safeDisplayText(source.purpose, 360, 'invalid_generated_plan'),
-      expected_change: safeDisplayText(source.expected_change, 360, 'invalid_generated_plan'),
+      title: safeDisplayText(source.title, MAX_PLAN_STEP_TITLE_CODE_POINTS, 'invalid_generated_plan'),
+      purpose: safeDisplayText(source.purpose, MAX_PLAN_STEP_TEXT_CODE_POINTS, 'invalid_generated_plan'),
+      expected_change: safeDisplayText(source.expected_change, MAX_PLAN_STEP_TEXT_CODE_POINTS, 'invalid_generated_plan'),
       status: 'proposed' as const,
     };
   }));
@@ -759,8 +764,8 @@ export async function sanitizeBuilderGenerationPlan(
       request_id: request.request_digest,
       project_id: request.existing_project_id,
       existing_project_id: request.existing_project_id,
-      title: safeDisplayText(source.title, 80, 'invalid_generated_plan'),
-      summary: safeDisplayText(source.summary, 400, 'invalid_generated_plan'),
+      title: safeDisplayText(source.title, MAX_PLAN_TITLE_CODE_POINTS, 'invalid_generated_plan'),
+      summary: safeDisplayText(source.summary, MAX_PLAN_SUMMARY_CODE_POINTS, 'invalid_generated_plan'),
       steps: sanitizePlanSteps(source.steps),
       admissions: {
         conversation: 'sqlite_recorded',
