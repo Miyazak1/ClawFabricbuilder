@@ -25,11 +25,31 @@ import {
   digest,
 } from '../../../test/builderV2Fixtures';
 
+const PLAN_SOURCE_READ_READY = Object.freeze({
+  result_version: 'builder-plan-source-read-approval-status.v1',
+  project_id: PROJECT_ID,
+  state: 'ready',
+  file_count: 1,
+  approval_scope: 'current_project_plan_source_read',
+  authority: 'main_selected_project_bounded_filesystem_read_v1',
+} as const);
+
+const PLAN_SOURCE_READ_APPROVED = Object.freeze({
+  result_version: 'builder-plan-source-read-approval-result.v1',
+  project_id: PROJECT_ID,
+  operation: 'approval_recorded',
+  file_count: 1,
+  approval_scope: 'current_project_plan_source_read',
+  authority: 'main_selected_project_bounded_filesystem_read_v1',
+} as const);
+
 function setup(options: {
   submit?: BuilderCodeGeneratorPort['submit'];
   generate?: BuilderCodeGeneratorPort['generate'];
   generateApprovedPlan?: BuilderCodeGeneratorPort['generateApprovedPlan'];
   proposePlan?: BuilderCodeGeneratorPort['proposePlan'];
+  preparePlanSourceReadApproval?: BuilderCodeGeneratorPort['preparePlanSourceReadApproval'];
+  approvePlanSourceRead?: BuilderCodeGeneratorPort['approvePlanSourceRead'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
@@ -79,6 +99,12 @@ function setup(options: {
       event_digest: `sha256:${'2'.repeat(64)}`,
     },
   })));
+  const preparePlanSourceReadApproval = vi.fn(options.preparePlanSourceReadApproval ?? (async () => (
+    PLAN_SOURCE_READ_READY
+  )));
+  const approvePlanSourceRead = vi.fn(options.approvePlanSourceRead ?? (async () => (
+    PLAN_SOURCE_READ_APPROVED
+  )));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
@@ -135,6 +161,8 @@ function setup(options: {
       generate,
       generateApprovedPlan,
       proposePlan,
+      preparePlanSourceReadApproval,
+      approvePlanSourceRead,
       retry,
       answer,
       restoreDraft,

@@ -23,6 +23,24 @@ import {
 
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
+const PLAN_SOURCE_READ_READY = Object.freeze({
+  result_version: 'builder-plan-source-read-approval-status.v1',
+  project_id: PROJECT_ID,
+  state: 'ready',
+  file_count: 1,
+  approval_scope: 'current_project_plan_source_read',
+  authority: 'main_selected_project_bounded_filesystem_read_v1',
+} as const);
+
+const PLAN_SOURCE_READ_APPROVED = Object.freeze({
+  result_version: 'builder-plan-source-read-approval-result.v1',
+  project_id: PROJECT_ID,
+  operation: 'approval_recorded',
+  file_count: 1,
+  approval_scope: 'current_project_plan_source_read',
+  authority: 'main_selected_project_bounded_filesystem_read_v1',
+} as const);
+
 afterEach(() => {
   for (const entry of mounted.splice(0)) {
     act(() => entry.root.unmount());
@@ -144,6 +162,8 @@ async function renderHook(
     submit,
     generateApprovedPlan,
     proposePlan,
+    preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+    approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
     generate,
     retry,
     answer,

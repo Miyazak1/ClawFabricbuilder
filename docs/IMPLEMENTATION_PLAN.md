@@ -397,18 +397,26 @@ Evidence requirements:
   candidate. Main first re-reads the current Git/SQLite project state, starts a
   trusted Conversation work Run, collects bounded private source context through
   the main source-context collector, and then asks the configured provider for
-  the plan-only JSON contract. Conversation admits the terminal `plan` result
+  the plan-only JSON contract. Before that provider work starts, the visible
+  desktop workspace asks main to prepare the current Project's source-read
+  approval state. The renderer sends only the Project ID; main re-reads the
+  selected Project, derives bounded source resource IDs, evaluates
+  deny-by-default filesystem-read permission, and returns only `ready` or
+  `approval_required` with a file count. If approval is required, the chat flow
+  shows one explicit approval card; approving again sends only the Project ID
+  and main records the bounded filesystem-read grants through its main-only
+  explicit approval primitive. Conversation admits the terminal `plan` result
   only after the source-context result and plan proposal record cross-check.
   The public Generation result exposes bounded plan text and a Conversation
-  head, not private source content, plan record bodies/digests, provider
-  config, credential, Git candidate evidence, Save authority, source mutation,
-  Project Revision authority, or renderer-owned authority. The visible desktop
-  workspace can request this through one active-renderer-bound
-  code-generator IPC/preload/desktop port method, but the renderer sends only
-  bounded user instruction text. Main derives the selected Project, re-reads
-  the current source tree, chooses bounded resource IDs, and returns only the
-  public plan result before the renderer re-reads the existing read-only Task
-  Stream;
+  head, not private source content, plan record bodies/digests, resource IDs,
+  permission receipts, provider config, credential, Git candidate evidence,
+  Save authority, source mutation, Project Revision authority, or
+  renderer-owned authority. The visible desktop workspace can request this
+  through controlled active-renderer-bound code-generator IPC/preload/desktop
+  port methods, but the renderer sends only bounded user instruction text or the
+  selected Project ID. Main derives the selected Project, re-reads the current
+  source tree, chooses bounded resource IDs, and returns only the public plan
+  result before the renderer re-reads the existing read-only Task Stream;
 - the current visible conversation workspace checkpoint makes the main Builder
   surface a continuous conversation workspace with the composer anchored at the
   main content bottom. The composer owns a single primary action: idle turns send
@@ -471,10 +479,11 @@ Evidence requirements:
   Conversation context head and appear in the read-only Task Stream as
   lightweight status rows, but they carry no provider envelope, prompt, token
   delta, credential, source, Git, Save, or Project Revision authority. Real
-  plan-first source context remains blocked until a visible, local-project-folder
-  bound permission approval path can consume the main-only grant primitive to
-  record durable allowed filesystem-read facts; generation must not silently
-  create those grants from renderer selection or a composer submit;
+  plan-first source context can now proceed only through the visible,
+  selected-Project-bound source-read approval path above; generation must not
+  silently create those grants from renderer selection or a composer submit, and
+  this approval does not grant arbitrary tool, network/process, write, Save, or
+  Project Revision authority;
 - the current main-only steering fact checkpoint records a bounded user
   steering message against the currently trusted active Run context, advances the
   SQLite Conversation event head, and exposes only the renderer-safe

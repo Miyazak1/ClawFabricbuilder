@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,6 +9,8 @@ const {
   GENERATE_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
+  PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+  APPROVE_PLAN_SOURCE_READ_CHANNEL,
   SUBMIT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
@@ -42,6 +44,14 @@ function adapter(overrides = {}) {
     proposePlan: async (request) => {
       calls.push(['proposePlan', request]);
       return { result: 'plan-proposed' };
+    },
+    preparePlanSourceReadApproval: async (request) => {
+      calls.push(['preparePlanSourceReadApproval', request]);
+      return { result: 'plan-source-read-status' };
+    },
+    approvePlanSourceRead: async (request) => {
+      calls.push(['approvePlanSourceRead', request]);
+      return { result: 'plan-source-read-approved' };
     },
     submit: async (request) => {
       calls.push(['submit', request]);
@@ -94,6 +104,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'generate',
     'generateApprovedPlan',
     'proposePlan',
+    'preparePlanSourceReadApproval',
+    'approvePlanSourceRead',
     'submit',
     'retry',
     'answer',
@@ -109,6 +121,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       GENERATE_CHANNEL,
       GENERATE_APPROVED_PLAN_CHANNEL,
       PROPOSE_PLAN_CHANNEL,
+      PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+      APPROVE_PLAN_SOURCE_READ_CHANNEL,
       SUBMIT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
@@ -141,6 +155,22 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       version: GENERATE_RESULT_VERSION,
       ok: true,
       result: { result: 'plan-proposed' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.preparePlanSourceReadApproval.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'plan-source-read-status' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.approvePlanSourceRead.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'plan-source-read-approved' },
     },
   );
   assert.deepEqual(
@@ -203,6 +233,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['generate', request],
     ['generateApprovedPlan', request],
     ['proposePlan', request],
+    ['preparePlanSourceReadApproval', request],
+    ['approvePlanSourceRead', request],
     ['submit', request],
     ['retry', request],
     ['answer', request],
@@ -326,6 +358,8 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       generate: () => { throw modified; },
       generateApprovedPlan: () => { throw modified; },
       proposePlan: () => { throw modified; },
+      preparePlanSourceReadApproval: () => { throw modified; },
+      approvePlanSourceRead: () => { throw modified; },
       submit: () => { throw modified; },
       retry: () => { throw modified; },
       answer: () => { throw modified; },
@@ -391,6 +425,16 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     },
     proposePlan: () => {
       const error = new Error('plan-private-marker');
+      error.code = 'builder_generation_timeout';
+      throw error;
+    },
+    preparePlanSourceReadApproval: () => {
+      const error = new Error('plan-source-read-status-private-marker');
+      error.code = 'builder_generation_timeout';
+      throw error;
+    },
+    approvePlanSourceRead: () => {
+      const error = new Error('plan-source-read-approve-private-marker');
       error.code = 'builder_generation_timeout';
       throw error;
     },
@@ -504,6 +548,8 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     generate: async () => ({}),
     generateApprovedPlan: async () => ({}),
     proposePlan: async () => ({}),
+    preparePlanSourceReadApproval: async () => ({}),
+    approvePlanSourceRead: async () => ({}),
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
@@ -546,6 +592,8 @@ test('keeps cancellation and other control failures as rejected generate invocat
     generate: () => pending,
     generateApprovedPlan: async () => ({}),
     proposePlan: async () => ({}),
+    preparePlanSourceReadApproval: async () => ({}),
+    approvePlanSourceRead: async () => ({}),
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
@@ -584,6 +632,8 @@ test('keeps cancellation and other control failures as rejected generate invocat
       },
       generateApprovedPlan: async () => ({}),
       proposePlan: async () => ({}),
+      preparePlanSourceReadApproval: async () => ({}),
+      approvePlanSourceRead: async () => ({}),
       submit: async () => ({}),
       retry: async () => ({}),
       answer: async () => ({}),
@@ -619,6 +669,8 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       generate: async () => result,
       generateApprovedPlan: async () => result,
       proposePlan: async () => result,
+      preparePlanSourceReadApproval: async () => result,
+      approvePlanSourceRead: async () => result,
       submit: async () => result,
       retry: async () => result,
       answer: async () => result,
@@ -665,6 +717,8 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       generate: async () => result,
       generateApprovedPlan: async () => result,
       proposePlan: async () => result,
+      preparePlanSourceReadApproval: async () => result,
+      approvePlanSourceRead: async () => result,
       submit: async () => result,
       retry: async () => result,
       answer: async () => result,
@@ -692,6 +746,8 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     generate: async () => ({}),
     generateApprovedPlan: async () => ({}),
     proposePlan: async () => ({}),
+    preparePlanSourceReadApproval: async () => ({}),
+    approvePlanSourceRead: async () => ({}),
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),

@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const assert = require('node:assert/strict');
 const nodeCrypto = require('node:crypto');
@@ -11,12 +11,14 @@ const vm = require('node:vm');
 const {
   ANSWER_CHANNEL,
   AVAILABILITY_CHANNEL,
+  APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATE_RESULT_VERSION,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
@@ -90,6 +92,21 @@ async function unreachableFetch() {
   throw new Error('unexpected network request');
 }
 
+async function grantPermissionForExplicitApproval(request) {
+  return {
+    result_version: 'builder-permission-grant-result.v1',
+    project_id: request.project_id,
+    action: request.action,
+    resource: {
+      resource_kind: request.resource_kind,
+      project_id: request.project_id,
+      resource_id: request.resource_id,
+    },
+    operation: 'grant_recorded',
+    ui_selection_authority: 'main_owned_explicit_user_approval_required',
+  };
+}
+
 function fakeIpcMain(failOnChannel = null, failRemoveOnChannel = null) {
   const handlers = new Map();
   const removed = [];
@@ -135,6 +152,8 @@ function runtimeWithService(service, probes = {}) {
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
           PROPOSE_PLAN_CHANNEL,
+          PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+          APPROVE_PLAN_SOURCE_READ_CHANNEL,
           GENERATION_OUTPUT_CHANNEL,
           GENERATION_STARTED_CHANNEL,
           SUBMIT_CHANNEL,
@@ -149,6 +168,10 @@ function runtimeWithService(service, probes = {}) {
               generate: { invoke: (_event, body) => options.generate(body) },
               generateApprovedPlan: { invoke: (_event, body) => options.generateApprovedPlan(body) },
               proposePlan: { invoke: (_event, body) => options.proposePlan(body) },
+              preparePlanSourceReadApproval: {
+                invoke: (_event, body) => options.preparePlanSourceReadApproval(body),
+              },
+              approvePlanSourceRead: { invoke: (_event, body) => options.approvePlanSourceRead(body) },
               submit: { invoke: (_event, body) => options.submit(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
@@ -488,8 +511,16 @@ function runtimeWithService(service, probes = {}) {
       };
       context.__mainWindow = options.mainWindow;
       context.__userDataPath = options.userDataPath;
+      context.__grantPermissionForExplicitApproval = options.grantPermissionForExplicitApproval ?? (async () => ({
+        result_version: 'builder-permission-grant-result.v1',
+        project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+        action: 'filesystem.read',
+        operation: 'grant_recorded',
+        ui_selection_authority: 'main_owned_explicit_user_approval_required',
+      }));
       return vm.runInContext(`module.exports.createBuilderGenerationIpcRuntime({
         fetchImpl: __fetchImpl,
+        grantPermissionForExplicitApproval: __grantPermissionForExplicitApproval,
         ipcMain: __ipcMain,
         mainWindowRef: () => __mainWindow,
         userDataPath: __userDataPath,
@@ -504,6 +535,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   const ipcMain = fakeIpcMain();
   const runtime = createBuilderGenerationIpcRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath,
@@ -514,6 +546,8 @@ test('registers exactly the controlled generation channels and keeps provider st
     GENERATE_CHANNEL,
     GENERATE_APPROVED_PLAN_CHANNEL,
     PROPOSE_PLAN_CHANNEL,
+    PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+    APPROVE_PLAN_SOURCE_READ_CHANNEL,
     SUBMIT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
@@ -570,6 +604,7 @@ test('binds one selected empty folder as the main-owned local project workspace'
   const dialogCalls = [];
   const runtime = createBuilderGenerationIpcRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath,
@@ -612,6 +647,7 @@ test('keeps active-renderer and request validation inside the controlled adapter
   const ipcMain = fakeIpcMain();
   const runtime = createBuilderGenerationIpcRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -810,9 +846,9 @@ test('selects only currently supported plan context resources from the saved sou
         product_revision_receipt: { project_id: __readProjectId },
         source_tree: {
           files: [
-            { path: "src/App.jsx" },
+            { path: "src/app.jsx" },
             { path: "index.html" },
-            { path: "README.md" },
+            { path: "readme.md" },
             { path: "src/main.jsx" },
             { path: "package.json" }
           ]
@@ -823,6 +859,7 @@ test('selects only currently supported plan context resources from the saved sou
   };
   const runtime = harness.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -848,6 +885,8 @@ test('selects only currently supported plan context resources from the saved sou
   assert.deepEqual(Array.from(probes.proposePlanBody.resource_ids), [
     'project:/index.html',
     'project:/package.json',
+    'project:/readme.md',
+    'project:/src/app.jsx',
     'project:/src/main.jsx',
   ]);
   assert.equal(probes.proposePlanBody.request.existing_project_id, PROJECT_ID);
@@ -855,6 +894,123 @@ test('selects only currently supported plan context resources from the saved sou
     probes.proposePlanBody.request.request_digest,
     hostRequestDigest('Plan a saved React project update.', PROJECT_ID),
   );
+  runtime.dispose();
+});
+
+test('prepares and records bounded plan source-read approval without renderer resource authority', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    generate_approved_plan() { throw new Error('unexpected approved plan generate'); },
+    propose_plan() { throw new Error('unexpected plan before approval'); },
+    submit() { throw new Error('unexpected submit'); },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
+    steer() { return { request_id: hostRequestDigest(), steered: false }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: true,
+        reason: 'ready',
+        supports_cancel: true,
+      };
+    },
+  };
+  const grantCalls = [];
+  const harness = runtimeWithService(service, probes);
+  probes.loadCurrent = (body) => {
+    harness.context.__readProjectId = body.project_id;
+    return vm.runInContext(
+      `({
+        product_revision_receipt: { project_id: __readProjectId },
+        source_tree: {
+          files: [
+            { path: "src/app.jsx" },
+            { path: "index.html" },
+            { path: "readme.md" }
+          ]
+        }
+      })`,
+      harness.context,
+    );
+  };
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval: async (body) => {
+      grantCalls.push(body);
+      harness.context.__grantProjectId = body.project_id;
+      harness.context.__grantAction = body.action;
+      harness.context.__grantResourceKind = body.resource_kind;
+      harness.context.__grantResourceId = body.resource_id;
+      return vm.runInContext(
+        `({
+          result_version: "builder-permission-grant-result.v1",
+          project_id: __grantProjectId,
+          action: __grantAction,
+          resource: {
+            resource_kind: __grantResourceKind,
+            project_id: __grantProjectId,
+            resource_id: __grantResourceId
+          },
+          operation: "grant_recorded",
+          ui_selection_authority: "main_owned_explicit_user_approval_required"
+        })`,
+        harness.context,
+      );
+    },
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+  const approvalRequest = vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context);
+  const status = await ipcMain.handlers.get(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    approvalRequest,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(status)), {
+    result_version: 'builder-plan-source-read-approval-status.v1',
+    project_id: PROJECT_ID,
+    state: 'approval_required',
+    file_count: 3,
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
+  assert.deepEqual(probes.permissionEvaluateRequests.map((entry) => entry.resource.resource_id), [
+    'project:/index.html',
+    'project:/readme.md',
+    'project:/src/app.jsx',
+  ]);
+
+  const approved = await ipcMain.handlers.get(APPROVE_PLAN_SOURCE_READ_CHANNEL)(
+    { sender: mainWindow.webContents },
+    approvalRequest,
+  );
+
+  assert.deepEqual(grantCalls.map((entry) => entry.resource_id), [
+    'project:/index.html',
+    'project:/readme.md',
+    'project:/src/app.jsx',
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(approved)), {
+    result_version: 'builder-plan-source-read-approval-result.v1',
+    project_id: PROJECT_ID,
+    operation: 'approval_recorded',
+    file_count: 3,
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
+  assert.doesNotMatch(JSON.stringify(approved), /permission_id|resource_id|source_tree|credential|provider/iu);
   runtime.dispose();
 });
 
@@ -888,6 +1044,7 @@ test('publishes project-id-only task stream change events to the active renderer
   const harness = runtimeWithService(service, probes);
   const runtime = harness.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -945,6 +1102,7 @@ test('publishes generation started hints to bind live reads without exposing sou
   const harness = runtimeWithService(service, probes);
   const runtime = harness.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1010,6 +1168,7 @@ test('publishes display-safe generation output deltas without exposing provider 
   const harness = runtimeWithService(service, probes);
   const runtime = harness.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1047,6 +1206,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   const ipcMain = fakeIpcMain(CANCEL_CHANNEL);
   const runtime = createBuilderGenerationIpcRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1063,6 +1223,8 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     SUBMIT_CHANNEL,
+    APPROVE_PLAN_SOURCE_READ_CHANNEL,
+    PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
     PROPOSE_PLAN_CHANNEL,
     GENERATE_APPROVED_PLAN_CHANNEL,
     GENERATE_CHANNEL,
@@ -1072,6 +1234,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   const removalFailure = fakeIpcMain(CANCEL_CHANNEL, GENERATE_CHANNEL);
   const cleanupRuntime = createBuilderGenerationIpcRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain: removalFailure,
     mainWindowRef: () => mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1081,6 +1244,8 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   });
   assert.equal(removalFailure.handlers.has(GENERATE_CHANNEL), true);
   assert.equal(removalFailure.handlers.has(GENERATE_APPROVED_PLAN_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(APPROVE_PLAN_SOURCE_READ_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(SUBMIT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RETRY_GENERATE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
@@ -1101,9 +1266,10 @@ test('rolls back partial registration and rejects malformed runtime authority', 
       mainWindowRef: () => mainWindow,
       userDataPath: temporaryUserData(t),
     },
-    { fetchImpl: unreachableFetch, ipcMain, mainWindowRef: () => mainWindow, userDataPath: 'relative' },
+    { fetchImpl: unreachableFetch, grantPermissionForExplicitApproval, ipcMain, mainWindowRef: () => mainWindow, userDataPath: 'relative' },
     {
       fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
       ipcMain,
       mainWindowRef: () => mainWindow,
       userDataPath: temporaryUserData(t),
@@ -1128,6 +1294,7 @@ test('closes project main authority when generation channel registration fails',
   const ipcMain = fakeIpcMain(CANCEL_CHANNEL);
   const runtime = harness.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow: activeWindow(),
     userDataPath: temporaryUserData(t),
@@ -1157,6 +1324,7 @@ test('composes project main authority and closes it on dispose', (t) => {
   const userDataPath = temporaryUserData(t);
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath,
@@ -1199,6 +1367,7 @@ test('registers a read-only task stream channel backed by the conversation servi
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1237,6 +1406,7 @@ test('registers a plan review channel backed only by the conversation service', 
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1280,6 +1450,7 @@ test('registers a read-only project history channel backed by project read autho
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1318,6 +1489,7 @@ test('registers a read-only historical revision channel without changing selecti
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1367,6 +1539,7 @@ test('registers a read-only draft restore channel backed by generation service',
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1409,6 +1582,7 @@ test('registers a draft rejection channel backed by generation service', async (
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1499,6 +1673,7 @@ test('keeps selected project identity in main and accepts only instruction over 
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1696,6 +1871,7 @@ test('ignores stale Open and Save completions when a newer project selection win
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1809,6 +1985,7 @@ test('cancels every accepted generation, submit, retry, or answer before removin
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),
@@ -1859,6 +2036,7 @@ test('does not close project authority when an active generation lacks durable c
   const ipcMain = fakeIpcMain();
   const runtime = runtimeModule.createRuntime({
     fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
     ipcMain,
     mainWindow,
     userDataPath: temporaryUserData(t),

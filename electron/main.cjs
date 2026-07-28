@@ -198,19 +198,21 @@ function createProjectFolderDialog(packagedCanaryProjectRootPath) {
 }
 
 function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
+  const permissionRuntime = createBuilderPermissionIpcRuntime({
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath,
+  });
   return Object.freeze([
     createBuilderProviderSettingsIpcRuntime({
       ipcMain,
       mainWindowRef: () => mainWindow,
       userDataPath,
     }),
-    createBuilderPermissionIpcRuntime({
-      ipcMain,
-      mainWindowRef: () => mainWindow,
-      userDataPath,
-    }),
+    permissionRuntime,
     createBuilderGenerationIpcRuntime({
       fetchImpl: net.fetch,
+      grantPermissionForExplicitApproval: permissionRuntime.grantForExplicitApproval,
       ipcMain,
       mainWindowRef: () => mainWindow,
       showOpenDialog: createProjectFolderDialog(packagedCanaryProjectRootPath),

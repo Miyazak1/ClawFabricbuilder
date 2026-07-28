@@ -20,6 +20,24 @@ export type BuilderGenerationOutputEvent = Readonly<{
   display_delta_text: string;
 }>;
 
+export type BuilderPlanSourceReadApprovalStatus = Readonly<{
+  result_version: 'builder-plan-source-read-approval-status.v1';
+  project_id: string;
+  state: 'ready' | 'approval_required';
+  file_count: number;
+  approval_scope: 'current_project_plan_source_read';
+  authority: 'main_selected_project_bounded_filesystem_read_v1';
+}>;
+
+export type BuilderPlanSourceReadApprovalResult = Readonly<{
+  result_version: 'builder-plan-source-read-approval-result.v1';
+  project_id: string;
+  operation: 'approval_recorded' | 'already_approved';
+  file_count: number;
+  approval_scope: 'current_project_plan_source_read';
+  authority: 'main_selected_project_bounded_filesystem_read_v1';
+}>;
+
 export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_base_unavailable'
   | 'builder_generation_parent_unavailable'
@@ -91,6 +109,12 @@ export interface BuilderCodeGeneratorPort {
   generate(request: BuilderGenerationRequest): Promise<unknown>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<unknown>;
   proposePlan(request: BuilderGenerationRequest): Promise<unknown>;
+  preparePlanSourceReadApproval(
+    request: Readonly<{ project_id: string }>,
+  ): Promise<BuilderPlanSourceReadApprovalStatus>;
+  approvePlanSourceRead(
+    request: Readonly<{ project_id: string }>,
+  ): Promise<BuilderPlanSourceReadApprovalResult>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;

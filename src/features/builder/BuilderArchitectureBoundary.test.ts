@@ -150,6 +150,8 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
     expect(ports).toContain('submit(request: BuilderGenerationRequest)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
+    expect(ports).toMatch(/preparePlanSourceReadApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
+    expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toContain('retry(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
@@ -174,12 +176,15 @@ describe('Builder v2 architecture boundary', () => {
     expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).toContain('submit: methods.submit');
+    expect(generationPort).toMatch(/preparePlanSourceReadApproval:\s*methods\.preparePlanSourceReadApproval/u);
+    expect(generationPort).toMatch(/approvePlanSourceRead:\s*methods\.approvePlanSourceRead/u);
+    expect(generationPort).toContain('project_id: projectId');
     expect(generationPort).toContain('retry: methods.retry');
     expect(generationPort).toContain('answer: methods.answer');
     expect(generationPort).toContain('rejectDraft: methods.rejectDraft');
     expect(generationPort).toContain('draft_id: request.draft_id');
     expect(generationPort).toContain('request_id: request.request_id');
-    expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request/u);
+    expect(generationPort).not.toMatch(/existing_project_id: request|request_digest: request|resource_id|permission_id|grant_id/u);
     expect(taskStreamPort).toContain("const BRIDGE_KEYS = Object.freeze(['read', 'subscribeChanged'])");
     expect(taskStreamPort).toContain("event_version: 'builder-task-stream-changed.v1'");
     expect(taskStreamPort).not.toMatch(/saveDraft|generate|projectWorkspace|providerSettings/u);

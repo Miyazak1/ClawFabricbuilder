@@ -5,6 +5,10 @@ const { types: utilTypes } = require('node:util');
 const GENERATE_CHANNEL = 'clawfabric-builder:code-generator:generate';
 const GENERATE_APPROVED_PLAN_CHANNEL = 'clawfabric-builder:code-generator:generate-approved-plan';
 const PROPOSE_PLAN_CHANNEL = 'clawfabric-builder:code-generator:propose-plan';
+const PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL =
+  'clawfabric-builder:code-generator:prepare-plan-source-read-approval';
+const APPROVE_PLAN_SOURCE_READ_CHANNEL =
+  'clawfabric-builder:code-generator:approve-plan-source-read';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
@@ -24,6 +28,8 @@ const OPTION_KEYS = Object.freeze([
   'generate',
   'generateApprovedPlan',
   'proposePlan',
+  'preparePlanSourceReadApproval',
+  'approvePlanSourceRead',
   'submit',
   'retry',
   'answer',
@@ -304,6 +310,20 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.proposePlan);
         },
       }),
+      preparePlanSourceReadApproval: Object.freeze({
+        channel: PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+        method: 'preparePlanSourceReadApproval',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.preparePlanSourceReadApproval);
+        },
+      }),
+      approvePlanSourceRead: Object.freeze({
+        channel: APPROVE_PLAN_SOURCE_READ_CHANNEL,
+        method: 'approvePlanSourceRead',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.approvePlanSourceRead);
+        },
+      }),
       submit: Object.freeze({
         channel: SUBMIT_CHANNEL,
         method: 'submit',
@@ -365,6 +385,8 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'generate',
       'generateApprovedPlan',
       'proposePlan',
+      'preparePlanSourceReadApproval',
+      'approvePlanSourceRead',
       'submit',
       'retry',
       'answer',
@@ -390,6 +412,8 @@ module.exports = Object.freeze({
   GENERATE_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
+  PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+  APPROVE_PLAN_SOURCE_READ_CHANNEL,
   SUBMIT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,

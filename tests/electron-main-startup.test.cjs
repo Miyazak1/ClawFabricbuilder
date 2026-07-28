@@ -36,11 +36,14 @@ async function executeMain({
   const browserWindowOptions = [];
   const dialogCalls = [];
   let sessionCreated = sessionDataExists;
+  let permissionGrantForExplicitApproval = null;
   const events = new Map();
   const generationRuntimeOptions = [];
   function runtime(index) {
+    const grantForExplicitApproval = () => ({ ok: true });
     return {
       index,
+      grantForExplicitApproval,
       dispose() { calls.dispose += 1; },
       register() {
         calls.register += 1;
@@ -151,7 +154,9 @@ async function executeMain({
             calls.createPermissionRuntime += 1;
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
-            return runtime(1);
+            const value = runtime(1);
+            permissionGrantForExplicitApproval = value.grantForExplicitApproval;
+            return value;
           },
         };
       }
@@ -160,6 +165,7 @@ async function executeMain({
           createBuilderGenerationIpcRuntime(options) {
             calls.createGenerationRuntime += 1;
             assert.equal(options.fetchImpl, electron.net.fetch);
+            assert.equal(options.grantPermissionForExplicitApproval, permissionGrantForExplicitApproval);
             assert.equal(typeof options.showOpenDialog, 'function');
             generationRuntimeOptions.push(options);
             return runtime(2);

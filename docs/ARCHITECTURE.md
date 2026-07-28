@@ -85,21 +85,26 @@ The Generation main service can also create a main-only plan proposal for an
 existing project by binding the user request to the current Git/SQLite project
 read result, starting a trusted Conversation work Run, collecting bounded
 private source context through the main source-context collector, and then
-asking the configured provider for the plan-only JSON contract. The private
-source context is used only inside main for the provider prompt and plan record
-creation. Conversation admits only the completed plan fact after cross-checking
-the source-context result and plan proposal record; the public Generation result
-contains bounded plan text and a Conversation head, not the plan record body,
-record digests, source context, provider config, credential, Git evidence, Save
-authority, Project Revision authority, or source mutation. The visible desktop
-workspace can request this as a composer tool through one controlled
-preload/IPC entry, but the renderer sends only bounded user instruction text.
-Main derives the selected Project, re-reads the current Git/SQLite source-tree
-facts, chooses bounded resource IDs, and then returns only the public plan
-result; the UI re-reads the renderer-safe Task Stream for the displayed plan.
-The renderer cannot send source content, project/resource authority, provider
-config, credential, request digest, Save authority, or Project Revision
-authority.
+asking the configured provider for the plan-only JSON contract. Before the
+visible workspace starts that plan request, it must ask main to prepare the
+bounded source-read approval state for the currently selected Project. The
+renderer sends only the Project ID; main re-reads the selected Project, derives
+the bounded source resource IDs, evaluates deny-by-default filesystem-read
+permission, and returns only `ready` or `approval_required` with a file count.
+If approval is required, the chat flow shows one explicit approval card;
+approval again sends only the Project ID, and main records the durable
+filesystem-read grants through its main-only explicit approval primitive. The
+renderer never receives resource IDs, permission IDs, source paths, source
+content, grant receipts, provider config, credentials, Git evidence, Save
+authority, or Project Revision authority. After approval is ready, main derives
+the selected Project again, re-reads the Git/SQLite source-tree facts, chooses
+bounded resource IDs, collects the private source context, and returns only the
+public plan result; the UI re-reads the renderer-safe Task Stream for the
+displayed plan. Conversation admits only the completed plan fact after
+cross-checking the source-context result and plan proposal record; the public
+Generation result contains bounded plan text and a Conversation head, not the
+plan record body, record digests, source context, provider config, credential,
+Git evidence, Save authority, Project Revision authority, or source mutation.
 
 The Generation main service can also record fixed Run progress stages through
 the Conversation main service while provider generation, explanation, or
@@ -111,11 +116,12 @@ projection contains no provider envelope, prompt, token delta, credential,
 source content, Git evidence, Save authority, or Project Revision authority.
 This is durable work visibility, not a token-streaming or tool-execution
 protocol. A controlled main-only permission grant primitive can record durable
-allowed filesystem-read facts, but it is not exposed through preload or a
-renderer port. Plan-first source context therefore remains fail-closed until a
-visible approval flow binds the selected local project folder, the bounded
-main-selected project resources, and the user's explicit approval before calling
-that main-only primitive.
+allowed filesystem-read facts, but it is not exposed as a generic preload or
+renderer permission-grant port. The only current visible consumer is the
+plan-first source-read approval flow above; it is bound to the current selected
+Project and bounded main-selected source resources, and it cannot be reused for
+arbitrary tools, external network/process access, source mutation, Save, or
+Project Revision creation.
 
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but

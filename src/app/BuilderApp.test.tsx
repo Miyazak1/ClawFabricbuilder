@@ -70,6 +70,8 @@ async function setup(options: Readonly<{
   deferredPlanReview?: boolean;
   failSubmitOnce?: boolean;
   initiallySaved?: boolean;
+  planSourceReadApprovalRequired?: boolean;
+  failPlanSourceReadApproval?: boolean;
   planAfterPropose?: boolean;
   pendingActivity?: boolean;
   pendingPlanActivity?: boolean;
@@ -336,6 +338,33 @@ async function setup(options: Readonly<{
       },
     };
   });
+  const preparePlanSourceReadApproval = vi.fn(async (request: unknown) => ({
+    version: 'builder-generation-ipc-result.v1',
+    ok: true,
+    result: {
+      result_version: 'builder-plan-source-read-approval-status.v1',
+      project_id: (request as { project_id: string }).project_id,
+      state: options.planSourceReadApprovalRequired === true ? 'approval_required' : 'ready',
+      file_count: 3,
+      approval_scope: 'current_project_plan_source_read',
+      authority: 'main_selected_project_bounded_filesystem_read_v1',
+    },
+  }));
+  const approvePlanSourceRead = vi.fn(async (request: unknown) => {
+    if (options.failPlanSourceReadApproval === true) throw new Error('approval unavailable');
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: {
+        result_version: 'builder-plan-source-read-approval-result.v1',
+        project_id: (request as { project_id: string }).project_id,
+        operation: 'approval_recorded',
+        file_count: 3,
+        approval_scope: 'current_project_plan_source_read',
+        authority: 'main_selected_project_bounded_filesystem_read_v1',
+      },
+    };
+  });
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
@@ -415,6 +444,8 @@ async function setup(options: Readonly<{
       generate,
       generateApprovedPlan,
       proposePlan,
+      preparePlanSourceReadApproval,
+      approvePlanSourceRead,
       retry,
       answer,
       restoreDraft,
@@ -487,6 +518,8 @@ async function setup(options: Readonly<{
       await resolvePlanReview();
     },
     proposePlan,
+    preparePlanSourceReadApproval,
+    approvePlanSourceRead,
     submit,
     retry,
     steer,
@@ -1079,6 +1112,7 @@ describe('BuilderApp v2', () => {
     const {
       container,
       generate,
+      preparePlanSourceReadApproval,
       proposePlan,
       readTaskStream,
       saveDraft,
@@ -1111,6 +1145,9 @@ describe('BuilderApp v2', () => {
       expect(proposePlan).toHaveBeenCalledOnce();
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
     expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
       instruction: 'Plan the next project update.',
     });
@@ -1119,6 +1156,61 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(textarea.value).toBe('');
     expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+  });
+
+  it('asks for visible project-read approval before a saved-project plan needs source context', async () => {
+    const {
+      approvePlanSourceRead,
+      container,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      readTaskStream,
+    } = await setup({
+      initiallySaved: true,
+      planAfterPropose: true,
+      planSourceReadApprovalRequired: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('#builder-idea')).not.toBeNull();
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Plan the next project update.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-propose-plan="true"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+    click(container, 'Plan first');
+
+    await waitFor(() => {
+      expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+      });
+      expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')?.textContent).
+        toContain('Allow project reading?');
+    });
+    expect(proposePlan).not.toHaveBeenCalled();
+    expect(textarea.value).toBe('');
+
+    click(container, 'Allow and continue');
+
+    await waitFor(() => {
+      expect(approvePlanSourceRead).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+        instruction: 'Plan the next project update.',
+      });
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')).toBeNull();
+    expect(JSON.stringify(approvePlanSourceRead.mock.calls)).not.toMatch(/resource_id|permission_id|source_tree/iu);
   });
 
   it('records plan approval then continues into an unsaved draft without saving', async () => {

@@ -36,6 +36,24 @@ import { createBuilderGenerationRequest } from '../application/builderGeneration
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ container: HTMLDivElement; root: Root }> = [];
 
+const PLAN_SOURCE_READ_READY = Object.freeze({
+  result_version: 'builder-plan-source-read-approval-status.v1',
+  project_id: PROJECT_ID,
+  state: 'ready',
+  file_count: 1,
+  approval_scope: 'current_project_plan_source_read',
+  authority: 'main_selected_project_bounded_filesystem_read_v1',
+} as const);
+
+const PLAN_SOURCE_READ_APPROVED = Object.freeze({
+  result_version: 'builder-plan-source-read-approval-result.v1',
+  project_id: PROJECT_ID,
+  operation: 'approval_recorded',
+  file_count: 1,
+  approval_scope: 'current_project_plan_source_read',
+  authority: 'main_selected_project_bounded_filesystem_read_v1',
+} as const);
+
 afterEach(() => {
   for (const entry of mounted.splice(0)) {
     act(() => entry.root.unmount());
@@ -78,6 +96,12 @@ async function snapshots() {
       },
       async proposePlan() {
         return null;
+      },
+      async preparePlanSourceReadApproval() {
+        return PLAN_SOURCE_READ_READY;
+      },
+      async approvePlanSourceRead() {
+        return PLAN_SOURCE_READ_APPROVED;
       },
       async retry(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
@@ -538,6 +562,12 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async proposePlan() {
         return null;
       },
+      async preparePlanSourceReadApproval() {
+        return PLAN_SOURCE_READ_READY;
+      },
+      async approvePlanSourceRead() {
+        return PLAN_SOURCE_READ_APPROVED;
+      },
       async retry() {
         return draft;
       },
@@ -619,6 +649,12 @@ async function inspectedHistorySnapshot() {
       },
       async proposePlan() {
         return null;
+      },
+      async preparePlanSourceReadApproval() {
+        return PLAN_SOURCE_READ_READY;
+      },
+      async approvePlanSourceRead() {
+        return PLAN_SOURCE_READ_APPROVED;
       },
       async retry(request) {
         return createGenerationDraft(request, currentTree);
@@ -969,6 +1005,8 @@ describe('BuilderPage v2', () => {
         },
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1019,6 +1057,8 @@ describe('BuilderPage v2', () => {
         generate: async () => new Promise(() => undefined),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1068,6 +1108,8 @@ describe('BuilderPage v2', () => {
         generate: async () => null,
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
         restoreDraft: async () => null,
@@ -1126,6 +1168,8 @@ describe('BuilderPage v2', () => {
         generate: async () => new Promise(() => undefined),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1173,6 +1217,8 @@ describe('BuilderPage v2', () => {
         generate: async () => new Promise(() => undefined),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -1237,6 +1283,8 @@ describe('BuilderPage v2', () => {
         generate: async (request) => createGenerationDraft(request),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => new Promise((resolve) => {
@@ -2318,6 +2366,39 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('shows project-read approval before plan source context without leaking grant details', async () => {
+    const { saved } = await snapshots();
+    const onApprovePlanSourceRead = vi.fn();
+    const onDismissPlanSourceReadApproval = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        onApprovePlanSourceRead={onApprovePlanSourceRead}
+        onDismissPlanSourceReadApproval={onDismissPlanSourceReadApproval}
+        planSourceReadApproval={{
+          project_id: PROJECT_ID,
+          instruction: 'Plan the next project update.',
+          file_count: 3,
+          state: 'pending',
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const approval = container.querySelector('[data-builder-plan-source-read-approval="true"]');
+    expect(approval?.textContent).toContain('Allow project reading?');
+    expect(approval?.textContent).toContain('3 project files');
+    expect(approval?.closest('[data-builder-composer="true"]')).toBeNull();
+    click(container, '[data-builder-approve-plan-source-read="true"]');
+    expect(onApprovePlanSourceRead).toHaveBeenCalledOnce();
+    click(container, '[data-builder-dismiss-plan-source-read="true"]');
+    expect(onDismissPlanSourceReadApproval).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toMatch(
+      /permission_id|resource_id|project:\/|source_tree|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
   it('keeps plan review actions single-shot while the decision is recording', async () => {
     const { saved } = await snapshots();
     const activity = await pendingPlanActivity();
@@ -2518,6 +2599,8 @@ describe('BuilderPage v2', () => {
         },
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
@@ -2558,6 +2641,8 @@ describe('BuilderPage v2', () => {
         generate: async (request) => createGenerationDraft(request),
         generateApprovedPlan: async () => null,
         proposePlan: async () => null,
+        preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
+        approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,

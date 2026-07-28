@@ -15,6 +15,8 @@ type BuilderCodeGeneratorBridge = Readonly<{
   generate(request: unknown): Promise<unknown>;
   generateApprovedPlan(request: unknown): Promise<unknown>;
   proposePlan(request: unknown): Promise<unknown>;
+  preparePlanSourceReadApproval(request: unknown): Promise<unknown>;
+  approvePlanSourceRead(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   restoreDraft(request: unknown): Promise<unknown>;
@@ -31,6 +33,8 @@ const BRIDGE_KEYS = new Set([
   'generate',
   'generateApprovedPlan',
   'proposePlan',
+  'preparePlanSourceReadApproval',
+  'approvePlanSourceRead',
   'retry',
   'answer',
   'restoreDraft',
@@ -190,6 +194,10 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
       generateApprovedPlan: methods.generateApprovedPlan as BuilderCodeGeneratorBridge['generateApprovedPlan'],
       proposePlan: methods.proposePlan as BuilderCodeGeneratorBridge['proposePlan'],
+      preparePlanSourceReadApproval:
+        methods.preparePlanSourceReadApproval as BuilderCodeGeneratorBridge['preparePlanSourceReadApproval'],
+      approvePlanSourceRead:
+        methods.approvePlanSourceRead as BuilderCodeGeneratorBridge['approvePlanSourceRead'],
       retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
       answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
       restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
@@ -251,6 +259,76 @@ function unwrapGenerationEnvelope(value: unknown): unknown {
   const code = error.code as BuilderGenerationDiagnosticCode;
   if (error.retryable !== BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY[code]) throw portError();
   throw portError(code);
+}
+
+function safeProjectId(value: unknown): string {
+  if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) throw portError();
+  return value;
+}
+
+function safePlanSourceReadFileCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > 8) {
+    throw portError();
+  }
+  return value;
+}
+
+function unwrapPlanSourceReadApprovalStatus(
+  value: unknown,
+  expectedProjectId: string,
+): Awaited<ReturnType<BuilderCodeGeneratorPort['preparePlanSourceReadApproval']>> {
+  const result = exactDataRecord(value, [
+    'result_version',
+    'project_id',
+    'state',
+    'file_count',
+    'approval_scope',
+    'authority',
+  ]);
+  if (
+    result.result_version !== 'builder-plan-source-read-approval-status.v1'
+    || result.project_id !== expectedProjectId
+    || (result.state !== 'ready' && result.state !== 'approval_required')
+    || result.approval_scope !== 'current_project_plan_source_read'
+    || result.authority !== 'main_selected_project_bounded_filesystem_read_v1'
+  ) throw portError();
+  return Object.freeze({
+    result_version: 'builder-plan-source-read-approval-status.v1',
+    project_id: safeProjectId(result.project_id),
+    state: result.state,
+    file_count: safePlanSourceReadFileCount(result.file_count),
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
+}
+
+function unwrapPlanSourceReadApprovalResult(
+  value: unknown,
+  expectedProjectId: string,
+): Awaited<ReturnType<BuilderCodeGeneratorPort['approvePlanSourceRead']>> {
+  const result = exactDataRecord(value, [
+    'result_version',
+    'project_id',
+    'operation',
+    'file_count',
+    'approval_scope',
+    'authority',
+  ]);
+  if (
+    result.result_version !== 'builder-plan-source-read-approval-result.v1'
+    || result.project_id !== expectedProjectId
+    || (result.operation !== 'approval_recorded' && result.operation !== 'already_approved')
+    || result.approval_scope !== 'current_project_plan_source_read'
+    || result.authority !== 'main_selected_project_bounded_filesystem_read_v1'
+  ) throw portError();
+  return Object.freeze({
+    result_version: 'builder-plan-source-read-approval-result.v1',
+    project_id: safeProjectId(result.project_id),
+    operation: result.operation,
+    file_count: safePlanSourceReadFileCount(result.file_count),
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
 }
 
 function unwrapCancelResult(value: unknown, expectedRequestId: string): Readonly<{
@@ -374,6 +452,26 @@ export function createBuilderDesktopCodeGeneratorPort(
       return callBridge(bridge, bridge.proposePlan, [{
         instruction: request.instruction,
       }]).then(unwrapGenerationEnvelope);
+    },
+    preparePlanSourceReadApproval(
+      request: Parameters<BuilderCodeGeneratorPort['preparePlanSourceReadApproval']>[0],
+    ) {
+      const projectId = safeProjectId(request.project_id);
+      return callBridge(bridge, bridge.preparePlanSourceReadApproval, [{
+        project_id: projectId,
+      }]).then((result) => unwrapPlanSourceReadApprovalStatus(
+        unwrapGenerationEnvelope(result),
+        projectId,
+      ));
+    },
+    approvePlanSourceRead(request: Parameters<BuilderCodeGeneratorPort['approvePlanSourceRead']>[0]) {
+      const projectId = safeProjectId(request.project_id);
+      return callBridge(bridge, bridge.approvePlanSourceRead, [{
+        project_id: projectId,
+      }]).then((result) => unwrapPlanSourceReadApprovalResult(
+        unwrapGenerationEnvelope(result),
+        projectId,
+      ));
     },
     submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
       return callBridge(bridge, bridge.submit, [{

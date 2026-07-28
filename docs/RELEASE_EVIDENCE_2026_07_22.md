@@ -509,6 +509,42 @@ flow for bounded filesystem-read permission.
   chat-style project work until that approval path is implemented and the
   packaged canary passes.
 
+## 2026-07-28 Visible Plan Source-Read Approval Package Check
+
+This addendum records the desktop package checkpoint after adding the visible
+Plan first source-read approval flow. It is desktop package evidence only; it
+does not extend installer evidence, code-signing status, public release
+readiness, mobile evidence, or real-provider DeepSeek canary evidence.
+
+- Plan-first source reading now has a visible chat-flow approval prompt before
+  continuing. Renderer sends only the current Project ID; main re-reads the
+  selected project, derives bounded project-file resources, evaluates
+  deny-by-default `filesystem.read`, and records explicit grants through the
+  main-only permission runtime.
+- The bridge exposes only public approval status/result fields:
+  `ready`/`approval_required`, current Project ID, bounded file count, fixed
+  scope, and fixed authority label. Renderer cannot supply resource IDs,
+  permission IDs, grants, source content, provider material, Git evidence, Save
+  authority, or revision receipts through this flow.
+- Focused Electron validation passed 50 subtests covering the generation IPC
+  adapter/runtime, Electron main startup, security boundaries, and architecture
+  boundary.
+- Focused frontend validation passed 106 Vitest tests covering the desktop code
+  generator port, Builder app flow, Builder page approval card, bridge root, and
+  Builder architecture boundary.
+- `npm exec tsc -b --pretty false`, `npm run lint`, `npm run build`, and
+  `npm run test` passed. The full test command reported 390 Vitest tests and
+  564 Node boundary subtests passing.
+- `npm run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- A packaged desktop screenshot of the fresh project conversation surface was
+  captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-current-packaged.png`.
+  It is local visual evidence only and was not committed. The screenshot does
+  not claim the generated-draft Review/Changes overlap issue is fixed.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

@@ -8,11 +8,13 @@ const { types: utilTypes } = require('node:util');
 const {
   ANSWER_CHANNEL,
   AVAILABILITY_CHANNEL,
+  APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
@@ -85,8 +87,21 @@ const {
 } = require('./builder-tool-source-context-collector.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
-const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath', 'showOpenDialog']);
-const REQUIRED_OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
+const OPTION_KEYS = Object.freeze([
+  'fetchImpl',
+  'grantPermissionForExplicitApproval',
+  'ipcMain',
+  'mainWindowRef',
+  'userDataPath',
+  'showOpenDialog',
+]);
+const REQUIRED_OPTION_KEYS = Object.freeze([
+  'fetchImpl',
+  'grantPermissionForExplicitApproval',
+  'ipcMain',
+  'mainWindowRef',
+  'userDataPath',
+]);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const REQUEST_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -178,6 +193,12 @@ function publicInstruction(rawRequest) {
 function openProjectId(rawRequest) {
   const projectId = exactDataValue(rawRequest, ['project_id'], 'project_id');
   if (projectId !== null && (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId))) fail();
+  return projectId;
+}
+
+function planSourceReadApprovalProjectId(rawRequest) {
+  const projectId = exactDataValue(rawRequest, ['project_id'], 'project_id');
+  if (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId)) fail();
   return projectId;
 }
 
@@ -528,6 +549,7 @@ function safeOptions(value) {
       if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
     }
     const fetchImpl = descriptors.fetchImpl.value;
+    const grantPermissionForExplicitApproval = descriptors.grantPermissionForExplicitApproval.value;
     const ipcMain = descriptors.ipcMain.value;
     const mainWindowRef = descriptors.mainWindowRef.value;
     const userDataPath = descriptors.userDataPath.value;
@@ -537,6 +559,8 @@ function safeOptions(value) {
     if (
       typeof fetchImpl !== 'function'
       || utilTypes.isProxy(fetchImpl)
+      || typeof grantPermissionForExplicitApproval !== 'function'
+      || utilTypes.isProxy(grantPermissionForExplicitApproval)
       || ipcMain === null
       || typeof ipcMain !== 'object'
       || utilTypes.isProxy(ipcMain)
@@ -552,6 +576,7 @@ function safeOptions(value) {
     ) fail();
     return Object.freeze({
       fetchImpl,
+      grantPermissionForExplicitApproval,
       ipcMain,
       handle: stableMethod(ipcMain, 'handle'),
       removeHandler: stableMethod(ipcMain, 'removeHandler'),
@@ -726,6 +751,80 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
     }
 
+    async function selectedPlanSourceReadResources(projectId) {
+      if (selectionPending || selectedProjectId !== projectId) failGenerationBaseUnavailable();
+      let currentProject;
+      try {
+        currentProject = await projectMainAuthority.project_read_authority.load_current({ project_id: projectId });
+        if (readResultProjectId(currentProject) !== projectId) fail();
+        return sourceTreeResourceIds(currentProject);
+      } catch {
+        failGenerationBaseUnavailable();
+      }
+    }
+
+    async function planSourceReadApprovalStatus(rawRequest) {
+      const projectId = planSourceReadApprovalProjectId(rawRequest);
+      const resourceIds = await selectedPlanSourceReadResources(projectId);
+      const nowMs = Date.now();
+      let denied = false;
+      for (const resourceId of resourceIds) {
+        const decision = await permissionEvaluator.evaluate({
+          policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+          actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+          action: 'filesystem.read',
+          resource: {
+            resource_kind: 'filesystem',
+            project_id: projectId,
+            resource_id: resourceId,
+          },
+          now_ms: nowMs,
+        });
+        if (decision.decision !== 'allowed') denied = true;
+      }
+      return Object.freeze({
+        result_version: 'builder-plan-source-read-approval-status.v1',
+        project_id: projectId,
+        state: denied ? 'approval_required' : 'ready',
+        file_count: resourceIds.length,
+        approval_scope: 'current_project_plan_source_read',
+        authority: 'main_selected_project_bounded_filesystem_read_v1',
+      });
+    }
+
+    async function approvePlanSourceRead(rawRequest) {
+      const projectId = planSourceReadApprovalProjectId(rawRequest);
+      const resourceIds = await selectedPlanSourceReadResources(projectId);
+      let recorded = false;
+      for (const resourceId of resourceIds) {
+        const result = await Reflect.apply(options.grantPermissionForExplicitApproval, undefined, [{
+          project_id: projectId,
+          action: 'filesystem.read',
+          resource_kind: 'filesystem',
+          resource_id: resourceId,
+        }]);
+        if (
+          !isPlainObject(result)
+          || Object.getOwnPropertyDescriptor(result, 'result_version')?.value !== 'builder-permission-grant-result.v1'
+          || Object.getOwnPropertyDescriptor(result, 'project_id')?.value !== projectId
+          || Object.getOwnPropertyDescriptor(result, 'action')?.value !== 'filesystem.read'
+          || Object.getOwnPropertyDescriptor(result, 'ui_selection_authority')?.value
+            !== 'main_owned_explicit_user_approval_required'
+        ) fail();
+        const operation = Object.getOwnPropertyDescriptor(result, 'operation')?.value;
+        if (operation === 'grant_recorded') recorded = true;
+        else if (operation !== 'grant_existing') fail();
+      }
+      return Object.freeze({
+        result_version: 'builder-plan-source-read-approval-result.v1',
+        project_id: projectId,
+        operation: recorded ? 'approval_recorded' : 'already_approved',
+        file_count: resourceIds.length,
+        approval_scope: 'current_project_plan_source_read',
+        authority: 'main_selected_project_bounded_filesystem_read_v1',
+      });
+    }
+
     function trackedSubmit(rawRequest) {
       return trackedGenerationOperation(rawRequest, service.submit);
     }
@@ -742,6 +841,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       generate: trackedGenerate,
       generateApprovedPlan: trackedGenerateApprovedPlan,
       proposePlan: trackedProposePlan,
+      preparePlanSourceReadApproval: planSourceReadApprovalStatus,
+      approvePlanSourceRead,
       submit: trackedSubmit,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
@@ -876,6 +977,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: GENERATE_CHANNEL, invoke: adapter.channels.generate.invoke }),
     Object.freeze({ channel: GENERATE_APPROVED_PLAN_CHANNEL, invoke: adapter.channels.generateApprovedPlan.invoke }),
     Object.freeze({ channel: PROPOSE_PLAN_CHANNEL, invoke: adapter.channels.proposePlan.invoke }),
+    Object.freeze({
+      channel: PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
+      invoke: adapter.channels.preparePlanSourceReadApproval.invoke,
+    }),
+    Object.freeze({
+      channel: APPROVE_PLAN_SOURCE_READ_CHANNEL,
+      invoke: adapter.channels.approvePlanSourceRead.invoke,
+    }),
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),

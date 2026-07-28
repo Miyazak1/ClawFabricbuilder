@@ -55,6 +55,7 @@ import {
   BuilderPage,
   type BuilderFileName,
   type BuilderPlanReviewInFlight,
+  type BuilderPlanSourceReadApprovalPrompt,
 } from '../features/builder/presentation/BuilderPage';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
@@ -229,6 +230,16 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
   proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
+  preparePlanSourceReadApproval(
+    request: Parameters<BuilderCodeGeneratorPort['preparePlanSourceReadApproval']>[0],
+  ) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
+  approvePlanSourceRead(request: Parameters<BuilderCodeGeneratorPort['approvePlanSourceRead']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
@@ -427,12 +438,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
+  const [planSourceReadApproval, setPlanSourceReadApproval] =
+    useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
+  const planSourceReadApprovalRef = useRef<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
   const workspacePorts = useMemo(() => {
@@ -449,6 +463,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
         return ports.generator.proposePlan(request);
+      },
+      preparePlanSourceReadApproval(
+        request: Parameters<BuilderCodeGeneratorPort['preparePlanSourceReadApproval']>[0],
+      ) {
+        return ports.generator.preparePlanSourceReadApproval(request);
+      },
+      approvePlanSourceRead(request: Parameters<BuilderCodeGeneratorPort['approvePlanSourceRead']>[0]) {
+        return ports.generator.approvePlanSourceRead(request);
       },
       retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
         return ports.generator.retry(request);
@@ -521,6 +543,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     liveOutputRef.current = liveOutput;
   }, [liveOutput]);
 
+  useLayoutEffect(() => {
+    planSourceReadApprovalRef.current = planSourceReadApproval;
+  }, [planSourceReadApproval]);
+
   const publishPlanReviewInFlight = useCallback((value: BuilderPlanReviewInFlight | null) => {
     planReviewInFlightRef.current = value;
     setPlanReviewInFlight(value);
@@ -567,8 +593,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
     workspaceEpochRef.current += 1;
     approvedPlanWaitingProjectRef.current = null;
+    planSourceReadApprovalRef.current = null;
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
+    setPlanSourceReadApproval(null);
     publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
     submitInFlightRef.current = false;
@@ -677,6 +705,20 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [idea, project, readActivityAfterTerminal, steerInstruction]);
 
+  const runPlanProposal = useCallback(async (
+    submittedIdea: string,
+    commandEpoch: number,
+    fallbackProjectId: string,
+  ) => {
+    const result = await project.proposePlan(submittedIdea);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    if (result.status === 'submit_failed' || result.status === 'unavailable') {
+      setIdea(submittedIdea);
+    }
+    await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
+    setLiveOutput(null);
+  }, [project, readActivityAfterTerminal]);
+
   const proposePlan = useCallback(async () => {
     const currentSnapshot = projectSnapshotRef.current;
     if (
@@ -692,22 +734,72 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const submittedIdea = idea;
     const fallbackProjectId = currentSnapshot.savedProject.target.project_id;
     submitInFlightRef.current = true;
-    setIdea('');
     setLiveOutput(null);
     try {
-      const result = await project.proposePlan(submittedIdea);
+      const approval = await ports.generator.preparePlanSourceReadApproval({
+        project_id: fallbackProjectId,
+      });
       if (workspaceEpochRef.current !== commandEpoch) return;
-      if (result.status === 'submit_failed' || result.status === 'unavailable') {
-        setIdea(submittedIdea);
+      if (approval.state === 'approval_required') {
+        const prompt = Object.freeze({
+          project_id: fallbackProjectId,
+          instruction: submittedIdea,
+          file_count: approval.file_count,
+          state: 'pending' as const,
+        });
+        planSourceReadApprovalRef.current = prompt;
+        setPlanSourceReadApproval(prompt);
+        setIdea('');
+        return;
       }
-      await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
-      setLiveOutput(null);
+      planSourceReadApprovalRef.current = null;
+      setPlanSourceReadApproval(null);
+      setIdea('');
+      await runPlanProposal(submittedIdea, commandEpoch, fallbackProjectId);
+    } catch {
+      if (workspaceEpochRef.current === commandEpoch) setIdea(submittedIdea);
     } finally {
       if (workspaceEpochRef.current === commandEpoch) {
         submitInFlightRef.current = false;
       }
     }
-  }, [idea, project, readActivityAfterTerminal]);
+  }, [idea, ports.generator, runPlanProposal]);
+
+  const approvePlanSourceRead = useCallback(async () => {
+    const prompt = planSourceReadApprovalRef.current;
+    if (prompt === null || submitInFlightRef.current || prompt.state === 'approving') return;
+    const commandEpoch = workspaceEpochRef.current;
+    submitInFlightRef.current = true;
+    const approving = Object.freeze({ ...prompt, state: 'approving' as const });
+    planSourceReadApprovalRef.current = approving;
+    setPlanSourceReadApproval(approving);
+    setLiveOutput(null);
+    try {
+      await ports.generator.approvePlanSourceRead({ project_id: prompt.project_id });
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      planSourceReadApprovalRef.current = null;
+      setPlanSourceReadApproval(null);
+      await runPlanProposal(prompt.instruction, commandEpoch, prompt.project_id);
+    } catch {
+      if (workspaceEpochRef.current === commandEpoch) {
+        const failed = Object.freeze({ ...prompt, state: 'failed' as const });
+        planSourceReadApprovalRef.current = failed;
+        setPlanSourceReadApproval(failed);
+      }
+    } finally {
+      if (workspaceEpochRef.current === commandEpoch) {
+        submitInFlightRef.current = false;
+      }
+    }
+  }, [ports.generator, runPlanProposal]);
+
+  const dismissPlanSourceReadApproval = useCallback(() => {
+    const prompt = planSourceReadApprovalRef.current;
+    if (prompt === null || prompt.state === 'approving') return;
+    planSourceReadApprovalRef.current = null;
+    setPlanSourceReadApproval(null);
+    setIdea((current) => (current.trim().length === 0 ? prompt.instruction : current));
+  }, []);
 
   const retryGenerate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -1012,6 +1104,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               planReviewFailure={planReviewFailure}
               planReviewInFlight={planReviewInFlight}
               planReviewRecorded={planReviewRecorded}
+              planSourceReadApproval={planSourceReadApproval}
+              onApprovePlanSourceRead={approvePlanSourceRead}
+              onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}

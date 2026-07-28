@@ -9,6 +9,7 @@ import {
   GitCompareArrows,
   History,
   ListChecks,
+  LockKeyhole,
   Play,
   RefreshCw,
   Save,
@@ -70,14 +71,24 @@ export type BuilderPlanReviewInFlight = Readonly<{
   run_id: string;
 }>;
 
+export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
+  project_id: string;
+  instruction: string;
+  file_count: number;
+  state: 'pending' | 'approving' | 'failed';
+}>;
+
 export type BuilderPageProps = {
   instruction: string;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
+  planSourceReadApproval?: BuilderPlanSourceReadApprovalPrompt | null;
   onInstructionChange?: (value: string) => void;
+  onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onCancel?: () => void;
+  onDismissPlanSourceReadApproval?: () => void;
   onSteerInstruction?: () => void;
   onProposePlan?: () => void;
   onSubmitInstruction?: () => void;
@@ -1150,7 +1161,9 @@ function StarterPrompt() {
 
 export function BuilderPage({
   instruction,
+  onApprovePlanSourceRead,
   onCancel,
+  onDismissPlanSourceReadApproval,
   onInstructionChange,
   onSteerInstruction,
   onProposePlan,
@@ -1172,6 +1185,7 @@ export function BuilderPage({
   planReviewFailure = null,
   planReviewInFlight = null,
   planReviewRecorded = null,
+  planSourceReadApproval = null,
   onSelectFile,
 }: BuilderPageProps) {
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
@@ -1673,6 +1687,56 @@ export function BuilderPage({
     </section>
   ) : null;
 
+  const planSourceReadApprovalCard = planSourceReadApproval === null ? null : (
+    <section
+      aria-label="Project read approval"
+      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
+      data-builder-plan-source-read-approval="true"
+    >
+      <div className="cf-builder-review-copy">
+        <div className="cf-builder-review-icon" aria-hidden="true">
+          <LockKeyhole className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="cf-builder-review-title">Allow project reading?</h2>
+          <p className="cf-builder-review-summary">
+            I need to read {planSourceReadApproval.file_count === 1
+              ? 'one project file'
+              : `${planSourceReadApproval.file_count} project files`} to make a useful plan.
+          </p>
+          <p className="cf-builder-review-note">
+            This only prepares the plan. It will not change files or save a version.
+          </p>
+        </div>
+      </div>
+      <div className="cf-builder-review-actions" data-builder-plan-source-read-actions="true">
+        {planSourceReadApproval.state === 'failed' ? (
+          <p className="cf-builder-review-note" role="alert">
+            I could not record that approval. Try again.
+          </p>
+        ) : null}
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-dismiss-plan-source-read="true"
+          disabled={planSourceReadApproval.state === 'approving'}
+          onClick={onDismissPlanSourceReadApproval}
+          type="button"
+        >
+          Not now
+        </button>
+        <button
+          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-approve-plan-source-read="true"
+          disabled={planSourceReadApproval.state === 'approving'}
+          onClick={() => { void onApprovePlanSourceRead?.(); }}
+          type="button"
+        >
+          {planSourceReadApproval.state === 'approving' ? 'Allowing...' : 'Allow and continue'}
+        </button>
+      </div>
+    </section>
+  );
+
   const composer = (
     <section aria-label="Conversation command" className="cf-builder-composer-card" data-builder-composer="true">
       <div className="cf-builder-composer-shell">
@@ -1822,6 +1886,8 @@ export function BuilderPage({
                 />
               ) : null}
               {showStarterPrompt ? <StarterPrompt /> : null}
+
+              {planSourceReadApprovalCard}
 
               {draftReview}
 

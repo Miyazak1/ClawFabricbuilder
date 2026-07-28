@@ -275,6 +275,8 @@ const generationChannels = [
   'clawfabric-builder:code-generator:generate',
   'clawfabric-builder:code-generator:generate-approved-plan',
   'clawfabric-builder:code-generator:propose-plan',
+  'clawfabric-builder:code-generator:prepare-plan-source-read-approval',
+  'clawfabric-builder:code-generator:approve-plan-source-read',
   'clawfabric-builder:code-generator:submit',
   'clawfabric-builder:code-generator:started',
   'clawfabric-builder:code-generator:output',
@@ -408,7 +410,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v12');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v13');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -430,6 +432,8 @@ exactObjectKeys(generationBridge, [
   'generate',
   'generateApprovedPlan',
   'proposePlan',
+  'preparePlanSourceReadApproval',
+  'approvePlanSourceRead',
   'retry',
   'answer',
   'restoreDraft',
@@ -446,6 +450,8 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -525,16 +531,18 @@ assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[6]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('GENERATE_APPROVED_PLAN_CHANNEL'), generationChannels[1]);
 assert.equal(preloadConstants.get('PROPOSE_PLAN_CHANNEL'), generationChannels[2]);
-assert.equal(preloadConstants.get('SUBMIT_CHANNEL'), generationChannels[3]);
-assert.equal(preloadConstants.get('GENERATION_STARTED_CHANNEL'), generationChannels[4]);
-assert.equal(preloadConstants.get('GENERATION_OUTPUT_CHANNEL'), generationChannels[5]);
-assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[6]);
-assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[7]);
-assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[8]);
-assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[9]);
-assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[10]);
-assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[11]);
-assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[12]);
+assert.equal(preloadConstants.get('PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL'), generationChannels[3]);
+assert.equal(preloadConstants.get('APPROVE_PLAN_SOURCE_READ_CHANNEL'), generationChannels[4]);
+assert.equal(preloadConstants.get('SUBMIT_CHANNEL'), generationChannels[5]);
+assert.equal(preloadConstants.get('GENERATION_STARTED_CHANNEL'), generationChannels[6]);
+assert.equal(preloadConstants.get('GENERATION_OUTPUT_CHANNEL'), generationChannels[7]);
+assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[8]);
+assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[9]);
+assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[10]);
+assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[11]);
+assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[12]);
+assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[13]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[14]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
@@ -557,6 +565,13 @@ exactInvokeMethod(generationBridge, 'submit', 'SUBMIT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generateApprovedPlan', 'GENERATE_APPROVED_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'proposePlan', 'PROPOSE_PLAN_CHANNEL', ['request']);
+exactInvokeMethod(
+  generationBridge,
+  'preparePlanSourceReadApproval',
+  'PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(generationBridge, 'approvePlanSourceRead', 'APPROVE_PLAN_SOURCE_READ_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'retry', 'RETRY_GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answer', 'ANSWER_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'restoreDraft', 'RESTORE_DRAFT_CHANNEL', ['request']);
@@ -995,6 +1010,8 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_TASK_STREAM_CHANNEL/
 assert.match(packagedGenerationIpcRuntime, /channel:\s*REVIEW_PLAN_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*STEER_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*PROPOSE_PLAN_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*APPROVE_PLAN_SOURCE_READ_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectWorkspace/u);
 assert.match(packagedPreload, /createLocalProject/u);
@@ -1006,6 +1023,10 @@ assert.match(packagedPreload, /generateApprovedPlan/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:generate-approved-plan/u);
 assert.match(packagedPreload, /proposePlan/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:propose-plan/u);
+assert.match(packagedPreload, /preparePlanSourceReadApproval/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:prepare-plan-source-read-approval/u);
+assert.match(packagedPreload, /approvePlanSourceRead/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:approve-plan-source-read/u);
 assert.match(packagedPreload, /\bretry\b/u);
 assert.match(packagedPreload, /\banswer\b/u);
 assert.match(packagedPreload, /restoreDraft/u);
@@ -1019,7 +1040,7 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 28);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 30);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
