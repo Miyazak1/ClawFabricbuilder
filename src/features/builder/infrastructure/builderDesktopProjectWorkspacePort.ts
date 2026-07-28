@@ -2,6 +2,7 @@ import type { BuilderProjectWorkspacePort } from '../application/builderPorts';
 
 type BuilderProjectWorkspaceBridge = Readonly<{
   open(request: unknown): Promise<unknown>;
+  createLocalProject(): Promise<unknown>;
   saveDraft(request: unknown): Promise<unknown>;
   loadCurrent(request: unknown): Promise<unknown>;
   loadRevision(request: unknown): Promise<unknown>;
@@ -9,7 +10,15 @@ type BuilderProjectWorkspaceBridge = Readonly<{
   listHistory(request: unknown): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
+const BRIDGE_KEYS = Object.freeze([
+  'open',
+  'createLocalProject',
+  'saveDraft',
+  'loadCurrent',
+  'loadRevision',
+  'listCurrent',
+  'listHistory',
+]);
 const OPEN_REQUEST_KEYS = Object.freeze(['project_id']);
 const SAVE_DRAFT_REQUEST_KEYS = Object.freeze(['draft_id']);
 const LOAD_REVISION_REQUEST_KEYS = Object.freeze(['project_id', 'revision_receipt_digest']);
@@ -62,6 +71,7 @@ function sanitizeBridge(value: unknown): BuilderProjectWorkspaceBridge {
     }
     return Object.freeze({
       open: methods.open,
+      createLocalProject: methods.createLocalProject,
       saveDraft: methods.saveDraft,
       loadCurrent: methods.loadCurrent,
       loadRevision: methods.loadRevision,
@@ -188,6 +198,9 @@ export function createBuilderDesktopProjectWorkspacePort(
   return Object.freeze({
     open(request: Readonly<{ project_id: string | null }>) {
       return call(bridge, bridge.open, [requestFields(request, OPEN_REQUEST_KEYS)]);
+    },
+    createLocalProject() {
+      return call(bridge, bridge.createLocalProject, []);
     },
     saveDraft(request: Readonly<{ draft_id: string }>) {
       return call(bridge, bridge.saveDraft, [requestFields(request, SAVE_DRAFT_REQUEST_KEYS)]);

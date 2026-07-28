@@ -391,7 +391,7 @@ function seedRevisionChainFixture(filePath, length) {
     const insertProject = raw.prepare(`INSERT OR IGNORE INTO projects (
       project_id, project_created_at_ms, current_revision_receipt_digest,
       current_revision_number, metadata_schema_version
-    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v4')`);
+    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v5')`);
     const insertConversation = raw.prepare(`INSERT OR IGNORE INTO conversations (
       project_id, conversation_id, created_at_ms
     ) VALUES (?, ?, ?)`);
@@ -575,9 +575,11 @@ test('records monotonic Project Revision receipts and restores current after res
   assert.deepEqual(identity.project, {
     project_id: PROJECT_ID,
     created_at_ms: 1,
+    current_revision_receipt_digest: first.receipt.revision_receipt_digest,
+    current_revision_number: 1,
   });
   assert.equal(identity.operation, 'project_identity_loaded');
-  assert.doesNotMatch(JSON.stringify(identity), /commit_oid|revision_receipt_digest|candidate_digest/u);
+  assert.doesNotMatch(JSON.stringify(identity), /commit_oid|candidate_digest/u);
   assert.deepEqual(first.metadata_evidence.runtime_pragmas, {
     foreign_keys: 'on',
     journal_mode: 'wal',
@@ -621,7 +623,51 @@ test('records monotonic Project Revision receipts and restores current after res
   assert.deepEqual(restarted.load_project_identity({ project_id: PROJECT_ID }).project, {
     project_id: PROJECT_ID,
     created_at_ms: 1,
+    current_revision_receipt_digest: second.receipt.revision_receipt_digest,
+    current_revision_number: 2,
   });
+  restarted.close();
+});
+
+test('binds a logical project to one local workspace root without creating a revision', (t) => {
+  const filePath = temporaryDatabase(t);
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-workspace-binding-'));
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  const requestValue = {
+    project_id: PROJECT_ID,
+    project_root_path: projectRoot,
+    created_at_ms: 123,
+    bound_at_ms: 456,
+  };
+
+  const bound = metadata.bind_project_workspace(requestValue);
+  const replayed = metadata.bind_project_workspace(requestValue);
+  const identity = metadata.load_project_identity({ project_id: PROJECT_ID });
+  const loaded = metadata.load_project_workspace({ project_id: PROJECT_ID });
+
+  assert.equal(bound.operation, 'project_workspace_bound');
+  assert.deepEqual(bound.workspace, {
+    project_id: PROJECT_ID,
+    project_root_path: projectRoot,
+    bound_at_ms: 456,
+    binding_status: 'bound',
+  });
+  assert.deepEqual(replayed.workspace, bound.workspace);
+  assert.deepEqual(identity.project, {
+    project_id: PROJECT_ID,
+    created_at_ms: 123,
+    current_revision_receipt_digest: null,
+    current_revision_number: 0,
+  });
+  assert.deepEqual(loaded.workspace, bound.workspace);
+  metadata.close();
+
+  const restarted = createBuilderProductMetadataDatabase(filePath);
+  assert.deepEqual(
+    restarted.load_project_workspace({ project_id: PROJECT_ID }).workspace,
+    bound.workspace,
+  );
   restarted.close();
 });
 
@@ -1483,6 +1529,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
   const metadata = createBuilderProductMetadataDatabase(filePath);
   assert.deepEqual(Reflect.ownKeys(metadata).sort(), [
     'append_conversation_events',
+    'bind_project_workspace',
     'close',
     'list_current_project_revisions',
     'list_project_revisions',
@@ -1491,6 +1538,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
     'load_current_project_revision',
     'load_project_identity',
     'load_project_revision',
+    'load_project_workspace',
     'record_project_revision_receipt',
   ]);
   assert.equal(Object.isFrozen(metadata), true);

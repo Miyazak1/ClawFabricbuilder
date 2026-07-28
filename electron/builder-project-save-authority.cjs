@@ -413,12 +413,21 @@ function taskTitle(candidate) {
 function projectIdentityFromResult(value, expectedProjectId) {
   exactObject(value, ['result_version', 'operation', 'project', 'metadata_evidence']);
   if (
-    valueAt(value, 'result_version') !== 'builder-product-metadata-result.v3'
+    valueAt(value, 'result_version') !== 'builder-product-metadata-result.v4'
     || valueAt(value, 'operation') !== 'project_identity_loaded'
   ) fail('builder_project_save_invalid');
   const project = valueAt(value, 'project');
-  exactObject(project, ['project_id', 'created_at_ms']);
+  exactObject(project, [
+    'project_id',
+    'created_at_ms',
+    'current_revision_receipt_digest',
+    'current_revision_number',
+  ]);
   if (safeProjectId(valueAt(project, 'project_id')) !== expectedProjectId) fail('builder_project_save_invalid');
+  if (
+    valueAt(project, 'current_revision_number') < 0
+    || !Number.isSafeInteger(valueAt(project, 'current_revision_number'))
+  ) fail('builder_project_save_invalid');
   return freezeDeep({
     project_id: expectedProjectId,
     created_at_ms: safeMs(valueAt(project, 'created_at_ms')),

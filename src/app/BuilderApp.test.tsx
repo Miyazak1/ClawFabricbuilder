@@ -377,6 +377,11 @@ async function setup(options: Readonly<{
       }
       : readWire;
   });
+  const createLocalProject = vi.fn(async () => ({
+    result_version: 'builder-project-selection-result.v1',
+    operation: 'new_selected',
+    project_id: null,
+  }));
   const listCurrent = vi.fn(async () => (
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
@@ -432,6 +437,7 @@ async function setup(options: Readonly<{
     },
     projectWorkspace: {
       open,
+      createLocalProject,
       saveDraft,
       loadCurrent,
       loadRevision,
@@ -473,6 +479,7 @@ async function setup(options: Readonly<{
     container,
     answer,
     cancel,
+    createLocalProject,
     generate,
     generateApprovedPlan,
     resolvePlanReview: async () => {
@@ -722,7 +729,7 @@ describe('BuilderApp v2', () => {
   });
 
   it('requires a project folder before a build turn can make a draft', async () => {
-    const { container, generate, listCurrent, saveDraft, submit } = await setup();
+    const { container, createLocalProject, generate, listCurrent, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
     act(() => {
@@ -742,6 +749,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
         .toContain('Choose or open a project folder before I build.');
     });
+    expect(createLocalProject).toHaveBeenCalledOnce();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();

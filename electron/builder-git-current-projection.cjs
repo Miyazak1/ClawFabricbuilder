@@ -26,7 +26,19 @@ const BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION =
 const BUILDER_GIT_VERIFIED_CANDIDATE_READ_RESULT_VERSION =
   'builder-git-verified-candidate-read-result.v1';
 const OPTION_KEYS = Object.freeze(['projects_root', 'git_runner', 'read_verified_candidate']);
+const OPTION_KEYS_WITH_RESOLVER = Object.freeze([
+  'projects_root',
+  'git_runner',
+  'read_verified_candidate',
+  'resolve_project_root',
+]);
 const DEFAULT_OPTION_KEYS = Object.freeze(['projects_root', 'runtime_root', 'git_repository']);
+const DEFAULT_OPTION_KEYS_WITH_RESOLVER = Object.freeze([
+  'projects_root',
+  'runtime_root',
+  'git_repository',
+  'resolve_project_root',
+]);
 const PROJECT_REQUEST_KEYS = Object.freeze(['candidate_receipt', 'projection_mode']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -113,6 +125,20 @@ function safeAbsolutePath(value) {
   return value;
 }
 
+function optionKeys(value, withoutResolver, withResolver) {
+  if (!isPlainObject(value)) fail('builder_git_current_projection_invalid');
+  const keys = Reflect.ownKeys(value);
+  const selected = keys.includes('resolve_project_root') ? withResolver : withoutResolver;
+  assertExactObject(value, selected);
+  return selected;
+}
+
+function safeProjectRootResolver(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'function' || utilTypes.isProxy(value)) fail('builder_git_current_projection_invalid');
+  return value;
+}
+
 function projectUuid(projectId) {
   if (typeof projectId !== 'string') fail('builder_git_current_projection_invalid');
   const match = PROJECT_ID_PATTERN.exec(projectId);
@@ -120,8 +146,9 @@ function projectUuid(projectId) {
   return match[1];
 }
 
-function projectDirectory(projectsRoot, projectId) {
-  return path.join(projectsRoot, projectUuid(projectId));
+function projectDirectory(projectsRoot, projectId, resolveProjectRoot) {
+  if (resolveProjectRoot === null) return path.join(projectsRoot, projectUuid(projectId));
+  return safeAbsolutePath(Reflect.apply(resolveProjectRoot, undefined, [projectId]));
 }
 
 function assertSafeDirectory(value, allowMissing) {
@@ -135,11 +162,12 @@ function assertSafeDirectory(value, allowMissing) {
   }
 }
 
-function assertProjectRoot(projectsRoot, projectRoot) {
+function assertProjectRoot(projectsRoot, projectRoot, resolverBacked) {
   assertSafeDirectory(projectsRoot, false);
   assertSafeDirectory(projectRoot, false);
   assertSafeDirectory(path.join(projectRoot, '.git'), false);
   assertSafeProtectedRootEntries(projectRoot);
+  if (resolverBacked) return;
   const relative = path.relative(projectsRoot, projectRoot);
   if (
     relative.startsWith('..')
@@ -344,7 +372,7 @@ function normalizeError(error) {
 }
 
 function sanitizeOptions(value) {
-  assertExactObject(value, OPTION_KEYS);
+  const keys = optionKeys(value, OPTION_KEYS, OPTION_KEYS_WITH_RESOLVER);
   const projectsRoot = safeAbsolutePath(valueAt(value, 'projects_root'));
   const gitRunner = valueAt(value, 'git_runner');
   const readVerifiedCandidate = valueAt(value, 'read_verified_candidate');
@@ -356,11 +384,14 @@ function sanitizeOptions(value) {
     || typeof readVerifiedCandidate !== 'function'
     || utilTypes.isProxy(readVerifiedCandidate)
   ) fail('builder_git_current_projection_invalid');
-  return Object.freeze({ projectsRoot, gitRunner, readVerifiedCandidate });
+  const resolveProjectRoot = keys.includes('resolve_project_root')
+    ? safeProjectRootResolver(valueAt(value, 'resolve_project_root'))
+    : null;
+  return Object.freeze({ projectsRoot, gitRunner, readVerifiedCandidate, resolveProjectRoot });
 }
 
 function sanitizeDefaultOptions(value) {
-  assertExactObject(value, DEFAULT_OPTION_KEYS);
+  const keys = optionKeys(value, DEFAULT_OPTION_KEYS, DEFAULT_OPTION_KEYS_WITH_RESOLVER);
   const projectsRoot = safeAbsolutePath(valueAt(value, 'projects_root'));
   const runtimeRoot = safeAbsolutePath(valueAt(value, 'runtime_root'));
   const gitRepository = valueAt(value, 'git_repository');
@@ -376,6 +407,9 @@ function sanitizeDefaultOptions(value) {
     runtimeRoot,
     gitRepository,
     readVerifiedCandidate: descriptor.value,
+    resolveProjectRoot: keys.includes('resolve_project_root')
+      ? safeProjectRootResolver(valueAt(value, 'resolve_project_root'))
+      : null,
   });
 }
 
@@ -421,8 +455,12 @@ function createBuilderGitCurrentProjection(rawOptions) {
     }
     return runExclusive(receipt.project_id, async () => {
       try {
-        const projectRoot = projectDirectory(options.projectsRoot, receipt.project_id);
-        assertProjectRoot(options.projectsRoot, projectRoot);
+        const projectRoot = projectDirectory(
+          options.projectsRoot,
+          receipt.project_id,
+          options.resolveProjectRoot,
+        );
+        assertProjectRoot(options.projectsRoot, projectRoot, options.resolveProjectRoot !== null);
         const verified = sanitizeVerifiedCandidateRead(
           await Reflect.apply(options.readVerifiedCandidate, undefined, [receipt]),
           receipt,
@@ -493,7 +531,7 @@ function createBuilderGitCurrentProjection(rawOptions) {
 
 function createDefaultBuilderGitCurrentProjection(rawOptions) {
   const options = sanitizeDefaultOptions(rawOptions);
-  return createBuilderGitCurrentProjection({
+  const projectionOptions = {
     projects_root: options.projectsRoot,
     git_runner: createDefaultBuilderGitCommandRunner({ runtime_root: options.runtimeRoot }),
     read_verified_candidate: (receipt) => Reflect.apply(
@@ -501,7 +539,11 @@ function createDefaultBuilderGitCurrentProjection(rawOptions) {
       options.gitRepository,
       [receipt],
     ),
-  });
+  };
+  if (options.resolveProjectRoot !== null) {
+    projectionOptions.resolve_project_root = options.resolveProjectRoot;
+  }
+  return createBuilderGitCurrentProjection(projectionOptions);
 }
 
 module.exports = Object.freeze({

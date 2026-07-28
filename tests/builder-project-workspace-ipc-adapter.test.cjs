@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  CREATE_LOCAL_PROJECT_CHANNEL,
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
@@ -49,6 +50,14 @@ function adapter(overrides = {}) {
       calls.push(['save', request]);
       return { result_version: 'builder-project-save-result.v1', draft_id: request.draft_id };
     }),
+    createLocalProject: overrides.createLocalProject ?? (async () => {
+      calls.push(['createLocalProject']);
+      return {
+        result_version: 'builder-project-selection-result.v1',
+        operation: 'local_project_bound',
+        project_id: PROJECT_ID,
+      };
+    }),
     loadCurrent: overrides.loadCurrent ?? (async (request) => {
       calls.push(['load', request]);
       return { result_version: 'builder-project-read-result.v1', project_id: request.project_id };
@@ -78,9 +87,10 @@ function adapter(overrides = {}) {
 test('workspace adapter exposes only open, save, verified reads, and catalog commands', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.namespace, 'builderProjectWorkspace');
-  assert.deepEqual(value.exposed_methods, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
-  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
+  assert.deepEqual(value.exposed_methods, ['open', 'createLocalProject', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
+  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'createLocalProject', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
   assert.equal(value.channels.open.channel, OPEN_PROJECT_CHANNEL);
+  assert.equal(value.channels.createLocalProject.channel, CREATE_LOCAL_PROJECT_CHANNEL);
   assert.equal(value.channels.saveDraft.channel, SAVE_DRAFT_CHANNEL);
   assert.equal(value.channels.loadCurrent.channel, LOAD_CURRENT_CHANNEL);
   assert.equal(value.channels.loadRevision.channel, LOAD_REVISION_CHANNEL);
@@ -93,6 +103,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   const saved = await value.channels.saveDraft.invoke(authority.event, {
     draft_id: DRAFT_ID,
   });
+  const created = await value.channels.createLocalProject.invoke(authority.event);
   const loaded = await value.channels.loadCurrent.invoke(authority.event, {
     project_id: PROJECT_ID,
   });
@@ -107,6 +118,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   });
   assert.equal(selected.operation, 'new_selected');
   assert.equal(saved.result_version, 'builder-project-save-result.v1');
+  assert.equal(created.operation, 'local_project_bound');
   assert.equal(loaded.result_version, 'builder-project-read-result.v1');
   assert.equal(revision.operation, 'revision_loaded');
   assert.deepEqual(listed.projects, []);
@@ -114,6 +126,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   assert.deepEqual(calls, [
     ['open', { project_id: null }],
     ['save', { draft_id: DRAFT_ID }],
+    ['createLocalProject'],
     ['load', { project_id: PROJECT_ID }],
     ['revision', { project_id: PROJECT_ID, revision_receipt_digest: REVISION_DIGEST }],
     ['list'],

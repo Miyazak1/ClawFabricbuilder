@@ -154,6 +154,11 @@ async function renderHook(
   };
   const workspace = {
     open,
+    createLocalProject: async () => ({
+      result_version: 'builder-project-selection-result.v1',
+      operation: 'new_selected',
+      project_id: null,
+    }),
     saveDraft,
     loadCurrent,
     loadRevision,

@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
 const {
@@ -12,9 +13,9 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 
-const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v4';
-const BUILDER_PRODUCT_METADATA_USER_VERSION = 4;
-const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v3';
+const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v5';
+const BUILDER_PRODUCT_METADATA_USER_VERSION = 5;
+const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v4';
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_PATTERN}$`, 'u');
@@ -33,6 +34,7 @@ const ACTOR_ID_PATTERN = new RegExp(`^(?:builder-user|builder-agent):${UUID_PATT
 
 const METADATA_TABLES = Object.freeze([
   'projects',
+  'project_workspaces',
   'project_revisions',
   'conversations',
   'conversation_events',
@@ -50,7 +52,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     current_revision_receipt_digest TEXT,
     current_revision_number INTEGER NOT NULL DEFAULT 0,
     metadata_schema_version TEXT NOT NULL,
-    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v4'),
+    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v5'),
     CHECK (project_created_at_ms >= 0),
     CHECK (current_revision_number >= 0),
     CHECK (
@@ -60,6 +62,17 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     UNIQUE (project_id, current_revision_receipt_digest),
     FOREIGN KEY (project_id, current_revision_receipt_digest)
       REFERENCES project_revisions(project_id, revision_receipt_digest)
+      ON DELETE RESTRICT ON UPDATE RESTRICT
+  ) STRICT`,
+  `CREATE TABLE project_workspaces (
+    project_id TEXT PRIMARY KEY,
+    project_root_path TEXT NOT NULL,
+    bound_at_ms INTEGER NOT NULL,
+    binding_status TEXT NOT NULL,
+    CHECK (length(project_root_path) BETWEEN 1 AND 1024),
+    CHECK (bound_at_ms >= 0),
+    CHECK (binding_status = 'bound'),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
       ON DELETE RESTRICT ON UPDATE RESTRICT
   ) STRICT`,
   `CREATE TABLE conversations (
@@ -322,6 +335,19 @@ function hasControlCharacter(value) {
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function safeProjectRootPath(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 1024
+    || value.trim() !== value
+    || hasControlCharacter(value)
+    || !path.isAbsolute(value)
+    || path.normalize(value) !== value
+  ) fail();
+  return value;
 }
 
 function safeText(value, maximum) {
@@ -735,6 +761,16 @@ function sanitizeLoadCurrentRequest(value) {
   return freezeDeep({ project_id: safeProjectId(valueAt(value, 'project_id')) });
 }
 
+function sanitizeBindProjectWorkspaceRequest(value) {
+  exactObject(value, ['project_id', 'project_root_path', 'created_at_ms', 'bound_at_ms']);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    project_root_path: safeProjectRootPath(valueAt(value, 'project_root_path')),
+    created_at_ms: safeInteger(valueAt(value, 'created_at_ms')),
+    bound_at_ms: safeInteger(valueAt(value, 'bound_at_ms')),
+  });
+}
+
 function sanitizeLoadProjectRevisionRequest(value) {
   exactObject(value, ['project_id', 'revision_receipt_digest']);
   return freezeDeep({
@@ -840,6 +876,7 @@ module.exports = Object.freeze({
   sha256Canonical: safeBoundary(sha256Canonical),
   sanitizeLoadCurrentRequest: safeBoundary(sanitizeLoadCurrentRequest),
   sanitizeLoadProjectRevisionRequest: safeBoundary(sanitizeLoadProjectRevisionRequest),
+  sanitizeBindProjectWorkspaceRequest: safeBoundary(sanitizeBindProjectWorkspaceRequest),
   sanitizeListProjectRevisionsRequest: safeBoundary(sanitizeListProjectRevisionsRequest),
   sanitizeListCurrentProjectRevisionsRequest: safeBoundary(sanitizeListCurrentProjectRevisionsRequest),
   sanitizeLoadConversationCandidateByDraftRequest:

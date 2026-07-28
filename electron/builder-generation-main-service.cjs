@@ -39,6 +39,7 @@ const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
+  'projectIdentityAuthority',
   'conversationService',
   'gitAuthority',
   'transport',
@@ -494,6 +495,9 @@ function sanitizeOptions(value) {
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
+    projectIdentityAuthority: keys.includes('projectIdentityAuthority')
+      ? descriptors.projectIdentityAuthority.value
+      : null,
     conversationService: descriptors.conversationService.value,
     gitAuthority: descriptors.gitAuthority.value,
     ...(keys.includes('transport') ? { transport: descriptors.transport.value } : {}),
@@ -559,6 +563,46 @@ function sanitizeReadResult(value, expectedProjectId) {
     },
     source_tree: sourceTree,
   });
+}
+
+function emptyBaseForBoundProject(value, expectedProjectId) {
+  exactObject(value, ['result_version', 'operation', 'project', 'metadata_evidence']);
+  if (
+    valueAt(value, 'result_version') !== 'builder-product-metadata-result.v4'
+    || valueAt(value, 'operation') !== 'project_identity_loaded'
+  ) fail();
+  const project = valueAt(value, 'project');
+  exactObject(project, [
+    'project_id',
+    'created_at_ms',
+    'current_revision_receipt_digest',
+    'current_revision_number',
+  ]);
+  if (
+    valueAt(project, 'project_id') !== expectedProjectId
+    || valueAt(project, 'current_revision_receipt_digest') !== null
+    || valueAt(project, 'current_revision_number') !== 0
+  ) fail();
+  return freezeDeep({
+    base_revision: null,
+    base_revision_evidence: null,
+    source_tree: createBuilderProjectSourceTree({ files: [] }),
+  });
+}
+
+async function loadBaseForExistingProject(projectId, loadCurrentProject, loadProjectIdentity, projectReadAuthority, projectIdentityAuthority) {
+  try {
+    return sanitizeReadResult(
+      await Reflect.apply(loadCurrentProject, projectReadAuthority, [{ project_id: projectId }]),
+      projectId,
+    );
+  } catch {
+    if (projectIdentityAuthority === null || loadProjectIdentity === null) fail();
+    return emptyBaseForBoundProject(
+      await Reflect.apply(loadProjectIdentity, projectIdentityAuthority, [{ project_id: projectId }]),
+      projectId,
+    );
+  }
 }
 
 function publicSourceTree(sourceTree) {
@@ -817,6 +861,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
   const bindCurrentAuthority = ownMethod(options.providerConfigRepository, 'bind_current_authority');
   const loadCurrentProject = ownMethod(options.projectReadAuthority, 'load_current');
+  const loadProjectIdentity = options.projectIdentityAuthority === null
+    ? null
+    : ownMethod(options.projectIdentityAuthority, 'load_project_identity');
   const beginConversationQuestion = ownMethod(options.conversationService, 'begin_question');
   const beginConversationWork = ownMethod(options.conversationService, 'begin_work');
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
@@ -1006,7 +1053,14 @@ function createBuilderGenerationMainService(rawOptions) {
 
   async function baseForGeneration(request, projectId, expectedBaseRevision) {
     if (expectedBaseRevision === null) {
-      if (request.existing_project_id !== null) fail();
+      if (request.existing_project_id !== null) {
+        if (request.existing_project_id !== projectId) fail();
+        if (options.projectIdentityAuthority === null || loadProjectIdentity === null) fail();
+        return emptyBaseForBoundProject(
+          await Reflect.apply(loadProjectIdentity, options.projectIdentityAuthority, [{ project_id: projectId }]),
+          projectId,
+        );
+      }
       return {
         base_revision: null,
         base_revision_evidence: null,
@@ -1115,9 +1169,12 @@ function createBuilderGenerationMainService(rawOptions) {
           base_revision_evidence: null,
           source_tree: createBuilderProjectSourceTree({ files: [] }),
         }
-        : sanitizeReadResult(
-          await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: existingProjectId }]),
+        : await loadBaseForExistingProject(
           existingProjectId,
+          loadCurrentProject,
+          loadProjectIdentity,
+          options.projectReadAuthority,
+          options.projectIdentityAuthority,
         );
       const conversationContext = Reflect.apply(
         beginConversationWork,
@@ -1153,9 +1210,12 @@ function createBuilderGenerationMainService(rawOptions) {
           base_revision_evidence: null,
           source_tree: createBuilderProjectSourceTree({ files: [] }),
         }
-        : sanitizeReadResult(
-          await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: existingProjectId }]),
+        : await loadBaseForExistingProject(
           existingProjectId,
+          loadCurrentProject,
+          loadProjectIdentity,
+          options.projectReadAuthority,
+          options.projectIdentityAuthority,
         );
       const conversationContext = Reflect.apply(
         beginConversationQuestion,

@@ -23,7 +23,7 @@ const {
 const BUILDER_PROJECT_MAIN_AUTHORITY_VERSION = 'builder-project-main-authority.v1';
 const PROJECT_REPOSITORY_DIRECTORY = 'builder-projects-v2';
 const GIT_RUNTIME_DIRECTORY = 'builder-git-runtime-v2';
-const METADATA_DIRECTORY = 'builder-product-metadata-v4';
+const METADATA_DIRECTORY = 'builder-product-metadata-v5';
 const METADATA_DATABASE = 'builder.sqlite';
 const OPTION_KEYS = Object.freeze(['userDataPath', 'nowSeconds']);
 const ERROR_MESSAGE = 'Builder project authority is unavailable.';
@@ -95,6 +95,30 @@ function methodFacade(target, keys) {
   return Object.freeze(facade);
 }
 
+function valueAt(value, key) {
+  if (!isPlainObject(value)) fail();
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  return descriptor.value;
+}
+
+function projectRootFromWorkspace(value, expectedProjectId) {
+  if (!isPlainObject(value) || valueAt(value, 'operation') !== 'project_workspace_bound') fail();
+  const workspace = valueAt(value, 'workspace');
+  if (!isPlainObject(workspace) || valueAt(workspace, 'project_id') !== expectedProjectId) fail();
+  const projectRootPath = valueAt(workspace, 'project_root_path');
+  if (
+    typeof projectRootPath !== 'string'
+    || projectRootPath.length === 0
+    || projectRootPath.length > 1024
+    || projectRootPath.trim() !== projectRootPath
+    || projectRootPath.includes('\0')
+    || !path.isAbsolute(projectRootPath)
+    || path.normalize(projectRootPath) !== projectRootPath
+  ) fail();
+  return projectRootPath;
+}
+
 function createBuilderProjectMainAuthority(rawOptions) {
   const options = exactOptions(rawOptions);
   let metadataDatabase = null;
@@ -106,10 +130,15 @@ function createBuilderProjectMainAuthority(rawOptions) {
     fs.mkdirSync(runtimeRoot, { recursive: true, mode: 0o700 });
     fs.mkdirSync(metadataRoot, { recursive: true, mode: 0o700 });
     metadataDatabase = createBuilderProductMetadataDatabase(path.join(metadataRoot, METADATA_DATABASE));
+    const resolveProjectRoot = (projectId) => projectRootFromWorkspace(
+      metadataDatabase.load_project_workspace({ project_id: projectId }),
+      projectId,
+    );
     const gitRepository = createDefaultBuilderGitProjectRepository({
       projects_root: projectsRoot,
       runtime_root: runtimeRoot,
       now_seconds: options.nowSeconds,
+      resolve_project_root: resolveProjectRoot,
     });
     const projectReadAuthority = createBuilderProjectReadAuthority({
       metadata_database: metadataDatabase,
@@ -117,11 +146,13 @@ function createBuilderProjectMainAuthority(rawOptions) {
     });
     const projectWorkspaceAuthority = createBuilderToolProjectWorkspaceAuthority({
       projects_root: projectsRoot,
+      resolve_project_root: resolveProjectRoot,
     });
     const gitCurrentProjection = createDefaultBuilderGitCurrentProjection({
       projects_root: projectsRoot,
       runtime_root: runtimeRoot,
       git_repository: gitRepository,
+      resolve_project_root: resolveProjectRoot,
     });
     const gitAuthority = methodFacade(gitRepository, [
       'persist_candidate_commit',
@@ -133,9 +164,11 @@ function createBuilderProjectMainAuthority(rawOptions) {
     ]);
     const metadataAuthority = methodFacade(metadataDatabase, [
       'append_conversation_events',
+      'bind_project_workspace',
       'load_conversation',
       'load_conversation_candidate_by_draft',
       'load_project_identity',
+      'load_project_workspace',
       'record_project_revision_receipt',
     ]);
     const readAuthority = methodFacade(projectReadAuthority, [

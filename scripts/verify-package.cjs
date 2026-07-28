@@ -264,6 +264,7 @@ const packagedPlanReviewIpcAdapter = packagedSource('electron/builder-plan-revie
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
   'clawfabric-builder:project-workspace:open',
+  'clawfabric-builder:project-workspace:create-local',
   'clawfabric-builder:project-workspace:save-draft',
   'clawfabric-builder:project-workspace:load-current',
   'clawfabric-builder:project-workspace:load-revision',
@@ -407,7 +408,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v11');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v12');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -415,7 +416,15 @@ const taskStreamBridge = frozenObjectLiteral(taskStreamProperty.initializer);
 const planReviewBridge = frozenObjectLiteral(planReviewProperty.initializer);
 const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
-exactObjectKeys(workspaceBridge, ['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']);
+exactObjectKeys(workspaceBridge, [
+  'open',
+  'createLocalProject',
+  'saveDraft',
+  'loadCurrent',
+  'loadRevision',
+  'listCurrent',
+  'listHistory',
+]);
 exactObjectKeys(generationBridge, [
   'submit',
   'generate',
@@ -437,6 +446,7 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -506,11 +516,12 @@ function exactSubscribeMethod(object, methodName, channelName) {
 }
 
 assert.equal(preloadConstants.get('OPEN_PROJECT_CHANNEL'), channels[0]);
-assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[1]);
-assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[2]);
-assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[3]);
-assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[4]);
-assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[5]);
+assert.equal(preloadConstants.get('CREATE_LOCAL_PROJECT_CHANNEL'), channels[1]);
+assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[2]);
+assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[3]);
+assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[4]);
+assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[5]);
+assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[6]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('GENERATE_APPROVED_PLAN_CHANNEL'), generationChannels[1]);
 assert.equal(preloadConstants.get('PROPOSE_PLAN_CHANNEL'), generationChannels[2]);
@@ -536,6 +547,7 @@ assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowContr
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
 assert.equal(preloadConstants.get('READ_WINDOW_STATE_CHANNEL'), windowControlsChannels[3]);
 exactInvokeMethod(workspaceBridge, 'open', 'OPEN_PROJECT_CHANNEL', ['request']);
+exactInvokeMethod(workspaceBridge, 'createLocalProject', 'CREATE_LOCAL_PROJECT_CHANNEL', []);
 exactInvokeMethod(workspaceBridge, 'saveDraft', 'SAVE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadRevision', 'LOAD_REVISION_CHANNEL', ['request']);
@@ -969,6 +981,7 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(packagedToolResultRecords, /builder-tool-runtime-invocation-admission\.cjs/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*CREATE_LOCAL_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*GENERATE_APPROVED_PLAN_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RESTORE_DRAFT_CHANNEL/u);
@@ -983,6 +996,8 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*STEER_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*PROPOSE_PLAN_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectWorkspace/u);
+assert.match(packagedPreload, /createLocalProject/u);
+assert.match(packagedPreload, /clawfabric-builder:project-workspace:create-local/u);
 assert.match(packagedPreload, /loadRevision/u);
 assert.doesNotMatch(packagedPreload, /projectRevisions|projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
@@ -1003,7 +1018,7 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 27);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 28);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

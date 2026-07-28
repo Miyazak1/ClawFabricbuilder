@@ -35,6 +35,7 @@ const {
   createRevisionReceipt,
   sha256Canonical,
   sanitizeLoadCurrentRequest,
+  sanitizeBindProjectWorkspaceRequest,
   sanitizeLoadProjectRevisionRequest,
   sanitizeListProjectRevisionsRequest,
   sanitizeListCurrentProjectRevisionsRequest,
@@ -1152,6 +1153,91 @@ function recordProjectRevision(db, rawRequest) {
   }
 }
 
+function workspaceRow(db, projectId) {
+  return one(db, 'SELECT * FROM project_workspaces WHERE project_id = ?', [projectId]);
+}
+
+function verifyWorkspaceRow(row, request) {
+  if (
+    !row
+    || row.project_id !== request.project_id
+    || row.project_root_path !== request.project_root_path
+    || row.bound_at_ms !== request.bound_at_ms
+    || row.binding_status !== 'bound'
+  ) fail('builder_product_metadata_integrity_failed');
+  return frozen({
+    project_id: row.project_id,
+    project_root_path: row.project_root_path,
+    bound_at_ms: row.bound_at_ms,
+    binding_status: 'bound',
+  });
+}
+
+function workspaceResult(db, workspace) {
+  return frozen({
+    result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+    operation: 'project_workspace_bound',
+    workspace,
+    metadata_evidence: {
+      database_id: DATABASE_ID,
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      user_version: BUILDER_PRODUCT_METADATA_USER_VERSION,
+      runtime_pragmas: runtimePragmas(db),
+      transaction: 'project_workspace_binding_readback',
+      git_object_verification: 'not_performed_by_metadata_database',
+      source_bytes_stored: false,
+      credential_storage: 'not_present',
+      ui_state_storage: 'not_present',
+    },
+  });
+}
+
+function bindProjectWorkspace(db, rawRequest) {
+  const request = sanitizeBindProjectWorkspaceRequest(rawRequest);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const existing = projectRow(db, request.project_id);
+    const project = {
+      project_id: request.project_id,
+      created_at_ms: request.created_at_ms,
+    };
+    if (existing) verifyProjectRow(db, existing, project, true);
+    else ensureProject(db, project);
+    const existingWorkspace = workspaceRow(db, request.project_id);
+    if (existingWorkspace) {
+      const workspace = verifyWorkspaceRow(existingWorkspace, request);
+      db.exec('COMMIT');
+      return workspaceResult(db, workspace);
+    }
+    run(db, `INSERT INTO project_workspaces (
+      project_id, project_root_path, bound_at_ms, binding_status
+    ) VALUES (?, ?, ?, 'bound')`, [
+      request.project_id,
+      request.project_root_path,
+      request.bound_at_ms,
+    ]);
+    const workspace = verifyWorkspaceRow(workspaceRow(db, request.project_id), request);
+    db.exec('COMMIT');
+    return workspaceResult(db, workspace);
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    throw error;
+  }
+}
+
+function loadProjectWorkspace(db, rawRequest) {
+  const request = sanitizeLoadCurrentRequest(rawRequest);
+  const row = workspaceRow(db, request.project_id);
+  if (!row) fail('builder_product_metadata_not_found');
+  return workspaceResult(db, frozen({
+    project_id: request.project_id,
+    project_root_path: row.project_root_path,
+    bound_at_ms: row.bound_at_ms,
+    binding_status: 'bound',
+  }));
+}
+
 function loadCurrent(db, rawRequest) {
   const request = sanitizeLoadCurrentRequest(rawRequest);
   const current = loadCurrentReceipt(db, request.project_id, true);
@@ -1174,6 +1260,8 @@ function loadProjectIdentity(db, rawRequest) {
     project: {
       project_id: request.project_id,
       created_at_ms: row.project_created_at_ms,
+      current_revision_receipt_digest: row.current_revision_receipt_digest,
+      current_revision_number: row.current_revision_number,
     },
     metadata_evidence: {
       database_id: DATABASE_ID,
@@ -1335,6 +1423,18 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     load_project_revision(rawRequest) {
       try { return loadProjectRevision(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    bind_project_workspace(rawRequest) {
+      try { return bindProjectWorkspace(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    load_project_workspace(rawRequest) {
+      try { return loadProjectWorkspace(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

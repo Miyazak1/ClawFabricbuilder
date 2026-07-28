@@ -52,6 +52,14 @@ function render(element: ReactNode): HTMLDivElement {
   return container;
 }
 
+async function createLocalProjectSelectionCancelled() {
+  return {
+    result_version: 'builder-project-selection-result.v1',
+    operation: 'new_selected',
+    project_id: null,
+  };
+}
+
 async function snapshots() {
   const readWire = await createReadWire();
   let draft = await createGenerationDraft();
@@ -108,6 +116,7 @@ async function snapshots() {
           }
           : readWire;
       },
+      createLocalProject: createLocalProjectSelectionCancelled,
       async saveDraft() {
         return createSaveResult(draft, readWire);
       },
@@ -559,6 +568,7 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async open() {
         return readWire;
       },
+      createLocalProject: createLocalProjectSelectionCancelled,
       async saveDraft() {
         return createSaveResult(draft, readWire);
       },
@@ -643,6 +653,7 @@ async function inspectedHistorySnapshot() {
       async open() {
         return currentWire;
       },
+      createLocalProject: createLocalProjectSelectionCancelled,
       async saveDraft() {
         throw new Error('not used');
       },
@@ -967,6 +978,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1016,6 +1028,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1064,6 +1077,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => null,
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1121,6 +1135,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => null,
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1167,6 +1182,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1232,6 +1248,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => readWire,
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -2510,6 +2527,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => null,
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -2556,6 +2574,7 @@ describe('BuilderPage v2', () => {
           if (request.project_id === null) return null;
           throw new Error('unavailable');
         },
+        createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => {
           throw new Error('response lost');
         },

@@ -666,10 +666,15 @@ function createBuilderConversationMainService(rawOptions) {
       }]);
       exactObject(loaded, ['result_version', 'operation', 'project', 'metadata_evidence']);
       if (
-        valueAt(loaded, 'result_version') !== 'builder-product-metadata-result.v3'
+        valueAt(loaded, 'result_version') !== 'builder-product-metadata-result.v4'
         || valueAt(loaded, 'operation') !== 'project_identity_loaded'
       ) fail();
-      const project = exactObject(valueAt(loaded, 'project'), ['project_id', 'created_at_ms']);
+      const project = exactObject(valueAt(loaded, 'project'), [
+        'project_id',
+        'created_at_ms',
+        'current_revision_receipt_digest',
+        'current_revision_number',
+      ]);
       if (valueAt(project, 'project_id') !== projectId) fail();
       return safeTimestamp(valueAt(project, 'created_at_ms'));
     } catch {

@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
+const CREATE_LOCAL_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:create-local';
 const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
 const LOAD_REVISION_CHANNEL = 'clawfabric-builder:project-workspace:load-revision';
@@ -13,6 +14,16 @@ const PROJECT_ID_PATTERN =
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OPTION_KEYS = Object.freeze([
+  'openProject',
+  'createLocalProject',
+  'saveDraft',
+  'loadCurrent',
+  'loadRevision',
+  'listCurrent',
+  'listHistory',
+  'mainWindowRef',
+]);
+const REQUIRED_OPTION_KEYS = Object.freeze([
   'openProject',
   'saveDraft',
   'loadCurrent',
@@ -204,11 +215,18 @@ function safeOptions(value) {
     if (!isPlainObject(value)) throw ipcError();
     const keys = Reflect.ownKeys(value);
     if (
-      keys.length !== OPTION_KEYS.length
+      keys.length < REQUIRED_OPTION_KEYS.length
+      || keys.length > OPTION_KEYS.length
       || keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.includes(key))
+      || REQUIRED_OPTION_KEYS.some((key) => !keys.includes(key))
     ) throw ipcError();
     return Object.freeze({
       openProject: stableMethod(value, 'openProject'),
+      createLocalProject: keys.includes('createLocalProject')
+        ? stableMethod(value, 'createLocalProject')
+        : () => {
+          throw ipcError();
+        },
       saveDraft: stableMethod(value, 'saveDraft'),
       loadCurrent: stableMethod(value, 'loadCurrent'),
       loadRevision: stableMethod(value, 'loadRevision'),
@@ -341,6 +359,13 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.saveDraft, 1, saveDraftRequest);
         },
       }),
+      createLocalProject: Object.freeze({
+        channel: CREATE_LOCAL_PROJECT_CHANNEL,
+        method: 'createLocalProject',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.createLocalProject, 0);
+        },
+      }),
       loadCurrent: Object.freeze({
         channel: LOAD_CURRENT_CHANNEL,
         method: 'loadCurrent',
@@ -370,7 +395,15 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory']),
+    exposed_methods: Object.freeze([
+      'open',
+      'createLocalProject',
+      'saveDraft',
+      'loadCurrent',
+      'loadRevision',
+      'listCurrent',
+      'listHistory',
+    ]),
     authority: Object.freeze({
       renderer_authority: 'project_selection_or_draft_id_only',
       main_owned_git_authority: true,
@@ -384,6 +417,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   OPEN_PROJECT_CHANNEL,
+  CREATE_LOCAL_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,

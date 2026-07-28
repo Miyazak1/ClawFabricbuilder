@@ -1029,7 +1029,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v11',
+      bridge_version: 'builder-preload.v12',
       legacy_namespaces_absent: true,
       plan_review_namespace: 'review_method_only',
     },
@@ -1176,7 +1176,7 @@ function addSteeringMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v11',
+    bridgeVersion: 'builder-preload.v12',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -1762,7 +1762,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v11');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v12');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -3912,7 +3912,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
-  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|proposePlan|retry|answer|rejectDraft|steer)|projectWorkspace\.saveDraft/u);
+  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|generateApprovedPlan|proposePlan|retry|answer|rejectDraft|steer)|projectWorkspace\.(?:saveDraft|createLocalProject)/u);
   assert.doesNotMatch(source, /generator\.proposePlan/u);
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
@@ -3936,7 +3936,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v11['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v12['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /planReview:\s*Object\.freeze/u);
   assert.match(source, /plan_review_namespace/u);

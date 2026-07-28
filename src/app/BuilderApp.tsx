@@ -191,6 +191,9 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
+  createLocalProject() {
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
+  },
   saveDraft(request: Parameters<BuilderProjectWorkspacePort['saveDraft']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
@@ -475,6 +478,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const workspace: BuilderProjectWorkspacePort = Object.freeze({
       open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
         return ports.workspace.open(request);
+      },
+      createLocalProject() {
+        return ports.workspace.createLocalProject();
       },
       saveDraft(request: Parameters<BuilderProjectWorkspacePort['saveDraft']>[0]) {
         return ports.workspace.saveDraft(request);

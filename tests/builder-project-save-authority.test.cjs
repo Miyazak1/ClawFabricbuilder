@@ -305,11 +305,13 @@ function conversationServiceFor(draft) {
 
 function projectIdentityResult(createdAtMs = 1) {
   return {
-    result_version: 'builder-product-metadata-result.v3',
+    result_version: 'builder-product-metadata-result.v4',
     operation: 'project_identity_loaded',
     project: {
       project_id: PROJECT_ID,
       created_at_ms: createdAtMs,
+      current_revision_receipt_digest: null,
+      current_revision_number: 0,
     },
     metadata_evidence: {},
   };
@@ -485,6 +487,20 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
     createUuid: uuidFactory(900),
     nowMs: () => 10_000,
   });
+  const saveConversationService = {
+    verify_candidate(input) {
+      return conversationService.verify_candidate(input);
+    },
+    accept_candidate(input) {
+      stages.push('conversation_accept');
+      try {
+        return conversationService.accept_candidate(input);
+      } catch (error) {
+        stages.push(`conversation_accept_error:${error.code}`);
+        throw error;
+      }
+    },
+  };
   const gitAuthority = {
     async verify_candidate_receipt(receipt) {
       stages.push('git_verify');
@@ -513,7 +529,12 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   const projectReadAuthority = {
     async load_current(request) {
       stages.push('read_current');
-      return value.read.load_current(request);
+      try {
+        return await value.read.load_current(request);
+      } catch (error) {
+        stages.push(`read_current_error:${error.code}`);
+        throw error;
+      }
     },
   };
   let acceptanceTime = 10_000;
@@ -523,7 +544,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
     currentProjection,
     metadataAuthority,
     projectReadAuthority,
-    conversationService,
+    conversationService: saveConversationService,
     createUuid: uuidFactory(),
     nowMs: () => acceptanceTime,
   });
@@ -632,7 +653,9 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   });
   appendCandidateConversation(value.metadata, updateCandidate, 20_000);
   generationDrafts.replace(updatePending);
-  const updated = await saveAuthority.save({ draft_id: updatePending.draft_id });
+  const updated = await saveAuthority.save({ draft_id: updatePending.draft_id }).catch((error) => {
+    assert.fail(`update save failed at stages:${stages.join(',')}:${error.code}`);
+  });
   assert.equal(updated.project_id, PROJECT_ID);
   assert.notEqual(updated.revision_receipt_digest, saved.revision_receipt_digest);
   assert.equal(updated.save_evidence.projection_main_ref, 'repaired');

@@ -25,6 +25,7 @@ const {
   SUBMIT_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
 const {
+  CREATE_LOCAL_PROJECT_CHANNEL,
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
@@ -43,6 +44,9 @@ const {
   BuilderGenerationIpcRuntimeError,
   createBuilderGenerationIpcRuntime,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
+const {
+  createBuilderProductMetadataDatabase,
+} = require('../electron/builder-product-metadata-database.cjs');
 
 function temporaryUserData(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-generation-runtime-'));
@@ -247,6 +251,7 @@ function runtimeWithService(service, probes = {}) {
       }
       if (specifier === './builder-project-workspace-ipc-adapter.cjs') {
         return {
+          CREATE_LOCAL_PROJECT_CHANNEL,
           OPEN_PROJECT_CHANNEL,
           SAVE_DRAFT_CHANNEL,
           LOAD_CURRENT_CHANNEL,
@@ -256,6 +261,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderProjectWorkspaceIpcAdapter: (options) => ({
             channels: {
               open: { invoke: (_event, body) => options.openProject(body) },
+              createLocalProject: { invoke: () => options.createLocalProject() },
               saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
               loadRevision: { invoke: (_event, body) => options.loadRevision(body) },
@@ -391,7 +397,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           PROJECT_REPOSITORY_DIRECTORY: 'builder-projects-v2',
           GIT_RUNTIME_DIRECTORY: 'builder-git-runtime-v2',
-          METADATA_DIRECTORY: 'builder-product-metadata-v4',
+          METADATA_DIRECTORY: 'builder-product-metadata-v5',
           METADATA_DATABASE: 'builder.sqlite',
           createBuilderProjectMainAuthority(options) {
             probes.projectMainAuthorityOptions = options;
@@ -517,6 +523,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     STEER_CHANNEL,
     AVAILABILITY_CHANNEL,
     OPEN_PROJECT_CHANNEL,
+    CREATE_LOCAL_PROJECT_CHANNEL,
     SAVE_DRAFT_CHANNEL,
     LOAD_CURRENT_CHANNEL,
     LOAD_REVISION_CHANNEL,
@@ -527,7 +534,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-projects-v2')), true);
-  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v4', 'builder.sqlite')), true);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-product-metadata-v5', 'builder.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-config-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-permissions-v1', 'permissions.sqlite')), true);
@@ -551,6 +558,53 @@ test('registers exactly the controlled generation channels and keeps provider st
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   runtime.dispose();
+});
+
+test('binds one selected empty folder as the main-owned local project workspace', async (t) => {
+  const userDataPath = temporaryUserData(t);
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-selected-project-'));
+  const selectedProjectRootPath = fs.realpathSync.native(projectRoot);
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const dialogCalls = [];
+  const runtime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath,
+    showOpenDialog: async (windowRef, dialogOptions) => {
+      dialogCalls.push({ windowRef, dialogOptions });
+      return { canceled: false, filePaths: [selectedProjectRootPath] };
+    },
+  });
+  runtime.register();
+
+  const selected = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)({
+    sender: mainWindow.webContents,
+  });
+  assert.equal(selected.result_version, 'builder-project-selection-result.v1');
+  assert.equal(selected.operation, 'local_project_bound');
+  assert.match(selected.project_id, /^builder-project:/u);
+  assert.equal(dialogCalls.length, 1);
+  assert.equal(dialogCalls[0].windowRef, mainWindow);
+  assert.deepEqual(dialogCalls[0].dialogOptions.properties, ['openDirectory', 'createDirectory']);
+
+  runtime.dispose();
+  const metadata = createBuilderProductMetadataDatabase(
+    path.join(userDataPath, 'builder-product-metadata-v5', 'builder.sqlite'),
+  );
+  const workspace = metadata.load_project_workspace({ project_id: selected.project_id });
+  assert.deepEqual(workspace.workspace, {
+    project_id: selected.project_id,
+    project_root_path: selectedProjectRootPath,
+    bound_at_ms: workspace.workspace.bound_at_ms,
+    binding_status: 'bound',
+  });
+  const identity = metadata.load_project_identity({ project_id: selected.project_id });
+  assert.equal(identity.project.current_revision_receipt_digest, null);
+  assert.equal(identity.project.current_revision_number, 0);
+  metadata.close();
 });
 
 test('keeps active-renderer and request validation inside the controlled adapter', async (t) => {

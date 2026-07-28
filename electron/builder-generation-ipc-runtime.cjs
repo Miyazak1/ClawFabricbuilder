@@ -31,6 +31,7 @@ const {
   createBuilderProjectSaveAuthority,
 } = require('./builder-project-save-authority.cjs');
 const {
+  CREATE_LOCAL_PROJECT_CHANNEL,
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
@@ -84,7 +85,8 @@ const {
 } = require('./builder-tool-source-context-collector.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
-const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
+const OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath', 'showOpenDialog']);
+const REQUIRED_OPTION_KEYS = Object.freeze(['fetchImpl', 'ipcMain', 'mainWindowRef', 'userDataPath']);
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const REQUEST_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -226,6 +228,71 @@ function readResultProjectId(value) {
     || !PROJECT_ID_PATTERN.test(projectId.value)
   ) fail();
   return projectId.value;
+}
+
+function workspaceBoundProjectId(value, expectedProjectId) {
+  if (!isPlainObject(value)) fail();
+  const operation = Object.getOwnPropertyDescriptor(value, 'operation');
+  const workspace = Object.getOwnPropertyDescriptor(value, 'workspace');
+  if (
+    !operation
+    || operation.value !== 'project_workspace_bound'
+    || !workspace
+    || !isPlainObject(workspace.value)
+  ) fail();
+  const projectId = Object.getOwnPropertyDescriptor(workspace.value, 'project_id');
+  const status = Object.getOwnPropertyDescriptor(workspace.value, 'binding_status');
+  if (
+    !projectId
+    || projectId.value !== expectedProjectId
+    || !status
+    || status.value !== 'bound'
+  ) fail();
+  return expectedProjectId;
+}
+
+function sameFilesystemPath(left, right) {
+  return process.platform === 'win32'
+    ? left.toLocaleLowerCase('en-US') === right.toLocaleLowerCase('en-US')
+    : left === right;
+}
+
+function selectedDirectoryFromDialog(value) {
+  if (!isPlainObject(value)) fail();
+  const canceled = Object.getOwnPropertyDescriptor(value, 'canceled');
+  const filePaths = Object.getOwnPropertyDescriptor(value, 'filePaths');
+  if (
+    !canceled
+    || typeof canceled.value !== 'boolean'
+    || !filePaths
+    || !Array.isArray(filePaths.value)
+  ) fail();
+  if (canceled.value) return null;
+  if (filePaths.value.length !== 1 || typeof filePaths.value[0] !== 'string') fail();
+  const resolved = path.resolve(filePaths.value[0]);
+  if (
+    resolved !== filePaths.value[0]
+    || path.normalize(resolved) !== resolved
+    || resolved.length === 0
+    || resolved.length > 1024
+    || resolved.includes('\0')
+    || path.parse(resolved).root === resolved
+  ) fail();
+  let stat;
+  let realPath;
+  try {
+    stat = fs.lstatSync(resolved);
+    realPath = path.resolve(fs.realpathSync.native(resolved));
+  } catch {
+    fail();
+  }
+  if (
+    !stat.isDirectory()
+    || stat.isSymbolicLink()
+    || !sameFilesystemPath(realPath, resolved)
+    || fs.readdirSync(realPath).length !== 0
+  ) fail();
+  return realPath;
 }
 
 function safeProjectSourcePath(value) {
@@ -450,11 +517,13 @@ function safeOptions(value) {
     if (!isPlainObject(value)) fail();
     const keys = Reflect.ownKeys(value);
     if (
-      keys.length !== OPTION_KEYS.length
+      keys.length < REQUIRED_OPTION_KEYS.length
+      || keys.length > OPTION_KEYS.length
       || keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.includes(key))
+      || REQUIRED_OPTION_KEYS.some((key) => !keys.includes(key))
     ) fail();
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    for (const key of OPTION_KEYS) {
+    for (const key of keys) {
       const descriptor = descriptors[key];
       if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
     }
@@ -462,6 +531,9 @@ function safeOptions(value) {
     const ipcMain = descriptors.ipcMain.value;
     const mainWindowRef = descriptors.mainWindowRef.value;
     const userDataPath = descriptors.userDataPath.value;
+    const showOpenDialog = keys.includes('showOpenDialog')
+      ? descriptors.showOpenDialog.value
+      : null;
     if (
       typeof fetchImpl !== 'function'
       || utilTypes.isProxy(fetchImpl)
@@ -469,6 +541,7 @@ function safeOptions(value) {
       || typeof ipcMain !== 'object'
       || utilTypes.isProxy(ipcMain)
       || typeof mainWindowRef !== 'function'
+      || (showOpenDialog !== null && (typeof showOpenDialog !== 'function' || utilTypes.isProxy(showOpenDialog)))
       || typeof userDataPath !== 'string'
       || userDataPath.length === 0
       || userDataPath.length > 1_024
@@ -483,6 +556,7 @@ function safeOptions(value) {
       handle: stableMethod(ipcMain, 'handle'),
       removeHandler: stableMethod(ipcMain, 'removeHandler'),
       mainWindowRef,
+      showOpenDialog,
       userDataPath,
     });
   } catch {
@@ -559,6 +633,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
       projectReadAuthority: projectMainAuthority.project_read_authority,
+      projectIdentityAuthority: projectMainAuthority.metadata_authority,
       conversationService,
       gitAuthority: projectMainAuthority.git_authority,
       sourceContextCollector,
@@ -705,6 +780,61 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       return result;
     }
+    async function createLocalProject() {
+      if (options.showOpenDialog === null) fail();
+      const operationEpoch = ++selectionEpoch;
+      selectionPending = true;
+      selectedProjectId = null;
+      let projectRootPath;
+      try {
+        const windowRef = Reflect.apply(options.mainWindowRef, undefined, []);
+        if (!windowRef || (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed())) fail();
+        const dialogOptions = {
+          title: 'Choose an empty folder for this project',
+          properties: ['openDirectory', 'createDirectory'],
+        };
+        projectRootPath = selectedDirectoryFromDialog(await Reflect.apply(
+          options.showOpenDialog,
+          undefined,
+          [windowRef, dialogOptions],
+        ));
+      } catch (error) {
+        if (operationEpoch === selectionEpoch) selectionPending = false;
+        throw error;
+      }
+      if (projectRootPath === null) {
+        if (operationEpoch === selectionEpoch) selectionPending = false;
+        return Object.freeze({
+          result_version: 'builder-project-selection-result.v1',
+          operation: 'new_selected',
+          project_id: null,
+        });
+      }
+      const projectId = `builder-project:${randomUUID()}`;
+      const boundAtMs = Date.now();
+      let result;
+      try {
+        result = await projectMainAuthority.metadata_authority.bind_project_workspace({
+          project_id: projectId,
+          project_root_path: projectRootPath,
+          created_at_ms: boundAtMs,
+          bound_at_ms: boundAtMs,
+        });
+      } catch (error) {
+        if (operationEpoch === selectionEpoch) selectionPending = false;
+        throw error;
+      }
+      workspaceBoundProjectId(result, projectId);
+      if (operationEpoch === selectionEpoch) {
+        selectedProjectId = projectId;
+        selectionPending = false;
+      }
+      return Object.freeze({
+        result_version: 'builder-project-selection-result.v1',
+        operation: 'local_project_bound',
+        project_id: projectId,
+      });
+    }
     async function saveDraft(rawRequest) {
       if (selectionPending) fail();
       const operationEpoch = selectionEpoch;
@@ -719,6 +849,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
     workspaceAdapter = createBuilderProjectWorkspaceIpcAdapter({
       openProject,
+      createLocalProject,
       saveDraft,
       loadCurrent: projectMainAuthority.project_read_authority.load_current,
       loadRevision: projectMainAuthority.project_read_authority.load_revision,
@@ -754,6 +885,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: STEER_CHANNEL, invoke: adapter.channels.steer.invoke }),
     Object.freeze({ channel: AVAILABILITY_CHANNEL, invoke: adapter.channels.availability.invoke }),
     Object.freeze({ channel: OPEN_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.open.invoke }),
+    Object.freeze({ channel: CREATE_LOCAL_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.createLocalProject.invoke }),
     Object.freeze({ channel: SAVE_DRAFT_CHANNEL, invoke: workspaceAdapter.channels.saveDraft.invoke }),
     Object.freeze({ channel: LOAD_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.loadCurrent.invoke }),
     Object.freeze({ channel: LOAD_REVISION_CHANNEL, invoke: workspaceAdapter.channels.loadRevision.invoke }),

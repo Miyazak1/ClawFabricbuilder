@@ -168,7 +168,9 @@ describe('Builder v2 architecture boundary', () => {
     expect(controller).toContain("restoreDraft({ draft_id: draftId })");
     expect(controller).toContain("rejectDraft({ draft_id: draft.draft_id })");
     expect(controller).not.toContain('repository.commit');
-    expect(workspacePort).toContain("const BRIDGE_KEYS = Object.freeze(['open', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listHistory'])");
+    expect(workspacePort).toContain('const BRIDGE_KEYS = Object.freeze([');
+    expect(workspacePort).toContain("'createLocalProject'");
+    expect(workspacePort).toContain('createLocalProject()');
     expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).toContain('submit: methods.submit');

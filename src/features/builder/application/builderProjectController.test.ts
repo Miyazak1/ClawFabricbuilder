@@ -38,6 +38,7 @@ function setup(options: {
   steer?: BuilderCodeGeneratorPort['steer'];
   subscribeStarted?: NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>;
   open?: BuilderProjectWorkspacePort['open'];
+  createLocalProject?: BuilderProjectWorkspacePort['createLocalProject'];
   saveDraft?: BuilderProjectWorkspacePort['saveDraft'];
   loadCurrent?: BuilderProjectWorkspacePort['loadCurrent'];
   loadRevision?: BuilderProjectWorkspacePort['loadRevision'];
@@ -114,8 +115,14 @@ function setup(options: {
       }
       : createReadWire()
   )));
+  const createLocalProject = vi.fn(options.createLocalProject ?? (async () => ({
+    result_version: 'builder-project-selection-result.v1',
+    operation: 'new_selected',
+    project_id: null,
+  })));
   const workspace: BuilderProjectWorkspacePort = {
     open,
+    createLocalProject,
     saveDraft,
     loadCurrent,
     loadRevision,
@@ -153,6 +160,7 @@ function setup(options: {
     loadCurrent,
     loadRevision,
     open,
+    createLocalProject,
     rejectDraft,
     restoreDraft,
     saveDraft,
@@ -208,10 +216,11 @@ describe('Builder project controller v2', () => {
     expect(isTrustedBuilderProjectControllerSnapshot(result)).toBe(true);
   });
 
-  it('requires an opened project workspace before generating a draft', async () => {
-    const { controller, generate, loadCurrent, saveDraft } = setup();
+  it('keeps generation blocked when local project folder selection is cancelled', async () => {
+    const { controller, createLocalProject, generate, loadCurrent, saveDraft } = setup();
     const result = await controller.generate('Make a timer.');
 
+    expect(createLocalProject).toHaveBeenCalledOnce();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(loadCurrent).not.toHaveBeenCalled();
@@ -222,10 +231,11 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
   });
 
-  it('requires an opened project workspace before submitting a build turn', async () => {
-    const { controller, saveDraft, submit } = setup();
+  it('keeps submit blocked when local project folder selection is cancelled', async () => {
+    const { controller, createLocalProject, saveDraft, submit } = setup();
     const result = await controller.submit('Make a timer.');
 
+    expect(createLocalProject).toHaveBeenCalledOnce();
     expect(submit).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('submit_failed');
@@ -233,6 +243,38 @@ describe('Builder project controller v2', () => {
     expect(result.retryableGeneration).toBe(false);
     expect(result.savedProject).toBeNull();
     expect(result.draft).toBeNull();
+  });
+
+  it('binds a local project folder before the first build turn', async () => {
+    const sourceTree = await createSourceTree();
+    const { controller, createLocalProject, submit } = setup({
+      createLocalProject: async () => ({
+        result_version: 'builder-project-selection-result.v1',
+        operation: 'local_project_bound',
+        project_id: PROJECT_ID,
+      }),
+      submit: async (request) => ({
+        ...await createGenerationDraft(request, sourceTree),
+        base_revision_evidence: null,
+      }),
+    });
+
+    const result = await controller.submit('Make a timer.');
+
+    expect(createLocalProject).toHaveBeenCalledOnce();
+    expect(submit.mock.calls[0][0]).toMatchObject({
+      instruction: 'Make a timer.',
+      existing_project_id: PROJECT_ID,
+    });
+    expect(result).toMatchObject({
+      status: 'draft_ready',
+      savedProject: null,
+      workingProjectId: PROJECT_ID,
+      draft: {
+        project_id: PROJECT_ID,
+        base_revision_evidence: null,
+      },
+    });
   });
 
   it('continues an approved plan into an unsaved draft through the approved-plan generator', async () => {

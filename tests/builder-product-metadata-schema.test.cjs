@@ -189,11 +189,12 @@ function assertSchemaError(fn) {
 }
 
 test('defines the exact C0 product metadata schema surface', () => {
-  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v4');
-  assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v3');
-  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 4);
+  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v5');
+  assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v4');
+  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 5);
   assert.deepEqual(METADATA_TABLES, [
     'projects',
+    'project_workspaces',
     'project_revisions',
     'conversations',
     'conversation_events',
@@ -203,8 +204,10 @@ test('defines the exact C0 product metadata schema surface', () => {
     'reviews',
     'idempotency_records',
   ]);
-  assert.equal(CREATE_SCHEMA_SQL.filter((sql) => /\bCREATE TABLE\b/u.test(sql)).length, 9);
+  assert.equal(CREATE_SCHEMA_SQL.filter((sql) => /\bCREATE TABLE\b/u.test(sql)).length, 10);
   assert.ok(CREATE_SCHEMA_SQL.every((sql) => !/\bCREATE TABLE\b/u.test(sql) || /\bSTRICT\b/u.test(sql)));
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /CREATE TABLE project_workspaces/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /binding_status TEXT NOT NULL/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /FOREIGN KEY \(project_id, run_id\) REFERENCES runs/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /UNIQUE \(project_id, commit_oid\)/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /CREATE TABLE conversation_candidate_results/u);

@@ -11,6 +11,7 @@ const BUILDER_TOOL_PROJECT_WORKSPACE_AUTHORITY_VERSION =
   'builder-tool-project-workspace-authority.v1';
 const WORKSPACE_ADMISSION_KIND = 'builder_tool_project_workspace_admission';
 const AUTHORITY_INPUT_KEYS = Object.freeze(['projects_root']);
+const AUTHORITY_INPUT_KEYS_WITH_RESOLVER = Object.freeze(['projects_root', 'resolve_project_root']);
 const ADMIT_INPUT_KEYS = Object.freeze([
   'project_id',
   'admitted_at_ms',
@@ -47,6 +48,10 @@ const AUTHORITY = Object.freeze({
   git_authority: 'not_present',
   sqlite_authority: 'not_present',
   filesystem_read: 'not_performed',
+});
+const SQLITE_IDENTITY_AUTHORITY = Object.freeze({
+  ...AUTHORITY,
+  path_derivation: 'sqlite_project_identity_root_path',
 });
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
@@ -149,6 +154,12 @@ function safeAbsolutePath(value) {
   return value;
 }
 
+function safeProjectRootResolver(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'function' || utilTypes.isProxy(value)) fail();
+  return value;
+}
+
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail();
   return value;
@@ -197,8 +208,13 @@ function assertAdmission(admission, { requireTrusted }) {
   safeAbsolutePath(valueAt(admission, 'project_root_real_path'));
   safeTimestamp(valueAt(admission, 'admitted_at_ms'));
   exactObject(valueAt(admission, 'authority'), AUTHORITY_KEYS);
+  const authority = valueAt(admission, 'authority');
+  const pathDerivation = valueAt(authority, 'path_derivation');
+  const expectedAuthority = pathDerivation === SQLITE_IDENTITY_AUTHORITY.path_derivation
+    ? SQLITE_IDENTITY_AUTHORITY
+    : AUTHORITY;
   for (const key of AUTHORITY_KEYS) {
-    if (valueAt(valueAt(admission, 'authority'), key) !== AUTHORITY[key]) fail();
+    if (valueAt(authority, key) !== expectedAuthority[key]) fail();
   }
   if (typeof valueAt(admission, 'admission_digest') !== 'string'
     || !DIGEST_PATTERN.test(valueAt(admission, 'admission_digest'))) fail();
@@ -206,27 +222,32 @@ function assertAdmission(admission, { requireTrusted }) {
     valueAt(admission, 'projects_root_real_path'),
     projectUuid,
   );
-  if (path.normalize(expectedRoot) !== expectedRoot) fail();
-  if (valueAt(admission, 'project_root_real_path') !== expectedRoot) fail();
-  if (!containedPath(
-    valueAt(admission, 'projects_root_real_path'),
-    valueAt(admission, 'project_root_real_path'),
-  )) fail();
+  if (pathDerivation === AUTHORITY.path_derivation) {
+    if (path.normalize(expectedRoot) !== expectedRoot) fail();
+    if (valueAt(admission, 'project_root_real_path') !== expectedRoot) fail();
+    if (!containedPath(
+      valueAt(admission, 'projects_root_real_path'),
+      valueAt(admission, 'project_root_real_path'),
+    )) fail();
+  }
   if (digestAdmission(admission) !== valueAt(admission, 'admission_digest')) fail();
   return { projectId, projectUuid };
 }
 
 function signedAdmission({
   projectsRootRealPath,
+  projectRootPath,
   projectId,
   projectUuid,
   admittedAtMs,
+  authority,
 }) {
-  const projectRoot = path.join(projectsRootRealPath, projectUuid);
+  const projectRoot = projectRootPath ?? path.join(projectsRootRealPath, projectUuid);
   if (path.normalize(projectRoot) !== projectRoot) fail();
   const projectRootRealPath = checkedDirectoryRealPath(projectRoot);
   if (projectRootRealPath !== projectRoot) fail();
-  if (!containedPath(projectsRootRealPath, projectRootRealPath)) fail();
+  if (authority.path_derivation === AUTHORITY.path_derivation
+    && !containedPath(projectsRootRealPath, projectRootRealPath)) fail();
   const admission = {
     admission_version: BUILDER_TOOL_PROJECT_WORKSPACE_ADMISSION_VERSION,
     admission_kind: WORKSPACE_ADMISSION_KIND,
@@ -235,7 +256,7 @@ function signedAdmission({
     projects_root_real_path: projectsRootRealPath,
     project_root_real_path: projectRootRealPath,
     admitted_at_ms: admittedAtMs,
-    authority: AUTHORITY,
+    authority,
     admission_digest: null,
   };
   admission.admission_digest = digestAdmission(admission);
@@ -247,8 +268,14 @@ function signedAdmission({
 
 function createBuilderToolProjectWorkspaceAuthority(rawInput) {
   try {
-    const descriptors = exactObject(rawInput, AUTHORITY_INPUT_KEYS);
+    const inputKeys = isPlainObject(rawInput) && Reflect.ownKeys(rawInput).includes('resolve_project_root')
+      ? AUTHORITY_INPUT_KEYS_WITH_RESOLVER
+      : AUTHORITY_INPUT_KEYS;
+    const descriptors = exactObject(rawInput, inputKeys);
     const projectsRoot = safeAbsolutePath(descriptors.projects_root.value);
+    const resolveProjectRoot = inputKeys.includes('resolve_project_root')
+      ? safeProjectRootResolver(descriptors.resolve_project_root.value)
+      : null;
     const projectsRootRealPath = checkedDirectoryRealPath(projectsRoot);
     return freezeDeep({
       authority_version: BUILDER_TOOL_PROJECT_WORKSPACE_AUTHORITY_VERSION,
@@ -257,11 +284,16 @@ function createBuilderToolProjectWorkspaceAuthority(rawInput) {
           const admitDescriptors = exactObject(rawAdmitInput, ADMIT_INPUT_KEYS);
           const { projectId, projectUuid } = safeProjectId(admitDescriptors.project_id.value);
           const admittedAtMs = safeTimestamp(admitDescriptors.admitted_at_ms.value);
+          const projectRootPath = resolveProjectRoot === null
+            ? null
+            : safeAbsolutePath(Reflect.apply(resolveProjectRoot, undefined, [projectId]));
           return signedAdmission({
             projectsRootRealPath,
+            projectRootPath,
             projectId,
             projectUuid,
             admittedAtMs,
+            authority: resolveProjectRoot === null ? AUTHORITY : SQLITE_IDENTITY_AUTHORITY,
           });
         } catch (error) {
           if (error instanceof BuilderToolProjectWorkspaceAdmissionError) throw error;

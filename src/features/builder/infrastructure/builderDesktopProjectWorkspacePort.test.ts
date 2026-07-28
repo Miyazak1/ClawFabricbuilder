@@ -6,8 +6,9 @@ import {
 } from './builderDesktopProjectWorkspacePort';
 
 describe('createBuilderDesktopProjectWorkspacePort', () => {
-  it('forwards only the six v2 workspace methods with fresh plain data', async () => {
+  it('forwards only the seven v2 workspace methods with fresh plain data', async () => {
     const open = vi.fn(async (request: unknown) => ({ operation: 'project_opened', request }));
+    const createLocalProject = vi.fn(async () => ({ operation: 'local_project_bound' }));
     const saveDraft = vi.fn(async (request: unknown) => ({ operation: 'draft_saved', request }));
     const loadCurrent = vi.fn(async (request: unknown) => ({ operation: 'current_loaded', request }));
     const loadRevision = vi.fn(async (request: unknown) => ({ operation: 'revision_loaded', request }));
@@ -15,6 +16,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     const listHistory = vi.fn(async (request: unknown) => ({ operation: 'history_listed', request }));
     const port = createBuilderDesktopProjectWorkspacePort({
       open,
+      createLocalProject,
       saveDraft,
       loadCurrent,
       loadRevision,
@@ -27,6 +29,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       receipt: `sha256:${'f'.repeat(64)}`,
     } as unknown as Readonly<{ project_id: null }>;
     const openResult = await port.open(openRequest);
+    const createLocalProjectResult = await port.createLocalProject();
     const saveRequest = {
       draft_id: `builder-generation-draft:${'1'.repeat(64)}`,
       source_tree: { files: [] },
@@ -57,6 +60,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(open.mock.calls[0][0]).toEqual({ project_id: null });
     expect(open.mock.calls[0][0]).not.toBe(openRequest);
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith();
     expect(saveDraft).toHaveBeenCalledOnce();
     expect(saveDraft.mock.calls[0][0]).toEqual({
       draft_id: `builder-generation-draft:${'1'.repeat(64)}`,
@@ -81,6 +85,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     });
     expect(listHistory.mock.calls[0][0]).not.toBe(historyRequest);
     expect(Object.isFrozen(openResult)).toBe(true);
+    expect(Object.isFrozen(createLocalProjectResult)).toBe(true);
     expect(Object.isFrozen(saveResult)).toBe(true);
     expect(Object.isFrozen(loadResult)).toBe(true);
     expect(Object.isFrozen(revisionResult)).toBe(true);
@@ -93,6 +98,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     {},
     {
       open: async (): Promise<unknown> => null,
+      createLocalProject: async (): Promise<unknown> => null,
       saveDraft: async (): Promise<unknown> => null,
       loadCurrent: async (): Promise<unknown> => null,
       loadRevision: async (): Promise<unknown> => null,
@@ -100,6 +106,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     },
     {
       open: async (): Promise<unknown> => null,
+      createLocalProject: async (): Promise<unknown> => null,
       saveDraft: async (): Promise<unknown> => null,
       loadCurrent: async (): Promise<unknown> => null,
       loadRevision: async (): Promise<unknown> => null,
@@ -125,6 +132,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     });
     const port = createBuilderDesktopProjectWorkspacePort({
       open: async () => null,
+      createLocalProject: async () => null,
       saveDraft: async () => Object.defineProperty({}, 'secret', {
         enumerable: true,
         get() {

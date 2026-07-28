@@ -80,6 +80,7 @@ export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
+  createLocalProject(): Promise<BuilderProjectControllerSnapshot>;
   submit(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   proposePlan(instruction: string): Promise<BuilderProjectControllerSnapshot>;
@@ -317,6 +318,33 @@ function sanitizeNewSelection(value: unknown): void {
   ) throw new Error();
 }
 
+function sanitizeLocalProjectSelection(value: unknown): string {
+  const source = exactRecord(value, SELECTION_RESULT_KEYS);
+  if (
+    source.result_version !== 'builder-project-selection-result.v1'
+    || source.operation !== 'local_project_bound'
+    || typeof source.project_id !== 'string'
+    || !PROJECT_ID_PATTERN.test(source.project_id)
+  ) throw new Error();
+  return source.project_id;
+}
+
+function sanitizeOptionalLocalProjectSelection(value: unknown): string | null {
+  const source = exactRecord(value, SELECTION_RESULT_KEYS);
+  if (
+    source.result_version === 'builder-project-selection-result.v1'
+    && source.operation === 'new_selected'
+    && source.project_id === null
+  ) return null;
+  if (
+    source.result_version === 'builder-project-selection-result.v1'
+    && source.operation === 'local_project_bound'
+    && typeof source.project_id === 'string'
+    && PROJECT_ID_PATTERN.test(source.project_id)
+  ) return source.project_id;
+  throw new Error();
+}
+
 function sanitizeRejectResult(value: unknown, draft: BuilderGenerationDraft): void {
   const source = exactRecord(value, REJECT_RESULT_KEYS);
   if (
@@ -373,9 +401,19 @@ function latestCurrentMatchesSaved(
 function settledStatus(
   savedProject: BuilderProjectReadSnapshot | null,
   preview: BuilderSourceTreePreviewProjection | null,
+  workingProjectId: string | null = null,
 ): 'new' | 'ready' | 'preview_unavailable' {
-  if (savedProject === null) return 'new';
+  if (savedProject === null) return workingProjectId === null ? 'new' : 'ready';
   return preview === null ? 'preview_unavailable' : 'ready';
+}
+
+function unsavedWorkingProjectId(
+  savedProject: BuilderProjectReadSnapshot | null,
+  draft: BuilderGenerationDraft | null,
+  fallback: string | null,
+): string | null {
+  if (savedProject !== null) return null;
+  return draft?.project_id ?? fallback;
 }
 
 export function createBuilderProjectController(
@@ -446,7 +484,17 @@ export function createBuilderProjectController(
     try {
       const preview = await previewProject(source);
       if (disposed || operationEpoch !== epoch) return current;
-      return publish(snapshot(status, savedProject, draft, preview, null, null, inspectedRevision));
+      return publish(snapshot(
+        status,
+        savedProject,
+        draft,
+        preview,
+        null,
+        null,
+        inspectedRevision,
+        false,
+        unsavedWorkingProjectId(savedProject, draft, current.workingProjectId),
+      ));
     } catch {
       if (disposed || operationEpoch !== epoch) return current;
       return publish(snapshot(
@@ -457,6 +505,8 @@ export function createBuilderProjectController(
         'preview_unavailable',
         null,
         inspectedRevision,
+        false,
+        unsavedWorkingProjectId(savedProject, draft, current.workingProjectId),
       ));
     }
   }
@@ -521,6 +571,44 @@ export function createBuilderProjectController(
     );
   }
 
+  async function bindProjectForBuild(
+    operationEpoch: number,
+    status: 'submit_failed' | 'generation_failed',
+    retained: BuilderProjectReadSnapshot | null,
+    preview: BuilderSourceTreePreviewProjection | null,
+  ): Promise<string | null> {
+    const existingProjectId = retained?.target.project_id ?? current.workingProjectId;
+    if (existingProjectId !== null) return existingProjectId;
+    publish(snapshot('opening', retained, null, preview, null));
+    try {
+      const projectId = sanitizeOptionalLocalProjectSelection(
+        await dependencies.workspace.createLocalProject(),
+      );
+      if (disposed || operationEpoch !== epoch) return null;
+      if (projectId === null) {
+        publish(buildWorkspaceRequiredSnapshot(status, retained, preview));
+        return null;
+      }
+      publish(snapshot(
+        settledStatus(retained, preview, projectId),
+        retained,
+        null,
+        preview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, null, projectId),
+      ));
+      return projectId;
+    } catch {
+      if (!disposed && operationEpoch === epoch) {
+        publish(buildWorkspaceRequiredSnapshot(status, retained, preview));
+      }
+      return null;
+    }
+  }
+
   async function open(projectId?: string): Promise<BuilderProjectControllerSnapshot> {
     epoch += 1;
     inFlight = null;
@@ -562,6 +650,35 @@ export function createBuilderProjectController(
     });
   }
 
+  async function createLocalProject(): Promise<BuilderProjectControllerSnapshot> {
+    if (disposed || current.busy || current.draft !== null || current.inspectedRevision !== null) return current;
+    epoch += 1;
+    inFlight = null;
+    activeGeneration = null;
+    retryableGeneration = null;
+    return run(async (operationEpoch) => {
+      publish(snapshot('opening', null, null, null, null));
+      try {
+        const projectId = sanitizeLocalProjectSelection(await dependencies.workspace.createLocalProject());
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot(
+          'ready',
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          false,
+          projectId,
+        ));
+      } catch {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot('new', null, null, null, null));
+      }
+    });
+  }
+
   async function answer(instruction: string): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
@@ -572,20 +689,31 @@ export function createBuilderProjectController(
     ) return current;
     const retained = current.savedProject;
     const retainedPreview = current.preview;
+    const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
     retryableGeneration = null;
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
-      publish(snapshot('answering', retained, null, retainedPreview, null));
+      publish(snapshot(
+        'answering',
+        retained,
+        null,
+        retainedPreview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, null, targetProjectId),
+      ));
       let requestId: string | null = null;
       try {
         const request = await createBuilderGenerationRequest(
           instruction,
-          retained?.target.project_id ?? null,
+          targetProjectId,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
           before,
-          projectId: retained?.target.project_id ?? null,
+          projectId: targetProjectId,
           requestId,
         });
         const answered = await sanitizeBuilderGenerationAnswer(
@@ -595,12 +723,15 @@ export function createBuilderProjectController(
         clearActiveGeneration(request.request_digest, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
-          settledStatus(retained, retainedPreview),
+          settledStatus(retained, retainedPreview, targetProjectId),
           retained,
           null,
           retainedPreview,
           null,
           answered,
+          null,
+          false,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
@@ -611,6 +742,10 @@ export function createBuilderProjectController(
           null,
           retainedPreview,
           sanitizeTrustedBuilderGenerationDiagnostic(error),
+          null,
+          null,
+          false,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
         ));
       }
     });
@@ -627,24 +762,40 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const retainedPreview = current.preview;
     retryableGeneration = null;
-    if (retained === null) {
-      activeGeneration = null;
-      return publish(buildWorkspaceRequiredSnapshot('submit_failed', retained, retainedPreview));
-    }
-    const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
-      publish(snapshot('submitting', retained, null, retainedPreview, null));
+      let targetProjectId = retained?.target.project_id ?? current.workingProjectId;
+      if (targetProjectId === null) {
+        targetProjectId = await bindProjectForBuild(
+          operationEpoch,
+          'submit_failed',
+          retained,
+          retainedPreview,
+        );
+      }
+      if (targetProjectId === null) return current;
+      const before = withoutRetryableGeneration(current);
+      publish(snapshot(
+        'submitting',
+        retained,
+        null,
+        retainedPreview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, null, targetProjectId),
+      ));
       let requestId: string | null = null;
       let request: BuilderGenerationRequest | null = null;
       try {
         request = await createBuilderGenerationRequest(
           instruction,
-          retained?.target.project_id ?? null,
+          targetProjectId,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
           before,
-          projectId: retained?.target.project_id ?? null,
+          projectId: targetProjectId,
           requestId,
         });
         const result = await dependencies.generator.submit(request);
@@ -653,12 +804,15 @@ export function createBuilderProjectController(
           clearActiveGeneration(request.request_digest, operationEpoch);
           if (disposed || operationEpoch !== epoch) return current;
           return publish(snapshot(
-            settledStatus(retained, retainedPreview),
+            settledStatus(retained, retainedPreview, targetProjectId),
             retained,
             null,
             retainedPreview,
             null,
             answered,
+            null,
+            false,
+            unsavedWorkingProjectId(retained, null, targetProjectId),
           ));
         }
         const draft = await sanitizeBuilderGenerationDraft(result, request);
@@ -678,6 +832,7 @@ export function createBuilderProjectController(
           null,
           null,
           false,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
         ));
       }
     });
@@ -693,24 +848,40 @@ export function createBuilderProjectController(
     ) return current;
     const retained = current.savedProject;
     retryableGeneration = null;
-    if (retained === null) {
-      activeGeneration = null;
-      return publish(buildWorkspaceRequiredSnapshot('generation_failed', retained, current.preview));
-    }
-    const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
-      publish(snapshot('generating', retained, null, current.preview, null));
+      let targetProjectId = retained?.target.project_id ?? current.workingProjectId;
+      if (targetProjectId === null) {
+        targetProjectId = await bindProjectForBuild(
+          operationEpoch,
+          'generation_failed',
+          retained,
+          current.preview,
+        );
+      }
+      if (targetProjectId === null) return current;
+      const before = withoutRetryableGeneration(current);
+      publish(snapshot(
+        'generating',
+        retained,
+        null,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, null, targetProjectId),
+      ));
       let requestId: string | null = null;
       let request: BuilderGenerationRequest | null = null;
       try {
         request = await createBuilderGenerationRequest(
           instruction,
-          retained?.target.project_id ?? null,
+          targetProjectId,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
           before,
-          projectId: retained?.target.project_id ?? null,
+          projectId: targetProjectId,
           requestId,
         });
         const draft = await sanitizeBuilderGenerationDraft(
@@ -733,6 +904,7 @@ export function createBuilderProjectController(
           null,
           null,
           retryableGeneration !== null,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
         ));
       }
     });
@@ -803,19 +975,30 @@ export function createBuilderProjectController(
       || retryableGeneration === null
     ) return current;
     const retained = current.savedProject;
-    if (retained === null) {
+    const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
+    if (targetProjectId === null) {
       retryableGeneration = null;
       activeGeneration = null;
       return publish(buildWorkspaceRequiredSnapshot('generation_failed', retained, current.preview));
     }
     const before = current;
     const request = retryableGeneration.request;
-    if ((retained?.target.project_id ?? null) !== request.existing_project_id) return current;
+    if (targetProjectId !== request.existing_project_id) return current;
     return run(async (operationEpoch) => {
-      publish(snapshot('generating', retained, null, current.preview, null));
+      publish(snapshot(
+        'generating',
+        retained,
+        null,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, null, targetProjectId),
+      ));
       activeGeneration = Object.freeze({
         before,
-        projectId: retained?.target.project_id ?? null,
+        projectId: targetProjectId,
         requestId: request.request_digest,
       });
       try {
@@ -840,6 +1023,7 @@ export function createBuilderProjectController(
           null,
           null,
           retryableGeneration !== null,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
         ));
       }
     });
@@ -906,7 +1090,17 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const beforeRestore = current;
     return run(async (operationEpoch) => {
-      publish(snapshot('restoring', retained, null, current.preview, null));
+      publish(snapshot(
+        'restoring',
+        retained,
+        null,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        current.workingProjectId,
+      ));
       try {
         const draft = await sanitizeRestoredBuilderGenerationDraft(
           await dependencies.generator.restoreDraft({ draft_id: draftId }),
@@ -1026,14 +1220,36 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const draft = current.draft;
     return run(async (operationEpoch) => {
-      publish(snapshot('rejecting', retained, draft, current.preview, null));
+      publish(snapshot(
+        'rejecting',
+        retained,
+        draft,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+      ));
       try {
         sanitizeRejectResult(
           await dependencies.generator.rejectDraft({ draft_id: draft.draft_id }),
           draft,
         );
         if (disposed || operationEpoch !== epoch) return current;
-        if (retained === null) return publish(snapshot('new', null, null, null, null));
+        if (retained === null) {
+          return publish(snapshot(
+            'ready',
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
+            draft.project_id,
+          ));
+        }
         return withPreview('ready', retained, null, operationEpoch);
       } catch {
         if (disposed || operationEpoch !== epoch) return current;
@@ -1047,7 +1263,17 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const draft = current.draft;
     return run(async (operationEpoch) => {
-      publish(snapshot('saving', retained, draft, current.preview, null));
+      publish(snapshot(
+        'saving',
+        retained,
+        draft,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+      ));
       let saveReceipt: ReturnType<typeof sanitizeSaveResult>;
       try {
         saveReceipt = sanitizeSaveResult(
@@ -1068,7 +1294,17 @@ export function createBuilderProjectController(
           // The durable outcome remains unknown; the draft stays available for an explicit retry.
         }
         if (disposed || operationEpoch !== epoch) return current;
-        return publish(snapshot('save_unknown', retained, draft, current.preview, 'save_unknown'));
+        return publish(snapshot(
+          'save_unknown',
+          retained,
+          draft,
+          current.preview,
+          'save_unknown',
+          null,
+          null,
+          false,
+          unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+        ));
       }
       try {
         const saved = await sanitizeBuilderProjectReadSnapshot(
@@ -1076,12 +1312,32 @@ export function createBuilderProjectController(
         );
         if (disposed || operationEpoch !== epoch) return current;
         if (!savedMatchesDraft(saved, draft, saveReceipt)) {
-          return publish(snapshot('conflict', retained, draft, current.preview, 'conflict'));
+          return publish(snapshot(
+            'conflict',
+            retained,
+            draft,
+            current.preview,
+            'conflict',
+            null,
+            null,
+            false,
+            unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+          ));
         }
         return withPreview('ready', saved, null, operationEpoch);
       } catch {
         if (disposed || operationEpoch !== epoch) return current;
-        return publish(snapshot('save_unknown', retained, draft, current.preview, 'save_unknown'));
+        return publish(snapshot(
+          'save_unknown',
+          retained,
+          draft,
+          current.preview,
+          'save_unknown',
+          null,
+          null,
+          false,
+          unsavedWorkingProjectId(retained, draft, current.workingProjectId),
+        ));
       }
     });
   }
@@ -1094,6 +1350,7 @@ export function createBuilderProjectController(
       return () => listeners.delete(listener);
     },
     open,
+    createLocalProject,
     submit,
     answer,
     proposePlan,

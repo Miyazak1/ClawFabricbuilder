@@ -53,6 +53,21 @@ const BUILDER_ID_PATTERNS = Object.freeze({
   candidate_id: /^builder-code-change-candidate:[0-9a-f]{64}$/u,
 });
 const PREPARE_REQUEST_KEYS = Object.freeze(['request_id', 'expected_base_oid', 'candidate']);
+const OPTION_KEYS = Object.freeze(['projects_root', 'runtime_root', 'git_runner', 'now_seconds']);
+const OPTION_KEYS_WITH_RESOLVER = Object.freeze([
+  'projects_root',
+  'runtime_root',
+  'git_runner',
+  'now_seconds',
+  'resolve_project_root',
+]);
+const DEFAULT_OPTION_KEYS = Object.freeze(['projects_root', 'runtime_root', 'now_seconds']);
+const DEFAULT_OPTION_KEYS_WITH_RESOLVER = Object.freeze([
+  'projects_root',
+  'runtime_root',
+  'now_seconds',
+  'resolve_project_root',
+]);
 const PROTECTED_SOURCE_NAMES = new Set(['.git', '.gitmodules', '.gitattributes', '.clawfabric']);
 const COMMIT_TRAILER_ORDER = Object.freeze([
   'Object-Format',
@@ -217,6 +232,20 @@ function safeNowSeconds(value) {
   };
 }
 
+function optionKeys(value, withoutResolver, withResolver) {
+  if (!isPlainObject(value)) fail('builder_git_project_invalid');
+  const keys = Reflect.ownKeys(value);
+  const selected = keys.includes('resolve_project_root') ? withResolver : withoutResolver;
+  assertExactObject(value, selected);
+  return selected;
+}
+
+function safeProjectRootResolver(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'function' || utilTypes.isProxy(value)) fail('builder_git_project_invalid');
+  return value;
+}
+
 function sanitizeRequest(rawRequest) {
   assertExactObject(rawRequest, PREPARE_REQUEST_KEYS);
   const candidate = sanitizeBuilderCodeChangeCandidate(valueAt(rawRequest, 'candidate'));
@@ -248,8 +277,9 @@ function semanticIdentity(request, treeOid) {
   };
 }
 
-function projectDirectory(projectsRoot, projectId) {
-  return path.join(projectsRoot, projectUuid(projectId));
+function projectDirectory(projectsRoot, projectId, resolveProjectRoot) {
+  if (resolveProjectRoot === null) return path.join(projectsRoot, projectUuid(projectId));
+  return safeAbsolutePath(Reflect.apply(resolveProjectRoot, undefined, [projectId]));
 }
 
 function gitControlIndexPath(projectRoot, semanticHash) {
@@ -505,12 +535,15 @@ function createProjectQueue() {
 }
 
 function createBuilderGitProjectRepository(rawOptions) {
-  assertExactObject(rawOptions, ['projects_root', 'runtime_root', 'git_runner', 'now_seconds']);
+  const keys = optionKeys(rawOptions, OPTION_KEYS, OPTION_KEYS_WITH_RESOLVER);
   const projectsRoot = safeAbsolutePath(valueAt(rawOptions, 'projects_root'));
   const runtimeRoot = safeAbsolutePath(valueAt(rawOptions, 'runtime_root'));
   const runner = valueAt(rawOptions, 'git_runner');
   if (!runner || typeof runner.run !== 'function') fail('builder_git_project_invalid');
   const nowSeconds = safeNowSeconds(valueAt(rawOptions, 'now_seconds'));
+  const resolveProjectRoot = keys.includes('resolve_project_root')
+    ? safeProjectRootResolver(valueAt(rawOptions, 'resolve_project_root'))
+    : null;
   fs.mkdirSync(projectsRoot, { recursive: true });
   fs.mkdirSync(runtimeRoot, { recursive: true });
   const runExclusive = createProjectQueue();
@@ -644,7 +677,7 @@ function createBuilderGitProjectRepository(rawOptions) {
   async function verifyReceiptAndSourceFromDisk(rawReceipt) {
     try {
       const receipt = sanitizeBuilderGitCandidateReceipt(rawReceipt);
-      const projectRoot = projectDirectory(projectsRoot, receipt.project_id);
+      const projectRoot = projectDirectory(projectsRoot, receipt.project_id, resolveProjectRoot);
       await assertExistingRepository(projectRoot);
       const requestHash = sha256Hex(receipt.request_id);
       const semanticHash = receipt.semantic_identity_digest.slice('sha256:'.length);
@@ -708,7 +741,7 @@ function createBuilderGitProjectRepository(rawOptions) {
   }
 
   async function prepareInternal(request) {
-    const projectRoot = projectDirectory(projectsRoot, request.candidate.project_id);
+    const projectRoot = projectDirectory(projectsRoot, request.candidate.project_id, resolveProjectRoot);
     await ensureRepository(projectRoot);
     const preSemanticHash = sha256Hex(canonicalJson({
       project_id: request.candidate.project_id,
@@ -917,14 +950,18 @@ function createBuilderGitProjectRepository(rawOptions) {
 }
 
 function createDefaultBuilderGitProjectRepository(options) {
-  assertExactObject(options, ['projects_root', 'runtime_root', 'now_seconds']);
+  const keys = optionKeys(options, DEFAULT_OPTION_KEYS, DEFAULT_OPTION_KEYS_WITH_RESOLVER);
   const runtimeRoot = valueAt(options, 'runtime_root');
-  return createBuilderGitProjectRepository({
+  const repositoryOptions = {
     projects_root: valueAt(options, 'projects_root'),
     runtime_root: runtimeRoot,
     git_runner: createDefaultBuilderGitCommandRunner({ runtime_root: runtimeRoot }),
     now_seconds: valueAt(options, 'now_seconds'),
-  });
+  };
+  if (keys.includes('resolve_project_root')) {
+    repositoryOptions.resolve_project_root = valueAt(options, 'resolve_project_root');
+  }
+  return createBuilderGitProjectRepository(repositoryOptions);
 }
 
 module.exports = Object.freeze({

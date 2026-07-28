@@ -558,7 +558,7 @@ export async function sanitizeBuilderGenerationDraft(
       base_revision_evidence: sanitizeBaseEvidence(
         source.base_revision_evidence,
         projectId,
-        request.existing_project_id !== null,
+        request.existing_project_id !== null && source.base_revision_evidence !== null,
       ),
       source_tree: sourceTree,
       admissions: {
