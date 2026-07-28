@@ -371,6 +371,10 @@ function visibleHistoryProjectId(
 
 type BuilderVisibleProjectSnapshot = ReturnType<typeof useBuilderProjectController>['snapshot'];
 type BuilderVisibleConversationSnapshot = ReturnType<typeof useBuilderConversationController>['snapshot'];
+type PendingBuildAfterWorkspace = Readonly<{
+  epoch: number;
+  instruction: string;
+}>;
 
 function latestRestorableDraft(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
@@ -460,6 +464,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
   const planSourceReadApprovalRef = useRef<BuilderPlanSourceReadApprovalPrompt | null>(null);
+  const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
   const workspacePorts = useMemo(() => {
@@ -611,7 +616,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     nextProjectId: string | undefined,
     options: Readonly<{ preserveIdea?: boolean }> = Object.freeze({}),
   ) => {
-    workspaceEpochRef.current += 1;
+    const nextEpoch = workspaceEpochRef.current + 1;
+    workspaceEpochRef.current = nextEpoch;
+    pendingBuildAfterWorkspaceRef.current = null;
     approvedPlanWaitingProjectRef.current = null;
     planSourceReadApprovalRef.current = null;
     setPlanReviewFailure(null);
@@ -640,22 +647,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(undefined);
   }, [resetWorkspace]);
 
-  const createWorkspaceProject = useCallback(async (projectTitle: string) => {
-    if (projectTitle.trim().length === 0) return;
-    if (submitInFlightRef.current) return;
-    submitInFlightRef.current = true;
-    try {
-      setView('project');
-      const result = await project.createLocalProject(projectTitle);
-      if (result.workingProjectId !== null || result.savedProject !== null) {
-        setActiveFile(null);
-        setLiveOutput(null);
-        await catalog.refresh().catch(() => undefined);
-      }
-    } finally {
-      submitInFlightRef.current = false;
-    }
-  }, [catalog, project]);
+  const dismissWorkspacePicker = useCallback(() => {
+    pendingBuildAfterWorkspaceRef.current = null;
+  }, []);
 
   const refreshCatalog = useCallback(() => {
     void catalog.refresh().catch(() => undefined);
@@ -675,6 +669,57 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       await conversation.load(conversationProjectId).catch(() => undefined);
     }
   }, [conversation]);
+
+  const createWorkspaceProject = useCallback(async (projectTitle: string) => {
+    if (projectTitle.trim().length === 0) return;
+    if (submitInFlightRef.current) return;
+    const commandEpoch = workspaceEpochRef.current;
+    submitInFlightRef.current = true;
+    try {
+      setView('project');
+      const result = await project.createLocalProject(projectTitle);
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      const workspaceReady = result.workingProjectId !== null || result.savedProject !== null;
+      if (workspaceReady) {
+        setActiveFile(null);
+        setLiveOutput(null);
+        await catalog.refresh().catch(() => undefined);
+      }
+      const pendingBuild = pendingBuildAfterWorkspaceRef.current;
+      if (pendingBuild === null || pendingBuild.epoch !== commandEpoch) return;
+      if (!workspaceReady) {
+        pendingBuildAfterWorkspaceRef.current = null;
+        return;
+      }
+      if (idea !== pendingBuild.instruction) {
+        pendingBuildAfterWorkspaceRef.current = null;
+        return;
+      }
+      const submittedIdea = pendingBuild.instruction;
+      if (
+        routeBuilderComposerIntent(submittedIdea) !== 'build'
+        || !hasBuildWorkspace(result)
+        || result.busy
+        || result.draft !== null
+        || result.inspectedRevision !== null
+      ) {
+        pendingBuildAfterWorkspaceRef.current = null;
+        return;
+      }
+      pendingBuildAfterWorkspaceRef.current = null;
+      setIdea('');
+      setLiveOutput(null);
+      const buildResult = await project.submit(submittedIdea);
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      if (!shouldClearSubmittedIdea(buildResult)) setIdea(submittedIdea);
+      await readActivityAfterTerminal(buildResult, commandEpoch);
+      setLiveOutput(null);
+    } finally {
+      if (workspaceEpochRef.current === commandEpoch) {
+        submitInFlightRef.current = false;
+      }
+    }
+  }, [catalog, idea, project, readActivityAfterTerminal]);
 
   useEffect(() => {
     const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
@@ -728,7 +773,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (submitInFlightRef.current || idea.trim().length === 0) return;
     const submittedIdea = idea;
     const route = routeBuilderComposerIntent(submittedIdea);
+    pendingBuildAfterWorkspaceRef.current = null;
     if (route === 'build' && !hasBuildWorkspace(projectSnapshotRef.current)) {
+      pendingBuildAfterWorkspaceRef.current = Object.freeze({
+        epoch: workspaceEpochRef.current,
+        instruction: submittedIdea,
+      });
       setWorkspacePickerRequest((request) => request + 1);
       return;
     }
@@ -1163,6 +1213,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               workspacePickerRequest={workspacePickerRequest}
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}
+              onDismissWorkspacePicker={dismissWorkspacePicker}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}

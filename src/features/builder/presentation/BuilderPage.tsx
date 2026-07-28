@@ -98,6 +98,7 @@ export type BuilderPageProps = {
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
+  onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
   onSteerInstruction?: () => void;
   onProposePlan?: () => void;
@@ -1229,6 +1230,7 @@ export function BuilderPage({
   onApprovePlanSourceRead,
   onCancel,
   onCreateProject,
+  onDismissWorkspacePicker,
   onDismissPlanSourceReadApproval,
   onInstructionChange,
   onOpenProject,
@@ -1542,7 +1544,10 @@ export function BuilderPage({
     });
   }
 
-  function closeWorkspacePicker(): void {
+  function closeWorkspacePicker(
+    options: Readonly<{ keepPendingBuild?: boolean }> = Object.freeze({}),
+  ): void {
+    if (options.keepPendingBuild !== true) onDismissWorkspacePicker?.();
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
@@ -1554,11 +1559,12 @@ export function BuilderPage({
 
   function toggleWorkspacePicker(): void {
     if (busy && !canAddContext) return;
+    if (workspacePickerOpen) onDismissWorkspacePicker?.();
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
       creating: false,
-      open: !picker.open,
+      open: !workspacePickerOpen,
       request: workspacePickerRequest,
     }));
   }
@@ -1581,7 +1587,7 @@ export function BuilderPage({
   function createProjectFromPicker(): void {
     if (!canCreateProjectFromPicker) return;
     const projectTitle = newProjectTitle.trim();
-    closeWorkspacePicker();
+    closeWorkspacePicker({ keepPendingBuild: true });
     void onCreateProject?.(projectTitle);
   }
 
