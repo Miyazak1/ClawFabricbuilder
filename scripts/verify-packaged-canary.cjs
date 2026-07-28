@@ -1930,6 +1930,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(changesText)
     ) fail('canary_review_diff_failed');
     return Object.freeze({
+      activity_review_do_not_overlap: true,
       changes_diff_nested_in_panel: true,
       changes_panel_follows_review: true,
       changes_panel_visible: true,

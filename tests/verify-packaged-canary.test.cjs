@@ -61,6 +61,7 @@ const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs'
 
 function reviewDiffEvidence() {
   return {
+    activity_review_do_not_overlap: true,
     changes_diff_nested_in_panel: true,
     changes_panel_follows_review: true,
     changes_panel_visible: true,
