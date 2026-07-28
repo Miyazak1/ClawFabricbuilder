@@ -1714,6 +1714,7 @@ test('submits one composer turn through main-owned work or explanation routing',
       transport_version: 'builder-openai-compatible-transport.v1',
       generated_text: input.messages[1].content.includes('What does this project do')
         || input.messages[1].content.includes('这个项目是做什么')
+        || input.messages[1].content.includes('怎么把按钮改红')
         ? JSON.stringify(providerExplanation())
         : JSON.stringify(providerOutput()),
     }),
@@ -1721,6 +1722,10 @@ test('submits one composer turn through main-owned work or explanation routing',
 
   const draft = await service.submit(request({ instruction: 'Make a timer.' }));
   const chineseDraft = await service.submit(request({ instruction: '可以帮我做一个登录页吗？' }));
+  const chineseClearEditDraft = await service.submit(request({
+    instruction: '把按钮颜色改红',
+    existingProjectId: PROJECT_ID,
+  }));
   const answer = await service.submit(request({
     instruction: 'What does this project do?',
     existingProjectId: PROJECT_ID,
@@ -1729,21 +1734,31 @@ test('submits one composer turn through main-owned work or explanation routing',
     instruction: '这个项目是做什么的？',
     existingProjectId: PROJECT_ID,
   }));
+  const chineseHowToAnswer = await service.submit(request({
+    instruction: '怎么把按钮改红？',
+  }));
 
   assert.equal(draft.version, 'builder-generation-result.v2');
   assert.equal(draft.admissions.draft, 'candidate_not_saved');
   assert.equal(chineseDraft.version, 'builder-generation-result.v2');
   assert.equal(chineseDraft.admissions.draft, 'candidate_not_saved');
+  assert.equal(chineseClearEditDraft.version, 'builder-generation-result.v2');
+  assert.equal(chineseClearEditDraft.admissions.draft, 'candidate_not_saved');
   assert.equal(answer.result_kind, 'explanation');
   assert.equal(answer.admissions.draft, 'not_created');
   assert.equal(chineseAnswer.result_kind, 'explanation');
   assert.equal(chineseAnswer.admissions.draft, 'not_created');
-  assert.equal(lifecycle.calls.begin.length, 2);
-  assert.equal(lifecycle.calls.question.length, 2);
-  assert.equal(lifecycle.calls.candidate.length, 2);
-  assert.equal(lifecycle.calls.explanation.length, 2);
-  assert.equal(git.receipts.length, 2);
+  assert.equal(chineseHowToAnswer.result_kind, 'explanation');
+  assert.equal(chineseHowToAnswer.admissions.draft, 'not_created');
+  assert.equal(chineseHowToAnswer.existing_project_id, null);
+  assert.equal(lifecycle.calls.begin.length, 3);
+  assert.equal(lifecycle.calls.question.length, 3);
+  assert.equal(lifecycle.calls.candidate.length, 3);
+  assert.equal(lifecycle.calls.explanation.length, 3);
+  assert.equal(git.receipts.length, 3);
   assert.deepEqual(startedEvents.map((event) => event.event_version), [
+    'builder-generation-started.v1',
+    'builder-generation-started.v1',
     'builder-generation-started.v1',
     'builder-generation-started.v1',
     'builder-generation-started.v1',
@@ -1752,17 +1767,28 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.deepEqual(startedEvents.map((event) => event.request_id), [
     draft.request_id,
     chineseDraft.request_id,
+    chineseClearEditDraft.request_id,
     answer.request_id,
     chineseAnswer.request_id,
+    chineseHowToAnswer.request_id,
   ]);
   assert.deepEqual(startedEvents.map((event) => event.project_id), [
     draft.project_id,
     chineseDraft.project_id,
+    chineseClearEditDraft.project_id,
     answer.project_id,
     chineseAnswer.project_id,
+    chineseHowToAnswer.project_id,
   ]);
   assert.doesNotMatch(
-    JSON.stringify([draft, chineseDraft, answer, chineseAnswer]),
+    JSON.stringify([
+      draft,
+      chineseDraft,
+      chineseClearEditDraft,
+      answer,
+      chineseAnswer,
+      chineseHowToAnswer,
+    ]),
     /credential|provider\.example|builder-model|git_request_id/iu,
   );
 });

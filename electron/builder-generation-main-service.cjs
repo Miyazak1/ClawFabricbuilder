@@ -120,9 +120,9 @@ const ENGLISH_WORK_INTENT_PATTERN =
 const ENGLISH_EXPLANATION_INTENT_PATTERN =
   /^(?:can you tell|compare|describe|explain|how|summarize|tell me|what|when|where|which|who|why)\b/u;
 const CHINESE_WORK_INTENT_PATTERN =
-  /(?:创建|生成|编写|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计|做一个|做个|做出|加一个|加个|帮我.{0,16}(?:做|写|创建|生成|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计)|(?:登录页|页面|按钮|表单|网站|网页|应用|工具|组件|功能|样式|布局|代码|小游戏|仪表盘|看板|预览|界面|UI).{0,16}(?:做|创建|生成|写|编写|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计))/iu;
+  /(?:创建|生成|编写|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计|做一个|做个|做出|加一个|加个|帮我.{0,16}(?:做|写|创建|生成|实现|开发|搭建|添加|新增|修改|调整|优化|修复|删除|移除|重构|设计)|(?:把|将).{0,32}(?:改|换|替换|设为|设置|添加|新增|加个|加一个|删除|删掉|去掉|移除|修复|调整|调成|调为|放大|缩小|移动|移到)|(?:登录页|页面|按钮|表单|网站|网页|应用|工具|组件|功能|样式|布局|代码|小游戏|仪表盘|看板|预览|界面|UI).{0,16}(?:做|创建|生成|写|编写|实现|开发|搭建|添加|新增|修改|改|调整|优化|修复|删除|移除|重构|设计))/iu;
 const CHINESE_EXPLANATION_INTENT_PATTERN =
-  /(?:是什么|为什么|怎么回事|怎么理解|怎样理解|怎么实现|如何实现|解释|说明|介绍|总结|对比|分析|原因|含义|意思|做什么|干什么|能做什么|会做什么)/u;
+  /(?:是什么|为什么|怎么|如何|怎样|解释|说明|介绍|总结|对比|分析|原因|含义|意思|做什么|干什么|能做什么|会做什么)/u;
 
 function shouldSubmitAsExplanation(instruction, existingProjectId = null) {
   const text = String(instruction).trim();
@@ -133,11 +133,11 @@ function shouldSubmitAsExplanation(instruction, existingProjectId = null) {
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(lower)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
   if (hasQuestionMark && hasExplanationIntent) return true;
+  if (hasExplanationIntent) return true;
   if (
     ENGLISH_WORK_INTENT_PATTERN.test(lower)
     || CHINESE_WORK_INTENT_PATTERN.test(text)
   ) return false;
-  if (hasExplanationIntent) return true;
   if (existingProjectId === null) return false;
   return hasQuestionMark;
 }
