@@ -263,14 +263,11 @@ describe('Builder project controller v2', () => {
     expect(isTrustedBuilderProjectControllerSnapshot(result)).toBe(true);
   });
 
-  it('keeps generation blocked when local project folder selection is cancelled', async () => {
+  it('keeps generation blocked when no local project folder is bound', async () => {
     const { controller, createLocalProject, generate, loadCurrent, saveDraft } = setup();
     const result = await controller.generate('Make a timer.');
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: null,
-      project_title: 'New project',
-    });
+    expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(loadCurrent).not.toHaveBeenCalled();
@@ -281,14 +278,11 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
   });
 
-  it('keeps submit blocked when local project folder selection is cancelled', async () => {
+  it('keeps submit blocked when no local project folder is bound', async () => {
     const { controller, createLocalProject, saveDraft, submit } = setup();
     const result = await controller.submit('Make a timer.');
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: null,
-      project_title: 'New project',
-    });
+    expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('submit_failed');
@@ -298,7 +292,32 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
   });
 
-  it('binds a local project folder before the first build turn', async () => {
+  it('keeps chat project identity when a build turn is blocked before source folder binding', async () => {
+    const { controller, createLocalProject, submit } = setup({
+      createLocalProject: async (request) => createLocalProjectSelection({
+        projectId: request.project_id ?? PROJECT_ID,
+        title: request.project_title,
+      }),
+    });
+    const answered = await controller.answer('hi');
+    expect(answered.answer?.project_id).toBe(PROJECT_ID);
+
+    const blocked = await controller.submit('Make a timer.');
+    expect(submit).not.toHaveBeenCalled();
+    expect(blocked.error).toBe('builder_generation_project_workspace_required');
+    expect(blocked.answer?.project_id).toBe(PROJECT_ID);
+
+    const result = await controller.createLocalProject('Focus timer');
+
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      project_title: 'Focus timer',
+    });
+    expect(result.workingProjectId).toBe(PROJECT_ID);
+    expect(result.savedProject).toBeNull();
+  });
+
+  it('uses an explicitly bound local project folder for the first build turn', async () => {
     const sourceTree = await createSourceTree();
     const { controller, createLocalProject, submit } = setup({
       createLocalProject: async () => createLocalProjectSelection(),
@@ -308,11 +327,14 @@ describe('Builder project controller v2', () => {
       }),
     });
 
+    const bound = await controller.createLocalProject('Focus timer');
+    expect(bound.workingProjectId).toBe(PROJECT_ID);
+
     const result = await controller.submit('Make a timer.');
 
     expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
       project_id: null,
-      project_title: 'New project',
+      project_title: 'Focus timer',
     });
     expect(submit.mock.calls[0][0]).toMatchObject({
       instruction: 'Make a timer.',

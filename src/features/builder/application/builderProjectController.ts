@@ -151,7 +151,6 @@ const REJECT_RESULT_KEYS = Object.freeze([
   'conversation_event_admission',
 ]);
 const TRUSTED_SNAPSHOTS = new WeakSet<object>();
-const DEFAULT_WORKING_PROJECT_TITLE = 'New project';
 
 function snapshot(
   status: BuilderProjectControllerStatus,
@@ -212,6 +211,7 @@ function buildWorkspaceRequiredSnapshot(
   status: 'submit_failed' | 'generation_failed',
   retained: BuilderProjectReadSnapshot | null,
   preview: BuilderSourceTreePreviewProjection | null,
+  answer: BuilderGenerationAnswer | null,
 ): BuilderProjectControllerSnapshot {
   return snapshot(
     status,
@@ -219,7 +219,7 @@ function buildWorkspaceRequiredSnapshot(
     null,
     preview,
     'builder_generation_project_workspace_required',
-    null,
+    answer,
     null,
     false,
   );
@@ -391,20 +391,6 @@ function sanitizeLocalProject(value: unknown): BuilderWorkingProject {
       }),
     ]),
   });
-}
-
-function sanitizeOptionalLocalProjectSelection(value: unknown): BuilderWorkingProject | null {
-  try {
-    const source = exactRecord(value, SELECTION_RESULT_KEYS);
-    if (
-      source.result_version === 'builder-project-selection-result.v1'
-      && source.operation === 'new_selected'
-      && source.project_id === null
-    ) return null;
-  } catch {
-    return sanitizeLocalProject(value);
-  }
-  throw new Error();
 }
 
 function sanitizeRejectResult(value: unknown, draft: BuilderGenerationDraft): void {
@@ -650,47 +636,14 @@ export function createBuilderProjectController(
   }
 
   async function bindProjectForBuild(
-    operationEpoch: number,
     status: 'submit_failed' | 'generation_failed',
     retained: BuilderProjectReadSnapshot | null,
     preview: BuilderSourceTreePreviewProjection | null,
   ): Promise<string | null> {
     const existingProjectId = retained?.target.project_id ?? current.workingProjectId;
     if (existingProjectId !== null) return existingProjectId;
-    const logicalProjectId = current.answer?.project_id ?? null;
-    publish(snapshot('opening', retained, null, preview, null));
-    try {
-      const workingProject = sanitizeOptionalLocalProjectSelection(
-        await dependencies.workspace.createLocalProject({
-          project_id: logicalProjectId,
-          project_title: DEFAULT_WORKING_PROJECT_TITLE,
-        }),
-      );
-      if (disposed || operationEpoch !== epoch) return null;
-      if (workingProject === null) {
-        publish(buildWorkspaceRequiredSnapshot(status, retained, preview));
-        return null;
-      }
-      const projectId = workingProject.project_id;
-      publish(snapshot(
-        settledStatus(retained, preview, projectId),
-        retained,
-        null,
-        preview,
-        null,
-        null,
-        null,
-        false,
-        unsavedWorkingProjectId(retained, null, projectId),
-        retained === null ? workingProject : null,
-      ));
-      return projectId;
-    } catch {
-      if (!disposed && operationEpoch === epoch) {
-        publish(buildWorkspaceRequiredSnapshot(status, retained, preview));
-      }
-      return null;
-    }
+    publish(buildWorkspaceRequiredSnapshot(status, retained, preview, current.answer));
+    return null;
   }
 
   async function open(projectId?: string): Promise<BuilderProjectControllerSnapshot> {
@@ -858,7 +811,6 @@ export function createBuilderProjectController(
       let targetProjectId = retained?.target.project_id ?? current.workingProjectId;
       if (targetProjectId === null) {
         targetProjectId = await bindProjectForBuild(
-          operationEpoch,
           'submit_failed',
           retained,
           retainedPreview,
@@ -947,7 +899,6 @@ export function createBuilderProjectController(
       let targetProjectId = retained?.target.project_id ?? current.workingProjectId;
       if (targetProjectId === null) {
         targetProjectId = await bindProjectForBuild(
-          operationEpoch,
           'generation_failed',
           retained,
           current.preview,
@@ -1076,7 +1027,12 @@ export function createBuilderProjectController(
     if (targetProjectId === null) {
       retryableGeneration = null;
       activeGeneration = null;
-      return publish(buildWorkspaceRequiredSnapshot('generation_failed', retained, current.preview));
+      return publish(buildWorkspaceRequiredSnapshot(
+        'generation_failed',
+        retained,
+        current.preview,
+        current.answer,
+      ));
     }
     const before = current;
     const request = retryableGeneration.request;
