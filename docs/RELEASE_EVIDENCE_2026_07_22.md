@@ -430,6 +430,52 @@ public release readiness, or mobile visual evidence.
   where expected, changed previews after update/continuation, and zero
   unexpected renderer network requests during the canary scope.
 
+## 2026-07-28 Runtime-Only Preview DeepSeek Canary
+
+This addendum records a real saved-profile DeepSeek desktop canary for
+checkpoint `4f1e8ec`, after replacing runtime-only blank preview surfaces with
+an explicit "Preview unavailable here" explanation in the desktop conversation
+flow. It is desktop package evidence only; it does not extend installer
+evidence, code-signing status, public release readiness, or mobile visual
+evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- Focused runtime-preview and BuilderPage validation passed through
+  `npm run test -- BuilderStaticPreview BuilderPage`; the command reported the
+  full renderer suite passing 362 Vitest tests and the Node boundary suite
+  passing 552 subtests.
+- `npm exec tsc -b --pretty false`, `npm run lint`, `npm run build`, and
+  `git diff --check` passed before commit.
+- `npm run pack` passed for checkpoint `4f1e8ec`; package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- A desktop visual fixture screenshot of the runtime-only generated-draft state
+  was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-runtime-preview-focused-desktop.png`.
+  It shows user messages as bubbles, assistant replies as plain chat text, stable
+  Review actions, and no large blank iframe for a Three.js/WebGL-style draft.
+  It is local visual evidence only and was not committed.
+- The saved profile was verified as DeepSeek V4 OpenAI-compatible; the canary
+  used the saved-profile path, did not accept provider material through stdin,
+  argv, env, logs, or renderer-readable evidence, and left the source profile
+  unchanged.
+- The packaged app was exercised through the visible desktop Builder UI. The
+  canary saved Version 1, answered a saved-project question without creating a
+  new draft or revision, produced an unsaved update draft, restored that pending
+  draft after restart with Save still explicit, saved Version 2, inspected saved
+  history, returned to the current preview, restored the project after restart,
+  and continued generation after restart into a new pending candidate.
+- Draft Review evidence was visible before every Save and reported stable
+  Review action layout for the initial draft, update draft, pending update after
+  restart, and restart-continuation draft.
+- Static preview evidence for the DeepSeek canary stayed nonblank with
+  script-denying preview policy, visible first-release runtime-limit
+  explanation, unchanged restart previews where expected, changed previews after
+  update/continuation, and zero unexpected renderer network requests during the
+  canary scope.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
