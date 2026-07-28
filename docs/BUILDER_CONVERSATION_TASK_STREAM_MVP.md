@@ -237,8 +237,11 @@ unless explicitly sent through the dedicated Builder provider authority.
   separate planning panel.
 - Ordinary chat and explanations may work before a local project folder is
   selected. Build/draft/save flows must not use a logical New project as a
-  hidden write target. Clear build intent without an opened/saved project enters
-  the main-owned folder-selection flow; cancellation fails closed with
+  hidden write target. The composer shows a current project/workspace chip.
+  Clear build intent without an opened/saved project opens that project picker
+  and preserves the user's text instead of immediately submitting or silently
+  creating a target. Choosing New project is an explicit entry into the
+  main-owned local workspace selection flow; cancellation fails closed with
   user-facing guidance, while successful selection creates a working local
   project identity. The renderer receives only that Project identity, not the
   folder path or any write authority. The project remains unsaved until the user

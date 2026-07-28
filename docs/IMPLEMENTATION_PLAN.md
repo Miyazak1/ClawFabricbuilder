@@ -443,12 +443,14 @@ Evidence requirements:
   and explicit Save bridges;
 - the current build-workspace binding checkpoint keeps logical New project
   conversation available for ordinary chat while requiring an explicit local
-  project folder before any build/draft work. If no saved/opened project or
-  working local project is selected, `submit`, direct draft generation, and
-  retry first call the main-owned folder-selection path instead of writing a
-  hidden app-internal target. Cancellation fails closed with a fixed
-  project-workspace-required diagnostic: it calls no generator, creates no
-  draft, grants no permission, saves no Version, and writes no substitute
+  project folder before any build/draft work. The visible composer now includes
+  a current project/workspace chip. If no saved/opened project or working local
+  project is selected, clear build intent opens that picker, preserves the
+  user's text, and calls no generator or folder dialog. Choosing New project
+  from the picker is the explicit entry into the main-owned folder-selection
+  path. Cancellation fails closed with a fixed project-workspace-required
+  diagnostic when the controller path is invoked: it calls no generator, creates
+  no draft, grants no permission, saves no Version, and writes no substitute
   project. Successful selection records a main-owned workspace binding in
   SQLite, creates or reuses the local Git project under that folder, and exposes
   only the resulting Project identity to the renderer as `workingProjectId`.

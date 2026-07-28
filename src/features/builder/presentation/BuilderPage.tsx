@@ -3,9 +3,12 @@ import {
   AlertCircle,
   ArrowUp,
   Bot,
+  ChevronDown,
   CheckCircle2,
   Eye,
   FileCode2,
+  FolderOpen,
+  FolderPlus,
   GitCompareArrows,
   History,
   ListChecks,
@@ -13,6 +16,7 @@ import {
   Play,
   RefreshCw,
   Save,
+  Search,
   StopCircle,
   Trash2,
   UserRound,
@@ -36,6 +40,10 @@ import {
   isTrustedBuilderProjectHistorySnapshot,
   type BuilderProjectHistorySnapshot,
 } from '../application/builderProjectHistoryController';
+import {
+  isTrustedBuilderProjectCatalogSnapshot,
+  type BuilderProjectCatalogSnapshot,
+} from '../application/builderProjectCatalogController';
 import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
 import type {
   BuilderConversationItem,
@@ -85,9 +93,11 @@ export type BuilderPageProps = {
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
   planSourceReadApproval?: BuilderPlanSourceReadApprovalPrompt | null;
+  workspacePickerRequest?: number;
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onCancel?: () => void;
+  onCreateProject?: () => Promise<unknown> | void;
   onDismissPlanSourceReadApproval?: () => void;
   onSteerInstruction?: () => void;
   onProposePlan?: () => void;
@@ -99,9 +109,11 @@ export type BuilderPageProps = {
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onSave?: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onShowCurrentRevision?: () => Promise<unknown> | void;
   onOpenSettings?: () => void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
+  projectCatalogSnapshot?: BuilderProjectCatalogSnapshot;
   historySnapshot?: BuilderProjectHistorySnapshot;
   snapshot: BuilderProjectControllerSnapshot;
   activeFile: BuilderFileName | null;
@@ -1163,8 +1175,10 @@ export function BuilderPage({
   instruction,
   onApprovePlanSourceRead,
   onCancel,
+  onCreateProject,
   onDismissPlanSourceReadApproval,
   onInstructionChange,
+  onOpenProject,
   onSteerInstruction,
   onProposePlan,
   onSubmitInstruction,
@@ -1178,6 +1192,7 @@ export function BuilderPage({
   onShowCurrentRevision,
   onOpenSettings,
   conversationSnapshot,
+  projectCatalogSnapshot,
   historySnapshot,
   snapshot,
   activeFile,
@@ -1186,6 +1201,7 @@ export function BuilderPage({
   planReviewInFlight = null,
   planReviewRecorded = null,
   planSourceReadApproval = null,
+  workspacePickerRequest = 0,
   onSelectFile,
 }: BuilderPageProps) {
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
@@ -1202,6 +1218,21 @@ export function BuilderPage({
   const viewingHistory = inspected !== null;
   const hasContent = files.length > 0;
   const title = draft?.title ?? inspected?.target.title ?? saved?.target.title ?? 'New project';
+  const catalog = isTrustedBuilderProjectCatalogSnapshot(projectCatalogSnapshot)
+    ? projectCatalogSnapshot
+    : null;
+  const catalogProjects = catalog?.projects ?? [];
+  const catalogBusy = catalog?.status === 'loading' || catalog?.status === 'refreshing';
+  const workspaceLabel = saved !== null
+    ? saved.target.title
+    : current?.workingProjectId !== null
+      ? 'Local project selected'
+      : 'Choose project';
+  const workspaceDetail = saved !== null
+    ? `Version ${saved.target.revision_number}`
+    : current?.workingProjectId !== null
+      ? 'Unsaved workspace'
+      : 'Chat without a project';
   const version = saved?.target.revision_number ?? null;
   const canAddContext = typeof onSteerInstruction === 'function'
     && busy
@@ -1318,6 +1349,29 @@ export function BuilderPage({
       && sourceDisclosureState.open
     )
   );
+  const [workspacePickerState, setWorkspacePickerState] = useState<Readonly<{
+    buildPrompt: boolean;
+    open: boolean;
+    request: number;
+    search: string;
+  }>>(() => ({
+    buildPrompt: false,
+    open: false,
+    request: 0,
+    search: '',
+  }));
+  const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
+  const workspacePickerOpen = workspacePickerState.open || pendingWorkspacePickerRequest;
+  const workspacePickerBuildPrompt = workspacePickerState.buildPrompt || pendingWorkspacePickerRequest;
+  const workspaceSearch = workspacePickerState.search;
+  const normalizedWorkspaceSearch = workspaceSearch.trim().toLocaleLowerCase('en-US');
+  const visibleWorkspaceProjects = normalizedWorkspaceSearch.length === 0
+    ? catalogProjects
+    : catalogProjects.filter((project) => [
+      project.title,
+      project.summary,
+      project.project_id,
+    ].some((value) => value.toLocaleLowerCase('en-US').includes(normalizedWorkspaceSearch)));
   const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
   const showReviewSidebar = saved !== null && !hasUnsavedDraft;
   const activityFollowCursor = (() => {
@@ -1401,6 +1455,35 @@ export function BuilderPage({
         open,
       };
     });
+  }
+
+  function closeWorkspacePicker(): void {
+    setWorkspacePickerState((picker) => ({
+      ...picker,
+      buildPrompt: false,
+      open: false,
+      request: workspacePickerRequest,
+    }));
+  }
+
+  function toggleWorkspacePicker(): void {
+    if (busy && !canAddContext) return;
+    setWorkspacePickerState((picker) => ({
+      ...picker,
+      buildPrompt: false,
+      open: !picker.open,
+      request: workspacePickerRequest,
+    }));
+  }
+
+  function createProjectFromPicker(): void {
+    closeWorkspacePicker();
+    void onCreateProject?.();
+  }
+
+  function openProjectFromPicker(projectId: string): void {
+    closeWorkspacePicker();
+    void onOpenProject?.(projectId);
   }
 
   function selectFile(path: string): boolean {
@@ -1759,6 +1842,23 @@ export function BuilderPage({
         />
         <footer className="cf-builder-composer-footer">
           <div className="cf-builder-composer-tools">
+            <button
+              aria-expanded={workspacePickerOpen}
+              aria-haspopup="dialog"
+              className="cf-builder-workspace-chip"
+              data-builder-workspace-chip="true"
+              disabled={busy && !canAddContext}
+              onClick={toggleWorkspacePicker}
+              title={workspaceLabel}
+              type="button"
+            >
+              <FolderOpen aria-hidden="true" className="size-3.5" />
+              <span className="cf-builder-workspace-chip-copy">
+                <span className="cf-builder-workspace-chip-label">{workspaceLabel}</span>
+                <span className="cf-builder-workspace-chip-detail">{workspaceDetail}</span>
+              </span>
+              <ChevronDown aria-hidden="true" className="size-3.5" />
+            </button>
             <span className="cf-builder-status-pill">
               {composerStatusLabel}
             </span>
@@ -1803,6 +1903,79 @@ export function BuilderPage({
             )}
           </div>
         </footer>
+        {workspacePickerOpen ? (
+          <div
+            aria-label="Choose project"
+            className="cf-builder-workspace-picker"
+            data-builder-workspace-picker="true"
+            role="dialog"
+          >
+            {workspacePickerBuildPrompt ? (
+              <p className="cf-builder-workspace-picker-note" role="status">
+                Choose or create a project before I build.
+              </p>
+            ) : null}
+            <label className="cf-builder-workspace-search">
+              <Search aria-hidden="true" className="size-3.5" />
+              <input
+                aria-label="Search projects"
+                autoComplete="off"
+                data-builder-workspace-search="true"
+                disabled={catalogBusy}
+                onChange={(event) => {
+                  setWorkspacePickerState((picker) => ({
+                    ...picker,
+                    search: event.currentTarget.value,
+                  }));
+                }}
+                placeholder="Search projects"
+                type="search"
+                value={workspaceSearch}
+              />
+            </label>
+            <div className="cf-builder-workspace-picker-list" role="listbox">
+              {catalogBusy ? (
+                <p className="cf-builder-workspace-picker-empty" role="status">
+                  Loading projects...
+                </p>
+              ) : null}
+              {!catalogBusy && visibleWorkspaceProjects.length === 0 ? (
+                <p className="cf-builder-workspace-picker-empty">
+                  {catalogProjects.length === 0 ? 'No saved projects yet.' : 'No matching projects.'}
+                </p>
+              ) : null}
+              {!catalogBusy && visibleWorkspaceProjects.map((project) => (
+                <button
+                  className="cf-builder-workspace-project-row"
+                  data-builder-workspace-project={project.project_id}
+                  disabled={typeof onOpenProject !== 'function'}
+                  key={project.project_id}
+                  onClick={() => openProjectFromPicker(project.project_id)}
+                  role="option"
+                  type="button"
+                >
+                  <FolderOpen aria-hidden="true" className="size-3.5" />
+                  <span className="min-w-0">
+                    <span className="cf-builder-workspace-project-title">{project.title}</span>
+                    <span className="cf-builder-workspace-project-summary">
+                      Version {project.revision_number} - {project.summary}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              className="cf-builder-workspace-new-project"
+              data-builder-workspace-new-project="true"
+              disabled={typeof onCreateProject !== 'function' || catalogBusy}
+              onClick={createProjectFromPicker}
+              type="button"
+            >
+              <FolderPlus aria-hidden="true" className="size-3.5" />
+              New project
+            </button>
+          </div>
+        ) : null}
       </div>
     </section>
   );

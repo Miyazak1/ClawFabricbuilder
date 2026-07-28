@@ -757,11 +757,14 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-workbench="true"]')).not.toBeNull();
     expect(container.textContent).toContain('Projects');
     expect(container.textContent).toContain('Settings');
-    expect(container.textContent).not.toContain('Canvas');
-    expect(container.textContent).not.toContain('Chat');
+    const railLabels = Array.from(container.querySelectorAll('.cf-builder-rail-button'))
+      .map((button) => button.textContent);
+    expect(railLabels).toEqual(['Projects', 'Settings']);
+    expect(railLabels).not.toContain('Canvas');
+    expect(railLabels).not.toContain('Chat');
   });
 
-  it('requires a project folder before a build turn can make a draft', async () => {
+  it('guides a build turn to the composer project picker before any draft work', async () => {
     const { container, createLocalProject, generate, listCurrent, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -779,19 +782,28 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
-        .toContain('Choose or open a project folder before I build.');
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Choose or create a project before I build.');
     });
-    expect(createLocalProject).toHaveBeenCalledOnce();
+    expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
-    await waitFor(() => {
-      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+
+    click(container, '[data-builder-workspace-new-project="true"]');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
+
+    expect(createLocalProject).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
   });
 
   it('keeps one composer turn editable after submit failure without draft retry', async () => {

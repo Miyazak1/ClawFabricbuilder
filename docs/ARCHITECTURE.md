@@ -126,10 +126,15 @@ Project Revision creation.
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but
 `submit`, direct draft generation, and retry require either a verified saved
-Project or a main-owned local workspace binding. If no such binding exists,
-main opens the controlled folder-selection flow; cancellation surfaces only a
-fixed project-folder-required diagnostic and performs no generation, hidden
-write, permission grant, Git mutation, Save, or Revision creation. Successful
+Project or a main-owned local workspace binding. The composer exposes the
+current project/workspace as a visible chip backed by the read-only catalog
+projection. If no binding exists, the visible app intercepts clear build intent
+and opens the project picker while preserving the user's text; it does not call
+the generator, silently create a target, or immediately open a system folder
+dialog. Choosing New project is the explicit path into the controlled
+folder-selection flow; cancellation surfaces only a fixed
+project-folder-required diagnostic and performs no generation, hidden write,
+permission grant, Git mutation, Save, or Revision creation. Successful
 selection records the workspace binding in SQLite, creates or reuses the local
 Git project under that folder, and returns only the Project identity to the
 renderer as a working project. The renderer never sends filesystem paths or

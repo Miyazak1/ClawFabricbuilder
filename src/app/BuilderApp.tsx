@@ -351,6 +351,10 @@ function visibleConversationProjectId(
     ?? null;
 }
 
+function hasBuildWorkspace(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): boolean {
+  return snapshot.savedProject !== null || snapshot.workingProjectId !== null;
+}
+
 function visibleHistoryProjectId(
   snapshot: ReturnType<typeof useBuilderProjectController>['snapshot'],
 ): string | null {
@@ -438,6 +442,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
+  const [workspacePickerRequest, setWorkspacePickerRequest] = useState(0);
   const [planSourceReadApproval, setPlanSourceReadApproval] =
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
@@ -590,7 +595,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }) ?? (() => undefined)
   ), [ports.generator]);
 
-  const resetWorkspace = useCallback((nextProjectId: string | undefined) => {
+  const resetWorkspace = useCallback((
+    nextProjectId: string | undefined,
+    options: Readonly<{ preserveIdea?: boolean }> = Object.freeze({}),
+  ) => {
     workspaceEpochRef.current += 1;
     approvedPlanWaitingProjectRef.current = null;
     planSourceReadApprovalRef.current = null;
@@ -602,7 +610,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     submitInFlightRef.current = false;
     setWorkspaceEpoch(workspaceEpochRef.current);
     setProjectId(nextProjectId);
-    setIdea('');
+    if (options.preserveIdea !== true) setIdea('');
     setActiveFile(null);
     setLiveOutput(null);
     setView('project');
@@ -612,9 +620,29 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(nextProjectId);
   }, [resetWorkspace]);
 
+  const openProjectFromComposer = useCallback((nextProjectId: string) => {
+    resetWorkspace(nextProjectId, { preserveIdea: true });
+  }, [resetWorkspace]);
+
   const newProject = useCallback(() => {
     resetWorkspace(undefined);
   }, [resetWorkspace]);
+
+  const createWorkspaceProject = useCallback(async () => {
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    try {
+      setView('project');
+      const result = await project.createLocalProject();
+      if (result.workingProjectId !== null || result.savedProject !== null) {
+        setActiveFile(null);
+        setLiveOutput(null);
+        await catalog.refresh().catch(() => undefined);
+      }
+    } finally {
+      submitInFlightRef.current = false;
+    }
+  }, [catalog, project]);
 
   const refreshCatalog = useCallback(() => {
     void catalog.refresh().catch(() => undefined);
@@ -685,13 +713,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     if (submitInFlightRef.current || idea.trim().length === 0) return;
-    const commandEpoch = workspaceEpochRef.current;
     const submittedIdea = idea;
+    const route = routeBuilderComposerIntent(submittedIdea);
+    if (route === 'build' && !hasBuildWorkspace(projectSnapshotRef.current)) {
+      setWorkspacePickerRequest((request) => request + 1);
+      return;
+    }
+    const commandEpoch = workspaceEpochRef.current;
     submitInFlightRef.current = true;
     setIdea('');
     setLiveOutput(null);
     try {
-      const result = routeBuilderComposerIntent(submittedIdea) === 'build'
+      const result = route === 'build'
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
       if (workspaceEpochRef.current !== commandEpoch) return;
@@ -1105,13 +1138,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               planReviewInFlight={planReviewInFlight}
               planReviewRecorded={planReviewRecorded}
               planSourceReadApproval={planSourceReadApproval}
+              workspacePickerRequest={workspacePickerRequest}
               onApprovePlanSourceRead={approvePlanSourceRead}
+              onCreateProject={createWorkspaceProject}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onProposePlan={proposePlan}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
               onInstructionChange={setIdea}
               onInspectRevision={inspectRevision}
+              onOpenProject={openProjectFromComposer}
               onOpenSettings={() => setView('settings')}
               onRetryGenerate={retryGenerate}
               onCancel={cancel}
@@ -1123,6 +1159,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onReviewPlan={reviewPlan}
               onShowCurrentRevision={showCurrentRevision}
               conversationSnapshot={conversation.snapshot}
+              projectCatalogSnapshot={catalog.snapshot}
               historySnapshot={history.snapshot}
               snapshot={project.snapshot}
             />

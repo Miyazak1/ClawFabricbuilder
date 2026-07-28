@@ -19,6 +19,7 @@ export type UseBuilderProjectControllerOptions = Readonly<
 
 export type UseBuilderProjectControllerResult = Readonly<{
   snapshot: BuilderProjectControllerSnapshot;
+  createLocalProject: BuilderProjectController['createLocalProject'];
   submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
   proposePlan: BuilderProjectController['proposePlan'];
@@ -89,6 +90,10 @@ export function useBuilderProjectController(
     (instruction) => controller.generate(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
+  const createLocalProject = useCallback<BuilderProjectController['createLocalProject']>(
+    () => controller.createLocalProject().catch(() => controller.getSnapshot()),
+    [controller],
+  );
   const submit = useCallback<BuilderProjectController['submit']>(
     (instruction) => controller.submit(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
@@ -142,6 +147,7 @@ export function useBuilderProjectController(
   return useMemo(
     () => Object.freeze({
       snapshot,
+      createLocalProject,
       submit,
       answer,
       proposePlan,
@@ -158,6 +164,7 @@ export function useBuilderProjectController(
     }),
     [
       snapshot,
+      createLocalProject,
       submit,
       answer,
       proposePlan,

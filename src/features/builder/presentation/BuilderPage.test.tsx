@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBuilderProjectController } from '../application/builderProjectController';
 import { createBuilderConversationController } from '../application/builderConversationController';
 import { createBuilderProjectHistoryController } from '../application/builderProjectHistoryController';
+import { createBuilderProjectCatalogController } from '../application/builderProjectCatalogController';
 import { BuilderGenerationDiagnosticError } from '../application/builderPorts';
 import { BuilderPage } from './BuilderPage';
 import {
@@ -17,6 +18,7 @@ import {
   TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
+  createCatalogWire,
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
@@ -535,6 +537,24 @@ async function changedDraftSnapshot() {
   return draftSnapshotFromSourceTrees(baseTree, draftTree);
 }
 
+async function trustedCatalogSnapshot(projects: 'empty' | 'saved' = 'saved') {
+  const wire = await createCatalogWire();
+  const catalog = createBuilderProjectCatalogController({
+    listCurrent: async () => ({
+      ...wire,
+      projects: projects === 'empty'
+        ? []
+        : wire.projects.map((project) => ({
+          ...project,
+          title: 'Saved dashboard',
+          summary: 'A local project dashboard.',
+          revision_number: 2,
+        })),
+    }),
+  });
+  return catalog.load();
+}
+
 async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: SourceTree) {
   const readWire = await createReadWire(baseTree);
   const request = await createBuilderGenerationRequest('Update the saved project.', PROJECT_ID);
@@ -837,6 +857,65 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-make-draft="true"]')).toBeNull();
     click(container, '[data-builder-submit-turn="true"]');
     expect(onSubmitInstruction).toHaveBeenCalledOnce();
+  });
+
+  it('shows a composer project picker with saved projects and New project', async () => {
+    const { fresh } = await snapshots();
+    const onCreateProject = vi.fn();
+    const onOpenProject = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCreateProject={onCreateProject}
+        onOpenProject={onOpenProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot()}
+        snapshot={fresh}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+      .toContain('Choose project');
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+
+    click(container, '[data-builder-workspace-chip="true"]');
+
+    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
+    expect(picker).not.toBeNull();
+    expect(picker?.textContent).toContain('Saved dashboard');
+    expect(picker?.textContent).toContain('New project');
+    expect(picker?.querySelector('[data-builder-workspace-search="true"]')).not.toBeNull();
+
+    click(container, `[data-builder-workspace-project="${PROJECT_ID}"]`);
+
+    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
+    expect(onCreateProject).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+  });
+
+  it('opens the composer project picker when build needs a workspace', async () => {
+    const { fresh } = await snapshots();
+    const onCreateProject = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCreateProject={onCreateProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
+        snapshot={fresh}
+        workspacePickerRequest={1}
+      />,
+    );
+
+    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
+    expect(picker).not.toBeNull();
+    expect(picker?.textContent).toContain('Choose or create a project before I build.');
+    expect(picker?.textContent).toContain('No saved projects yet.');
+
+    click(container, '[data-builder-workspace-new-project="true"]');
+
+    expect(onCreateProject).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
   });
 
   it('keeps explicit activity loading and failure states visible without empty placeholders', async () => {

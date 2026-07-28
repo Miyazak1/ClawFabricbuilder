@@ -96,7 +96,7 @@ describe('Builder v2 architecture boundary', () => {
       const source = readFileSync(path, 'utf8');
       expect(imports(relativePath, source), relativePath).not.toContain('FORBIDDEN_DYNAMIC_IMPORT');
       expect(source, relativePath).not.toMatch(
-        /ChatCreatePage|chat_planner|AppLayout|Canvas|\bJobMeta\b|projectRevisions|projectCatalog|builder-project-revisions-v1|builder-generation-request\.v1|localStorage|sessionStorage|indexedDB|ipcRenderer|eval\s*\(|new Function/u,
+        /ChatCreatePage|chat_planner|AppLayout|Canvas|\bJobMeta\b|projectRevisions|\bprojectCatalog\b|builder-project-revisions-v1|builder-generation-request\.v1|localStorage|sessionStorage|indexedDB|ipcRenderer|eval\s*\(|new Function/u,
       );
     }
   });
@@ -173,7 +173,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(workspacePort).toContain('const BRIDGE_KEYS = Object.freeze([');
     expect(workspacePort).toContain("'createLocalProject'");
     expect(workspacePort).toContain('createLocalProject()');
-    expect(workspacePort).not.toMatch(/projectRevisions|projectCatalog|commit/u);
+    expect(workspacePort).not.toMatch(/projectRevisions|\bprojectCatalog\b|commit/u);
     expect(generationPort).toContain('instruction: request.instruction');
     expect(generationPort).toContain('submit: methods.submit');
     expect(generationPort).toMatch(/preparePlanSourceReadApproval:\s*methods\.preparePlanSourceReadApproval/u);

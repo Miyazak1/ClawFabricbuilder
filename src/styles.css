@@ -358,9 +358,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-composer-shell {
   display: grid;
+  position: relative;
   min-width: 0;
   grid-template-rows: minmax(72px, auto) auto;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--cf-border);
   border-radius: 8px;
   background: var(--cf-surface);
@@ -396,6 +397,190 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   align-items: center;
   gap: 10px;
+  color: var(--cf-text-muted);
+}
+
+.cf-builder-workspace-chip {
+  display: inline-flex;
+  min-height: 34px;
+  max-width: min(260px, 42vw);
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: var(--cf-surface-muted);
+  color: var(--cf-text-soft);
+  cursor: pointer;
+  padding: 0 9px;
+  text-align: left;
+}
+
+.cf-builder-workspace-chip:hover,
+.cf-builder-workspace-chip:focus-visible,
+.cf-builder-workspace-chip[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--cf-primary) 36%, var(--cf-border));
+  background: color-mix(in srgb, var(--cf-primary) 7%, var(--cf-surface));
+  color: var(--cf-primary-text);
+  outline: none;
+}
+
+.cf-builder-workspace-chip:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.cf-builder-workspace-chip-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.cf-builder-workspace-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+.cf-builder-workspace-chip-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cf-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.cf-builder-workspace-picker {
+  position: absolute;
+  z-index: 30;
+  bottom: 54px;
+  left: 12px;
+  display: grid;
+  width: min(360px, calc(100% - 24px));
+  max-height: min(430px, 64vh);
+  min-width: 0;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-lg);
+  padding: 10px;
+}
+
+.cf-builder-workspace-picker-note,
+.cf-builder-workspace-picker-empty {
+  margin: 0;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cf-builder-workspace-picker-note {
+  color: var(--cf-text-soft);
+  font-weight: 600;
+}
+
+.cf-builder-workspace-search {
+  display: flex;
+  min-height: 34px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: var(--cf-surface-muted);
+  color: var(--cf-text-muted);
+  padding: 0 9px;
+}
+
+.cf-builder-workspace-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: var(--cf-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.cf-builder-workspace-picker-list {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  max-height: 220px;
+  gap: 4px;
+  overflow: auto;
+}
+
+.cf-builder-workspace-project-row,
+.cf-builder-workspace-new-project {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cf-text-soft);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.cf-builder-workspace-project-row {
+  grid-template-columns: 18px minmax(0, 1fr);
+  padding: 8px;
+}
+
+.cf-builder-workspace-new-project {
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-height: 34px;
+  border-color: var(--cf-border);
+  background: var(--cf-surface-muted);
+  font-weight: 650;
+  padding: 0 8px;
+}
+
+.cf-builder-workspace-project-row:hover,
+.cf-builder-workspace-project-row:focus-visible,
+.cf-builder-workspace-new-project:hover,
+.cf-builder-workspace-new-project:focus-visible {
+  border-color: color-mix(in srgb, var(--cf-primary) 34%, var(--cf-border));
+  background: color-mix(in srgb, var(--cf-primary) 7%, var(--cf-surface));
+  color: var(--cf-primary-text);
+  outline: none;
+}
+
+.cf-builder-workspace-project-row:disabled,
+.cf-builder-workspace-new-project:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.cf-builder-workspace-project-title,
+.cf-builder-workspace-project-summary {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-builder-workspace-project-title {
+  color: var(--cf-text);
+  font-weight: 650;
+}
+
+.cf-builder-workspace-project-summary {
+  margin-top: 2px;
   color: var(--cf-text-muted);
 }
 
