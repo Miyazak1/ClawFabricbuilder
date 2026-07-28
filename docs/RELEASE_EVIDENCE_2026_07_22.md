@@ -395,6 +395,41 @@ status, public release readiness, or mobile visual evidence.
   It renders real React/CSS with test fixtures and is local evidence only; it
   is not a real-provider canary artifact and was not committed.
 
+## 2026-07-28 Desktop Draft Review DeepSeek Canary
+
+This addendum records a real saved-profile DeepSeek desktop canary for
+checkpoint `39393df`, after updating the packaged canary preview-copy evidence
+to match the current generated-draft Review/Preview UI. It is desktop package
+evidence only; it does not extend installer evidence, code-signing status,
+public release readiness, or mobile visual evidence.
+
+- The current local package is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- The package was rebuilt at checkpoint `39393df`; package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 747 ASAR
+  entries.
+- Canary contract validation passed: the full Node boundary suite passed
+  552 subtests, the targeted packaged/deepseek canary tests passed 49 subtests,
+  `npm run lint` passed, and `git diff --check` passed before evidence commit.
+- The saved profile was verified as DeepSeek V4 OpenAI-compatible
+  `deepseek-v4-flash`; the canary used the saved-profile path, did not accept
+  provider material through stdin, argv, env, logs, or renderer-readable
+  evidence, and left the source profile unchanged.
+- The packaged app was exercised through the visible desktop Builder UI. The
+  canary saved Version 1, answered a saved-project question without creating a
+  new draft or revision, produced an unsaved update draft, restored that pending
+  draft after restart with Save still explicit, saved Version 2, inspected
+  saved history, returned to the current preview, restored the project after
+  restart, and continued generation after restart into a new pending candidate.
+- Draft Review evidence was visible before every Save and reported stable
+  Review action layout for the initial draft, update draft, pending update after
+  restart, and restart-continuation draft.
+- Static preview evidence stayed nonblank with script-denying preview policy,
+  visible first-release runtime-limit explanation, unchanged restart previews
+  where expected, changed previews after update/continuation, and zero
+  unexpected renderer network requests during the canary scope.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
