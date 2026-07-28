@@ -231,6 +231,32 @@ async function setup(options: Readonly<{
       result: restoredDraft,
     };
   });
+  const restoreRevisionAsDraft = vi.fn(async (request: unknown) => {
+    const revisionReceiptDigest = (request as { revision_receipt_digest: string }).revision_receipt_digest;
+    expect((request as { project_id: string }).project_id).toBe(PROJECT_ID);
+    const sourceTree = historicalWire !== null
+      && revisionReceiptDigest === historicalWire.product_revision_receipt.revision_receipt_digest
+      ? historicalWire.source_tree
+      : readWire.source_tree;
+    const hostRequest = await createBuilderGenerationRequest('Restore an earlier saved version.', PROJECT_ID);
+    latestDraft = await createGenerationDraft(hostRequest, sourceTree);
+    latestDraft = {
+      ...latestDraft,
+      base_revision_evidence: latestDraft.base_revision_evidence === null
+        ? null
+        : {
+          ...latestDraft.base_revision_evidence,
+          revision_receipt_digest: readWire.product_revision_receipt.revision_receipt_digest,
+          commit_oid: readWire.product_revision_receipt.commit_oid,
+          source_tree_digest: readWire.source_tree.source_tree_digest,
+        },
+    };
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: latestDraft,
+    };
+  });
   const rejectDraft = vi.fn(async (request: unknown) => {
     expect(request).toEqual({ draft_id: latestDraft.draft_id });
     return {
@@ -460,6 +486,7 @@ async function setup(options: Readonly<{
       retry,
       answer,
       restoreDraft,
+      restoreRevisionAsDraft,
       rejectDraft,
       cancel,
       steer,
@@ -586,6 +613,7 @@ async function setup(options: Readonly<{
     reviewPlan,
     rejectDraft,
     restoreDraft,
+    restoreRevisionAsDraft,
     async resolveGenerate() {
       await resolveGenerate?.();
     },
@@ -1861,6 +1889,43 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-history-preview="true"]')).toBeNull();
       expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Current</main>');
     });
+  });
+
+  it('restores a saved history item as an unsaved draft without saving immediately', async () => {
+    const {
+      container,
+      readTaskStream,
+      restoreDraft,
+      restoreRevisionAsDraft,
+      saveDraft,
+    } = await setup({
+      initiallySaved: true,
+      validHistoryPreview: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-restore-version="Version 1"]')).not.toBeNull();
+    });
+    readTaskStream.mockClear();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-builder-restore-version="Version 1"]')?.click();
+    });
+
+    await waitFor(() => {
+      expect(restoreRevisionAsDraft).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        revision_receipt_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      });
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(restoreDraft).not.toHaveBeenCalled();
   });
 
   it('saves only after the explicit command, then shows the verified Git/SQLite version', async () => {

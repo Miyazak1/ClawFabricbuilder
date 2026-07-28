@@ -18,6 +18,7 @@ const {
   STEER_CHANNEL,
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  RESTORE_REVISION_AS_DRAFT_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
@@ -69,6 +70,10 @@ function adapter(overrides = {}) {
       calls.push(['restoreDraft', request]);
       return { result: 'restored' };
     },
+    restoreRevisionAsDraft: async (request) => {
+      calls.push(['restoreRevisionAsDraft', request]);
+      return { result: 'restored-revision' };
+    },
     rejectDraft: async (request) => {
       calls.push(['rejectDraft', request]);
       return { result: 'rejected' };
@@ -110,6 +115,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'retry',
     'answer',
     'restoreDraft',
+    'restoreRevisionAsDraft',
     'rejectDraft',
     'cancel',
     'steer',
@@ -127,6 +133,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
       RESTORE_DRAFT_CHANNEL,
+      RESTORE_REVISION_AS_DRAFT_CHANNEL,
       REJECT_DRAFT_CHANNEL,
       CANCEL_CHANNEL,
       STEER_CHANNEL,
@@ -208,6 +215,17 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     },
   );
   assert.deepEqual(
+    await value.channels.restoreRevisionAsDraft.invoke({ sender: windowRef.webContents }, {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      revision_receipt_digest: `sha256:${'d'.repeat(64)}`,
+    }),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'restored-revision' },
+    },
+  );
+  assert.deepEqual(
     await value.channels.rejectDraft.invoke({ sender: windowRef.webContents }, {
       draft_id: `builder-generation-draft:${'c'.repeat(64)}`,
     }),
@@ -239,6 +257,10 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['retry', request],
     ['answer', request],
     ['restoreDraft', { draft_id: `builder-generation-draft:${'b'.repeat(64)}` }],
+    ['restoreRevisionAsDraft', {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      revision_receipt_digest: `sha256:${'d'.repeat(64)}`,
+    }],
     ['rejectDraft', { draft_id: `builder-generation-draft:${'c'.repeat(64)}` }],
     ['cancel', cancellation],
     ['steer', steering],
@@ -299,6 +321,15 @@ test('rejects inactive renderers and argument-count drift before invoking host a
   );
   await assert.rejects(
     value.channels.restoreDraft.invoke({ sender: windowRef.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
+    value.channels.restoreRevisionAsDraft.invoke({ sender: {} }, { marker }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && !error.message.includes(marker),
+  );
+  await assert.rejects(
+    value.channels.restoreRevisionAsDraft.invoke({ sender: windowRef.webContents }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
@@ -364,6 +395,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       retry: () => { throw modified; },
       answer: () => { throw modified; },
       restoreDraft: () => { throw modified; },
+      restoreRevisionAsDraft: () => { throw modified; },
       rejectDraft: () => { throw modified; },
       cancel: () => ({}),
       steer: () => ({}),
@@ -399,6 +431,12 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     });
     const restored = await known.channels.restoreDraft.invoke({ sender: windowRef.webContents }, {});
     assert.deepEqual(restored, {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code, retryable },
+    });
+    const restoredRevision = await known.channels.restoreRevisionAsDraft.invoke({ sender: windowRef.webContents }, {});
+    assert.deepEqual(restoredRevision, {
       version: GENERATE_RESULT_VERSION,
       ok: false,
       error: { code, retryable },
@@ -455,6 +493,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     },
     restoreDraft: () => {
       const error = new Error('restore-private-marker');
+      error.code = 'builder_generation_parent_unavailable';
+      throw error;
+    },
+    restoreRevisionAsDraft: () => {
+      const error = new Error('restore-revision-private-marker');
       error.code = 'builder_generation_parent_unavailable';
       throw error;
     },
@@ -526,6 +569,14 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     },
   );
   assert.deepEqual(
+    await hostile.channels.restoreRevisionAsDraft.invoke({ sender: windowRef.webContents }, {}),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code: 'builder_generation_parent_unavailable', retryable: true },
+    },
+  );
+  assert.deepEqual(
     await hostile.channels.rejectDraft.invoke({ sender: windowRef.webContents }, {}),
     {
       version: GENERATE_RESULT_VERSION,
@@ -554,6 +605,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     retry: async () => ({}),
     answer: async () => ({}),
     restoreDraft: async () => ({}),
+    restoreRevisionAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => {
       const error = new Error('control-private-marker');
@@ -598,6 +650,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
     retry: async () => ({}),
     answer: async () => ({}),
     restoreDraft: async () => ({}),
+    restoreRevisionAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => {
       const error = new Error('cancel-private-marker');
@@ -638,6 +691,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
       retry: async () => ({}),
       answer: async () => ({}),
       restoreDraft: async () => ({}),
+      restoreRevisionAsDraft: async () => ({}),
       rejectDraft: async () => ({}),
       cancel: () => ({}),
       steer: () => ({}),
@@ -675,6 +729,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       retry: async () => result,
       answer: async () => result,
       restoreDraft: async () => result,
+      restoreRevisionAsDraft: async () => result,
       rejectDraft: async () => result,
       cancel: () => ({}),
       steer: () => ({}),
@@ -693,6 +748,10 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
     );
     assert.deepEqual(
       await value.channels.rejectDraft.invoke({ sender: windowRef.webContents }, {}),
+      envelope,
+    );
+    assert.deepEqual(
+      await value.channels.restoreRevisionAsDraft.invoke({ sender: windowRef.webContents }, {}),
       envelope,
     );
     assert.doesNotMatch(JSON.stringify(envelope), /private-marker/u);
@@ -723,6 +782,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       retry: async () => result,
       answer: async () => result,
       restoreDraft: async () => result,
+      restoreRevisionAsDraft: async () => result,
       rejectDraft: async () => result,
       cancel: () => ({}),
       steer: () => ({}),
@@ -752,6 +812,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     retry: async () => ({}),
     answer: async () => ({}),
     restoreDraft: async () => ({}),
+    restoreRevisionAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => ({}),
     steer: () => ({}),

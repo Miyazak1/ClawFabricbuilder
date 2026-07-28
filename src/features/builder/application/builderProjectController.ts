@@ -3,6 +3,7 @@ import {
   sanitizeBuilderApprovedPlanGenerationDraft,
   sanitizeBuilderGenerationAnswer,
   sanitizeBuilderGenerationPlan,
+  sanitizeBuilderRevisionRestoreGenerationDraft,
   sanitizeRestoredBuilderGenerationDraft,
   sanitizeBuilderGenerationDraft,
   type BuilderApprovedPlanGenerationRequest,
@@ -100,6 +101,10 @@ export type BuilderProjectController = Readonly<{
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<BuilderProjectControllerSnapshot>;
   retryGenerate(): Promise<BuilderProjectControllerSnapshot>;
   restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
+  restoreRevisionAsDraft(
+    projectId: string,
+    revisionReceiptDigest: string,
+  ): Promise<BuilderProjectControllerSnapshot>;
   inspectRevision(projectId: string, revisionReceiptDigest: string): Promise<BuilderProjectControllerSnapshot>;
   showCurrentRevision(): Promise<BuilderProjectControllerSnapshot>;
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
@@ -1173,6 +1178,55 @@ export function createBuilderProjectController(
     });
   }
 
+  async function restoreRevisionAsDraft(
+    projectId: string,
+    revisionReceiptDigest: string,
+  ): Promise<BuilderProjectControllerSnapshot> {
+    const retained = current.savedProject;
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || retained === null
+      || !PROJECT_ID_PATTERN.test(projectId)
+      || !DIGEST_PATTERN.test(revisionReceiptDigest)
+      || retained.target.project_id !== projectId
+      || retained.target.revision_receipt_digest === revisionReceiptDigest
+      || !['ready', 'generation_failed', 'preview_unavailable'].includes(current.status)
+    ) return current;
+    const beforeRestore = current;
+    return run(async (operationEpoch) => {
+      publish(snapshot(
+        'restoring',
+        retained,
+        null,
+        current.preview,
+        null,
+        null,
+        current.inspectedRevision,
+        false,
+        current.workingProjectId,
+        current.workingProject,
+      ));
+      try {
+        const draft = await sanitizeBuilderRevisionRestoreGenerationDraft(
+          await dependencies.generator.restoreRevisionAsDraft({
+            project_id: projectId,
+            revision_receipt_digest: revisionReceiptDigest,
+          }),
+          projectId,
+        );
+        if (!draftMatchesSavedBase(draft, retained)) throw new Error();
+        if (disposed || operationEpoch !== epoch) return current;
+        retryableGeneration = null;
+        return withPreview('draft_ready', retained, draft, operationEpoch);
+      } catch {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(beforeRestore);
+      }
+    });
+  }
+
   async function inspectRevision(
     projectId: string,
     revisionReceiptDigest: string,
@@ -1420,6 +1474,7 @@ export function createBuilderProjectController(
     generateApprovedPlan,
     retryGenerate,
     restoreDraft,
+    restoreRevisionAsDraft,
     inspectRevision,
     showCurrentRevision,
     rejectDraft,

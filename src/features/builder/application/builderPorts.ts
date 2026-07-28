@@ -118,6 +118,9 @@ export interface BuilderCodeGeneratorPort {
   retry(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
+  restoreRevisionAsDraft(
+    request: Readonly<{ project_id: string; revision_receipt_digest: string }>,
+  ): Promise<unknown>;
   rejectDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   cancel(request: Readonly<{ request_id: string }>): Promise<unknown>;
   steer(request: Readonly<{ request_id: string; message: string }>): Promise<unknown>;

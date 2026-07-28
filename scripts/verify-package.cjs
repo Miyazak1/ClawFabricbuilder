@@ -410,7 +410,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v14');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v15');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -437,6 +437,7 @@ exactObjectKeys(generationBridge, [
   'retry',
   'answer',
   'restoreDraft',
+  'restoreRevisionAsDraft',
   'rejectDraft',
   'cancel',
   'steer',
@@ -450,6 +451,7 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -575,6 +577,7 @@ exactInvokeMethod(generationBridge, 'approvePlanSourceRead', 'APPROVE_PLAN_SOURC
 exactInvokeMethod(generationBridge, 'retry', 'RETRY_GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answer', 'ANSWER_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'restoreDraft', 'RESTORE_DRAFT_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'restoreRevisionAsDraft', 'RESTORE_REVISION_AS_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'rejectDraft', 'REJECT_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'cancel', 'CANCEL_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'steer', 'STEER_CHANNEL', ['request']);
@@ -1030,6 +1033,8 @@ assert.match(packagedPreload, /clawfabric-builder:code-generator:approve-plan-so
 assert.match(packagedPreload, /\bretry\b/u);
 assert.match(packagedPreload, /\banswer\b/u);
 assert.match(packagedPreload, /restoreDraft/u);
+assert.match(packagedPreload, /restoreRevisionAsDraft/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:restore-revision-as-draft/u);
 assert.match(packagedPreload, /rejectDraft/u);
 assert.match(packagedPreload, /\bsteer\b/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:steer/u);
@@ -1040,7 +1045,7 @@ assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 30);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 31);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

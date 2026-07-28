@@ -168,6 +168,9 @@ async function renderHook(
     retry,
     answer,
     restoreDraft,
+    restoreRevisionAsDraft: async () => createGenerationDraft(
+      await createBuilderGenerationRequest('Restore a saved version.', PROJECT_ID),
+    ),
     rejectDraft,
     cancel,
     steer: async () => null,

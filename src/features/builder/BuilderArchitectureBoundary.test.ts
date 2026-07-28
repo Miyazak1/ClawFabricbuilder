@@ -154,6 +154,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toContain('retry(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
+    expect(ports).toMatch(/restoreRevisionAsDraft\(\s*request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>/u);
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
     expect(ports).toContain('steer(request: Readonly<{ request_id: string; message: string }>)');
@@ -161,6 +162,9 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('evaluate(request: BuilderPermissionRequest)');
     const portsWithoutLoadRevision = ports.replace(
       / {2}loadRevision\(request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>\): Promise<unknown>;\r?\n/u,
+      '',
+    ).replace(
+      / {2}restoreRevisionAsDraft\(\r?\n {4}request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>,\r?\n {2}\): Promise<unknown>;\r?\n/u,
       '',
     );
     expect(portsWithoutLoadRevision).not.toMatch(
@@ -181,6 +185,8 @@ describe('Builder v2 architecture boundary', () => {
     expect(generationPort).toContain('project_id: projectId');
     expect(generationPort).toContain('retry: methods.retry');
     expect(generationPort).toContain('answer: methods.answer');
+    expect(generationPort).toContain('restoreRevisionAsDraft:');
+    expect(generationPort).toContain('revision_receipt_digest: revisionReceiptDigest');
     expect(generationPort).toContain('rejectDraft: methods.rejectDraft');
     expect(generationPort).toContain('draft_id: request.draft_id');
     expect(generationPort).toContain('request_id: request.request_id');

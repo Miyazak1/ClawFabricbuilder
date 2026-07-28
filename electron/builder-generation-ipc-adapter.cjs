@@ -18,6 +18,8 @@ const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const STEER_CHANNEL = 'clawfabric-builder:code-generator:steer';
 const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
 const RESTORE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:restore-draft';
+const RESTORE_REVISION_AS_DRAFT_CHANNEL =
+  'clawfabric-builder:code-generator:restore-revision-as-draft';
 const REJECT_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:reject-draft';
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const MAX_PLAIN_DATA_NODES = 20_000;
@@ -34,6 +36,7 @@ const OPTION_KEYS = Object.freeze([
   'retry',
   'answer',
   'restoreDraft',
+  'restoreRevisionAsDraft',
   'rejectDraft',
   'cancel',
   'steer',
@@ -355,6 +358,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.restoreDraft);
         },
       }),
+      restoreRevisionAsDraft: Object.freeze({
+        channel: RESTORE_REVISION_AS_DRAFT_CHANNEL,
+        method: 'restoreRevisionAsDraft',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.restoreRevisionAsDraft);
+        },
+      }),
       rejectDraft: Object.freeze({
         channel: REJECT_DRAFT_CHANNEL,
         method: 'rejectDraft',
@@ -394,6 +404,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'retry',
       'answer',
       'restoreDraft',
+      'restoreRevisionAsDraft',
       'rejectDraft',
       'cancel',
       'steer',
@@ -426,6 +437,7 @@ module.exports = Object.freeze({
   STEER_CHANNEL,
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  RESTORE_REVISION_AS_DRAFT_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,

@@ -20,6 +20,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   restoreDraft(request: unknown): Promise<unknown>;
+  restoreRevisionAsDraft(request: unknown): Promise<unknown>;
   rejectDraft(request: unknown): Promise<unknown>;
   cancel(request: unknown): Promise<unknown>;
   steer(request: unknown): Promise<unknown>;
@@ -38,6 +39,7 @@ const BRIDGE_KEYS = new Set([
   'retry',
   'answer',
   'restoreDraft',
+  'restoreRevisionAsDraft',
   'rejectDraft',
   'cancel',
   'steer',
@@ -201,6 +203,8 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
       answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
       restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
+      restoreRevisionAsDraft:
+        methods.restoreRevisionAsDraft as BuilderCodeGeneratorBridge['restoreRevisionAsDraft'],
       rejectDraft: methods.rejectDraft as BuilderCodeGeneratorBridge['rejectDraft'],
       cancel: methods.cancel as BuilderCodeGeneratorBridge['cancel'],
       steer: methods.steer as BuilderCodeGeneratorBridge['steer'],
@@ -263,6 +267,11 @@ function unwrapGenerationEnvelope(value: unknown): unknown {
 
 function safeProjectId(value: unknown): string {
   if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) throw portError();
+  return value;
+}
+
+function safeDigest(value: unknown): string {
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) throw portError();
   return value;
 }
 
@@ -491,6 +500,14 @@ export function createBuilderDesktopCodeGeneratorPort(
     restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
       return callBridge(bridge, bridge.restoreDraft, [{
         draft_id: request.draft_id,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    restoreRevisionAsDraft(request: Parameters<BuilderCodeGeneratorPort['restoreRevisionAsDraft']>[0]) {
+      const projectId = safeProjectId(request.project_id);
+      const revisionReceiptDigest = safeDigest(request.revision_receipt_digest);
+      return callBridge(bridge, bridge.restoreRevisionAsDraft, [{
+        project_id: projectId,
+        revision_receipt_digest: revisionReceiptDigest,
       }]).then(unwrapGenerationEnvelope);
     },
     rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {

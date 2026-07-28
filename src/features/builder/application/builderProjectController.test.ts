@@ -72,6 +72,7 @@ function setup(options: {
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
+  restoreRevisionAsDraft?: BuilderCodeGeneratorPort['restoreRevisionAsDraft'];
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
   cancel?: BuilderCodeGeneratorPort['cancel'];
   steer?: BuilderCodeGeneratorPort['steer'];
@@ -127,6 +128,9 @@ function setup(options: {
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
+  const restoreRevisionAsDraft = vi.fn(options.restoreRevisionAsDraft ?? (async () => (
+    createGenerationDraft(await createBuilderGenerationRequest('Restore a saved version.', PROJECT_ID))
+  )));
   const rejectDraft = vi.fn(options.rejectDraft ?? (async (request) => ({
     result_version: 'builder-generation-draft-rejection-result.v1',
     draft_id: request.draft_id,
@@ -185,6 +189,7 @@ function setup(options: {
       retry,
       answer,
       restoreDraft,
+      restoreRevisionAsDraft,
       rejectDraft,
       cancel,
       steer,
@@ -210,6 +215,7 @@ function setup(options: {
     createLocalProject,
     rejectDraft,
     restoreDraft,
+    restoreRevisionAsDraft,
     saveDraft,
   };
 }
@@ -1172,6 +1178,63 @@ describe('Builder project controller v2', () => {
     expect(result).toBe(before);
     expect(result.inspectedRevision).toBeNull();
     expect(result.savedProject?.target.revision_receipt_digest)
+      .toBe(currentWire.product_revision_receipt.revision_receipt_digest);
+  });
+
+  it('restores a historical revision as an unsaved draft against the current saved base', async () => {
+    const currentTree = await createSourceTree([
+      { path: 'index.html', content: '<main>Current</main>\n' },
+    ]);
+    const historicalTree = await createSourceTree([
+      { path: 'index.html', content: '<main>Earlier</main>\n' },
+    ]);
+    const historicalWire = await createReadWire(historicalTree, 1);
+    const currentWire = await readWireAsRevision(
+      await createReadWire(currentTree, 1),
+      2,
+      historicalWire.product_revision_receipt.revision_receipt_digest,
+    );
+    const restoredHostRequest = await createBuilderGenerationRequest('Restore an earlier saved version.', PROJECT_ID);
+    const restoredDraft = {
+      ...await createGenerationDraft(restoredHostRequest, historicalTree),
+      base_revision_evidence: {
+        evidence_version: 'builder-project-base-revision-evidence.v2' as const,
+        project_id: PROJECT_ID,
+        revision_receipt_digest: currentWire.product_revision_receipt.revision_receipt_digest,
+        commit_oid: currentWire.product_revision_receipt.commit_oid,
+        source_tree_digest: currentWire.source_tree.source_tree_digest,
+        verification_admission: 'git_sqlite_read_authority_verified' as const,
+      },
+    };
+    const { controller, restoreRevisionAsDraft, saveDraft } = setup({
+      open: async () => currentWire,
+      restoreRevisionAsDraft: async (request) => {
+        expect(request).toEqual({
+          project_id: PROJECT_ID,
+          revision_receipt_digest: historicalWire.product_revision_receipt.revision_receipt_digest,
+        });
+        return restoredDraft;
+      },
+    });
+    await controller.open(PROJECT_ID);
+    await controller.inspectRevision(
+      PROJECT_ID,
+      historicalWire.product_revision_receipt.revision_receipt_digest,
+    );
+
+    const result = await controller.restoreRevisionAsDraft(
+      PROJECT_ID,
+      historicalWire.product_revision_receipt.revision_receipt_digest,
+    );
+
+    expect(restoreRevisionAsDraft).toHaveBeenCalledOnce();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.savedProject?.target.revision_receipt_digest)
+      .toBe(currentWire.product_revision_receipt.revision_receipt_digest);
+    expect(result.inspectedRevision).toBeNull();
+    expect(result.draft?.source_tree.source_tree_digest).toBe(historicalTree.source_tree_digest);
+    expect(result.draft?.base_revision_evidence?.revision_receipt_digest)
       .toBe(currentWire.product_revision_receipt.revision_receipt_digest);
   });
 

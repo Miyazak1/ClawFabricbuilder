@@ -646,6 +646,76 @@ export async function sanitizeBuilderApprovedPlanGenerationDraft(
   }
 }
 
+export async function sanitizeBuilderRevisionRestoreGenerationDraft(
+  value: unknown,
+  expectedProjectIdValue: unknown,
+): Promise<BuilderGenerationDraft> {
+  try {
+    const expectedProjectId = safeProjectId(expectedProjectIdValue, 'invalid_generation_request');
+    const source = exactRecord(value, DRAFT_KEYS, 'invalid_generated_draft');
+    if (
+      source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
+      || typeof source.request_id !== 'string'
+      || !DIGEST_PATTERN.test(source.request_id)
+      || source.project_id !== expectedProjectId
+      || source.existing_project_id !== expectedProjectId
+      || source.restart_restore !== 'not_persisted'
+    ) throw invalid('invalid_generated_draft');
+    const candidate = exactRecord(source.candidate, CANDIDATE_KEYS, 'invalid_generated_draft');
+    if (
+      candidate.candidate_version !== 'builder-code-change-candidate.v2'
+      || typeof candidate.candidate_id !== 'string'
+      || !CANDIDATE_ID_PATTERN.test(candidate.candidate_id)
+    ) throw invalid('invalid_generated_draft');
+    const candidateDigest = safeDigest(candidate.candidate_digest);
+    const resultingTreeDigest = safeDigest(candidate.resulting_tree_digest);
+    const sourceTree = await sanitizeBuilderProjectSourceTree(source.source_tree);
+    if (sourceTree.source_tree_digest !== resultingTreeDigest) {
+      throw invalid('invalid_generated_draft');
+    }
+    const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_draft');
+    if (
+      admissions.conversation !== 'sqlite_recorded'
+      || admissions.draft !== 'candidate_not_saved'
+      || admissions.save !== 'not_performed'
+      || admissions.preview !== 'not_evaluated'
+      || admissions.execution !== 'not_evaluated'
+    ) throw invalid('invalid_generated_draft');
+    return deepFreeze({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      request_id: source.request_id,
+      draft_id: safeDraftId(source.draft_id),
+      title: safeDisplayText(source.title, 80),
+      summary: safeDisplayText(source.summary, 400),
+      project_id: expectedProjectId,
+      existing_project_id: expectedProjectId,
+      candidate: {
+        candidate_version: 'builder-code-change-candidate.v2',
+        candidate_id: candidate.candidate_id,
+        candidate_digest: candidateDigest,
+        resulting_tree_digest: resultingTreeDigest,
+      },
+      base_revision_evidence: sanitizeBaseEvidence(
+        source.base_revision_evidence,
+        expectedProjectId,
+        true,
+      ),
+      source_tree: sourceTree,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'candidate_not_saved',
+        save: 'not_performed',
+        preview: 'not_evaluated',
+        execution: 'not_evaluated',
+      },
+      restart_restore: 'not_persisted',
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationError) throw error;
+    throw invalid('invalid_generated_draft');
+  }
+}
+
 export async function sanitizeBuilderGenerationAnswer(
   value: unknown,
   expectedRequest: BuilderGenerationRequest,

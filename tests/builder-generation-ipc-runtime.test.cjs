@@ -22,6 +22,7 @@ const {
   PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  RESTORE_REVISION_AS_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   STEER_CHANNEL,
   SUBMIT_CHANNEL,
@@ -161,6 +162,7 @@ function runtimeWithService(service, probes = {}) {
           STEER_CHANNEL,
           AVAILABILITY_CHANNEL,
           RESTORE_DRAFT_CHANNEL,
+          RESTORE_REVISION_AS_DRAFT_CHANNEL,
           REJECT_DRAFT_CHANNEL,
           RETRY_GENERATE_CHANNEL,
           createBuilderGenerationIpcAdapter: (options) => ({
@@ -176,6 +178,7 @@ function runtimeWithService(service, probes = {}) {
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
+              restoreRevisionAsDraft: { invoke: (_event, body) => options.restoreRevisionAsDraft(body) },
               rejectDraft: { invoke: (_event, body) => options.rejectDraft(body) },
               cancel: { invoke: (_event, body) => options.cancel(body) },
               steer: { invoke: (_event, body) => options.steer(body) },
@@ -595,6 +598,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
+    RESTORE_REVISION_AS_DRAFT_CHANNEL,
     REJECT_DRAFT_CHANNEL,
     CANCEL_CHANNEL,
     STEER_CHANNEL,
@@ -840,6 +844,22 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(RESTORE_DRAFT_CHANNEL)({ sender: mainWindow.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(RESTORE_REVISION_AS_DRAFT_CHANNEL)({ sender: {} }, {
+      project_id: PROJECT_ID,
+      revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+    }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(RESTORE_REVISION_AS_DRAFT_CHANNEL)({ sender: mainWindow.webContents }, {
+      project_id: PROJECT_ID,
+    }, {
+      revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+    }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
@@ -1340,6 +1360,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.deepEqual([...ipcMain.handlers.keys()], []);
   assert.deepEqual(ipcMain.removed, [
     REJECT_DRAFT_CHANNEL,
+    RESTORE_REVISION_AS_DRAFT_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
@@ -1371,6 +1392,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.equal(removalFailure.handlers.has(RETRY_GENERATE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_DRAFT_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(RESTORE_REVISION_AS_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(REJECT_DRAFT_CHANNEL), false);
   assert.throws(() => cleanupRuntime.dispose(), {
     code: 'builder_generation_ipc_runtime_unavailable',
@@ -1678,6 +1700,102 @@ test('registers a read-only draft restore channel backed by generation service',
     restart_restore: 'git_sqlite_verified',
   });
   assert.deepEqual(restoreRequests, [{ draft_id: draftId }]);
+  runtime.dispose();
+});
+
+test('restores a saved revision as a draft only for the selected project workspace', async (t) => {
+  const restoreRequests = [];
+  const runtimeModule = runtimeWithService({
+    generate() { throw new Error('unexpected generate'); },
+    restore_revision_as_draft(body) {
+      restoreRequests.push({ ...body });
+      return {
+        version: 'builder-generation-result.v2',
+        project_id: body.project_id,
+        existing_project_id: body.project_id,
+        request_id: `sha256:${'e'.repeat(64)}`,
+        draft_id: `builder-generation-draft:${'f'.repeat(64)}`,
+        restart_restore: 'not_persisted',
+      };
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  });
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  const revisionDigest = `sha256:${'d'.repeat(64)}`;
+  const body = (source) => vm.runInContext(source, runtimeModule.context);
+
+  await assert.rejects(
+    async () => ipcMain.handlers.get(RESTORE_REVISION_AS_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      body(`({
+        project_id: ${JSON.stringify(PROJECT_ID)},
+        revision_receipt_digest: ${JSON.stringify(revisionDigest)}
+      })`),
+    ),
+    { code: 'builder_generation_project_workspace_required' },
+  );
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    body(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`),
+  );
+  const restored = await ipcMain.handlers.get(RESTORE_REVISION_AS_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    body(`({
+      project_id: ${JSON.stringify(PROJECT_ID)},
+      revision_receipt_digest: ${JSON.stringify(revisionDigest)}
+    })`),
+  );
+  assert.deepEqual(restored, {
+    version: 'builder-generation-result.v2',
+    project_id: PROJECT_ID,
+    existing_project_id: PROJECT_ID,
+    request_id: `sha256:${'e'.repeat(64)}`,
+    draft_id: `builder-generation-draft:${'f'.repeat(64)}`,
+    restart_restore: 'not_persisted',
+  });
+  assert.deepEqual(restoreRequests, [{
+    project_id: PROJECT_ID,
+    revision_receipt_digest: revisionDigest,
+  }]);
+  assert.equal(Object.hasOwn(restoreRequests[0], 'instruction'), false);
+  assert.equal(Object.hasOwn(restoreRequests[0], 'request_digest'), false);
+  assert.equal(Object.hasOwn(restoreRequests[0], 'source_tree'), false);
+
+  await assert.rejects(
+    async () => ipcMain.handlers.get(RESTORE_REVISION_AS_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      body(`({
+        project_id: "builder-project:223e4567-e89b-42d3-a456-426614174000",
+        revision_receipt_digest: ${JSON.stringify(revisionDigest)}
+      })`),
+    ),
+    { code: 'builder_generation_project_workspace_required' },
+  );
+  await assert.rejects(
+    async () => ipcMain.handlers.get(RESTORE_REVISION_AS_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      body(`({
+        project_id: ${JSON.stringify(PROJECT_ID)},
+        revision_receipt_digest: ${JSON.stringify(revisionDigest)},
+        source_tree: { files: [] }
+      })`),
+    ),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
+  assert.equal(restoreRequests.length, 1);
   runtime.dispose();
 });
 

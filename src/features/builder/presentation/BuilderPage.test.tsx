@@ -131,6 +131,9 @@ async function snapshots() {
       async restoreDraft() {
         return draft;
       },
+      async restoreRevisionAsDraft() {
+        return draft;
+      },
       async rejectDraft(request) {
         return {
           result_version: 'builder-generation-draft-rejection-result.v1',
@@ -215,6 +218,9 @@ async function workingProjectSnapshot() {
         return createGenerationAnswer(request);
       },
       async restoreDraft() {
+        return draft;
+      },
+      async restoreRevisionAsDraft() {
         return draft;
       },
       async rejectDraft(request) {
@@ -704,6 +710,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async restoreDraft() {
         return draft;
       },
+      async restoreRevisionAsDraft() {
+        return draft;
+      },
       async rejectDraft(request) {
         return {
           result_version: 'builder-generation-draft-rejection-result.v1',
@@ -793,6 +802,12 @@ async function inspectedHistorySnapshot() {
         return createGenerationDraft(
           await createBuilderGenerationRequest('Restore.', PROJECT_ID),
           currentTree,
+        );
+      },
+      async restoreRevisionAsDraft() {
+        return createGenerationDraft(
+          await createBuilderGenerationRequest('Restore a saved version.', PROJECT_ID),
+          historicalTree,
         );
       },
       async rejectDraft(request) {
@@ -1238,6 +1253,7 @@ describe('BuilderPage v2', () => {
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
@@ -1290,6 +1306,7 @@ describe('BuilderPage v2', () => {
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
         steer: async () => null,
@@ -1341,6 +1358,7 @@ describe('BuilderPage v2', () => {
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
         steer: async () => null,
@@ -1401,6 +1419,7 @@ describe('BuilderPage v2', () => {
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
@@ -1450,6 +1469,7 @@ describe('BuilderPage v2', () => {
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
         steer: async (request) => ({ request_id: request.request_id, steered: true }),
@@ -1518,6 +1538,7 @@ describe('BuilderPage v2', () => {
         restoreDraft: async () => new Promise((resolve) => {
           resolveRestore = resolve;
         }),
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
@@ -2456,6 +2477,7 @@ describe('BuilderPage v2', () => {
     });
     const history = await historyController.load(PROJECT_ID);
     const onInspectRevision = vi.fn();
+    const onRestoreRevisionAsDraft = vi.fn();
     const onShowCurrentRevision = vi.fn();
     const savedContainer = render(
       <BuilderPage
@@ -2463,10 +2485,18 @@ describe('BuilderPage v2', () => {
         historySnapshot={history}
         instruction=""
         onInspectRevision={onInspectRevision}
+        onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
         onShowCurrentRevision={onShowCurrentRevision}
         snapshot={saved}
       />,
     );
+
+    click(savedContainer, '[data-builder-restore-version="Version 1"]');
+    expect(onRestoreRevisionAsDraft).toHaveBeenCalledExactlyOnceWith(
+      PROJECT_ID,
+      history.history?.revisions.find((revision) => revision.revision_number === 1)?.revision_receipt_digest,
+    );
+    expect(onInspectRevision).not.toHaveBeenCalled();
 
     click(savedContainer, '[data-builder-view-version="Version 1"]');
     expect(onInspectRevision).toHaveBeenCalledExactlyOnceWith(
@@ -2481,6 +2511,7 @@ describe('BuilderPage v2', () => {
         historySnapshot={history}
         instruction="Change it."
         onInspectRevision={onInspectRevision}
+        onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
         onSubmitInstruction={vi.fn()}
         onShowCurrentRevision={onShowCurrentRevision}
         snapshot={inspected}
@@ -2872,6 +2903,7 @@ describe('BuilderPage v2', () => {
         retry: async () => null,
         answer: async () => null,
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
@@ -2914,6 +2946,7 @@ describe('BuilderPage v2', () => {
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         restoreDraft: async () => null,
+        restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,

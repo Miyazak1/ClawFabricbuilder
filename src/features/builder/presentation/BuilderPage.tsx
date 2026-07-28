@@ -110,6 +110,7 @@ export type BuilderPageProps = {
   onSave?: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
+  onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onShowCurrentRevision?: () => Promise<unknown> | void;
   onOpenSettings?: () => void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
@@ -781,17 +782,24 @@ function ChangesPanel({
 function VersionItem({
   inspectedRevisionReceiptDigest,
   onInspectRevision,
+  onRestoreRevisionAsDraft,
   revision,
+  restoreDisabled,
 }: Readonly<{
   inspectedRevisionReceiptDigest: string | null;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   revision: BuilderProjectHistoryRevision;
+  restoreDisabled: boolean;
 }>) {
   const isInspected = inspectedRevisionReceiptDigest === revision.revision_receipt_digest;
   const showAction = isInspected || !revision.is_current;
   const canInspect = !isInspected
     && !revision.is_current
     && typeof onInspectRevision === 'function';
+  const canRestore = !revision.is_current
+    && !restoreDisabled
+    && typeof onRestoreRevisionAsDraft === 'function';
   return (
     <li
       className="cf-builder-version-item"
@@ -812,18 +820,33 @@ function VersionItem({
         <p className="cf-builder-version-summary">{revision.summary}</p>
       </div>
       {showAction ? (
-        <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-show-current-version={revision.is_current ? 'true' : undefined}
-          data-builder-view-version={revision.is_current ? undefined : `Version ${revision.revision_number}`}
-          disabled={!canInspect}
-          onClick={() => {
-            void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
-          }}
-          type="button"
-        >
-          {isInspected ? 'Viewing' : 'View'}
-        </button>
+        <div className="cf-builder-version-actions flex shrink-0 items-center gap-1">
+          <button
+            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            data-builder-show-current-version={revision.is_current ? 'true' : undefined}
+            data-builder-view-version={revision.is_current ? undefined : `Version ${revision.revision_number}`}
+            disabled={!canInspect}
+            onClick={() => {
+              void onInspectRevision?.(revision.project_id, revision.revision_receipt_digest);
+            }}
+            type="button"
+          >
+            {isInspected ? 'Viewing' : 'View'}
+          </button>
+          {!revision.is_current ? (
+            <button
+              className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-restore-version={`Version ${revision.revision_number}`}
+              disabled={!canRestore}
+              onClick={() => {
+                void onRestoreRevisionAsDraft?.(revision.project_id, revision.revision_receipt_digest);
+              }}
+              type="button"
+            >
+              Restore
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </li>
   );
@@ -834,12 +857,14 @@ function VersionHistoryPanel({
   inspectedRevisionReceiptDigest,
   onInspectRevision,
   onRefresh,
+  onRestoreRevisionAsDraft,
   snapshot,
 }: Readonly<{
   hasSavedProject: boolean;
   inspectedRevisionReceiptDigest: string | null;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onRefresh?: () => Promise<unknown> | void;
+  onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   snapshot: BuilderProjectHistorySnapshot | null;
 }>) {
   const revisions = snapshot?.history?.revisions ?? [];
@@ -888,7 +913,9 @@ function VersionHistoryPanel({
                 inspectedRevisionReceiptDigest={inspectedRevisionReceiptDigest}
                 key={revision.revision_receipt_digest}
                 onInspectRevision={onInspectRevision}
+                onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
                 revision={revision}
+                restoreDisabled={snapshot?.busy === true}
               />
             ))}
           </ol>
@@ -1213,6 +1240,7 @@ export function BuilderPage({
   onRefreshHistory,
   onRejectDraft,
   onReviewPlan,
+  onRestoreRevisionAsDraft,
   onSave,
   onInspectRevision,
   onShowCurrentRevision,
@@ -2307,6 +2335,7 @@ export function BuilderPage({
                 inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
                 onInspectRevision={onInspectRevision}
                 onRefresh={onRefreshHistory}
+                onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
                 snapshot={history}
               />
             </aside>

@@ -18,6 +18,7 @@ const {
   PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  RESTORE_REVISION_AS_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   STEER_CHANNEL,
   SUBMIT_CHANNEL,
@@ -257,6 +258,29 @@ function planSourceReadApprovalProjectId(rawRequest) {
   const projectId = exactDataValue(rawRequest, ['project_id'], 'project_id');
   if (typeof projectId !== 'string' || !PROJECT_ID_PATTERN.test(projectId)) fail();
   return projectId;
+}
+
+function restoreRevisionAsDraftRequest(rawRequest) {
+  const projectId = exactDataValue(
+    rawRequest,
+    ['project_id', 'revision_receipt_digest'],
+    'project_id',
+  );
+  const revisionReceiptDigest = exactDataValue(
+    rawRequest,
+    ['project_id', 'revision_receipt_digest'],
+    'revision_receipt_digest',
+  );
+  if (
+    typeof projectId !== 'string'
+    || !PROJECT_ID_PATTERN.test(projectId)
+    || typeof revisionReceiptDigest !== 'string'
+    || !REQUEST_DIGEST_PATTERN.test(revisionReceiptDigest)
+  ) fail();
+  return Object.freeze({
+    project_id: projectId,
+    revision_receipt_digest: revisionReceiptDigest,
+  });
 }
 
 function approvedPlanGenerationRequest(rawRequest) {
@@ -904,6 +928,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.answer);
     }
 
+    function trackedRestoreRevisionAsDraft(rawRequest) {
+      const request = restoreRevisionAsDraftRequest(rawRequest);
+      if (selectionPending || selectedProjectId !== request.project_id) failGenerationProjectWorkspaceRequired();
+      return Reflect.apply(service.restore_revision_as_draft, service, [request]);
+    }
+
     adapter = createBuilderGenerationIpcAdapter({
       generate: trackedGenerate,
       generateApprovedPlan: trackedGenerateApprovedPlan,
@@ -914,6 +944,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
       restoreDraft: service.restore_draft,
+      restoreRevisionAsDraft: trackedRestoreRevisionAsDraft,
       rejectDraft: service.reject_draft,
       cancel: service.cancel,
       steer: service.steer,
@@ -1079,6 +1110,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
     Object.freeze({ channel: RESTORE_DRAFT_CHANNEL, invoke: adapter.channels.restoreDraft.invoke }),
+    Object.freeze({
+      channel: RESTORE_REVISION_AS_DRAFT_CHANNEL,
+      invoke: adapter.channels.restoreRevisionAsDraft.invoke,
+    }),
     Object.freeze({ channel: REJECT_DRAFT_CHANNEL, invoke: adapter.channels.rejectDraft.invoke }),
     Object.freeze({ channel: CANCEL_CHANNEL, invoke: adapter.channels.cancel.invoke }),
     Object.freeze({ channel: STEER_CHANNEL, invoke: adapter.channels.steer.invoke }),

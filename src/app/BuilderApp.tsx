@@ -256,6 +256,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  restoreRevisionAsDraft(request: Parameters<BuilderCodeGeneratorPort['restoreRevisionAsDraft']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -486,6 +490,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       restoreDraft(request: Parameters<BuilderCodeGeneratorPort['restoreDraft']>[0]) {
         return ports.generator.restoreDraft(request);
+      },
+      restoreRevisionAsDraft(request: Parameters<BuilderCodeGeneratorPort['restoreRevisionAsDraft']>[0]) {
+        return ports.generator.restoreRevisionAsDraft(request);
       },
       rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
         return ports.generator.rejectDraft(request);
@@ -952,6 +959,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setActiveFile(null);
     await project.inspectRevision(targetProjectId, revisionReceiptDigest);
   }, [project]);
+  const restoreRevisionAsDraft = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
+    const commandEpoch = workspaceEpochRef.current;
+    setActiveFile(null);
+    setLiveOutput(null);
+    const result = await project.restoreRevisionAsDraft(targetProjectId, revisionReceiptDigest);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch, targetProjectId);
+    setLiveOutput(null);
+  }, [project, readActivityAfterTerminal]);
   const showCurrentRevision = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     setActiveFile(null);
@@ -1151,6 +1167,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onInspectRevision={inspectRevision}
               onOpenProject={openProjectFromComposer}
               onOpenSettings={() => setView('settings')}
+              onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
               onCancel={cancel}
               onRejectDraft={rejectDraft}

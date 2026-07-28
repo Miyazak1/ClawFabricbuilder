@@ -27,6 +27,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   generateApprovedPlan: BuilderProjectController['generateApprovedPlan'];
   retryGenerate: BuilderProjectController['retryGenerate'];
   restoreDraft: BuilderProjectController['restoreDraft'];
+  restoreRevisionAsDraft: BuilderProjectController['restoreRevisionAsDraft'];
   inspectRevision: BuilderProjectController['inspectRevision'];
   showCurrentRevision: BuilderProjectController['showCurrentRevision'];
   rejectDraft: BuilderProjectController['rejectDraft'];
@@ -123,6 +124,12 @@ export function useBuilderProjectController(
     (draftId) => controller.restoreDraft(draftId).catch(() => controller.getSnapshot()),
     [controller],
   );
+  const restoreRevisionAsDraft = useCallback<BuilderProjectController['restoreRevisionAsDraft']>(
+    (projectId, revisionReceiptDigest) => (
+      controller.restoreRevisionAsDraft(projectId, revisionReceiptDigest).catch(() => controller.getSnapshot())
+    ),
+    [controller],
+  );
   const inspectRevision = useCallback<BuilderProjectController['inspectRevision']>(
     (projectId, revisionReceiptDigest) => (
       controller.inspectRevision(projectId, revisionReceiptDigest).catch(() => controller.getSnapshot())
@@ -156,6 +163,7 @@ export function useBuilderProjectController(
       generateApprovedPlan,
       retryGenerate,
       restoreDraft,
+      restoreRevisionAsDraft,
       inspectRevision,
       showCurrentRevision,
       rejectDraft,
@@ -173,6 +181,7 @@ export function useBuilderProjectController(
       generateApprovedPlan,
       retryGenerate,
       restoreDraft,
+      restoreRevisionAsDraft,
       inspectRevision,
       showCurrentRevision,
       rejectDraft,
