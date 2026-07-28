@@ -836,18 +836,24 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-chat-flow-surface {
+  position: relative;
+  z-index: 0;
   flex: 0 0 auto;
   width: min(860px, 100%);
   align-self: center;
 }
 
 .cf-builder-draft-landing {
-  display: flex;
+  display: grid;
+  position: relative;
+  z-index: 0;
   width: min(860px, 100%);
   flex: 0 0 auto;
-  flex-direction: column;
+  grid-template-columns: minmax(0, 1fr);
   align-self: center;
-  gap: 12px;
+  gap: 14px;
+  isolation: isolate;
+  margin-top: 4px;
   scroll-margin-block-start: 12px;
 }
 
@@ -893,15 +899,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-checkpoint {
   display: grid;
   position: relative;
-  z-index: 1;
+  z-index: 2;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
   row-gap: 12px;
   border-top: 1px solid var(--cf-border);
   border-bottom: 1px solid var(--cf-border);
-  background: transparent;
-  margin-block: 4px 2px;
+  background: var(--cf-bg);
+  isolation: isolate;
+  margin-block: 6px 2px;
   overflow: visible;
   padding: 14px 0 12px;
   scroll-margin-block-start: 12px;
@@ -1002,7 +1009,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-changes-flow {
   position: relative;
-  z-index: 0;
+  z-index: 1;
   margin-top: 2px;
   scroll-margin-block-start: 12px;
 }
@@ -1390,10 +1397,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-activity-panel {
-  display: block;
+  display: grid;
   position: relative;
+  z-index: 0;
   min-height: 0;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  isolation: isolate;
   color: var(--cf-text-soft);
 }
 
@@ -1438,9 +1449,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-activity-body-wrap {
-  display: block;
+  display: grid;
   min-height: 0;
   min-width: 0;
+  align-content: start;
+  gap: 8px;
   overflow: visible;
   padding: 0;
 }
@@ -1457,6 +1470,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-activity-list {
   display: flex;
+  position: relative;
+  z-index: 0;
   flex-direction: column;
   min-width: 0;
   gap: 10px;
@@ -1473,6 +1488,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-activity-item {
   display: grid;
+  position: relative;
+  z-index: 0;
   min-width: 0;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 8px;
@@ -1536,7 +1553,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-activity-content {
+  display: grid;
   max-width: min(720px, 92%);
+  min-width: 0;
+  gap: 2px;
   padding: 0;
 }
 

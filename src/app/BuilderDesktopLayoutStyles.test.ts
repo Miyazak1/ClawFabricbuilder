@@ -89,16 +89,19 @@ describe('Builder desktop layout styles', () => {
     const changesFlow = styleBlock(source, '.cf-builder-changes-flow');
     const changesPanel = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
 
-    expect(draftLanding).toContain('display: flex;');
+    expect(draftLanding).toContain('display: grid;');
+    expect(draftLanding).toContain('position: relative;');
+    expect(draftLanding).toContain('grid-template-columns: minmax(0, 1fr);');
     expect(draftLanding).toContain('width: min(860px, 100%);');
-    expect(draftLanding).toContain('flex-direction: column;');
-    expect(draftLanding).toContain('gap: 12px;');
+    expect(draftLanding).toContain('gap: 14px;');
+    expect(draftLanding).toContain('isolation: isolate;');
+    expect(draftLanding).toContain('margin-top: 4px;');
     expect(draftLanding).toContain('scroll-margin-block-start: 12px;');
     expect(draftLanding).not.toContain('border:');
     expect(draftLanding).not.toContain('border-radius');
     expect(draftLandingSurfaces).toContain('width: 100%;');
     expect(changesFlow).toContain('position: relative;');
-    expect(changesFlow).toContain('z-index: 0;');
+    expect(changesFlow).toContain('z-index: 1;');
     expect(changesFlow).toContain('margin-top: 2px;');
     expect(changesFlow).toContain('scroll-margin-block-start: 12px;');
     expect(changesFlow).not.toContain('position: absolute;');
@@ -122,13 +125,15 @@ describe('Builder desktop layout styles', () => {
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
 
     expect(review).toContain('position: relative;');
-    expect(review).toContain('z-index: 1;');
+    expect(review).toContain('z-index: 2;');
     expect(review).toContain('grid-template-columns: minmax(0, 1fr);');
     expect(review).toContain('align-items: start;');
     expect(review).toContain('row-gap: 12px;');
     expect(review).toContain('border-top: 1px solid var(--cf-border);');
     expect(review).toContain('border-bottom: 1px solid var(--cf-border);');
-    expect(review).toContain('margin-block: 4px 2px;');
+    expect(review).toContain('background: var(--cf-bg);');
+    expect(review).toContain('isolation: isolate;');
+    expect(review).toContain('margin-block: 6px 2px;');
     expect(review).toContain('overflow: visible;');
     expect(review).not.toContain('border-radius: 8px;');
     expect(review).not.toContain('minmax(320px, 360px)');
@@ -157,22 +162,33 @@ describe('Builder desktop layout styles', () => {
     const activityToolbar = styleBlock(source, '.cf-builder-activity-toolbar');
     const activityBody = styleBlock(source, '.cf-builder-activity-body-wrap');
     const activityList = styleBlock(source, '.cf-builder-activity-list');
+    const activityItem = styleBlock(source, '.cf-builder-activity-item');
+    const activityContent = styleBlock(source, '.cf-builder-activity-content');
 
-    expect(activityPanel).toContain('display: block;');
+    expect(activityPanel).toContain('display: grid;');
     expect(activityPanel).toContain('position: relative;');
+    expect(activityPanel).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(activityPanel).toContain('grid-template-rows: auto auto;');
+    expect(activityPanel).toContain('isolation: isolate;');
     expect(activityToolbar).toContain('display: flex;');
     expect(activityToolbar).toContain('min-height: 0;');
     expect(activityToolbar).toContain('margin-bottom: 6px;');
     expect(activityToolbar).not.toContain('position: absolute;');
     expect(activityToolbar).not.toContain('min-height: 32px;');
-    expect(activityBody).toContain('display: block;');
+    expect(activityBody).toContain('display: grid;');
+    expect(activityBody).toContain('align-content: start;');
+    expect(activityBody).toContain('gap: 8px;');
     expect(activityBody).toContain('overflow: visible;');
     expect(activityBody).toContain('padding: 0;');
     expect(activityList).toContain('display: flex;');
+    expect(activityList).toContain('position: relative;');
     expect(activityList).toContain('flex-direction: column;');
     expect(activityList).toContain('margin: 0;');
     expect(activityList).toContain('padding: 0;');
     expect(activityList).toContain('list-style: none;');
+    expect(activityItem).toContain('position: relative;');
+    expect(activityContent).toContain('display: grid;');
+    expect(activityContent).toContain('min-width: 0;');
   });
 
   it('keeps the result flow unframed so preview is not nested inside another card', () => {
