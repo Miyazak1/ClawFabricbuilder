@@ -594,7 +594,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (workspaceEpochRef.current !== commandEpoch) return;
     const conversationProjectId = visibleConversationProjectId(result) ?? fallbackProjectId;
     if (conversationProjectId === null) return;
-    await conversation.load(conversationProjectId).catch(() => undefined);
+    if (conversation.snapshot.project_id === conversationProjectId) {
+      await conversation.refresh().catch(() => undefined);
+    } else {
+      await conversation.load(conversationProjectId).catch(() => undefined);
+    }
   }, [conversation]);
 
   useEffect(() => {

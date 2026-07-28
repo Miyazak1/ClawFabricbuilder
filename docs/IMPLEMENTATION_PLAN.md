@@ -433,6 +433,15 @@ Evidence requirements:
   command, does not add a dedicated code workbench, and still uses only the
   existing read-only task stream, plan review, generation, draft reject, cancel,
   and explicit Save bridges;
+- the current build-workspace precondition checkpoint keeps logical New project
+  conversation read-only for build work. The composer may still answer ordinary
+  questions without a local project folder, but `submit`, `generate`, and retry
+  paths now fail closed with a fixed project-workspace-required diagnostic when
+  no saved/opened project is selected. That failure calls no generator, creates
+  no draft, grants no permission, saves no Version, and writes no hidden app
+  project as a substitute for an explicit user folder. The next independent
+  checkpoint must add the visible choose/create local project folder flow and
+  bind that folder to write permission before first build;
 - the current live activity notification checkpoint emits a project-id-only
   Task Stream change hint from main after a Conversation append has been
   durably recorded and replay-verified. The renderer can subscribe through the
@@ -445,8 +454,8 @@ Evidence requirements:
 - the current generation-started live-binding checkpoint emits a main-owned
   started hint after a generation request has been durably bound to a Project
   Conversation. The renderer may match that request digest to its own active
-  composer turn and use the included Project ID only to re-read the existing
-  read-only Task Stream for first-turn unsaved projects; the hint carries no
+  composer turn and use the included Project ID only to refresh the existing
+  read-only Task Stream for active saved-project work; the hint carries no
   source, receipt, provider, credential, tool output, save, Git, revision, or
   project-save authority and does not mark the project saved;
 - the current durable run-progress checkpoint records fixed main-owned Run

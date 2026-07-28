@@ -117,6 +117,14 @@ visible approval flow binds the selected local project folder, the bounded
 main-selected project resources, and the user's explicit approval before calling
 that main-only primitive.
 
+The visible desktop Builder currently fails closed for build/draft work when no
+saved/opened project is selected. Chat answers may still run without a folder,
+but `submit`, direct draft generation, and retry cannot create a candidate from
+the logical New project state, cannot write an implicit app-internal folder, and
+surface only a fixed project-folder-required diagnostic. A later independent
+workspace flow must let the user choose or create the local project folder and
+bind that folder to write permission before first build.
+
 The OpenAI-compatible provider transport also has a streaming observer path.
 When the Generation host supplies an internal observer, the request uses a
 bounded `text/event-stream` response and assembles the same terminal

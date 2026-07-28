@@ -576,11 +576,13 @@ function failedStatusMessage(
     return 'The answer could not be prepared. Try again.';
   }
   if (status === 'submit_failed') {
+    if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I build.';
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
     if (error === 'builder_generation_provider_http_error') return 'The AI service could not complete this request. Try again.';
     return 'This request could not be completed. Try again.';
   }
+  if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I make a draft.';
   if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
   if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
   if (error === 'builder_generation_provider_http_error') return 'The AI service could not make this draft. Try again.';

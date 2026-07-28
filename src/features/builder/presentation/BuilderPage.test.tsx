@@ -947,6 +947,7 @@ describe('BuilderPage v2', () => {
   });
 
   it('offers Retry for a retryable draft failure without submitting a new turn', async () => {
+    const readWire = await createReadWire();
     const controller = createBuilderProjectController({
       generator: {
         submit: async () => {
@@ -965,7 +966,7 @@ describe('BuilderPage v2', () => {
         steer: async () => null,
       },
       workspace: {
-        open: async () => null,
+        open: async (request) => (request.project_id === null ? null : readWire),
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -973,6 +974,7 @@ describe('BuilderPage v2', () => {
         listHistory: async () => ({ revisions: [] }),
       },
     });
+    await controller.open(PROJECT_ID);
     const failed = await controller.generate('Make a timer.');
     const onSubmitInstruction = vi.fn();
     const onRetryGenerate = vi.fn();
@@ -998,6 +1000,7 @@ describe('BuilderPage v2', () => {
 
   it('shows Stop only while AI work is active', async () => {
     const { fresh } = await snapshots();
+    const readWire = await createReadWire();
     const controller = createBuilderProjectController({
       generator: {
         submit: async () => null,
@@ -1012,7 +1015,7 @@ describe('BuilderPage v2', () => {
         steer: async () => null,
       },
       workspace: {
-        open: async () => null,
+        open: async (request) => (request.project_id === null ? null : readWire),
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1020,6 +1023,7 @@ describe('BuilderPage v2', () => {
         listHistory: async () => ({ revisions: [] }),
       },
     });
+    await controller.open(PROJECT_ID);
     void controller.generate('Make a timer.');
     const onCancel = vi.fn();
     const container = render(
@@ -1147,6 +1151,7 @@ describe('BuilderPage v2', () => {
   });
 
   it('uses the same desktop composer send command to add context while work is active', async () => {
+    const readWire = await createReadWire();
     const controller = createBuilderProjectController({
       generator: {
         submit: async () => null,
@@ -1161,7 +1166,7 @@ describe('BuilderPage v2', () => {
         steer: async (request) => ({ request_id: request.request_id, steered: true }),
       },
       workspace: {
-        open: async () => null,
+        open: async (request) => (request.project_id === null ? null : readWire),
         saveDraft: async () => null,
         loadCurrent: async () => null,
         loadRevision: async () => null,
@@ -1169,6 +1174,7 @@ describe('BuilderPage v2', () => {
         listHistory: async () => ({ revisions: [] }),
       },
     });
+    await controller.open(PROJECT_ID);
     void controller.generate('Make a timer.');
     const onCancel = vi.fn();
     const onSteerInstruction = vi.fn();
@@ -2526,6 +2532,8 @@ describe('BuilderPage v2', () => {
   });
 
   it('labels an unknown Save outcome without claiming the draft is lost', async () => {
+    const readWire = await createReadWire();
+    let initialOpen = true;
     const controller = createBuilderProjectController({
       generator: {
         submit: async (request) => createGenerationDraft(request),
@@ -2540,7 +2548,14 @@ describe('BuilderPage v2', () => {
         steer: async () => null,
       },
       workspace: {
-        open: async () => null,
+        open: async (request) => {
+          if (request.project_id === PROJECT_ID && initialOpen) {
+            initialOpen = false;
+            return readWire;
+          }
+          if (request.project_id === null) return null;
+          throw new Error('unavailable');
+        },
         saveDraft: async () => {
           throw new Error('response lost');
         },
@@ -2552,6 +2567,7 @@ describe('BuilderPage v2', () => {
         listHistory: async () => ({ revisions: [] }),
       },
     });
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const unknown = await controller.save();
     const container = render(

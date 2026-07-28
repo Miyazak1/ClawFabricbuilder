@@ -620,6 +620,17 @@ function click(container: HTMLElement, label: string): void {
   act(() => button?.click());
 }
 
+async function openSavedProject(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+  });
+  click(container, 'Hello project');
+  await waitFor(() => {
+    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
+      .toContain('Version 1');
+  });
+}
+
 async function createRestoredDraftForReadWire(
   readWire: Awaited<ReturnType<typeof createReadWire>>,
 ) {
@@ -710,7 +721,7 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('Chat');
   });
 
-  it('generates an unsaved draft without touching the workspace save authority', async () => {
+  it('requires a project folder before a build turn can make a draft', async () => {
     const { container, generate, listCurrent, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -728,20 +739,30 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
+        .toContain('Choose or open a project folder before I build.');
     });
-    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(listCurrent.mock.results.at(-1)?.value).toBeInstanceOf(Promise);
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    });
   });
 
   it('keeps one composer turn editable after submit failure without draft retry', async () => {
     const { container, generate, readTaskStream, retry, saveDraft, submit } = await setup({
       failSubmitOnce: true,
+      initiallySaved: true,
     });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -775,7 +796,7 @@ describe('BuilderApp v2', () => {
     expect(generate).not.toHaveBeenCalled();
     expect(retry).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.textContent).not.toMatch(/request_digest|existing_project_id|provider|credential/iu);
   });
@@ -783,7 +804,9 @@ describe('BuilderApp v2', () => {
   it('cancels active draft generation through request-id-only control', async () => {
     const { cancel, container, generate, resolveGenerate, saveDraft, submit } = await setup({
       deferredGenerate: true,
+      initiallySaved: true,
     });
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -798,7 +821,7 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(generate).not.toHaveBeenCalled();
-    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
     click(container, '[data-builder-cancel-work="true"]');
 
     await waitFor(() => {
@@ -820,7 +843,9 @@ describe('BuilderApp v2', () => {
   it('does not restore submitted text when the send command is triggered again while work is pending', async () => {
     const { container, resolveGenerate, submit } = await setup({
       deferredGenerate: true,
+      initiallySaved: true,
     });
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -849,7 +874,12 @@ describe('BuilderApp v2', () => {
   });
 
   it('loads the visible project activity through the read-only task stream bridge', async () => {
-    const { container, readTaskStream } = await setup();
+    const { container, readTaskStream } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -859,10 +889,13 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
       expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
         .toContain('I prepared a draft for review.');
     });
-    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('sqlite');
   });
@@ -875,7 +908,12 @@ describe('BuilderApp v2', () => {
       readTaskStream,
       resolveGenerate,
       submit,
-    } = await setup({ deferredGenerate: true, runningActivity: true });
+    } = await setup({ deferredGenerate: true, initiallySaved: true, runningActivity: true });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -888,11 +926,8 @@ describe('BuilderApp v2', () => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
-    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
-    await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-    });
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
         .toContain("I'm working on this...");
@@ -927,7 +962,8 @@ describe('BuilderApp v2', () => {
       emitGenerationStarted,
       resolveGenerate,
       submit,
-    } = await setup({ deferredGenerate: true });
+    } = await setup({ deferredGenerate: true, initiallySaved: true });
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -939,7 +975,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     });
-    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     expect(emitGenerationOutput(expected.request_digest, 'Planning a quiet timer UI.', PROJECT_ID)).toBeGreaterThan(0);
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
@@ -972,7 +1008,12 @@ describe('BuilderApp v2', () => {
       resolveGenerate,
       steer,
       submit,
-    } = await setup({ deferredGenerate: true, runningActivity: true });
+    } = await setup({ deferredGenerate: true, initiallySaved: true, runningActivity: true });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -985,16 +1026,13 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     });
-    const expected = await createBuilderGenerationRequest('Make a timer.', null);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
       expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
         .toBe('Add context');
-    });
-    await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     });
     await act(async () => {
       await Promise.resolve();
@@ -1303,7 +1341,8 @@ describe('BuilderApp v2', () => {
       rejectDraft,
       restoreDraft,
       saveDraft,
-    } = await setup({ rejectActivityAfterDiscard: true });
+    } = await setup({ initiallySaved: true, rejectActivityAfterDiscard: true });
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -1331,7 +1370,9 @@ describe('BuilderApp v2', () => {
     expect(loadCurrent).not.toHaveBeenCalled();
     expect(restoreDraft).not.toHaveBeenCalled();
     expect(cancel).not.toHaveBeenCalled();
-    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
     expect(container.textContent).not.toMatch(/builder-generation-draft:|sha256:|provider|credential/iu);
   });
 
@@ -1559,7 +1600,12 @@ describe('BuilderApp v2', () => {
       readTaskStream,
       restoreDraft,
       saveDraft,
-    } = await setup();
+    } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -1570,8 +1616,17 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
     readTaskStream.mockClear();
     click(container, 'Save version');
+    await waitFor(() => {
+      expect(saveDraft).toHaveBeenCalledOnce();
+    });
+    await waitFor(() => {
+      expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
     await waitFor(() => {
       expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
         .toContain('Version 1');
@@ -1582,7 +1637,9 @@ describe('BuilderApp v2', () => {
       draft_id: expect.stringMatching(/^builder-generation-draft:/u),
     });
     expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    });
     expect(listHistory).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       limit: 128,

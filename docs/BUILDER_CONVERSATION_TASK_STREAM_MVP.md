@@ -235,6 +235,10 @@ unless explicitly sent through the dedicated Builder provider authority.
   primary send action. Plan-first work may appear as a secondary composer tool,
   but it must route through the same conversation/task stream rather than a
   separate planning panel.
+- Ordinary chat and explanations may work before a local project folder is
+  selected. Build/draft/save flows must not use a logical New project as a
+  hidden write target; until the visible folder binding flow exists, clear build
+  intent without an opened project fails closed with user-facing guidance.
 - Source/preview tools stay accessible without dominating the conversation.
 
 Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`

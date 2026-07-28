@@ -230,7 +230,10 @@ describe('useBuilderProjectController', () => {
   });
 
   it('keeps generation unsaved until the explicit save command', async () => {
-    const hook = await renderHook();
+    const hook = await renderHook(PROJECT_ID);
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
     await act(async () => {
       await hook.current().generate('Make a timer.');
     });
@@ -254,14 +257,17 @@ describe('useBuilderProjectController', () => {
   });
 
   it('exposes one submit command for the composer without saving', async () => {
-    const hook = await renderHook();
+    const hook = await renderHook(PROJECT_ID);
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
     await act(async () => {
       await hook.current().submit('Make a timer.');
     });
 
     expect(hook.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       instruction: 'Make a timer.',
-      existing_project_id: null,
+      existing_project_id: PROJECT_ID,
     }));
     expect(hook.generate).not.toHaveBeenCalled();
     expect(hook.saveDraft).not.toHaveBeenCalled();
@@ -322,7 +328,10 @@ describe('useBuilderProjectController', () => {
   });
 
   it('exposes draft discard without saving', async () => {
-    const hook = await renderHook();
+    const hook = await renderHook(PROJECT_ID);
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
     await act(async () => {
       await hook.current().generate('Make a timer.');
       await hook.current().rejectDraft();
@@ -331,9 +340,9 @@ describe('useBuilderProjectController', () => {
     expect(hook.rejectDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
     expect(hook.saveDraft).not.toHaveBeenCalled();
     expect(hook.current().snapshot).toMatchObject({
-      status: 'new',
+      status: 'ready',
       draft: null,
-      savedProject: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
     });
   });
 
@@ -360,7 +369,10 @@ describe('useBuilderProjectController', () => {
   });
 
   it('exposes retry generation without creating a save', async () => {
-    const hook = await renderHook(undefined, false, { failGenerate: true });
+    const hook = await renderHook(PROJECT_ID, false, { failGenerate: true });
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
     await act(async () => {
       await hook.current().generate('Make a timer.');
     });
@@ -376,7 +388,7 @@ describe('useBuilderProjectController', () => {
     expect(hook.generate).toHaveBeenCalledOnce();
     expect(hook.retry).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       instruction: 'Make a timer.',
-      existing_project_id: null,
+      existing_project_id: PROJECT_ID,
     }));
     expect(hook.saveDraft).not.toHaveBeenCalled();
     expect(hook.current().snapshot).toMatchObject({
@@ -387,7 +399,10 @@ describe('useBuilderProjectController', () => {
   });
 
   it('exposes cancellation for the active generation request only', async () => {
-    const hook = await renderHook(undefined, false, { deferGenerate: true });
+    const hook = await renderHook(PROJECT_ID, false, { deferGenerate: true });
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
     let generation!: Promise<unknown>;
     await act(async () => {
       generation = hook.current().generate('Make a timer.');
@@ -404,8 +419,9 @@ describe('useBuilderProjectController', () => {
     });
     expect(hook.cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
     expect(hook.current().snapshot).toMatchObject({
-      status: 'new',
+      status: 'ready',
       draft: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
     });
     await act(async () => {
       await hook.resolveGenerate();
@@ -414,23 +430,31 @@ describe('useBuilderProjectController', () => {
     expect(hook.current().snapshot.draft).toBeNull();
   });
 
-  it('keeps the controller alive when the first save selects its durable project', async () => {
+  it('keeps a new project read-only for build until a project is selected', async () => {
     const hook = await renderHook();
     await act(async () => {
       await hook.current().generate('Make a timer.');
-      await hook.current().save();
     });
+    expect(hook.generate).not.toHaveBeenCalled();
+    expect(hook.saveDraft).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_project_workspace_required',
+      draft: null,
+      savedProject: null,
+    });
+
     await hook.selectProject(PROJECT_ID);
     await waitFor(() => {
       expect(hook.current().snapshot.status).toBe('ready');
     });
-    expect(hook.open).toHaveBeenCalledTimes(1);
-    expect(hook.open).toHaveBeenLastCalledWith({ project_id: null });
+    expect(hook.open).toHaveBeenCalledWith({ project_id: null });
+    expect(hook.open).toHaveBeenLastCalledWith({ project_id: PROJECT_ID });
 
     await act(async () => {
       await hook.current().generate('Add a pause button.');
     });
-    expect(hook.generate).toHaveBeenCalledTimes(2);
+    expect(hook.generate).toHaveBeenCalledTimes(1);
     expect(hook.current().snapshot).toMatchObject({
       status: 'draft_ready',
       savedProject: { target: { project_id: PROJECT_ID } },

@@ -208,22 +208,31 @@ describe('Builder project controller v2', () => {
     expect(isTrustedBuilderProjectControllerSnapshot(result)).toBe(true);
   });
 
-  it('generates an unsaved draft without calling save or durable reads', async () => {
+  it('requires an opened project workspace before generating a draft', async () => {
     const { controller, generate, loadCurrent, saveDraft } = setup();
     const result = await controller.generate('Make a timer.');
 
-    expect(generate).toHaveBeenCalledOnce();
-    expect(generate.mock.calls[0][0]).toMatchObject({
-      version: 'builder-generation-request.v2',
-      instruction: 'Make a timer.',
-      existing_project_id: null,
-    });
+    expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(loadCurrent).not.toHaveBeenCalled();
-    expect(result.status).toBe('draft_ready');
-    expect(result.draft?.draft_id).toBe(DRAFT_ID);
+    expect(result.status).toBe('generation_failed');
+    expect(result.error).toBe('builder_generation_project_workspace_required');
+    expect(result.retryableGeneration).toBe(false);
     expect(result.savedProject).toBeNull();
-    expect(result.draft?.admissions.save).toBe('not_performed');
+    expect(result.draft).toBeNull();
+  });
+
+  it('requires an opened project workspace before submitting a build turn', async () => {
+    const { controller, saveDraft, submit } = setup();
+    const result = await controller.submit('Make a timer.');
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('submit_failed');
+    expect(result.error).toBe('builder_generation_project_workspace_required');
+    expect(result.retryableGeneration).toBe(false);
+    expect(result.savedProject).toBeNull();
+    expect(result.draft).toBeNull();
   });
 
   it('continues an approved plan into an unsaved draft through the approved-plan generator', async () => {
@@ -274,15 +283,16 @@ describe('Builder project controller v2', () => {
 
   it('discards an unsaved draft by draft_id without saving it', async () => {
     const { controller, rejectDraft, saveDraft } = setup();
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const result = await controller.rejectDraft();
 
     expect(rejectDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result).toMatchObject({
-      status: 'new',
+      status: 'ready',
       draft: null,
-      savedProject: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
     });
   });
 
@@ -292,6 +302,7 @@ describe('Builder project controller v2', () => {
         throw new Error('private reject failure');
       },
     });
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const result = await controller.rejectDraft();
 
@@ -331,13 +342,14 @@ describe('Builder project controller v2', () => {
 
   it('submits one composer turn that can produce an unsaved draft', async () => {
     const { controller, generate, saveDraft, submit } = setup();
+    await controller.open(PROJECT_ID);
     const result = await controller.submit('Make a timer.');
 
     expect(submit).toHaveBeenCalledOnce();
     expect(submit.mock.calls[0][0]).toMatchObject({
       version: 'builder-generation-request.v2',
       instruction: 'Make a timer.',
-      existing_project_id: null,
+      existing_project_id: PROJECT_ID,
     });
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -350,13 +362,14 @@ describe('Builder project controller v2', () => {
     const { answer, controller, generate, saveDraft, submit } = setup({
       submit: async (request) => createGenerationAnswer(request),
     });
+    await controller.open(PROJECT_ID);
     const result = await controller.submit('What does this project do?');
 
     expect(submit).toHaveBeenCalledOnce();
     expect(answer).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(result.status).toBe('new');
+    expect(result.status).toBe('ready');
     expect(result.answer).toMatchObject({
       result_kind: 'explanation',
       admissions: {
@@ -381,6 +394,7 @@ describe('Builder project controller v2', () => {
         }).then(() => createGenerationDraft(request));
       },
     });
+    await controller.open(PROJECT_ID);
 
     const operation = controller.submit('Make a timer.');
     await submitStarted;
@@ -410,12 +424,13 @@ describe('Builder project controller v2', () => {
         resolveSubmit = resolve;
       }).then(() => createGenerationDraft(request)),
     });
+    await controller.open(PROJECT_ID);
 
     const operation = controller.submit('Make a timer.');
     for (let attempt = 0; attempt < 20 && controller.getSnapshot().status !== 'submitting'; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    const request = await createBuilderGenerationRequest('Make a timer.', null);
+    const request = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
 
     listener({
       event_version: 'builder-generation-started.v1',
@@ -432,7 +447,7 @@ describe('Builder project controller v2', () => {
     expect(controller.getSnapshot()).toMatchObject({
       status: 'submitting',
       busy: true,
-      savedProject: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
       draft: null,
       workingProjectId: PROJECT_ID,
     });
@@ -456,6 +471,7 @@ describe('Builder project controller v2', () => {
         return createGenerationDraft(request);
       },
     });
+    await controller.open(PROJECT_ID);
 
     const failed = await controller.submit('What should happen?');
     expect(failed).toMatchObject({
@@ -496,6 +512,7 @@ describe('Builder project controller v2', () => {
         throw new Error('private answer failure');
       },
     });
+    await controller.open(PROJECT_ID);
     const failed = await controller.answer('What does this project do?');
     expect(failed.status).toBe('answer_failed');
 
@@ -530,6 +547,7 @@ describe('Builder project controller v2', () => {
     const { cancel, controller, generate, saveDraft } = setup({
       generate: async () => pending,
     });
+    await controller.open(PROJECT_ID);
     const generation = controller.generate('Make a timer.');
     expect(controller.getSnapshot().status).toBe('generating');
     for (let attempt = 0; attempt < 20 && generate.mock.calls.length === 0; attempt += 1) {
@@ -544,15 +562,17 @@ describe('Builder project controller v2', () => {
     });
     expect(cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
     expect(cancel.mock.calls[0][0]).not.toHaveProperty('source_tree');
-    expect(cancelled.status).toBe('new');
+    expect(cancelled.status).toBe('ready');
     expect(cancelled.draft).toBeNull();
+    expect(cancelled.savedProject?.target.project_id).toBe(PROJECT_ID);
     expect(saveDraft).not.toHaveBeenCalled();
 
     resolveGenerate(await createGenerationDraft());
     await generation;
     expect(controller.getSnapshot()).toMatchObject({
-      status: 'new',
+      status: 'ready',
       draft: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
     });
   });
 
@@ -564,6 +584,7 @@ describe('Builder project controller v2', () => {
     const { controller, generate, saveDraft, steer } = setup({
       generate: async () => pending,
     });
+    await controller.open(PROJECT_ID);
     const generation = controller.generate('Make a timer.');
     expect(controller.getSnapshot().status).toBe('generating');
     for (let attempt = 0; attempt < 20 && generate.mock.calls.length === 0; attempt += 1) {
@@ -638,6 +659,7 @@ describe('Builder project controller v2', () => {
       },
       retry: async (request) => createGenerationDraft(request),
     });
+    await controller.open(PROJECT_ID);
 
     const failed = await controller.generate('Make a timer.');
     expect(failed).toMatchObject({
@@ -651,7 +673,7 @@ describe('Builder project controller v2', () => {
     expect(generate).toHaveBeenCalledOnce();
     expect(retry).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       instruction: 'Make a timer.',
-      existing_project_id: null,
+      existing_project_id: PROJECT_ID,
     }));
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('draft_ready');
@@ -665,6 +687,7 @@ describe('Builder project controller v2', () => {
         throw new BuilderGenerationDiagnosticError('builder_generation_provider_unavailable');
       },
     });
+    await controller.open(PROJECT_ID);
 
     const result = await controller.generate('Make a timer.');
 
@@ -689,6 +712,7 @@ describe('Builder project controller v2', () => {
         return createGenerationDraft(request);
       },
     });
+    await controller.open(PROJECT_ID);
 
     await controller.generate('Make a timer.');
     const result = await controller.generate('Make a different timer.');
@@ -716,6 +740,7 @@ describe('Builder project controller v2', () => {
         return secondPending;
       },
     });
+    await controller.open(PROJECT_ID);
 
     const failed = await controller.generate('Make a timer.');
     expect(failed.retryableGeneration).toBe(true);
@@ -752,6 +777,7 @@ describe('Builder project controller v2', () => {
         return answerPending;
       },
     });
+    await controller.open(PROJECT_ID);
 
     const failed = await controller.generate('Make a timer.');
     expect(failed.retryableGeneration).toBe(true);
@@ -788,6 +814,7 @@ describe('Builder project controller v2', () => {
       },
       loadCurrent: async () => readWire,
     });
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const result = await controller.save();
 
@@ -799,11 +826,17 @@ describe('Builder project controller v2', () => {
   });
 
   it('keeps an unsaved draft visible when the Save outcome cannot be verified', async () => {
+    const readWire = await createReadWire();
+    let initialOpen = true;
     const { controller } = setup({
       saveDraft: async () => {
         throw new Error('private disk detail');
       },
       open: async (request) => {
+        if (request.project_id === PROJECT_ID && initialOpen) {
+          initialOpen = false;
+          return readWire;
+        }
         if (request.project_id !== null) throw new Error('not found');
         return {
           result_version: 'builder-project-selection-result.v1',
@@ -812,6 +845,7 @@ describe('Builder project controller v2', () => {
         };
       },
     });
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const result = await controller.save();
 
@@ -841,6 +875,7 @@ describe('Builder project controller v2', () => {
           : readWire
       ),
     });
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const result = await controller.save();
     expect(saveDraft).toHaveBeenCalledOnce();
@@ -1030,6 +1065,7 @@ describe('Builder project controller v2', () => {
         },
       }),
     });
+    await controller.open(PROJECT_ID);
     await controller.generate('Make a timer.');
     const result = await controller.save();
     expect(result.status).toBe('save_unknown');
@@ -1042,6 +1078,7 @@ describe('Builder project controller v2', () => {
         throw new Error('https://provider.invalid private token');
       },
     });
+    await controller.open(PROJECT_ID);
     const result = await controller.generate('Make a timer.');
     expect(result).toMatchObject({
       status: 'generation_failed',
@@ -1057,6 +1094,7 @@ describe('Builder project controller v2', () => {
       resolveGenerate = resolve;
     });
     const { controller } = setup({ generate: async () => pending });
+    await controller.open(PROJECT_ID);
     const generation = controller.generate('Make a timer.');
     await controller.open();
     resolveGenerate(await createGenerationDraft());

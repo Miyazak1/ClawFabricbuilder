@@ -23,6 +23,7 @@ export type BuilderGenerationOutputEvent = Readonly<{
 export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_base_unavailable'
   | 'builder_generation_parent_unavailable'
+  | 'builder_generation_project_workspace_required'
   | 'builder_generation_provider_unavailable'
   | 'builder_generation_timeout'
   | 'builder_generation_provider_http_error'
@@ -34,6 +35,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
 > = Object.freeze({
   builder_generation_base_unavailable: true,
   builder_generation_parent_unavailable: true,
+  builder_generation_project_workspace_required: false,
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
@@ -44,6 +46,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
 const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, string>> = Object.freeze({
   builder_generation_base_unavailable: 'The current project source is unavailable.',
   builder_generation_parent_unavailable: 'The current project version is unavailable.',
+  builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',

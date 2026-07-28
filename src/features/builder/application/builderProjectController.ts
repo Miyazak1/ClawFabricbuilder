@@ -179,6 +179,23 @@ function draftMatchesSavedBase(
   );
 }
 
+function buildWorkspaceRequiredSnapshot(
+  status: 'submit_failed' | 'generation_failed',
+  retained: BuilderProjectReadSnapshot | null,
+  preview: BuilderSourceTreePreviewProjection | null,
+): BuilderProjectControllerSnapshot {
+  return snapshot(
+    status,
+    retained,
+    null,
+    preview,
+    'builder_generation_project_workspace_required',
+    null,
+    null,
+    false,
+  );
+}
+
 export function isTrustedBuilderProjectControllerSnapshot(
   value: unknown,
 ): value is BuilderProjectControllerSnapshot {
@@ -610,6 +627,10 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const retainedPreview = current.preview;
     retryableGeneration = null;
+    if (retained === null) {
+      activeGeneration = null;
+      return publish(buildWorkspaceRequiredSnapshot('submit_failed', retained, retainedPreview));
+    }
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
       publish(snapshot('submitting', retained, null, retainedPreview, null));
@@ -672,6 +693,10 @@ export function createBuilderProjectController(
     ) return current;
     const retained = current.savedProject;
     retryableGeneration = null;
+    if (retained === null) {
+      activeGeneration = null;
+      return publish(buildWorkspaceRequiredSnapshot('generation_failed', retained, current.preview));
+    }
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
       publish(snapshot('generating', retained, null, current.preview, null));
@@ -778,6 +803,11 @@ export function createBuilderProjectController(
       || retryableGeneration === null
     ) return current;
     const retained = current.savedProject;
+    if (retained === null) {
+      retryableGeneration = null;
+      activeGeneration = null;
+      return publish(buildWorkspaceRequiredSnapshot('generation_failed', retained, current.preview));
+    }
     const before = current;
     const request = retryableGeneration.request;
     if ((retained?.target.project_id ?? null) !== request.existing_project_id) return current;
