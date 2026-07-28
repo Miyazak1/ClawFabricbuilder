@@ -869,6 +869,39 @@ external-network permissions inside generated projects.
   as local visual evidence only. This screenshot is not a real-provider or
   DeepSeek canary.
 
+## 2026-07-29 Safe Unsaved Draft Continuation Check
+
+This addendum records the current desktop contract after the earlier gated
+draft-composer checkpoint evolved into controlled draft-to-draft continuation.
+It supersedes the `757b512` user-facing composer behavior while preserving its
+core authority boundary: Save version and Discard draft remain explicit Review
+actions, and continuing a draft does not save, accept, or create a Project
+Revision. It extends desktop evidence only; it does not extend real-provider
+DeepSeek evidence, installer evidence, code-signing status, mobile evidence,
+generated-code execution, arbitrary runtime/tool execution, or external-network
+permissions inside generated projects.
+
+- When an unsaved draft is pending Review, the single composer can accept a new
+  follow-up instruction and sends with Enter or the single Send button. The
+  desktop app routes that turn through the draft-continuation port with only the
+  pending `draft_id` and new instruction; it does not call first-draft submit,
+  direct generate, saveDraft, Save version, or Discard draft.
+- The Review checkpoint remains the only visible place for Save version and
+  Discard draft. Continuing the draft replaces the pending candidate for
+  review, keeps the composer text clear after the accepted continuation, and
+  leaves explicit Save as the only path to a verified Git/SQLite Version.
+- Focused desktop validation passed through
+  `npm.cmd exec vitest run src\app\BuilderApp.test.tsx src\features\builder\presentation\BuilderPage.test.tsx`;
+  the command reported 92 passing Vitest tests. Covered cases include
+  `continues an unsaved draft from the same composer without saving first`,
+  Enter-bound continuation without Save/Discard, explicit Save after review,
+  and draft-id-only discard.
+- The latest generated-draft packaged screenshot remains
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-generated-review-1785278051044.png`.
+  It shows the current composer status `Continue this draft`, stable Review
+  actions, non-overlapping Changes, and no window-level scroll. This screenshot
+  is local visual evidence only and is not a real-provider or DeepSeek canary.
+
 ## 2026-07-29 DeepSeek Preset Package Refresh Check
 
 This addendum records package and desktop visual evidence for checkpoint
