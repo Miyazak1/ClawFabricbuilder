@@ -31,6 +31,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'infrastructure/builderDesktopProjectWorkspacePort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
   'infrastructure/builderDesktopTaskStreamPort.ts',
+  'presentation/BuilderChangesPanel.tsx',
   'presentation/BuilderComposer.tsx',
   'presentation/BuilderPage.tsx',
   'presentation/BuilderProjectCatalog.tsx',
