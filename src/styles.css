@@ -659,6 +659,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   overflow: auto;
 }
 
+.cf-builder-workspace-picker-section-label {
+  margin: 5px 2px 2px;
+  color: var(--cf-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.cf-builder-workspace-picker-section-label:first-child {
+  margin-top: 0;
+}
+
 .cf-builder-workspace-project-row,
 .cf-builder-workspace-new-project {
   display: grid;

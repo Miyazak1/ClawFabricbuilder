@@ -906,6 +906,19 @@ function click(container: HTMLElement, selector: string): void {
   act(() => button?.click());
 }
 
+function changeInput(container: HTMLElement, selector: string, value: string): void {
+  const input = container.querySelector<HTMLInputElement>(selector);
+  expect(input).not.toBeNull();
+  act(() => {
+    if (input) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        ?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+}
+
 function keyDown(
   container: HTMLElement,
   selector: string,
@@ -1047,6 +1060,8 @@ describe('BuilderPage v2', () => {
 
     const picker = container.querySelector('[data-builder-workspace-picker="true"]');
     expect(picker).not.toBeNull();
+    expect(picker?.querySelector('[data-builder-workspace-section="saved"]')?.textContent)
+      .toContain('Saved projects');
     expect(picker?.textContent).toContain('Saved dashboard');
     expect(picker?.textContent).toContain('New project');
     expect(picker?.querySelector('[data-builder-workspace-search="true"]')).not.toBeNull();
@@ -1083,6 +1098,8 @@ describe('BuilderPage v2', () => {
 
     const picker = container.querySelector('[data-builder-workspace-picker="true"]');
     expect(picker).not.toBeNull();
+    expect(picker?.querySelector('[data-builder-workspace-section="current"]')?.textContent)
+      .toContain('Current project');
     expect(picker?.querySelector('[data-builder-workspace-current-project="true"]')?.textContent)
       .toContain('Current project - site-source');
     expect(picker?.textContent).not.toContain('No saved projects yet.');
@@ -1117,6 +1134,8 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-workspace-chip="true"]');
 
     const picker = container.querySelector('[data-builder-workspace-picker="true"]');
+    expect(picker?.querySelector('[data-builder-workspace-section="in-progress"]')?.textContent)
+      .toContain('In progress');
     expect(picker?.textContent).toContain('Unsaved dashboard');
     expect(picker?.textContent).toContain('Not saved yet - site-source');
     expect(picker?.textContent).not.toContain('No projects yet.');
@@ -1124,6 +1143,33 @@ describe('BuilderPage v2', () => {
     click(container, `[data-builder-workspace-bound-project="${workspaceOnlyProjectId}"]`);
 
     expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(workspaceOnlyProjectId);
+    expect(onCreateProject).not.toHaveBeenCalled();
+  });
+
+  it('keeps New project available when search has no matching project', async () => {
+    const { fresh } = await snapshots();
+    const onCreateProject = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Make a timer."
+        onCreateProject={onCreateProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot()}
+        snapshot={fresh}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-chip="true"]');
+    changeInput(container, '[data-builder-workspace-search="true"]', 'no matching project');
+
+    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
+    expect(picker?.textContent).toContain('No matching projects.');
+    expect(picker?.textContent).toContain('New project');
+    expect(picker?.textContent).not.toContain('Saved dashboard');
+
+    click(container, '[data-builder-workspace-new-project="true"]');
+
+    expect(container.querySelector('[data-builder-new-project-panel="true"]')).not.toBeNull();
     expect(onCreateProject).not.toHaveBeenCalled();
   });
 

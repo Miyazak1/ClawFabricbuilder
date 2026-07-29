@@ -1485,6 +1485,8 @@ export function BuilderPage({
       ...project.source_folders.map((folder) => folder.name),
     ].some((value) => value.toLocaleLowerCase('en-US').includes(normalizedWorkspaceSearch));
   });
+  const showSavedProjectSection = !catalogBusy && visibleWorkspaceProjects.length > 0;
+  const showBoundWorkspaceSection = !catalogBusy && visibleBoundWorkspaceProjects.length > 0;
   const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
   const showReviewSidebar = saved !== null && !hasUnsavedDraft;
   const activityFollowCursor = (() => {
@@ -2127,9 +2129,10 @@ export function BuilderPage({
                     data-builder-new-project-title="true"
                     maxLength={80}
                     onChange={(event) => {
+                      const nextTitle = event.currentTarget.value;
                       setWorkspacePickerState((picker) => ({
                         ...picker,
-                        title: event.currentTarget.value,
+                        title: nextTitle,
                       }));
                     }}
                     value={newProjectTitle}
@@ -2167,9 +2170,10 @@ export function BuilderPage({
                     data-builder-workspace-search="true"
                     disabled={catalogBusy}
                     onChange={(event) => {
+                      const nextSearch = event.currentTarget.value;
                       setWorkspacePickerState((picker) => ({
                         ...picker,
-                        search: event.currentTarget.value,
+                        search: nextSearch,
                       }));
                     }}
                     placeholder="Search projects"
@@ -2194,20 +2198,30 @@ export function BuilderPage({
                     </p>
                   ) : null}
                   {!catalogBusy && showCurrentWorkingProject ? (
-                    <div
-                      aria-selected="true"
-                      className="cf-builder-workspace-project-row cf-builder-workspace-project-row-current"
-                      data-builder-workspace-current-project="true"
-                      role="option"
-                    >
-                      <FolderOpen aria-hidden="true" className="size-3.5" />
-                      <span className="min-w-0">
-                        <span className="cf-builder-workspace-project-title">{workingProject.title}</span>
-                        <span className="cf-builder-workspace-project-summary">
-                          Current project - {workingProjectFolderLabel}
+                    <>
+                      <p className="cf-builder-workspace-picker-section-label" data-builder-workspace-section="current">
+                        Current project
+                      </p>
+                      <div
+                        aria-selected="true"
+                        className="cf-builder-workspace-project-row cf-builder-workspace-project-row-current"
+                        data-builder-workspace-current-project="true"
+                        role="option"
+                      >
+                        <FolderOpen aria-hidden="true" className="size-3.5" />
+                        <span className="min-w-0">
+                          <span className="cf-builder-workspace-project-title">{workingProject.title}</span>
+                          <span className="cf-builder-workspace-project-summary">
+                            Current project - {workingProjectFolderLabel}
+                          </span>
                         </span>
-                      </span>
-                    </div>
+                      </div>
+                    </>
+                  ) : null}
+                  {showSavedProjectSection ? (
+                    <p className="cf-builder-workspace-picker-section-label" data-builder-workspace-section="saved">
+                      Saved projects
+                    </p>
                   ) : null}
                   {!catalogBusy && visibleWorkspaceProjects.map((project) => (
                 <button
@@ -2228,6 +2242,11 @@ export function BuilderPage({
                   </span>
                 </button>
                   ))}
+                  {showBoundWorkspaceSection ? (
+                    <p className="cf-builder-workspace-picker-section-label" data-builder-workspace-section="in-progress">
+                      In progress
+                    </p>
+                  ) : null}
                   {!catalogBusy && visibleBoundWorkspaceProjects.map((project) => (
                 <button
                   className="cf-builder-workspace-project-row"

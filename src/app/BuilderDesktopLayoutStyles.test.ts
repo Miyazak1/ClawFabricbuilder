@@ -145,6 +145,18 @@ describe('Builder desktop layout styles', () => {
     expect(workspaceCatalog).not.toContain('border:');
   });
 
+  it('keeps composer project picker groups as labels instead of extra framed panels', () => {
+    const source = styles();
+    const sectionLabel = styleBlock(source, '.cf-builder-workspace-picker-section-label');
+
+    expect(sectionLabel).toContain('font-size: 10px;');
+    expect(sectionLabel).toContain('letter-spacing: 0;');
+    expect(sectionLabel).toContain('text-transform: uppercase;');
+    expect(sectionLabel).not.toContain('border:');
+    expect(sectionLabel).not.toContain('border-radius');
+    expect(sectionLabel).not.toContain('box-shadow');
+  });
+
   it('keeps draft review actions stable as a desktop conversation checkpoint', () => {
     const source = styles();
     const review = styleBlock(source, '.cf-builder-review-checkpoint');
