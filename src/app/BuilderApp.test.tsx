@@ -132,6 +132,7 @@ async function setup(options: Readonly<{
   planAfterPropose?: boolean;
   pendingActivity?: boolean;
   pendingPlanActivity?: boolean;
+  rejectedPlanActivity?: boolean;
   pendingAfterRevisionView?: boolean;
   acceptedPendingActivity?: boolean;
   rejectActivityAfterDiscard?: boolean;
@@ -496,6 +497,8 @@ async function setup(options: Readonly<{
     }
     return options.planAfterPropose === true && proposePlan.mock.calls.length > 0
       ? createPlanTaskStreamWire()
+      : options.rejectedPlanActivity === true
+        ? createPlanReviewTaskStreamWire('rejected')
       : options.pendingPlanActivity === true && planReviewRecorded
         ? createPlanReviewTaskStreamWire('approved')
         : options.pendingPlanActivity === true
@@ -1588,6 +1591,77 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
+  });
+
+  it('does not bypass pending plan review with a contextual execution phrase', async () => {
+    const { answer, container, createLocalProject, generate, reviewPlan, saveDraft, submit } = await setup({
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '按这个做');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '按这个做' });
+    });
+    expect(reviewPlan).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('does not revive a rejected plan with a contextual execution phrase', async () => {
+    const { answer, container, createLocalProject, generate, reviewPlan, saveDraft, submit } = await setup({
+      initiallySaved: true,
+      rejectedPlanActivity: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Plan rejected"]')?.textContent)
+        .toContain('The plan was rejected. The project has not changed.');
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '按这个做');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '按这个做' });
+    });
+    expect(reviewPlan).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
   it('keeps one composer turn editable and retryable after submit failure', async () => {

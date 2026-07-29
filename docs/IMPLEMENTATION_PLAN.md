@@ -493,6 +493,15 @@ Evidence requirements:
   exposure, source mutation, Git evidence, Save authority, or Project Revision
   fact; it only makes the existing main-owned prompt context more faithful to
   the conversation;
+- the current composer contextual-execution checkpoint aligns renderer routing
+  with that plan-state contract. Contextual phrases such as "do it" or
+  "按这个做" may enter build only when the visible conversation has live build
+  context that is not blocked by a newer proposed or rejected plan. A proposed
+  Plan first result must still go through the visible approve/reject action, and
+  a rejected plan cannot be revived by a short execution phrase. This is a
+  renderer-only routing guard over the already read-only Task Stream projection:
+  it creates no draft, approval, provider call, Git evidence, Save fact,
+  Project Revision, IPC/preload surface, or compatibility path;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,
   `provider_response_received`, `result_preparing`) before terminal generation,

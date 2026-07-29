@@ -439,16 +439,33 @@ function hasPriorBuildContext(
     || conversationSnapshot.project_id !== visibleProjectId
   ) return false;
 
-  return conversationSnapshot.conversation.conversation.items.some((item) => {
-    if (item.item_kind === 'plan_reviewed') return item.plan_state === 'approved';
-    if (item.item_kind === 'user_message') {
-      return PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.message.text);
+  let hasContext = false;
+  for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'plan_reviewed') {
+      hasContext = item.plan_state === 'approved';
+      continue;
     }
-    if (item.item_kind !== 'run_completed' || item.terminal_status !== 'succeeded') return false;
-    if (item.result_kind === 'plan' || item.result_kind === 'candidate') return true;
-    return item.assistant_message !== null
-      && PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.assistant_message.text);
-  });
+    if (item.item_kind === 'user_message') {
+      if (PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.message.text)) hasContext = true;
+      continue;
+    }
+    if (item.item_kind !== 'run_completed' || item.terminal_status !== 'succeeded') continue;
+    if (item.result_kind === 'plan') {
+      hasContext = false;
+      continue;
+    }
+    if (item.result_kind === 'candidate') {
+      hasContext = true;
+      continue;
+    }
+    if (
+      item.assistant_message !== null
+      && PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.assistant_message.text)
+    ) {
+      hasContext = true;
+    }
+  }
+  return hasContext;
 }
 
 function composerIntentContext(
