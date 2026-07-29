@@ -1775,10 +1775,10 @@ export function BuilderPage({
     return null;
   })();
   const composerPlaceholder = (() => {
-    if (hasUnsavedDraft) return 'Describe the next change to this draft...';
+    if (hasUnsavedDraft) return 'Ask about this draft, or describe the next change...';
     if (canAddContext) return 'Add context for the current work...';
     if (busy) return 'Working on your request...';
-    return 'Describe what you want to build or change...';
+    return 'Ask a question, or describe what to build or change...';
   })();
   const composerValue = instruction;
   const conversationNotice = (() => {
@@ -2076,7 +2076,7 @@ export function BuilderPage({
     >
       <div className="cf-builder-composer-shell">
         <textarea
-          aria-label="What do you want to build?"
+          aria-label="Ask a question, or describe what to build or change"
           className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
           disabled={busy && !canAddContext}
           id="builder-idea"

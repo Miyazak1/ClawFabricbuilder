@@ -999,7 +999,12 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    const composerTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(container.querySelector('[data-builder-composer="true"]')).not.toBeNull();
+    expect(composerTextarea?.getAttribute('aria-label'))
+      .toBe('Ask a question, or describe what to build or change');
+    expect(composerTextarea?.placeholder)
+      .toBe('Ask a question, or describe what to build or change...');
     expect(container.querySelector('[data-builder-starter-card="true"]')?.textContent)
       .toContain('What are we building today?');
     expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-role]')).toBeNull();
@@ -1850,7 +1855,7 @@ describe('BuilderPage v2', () => {
       .toBe('draft-ready');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Add a timer.');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
-      .toBe('Describe the next change to this draft...');
+      .toBe('Ask about this draft, or describe the next change...');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.readOnly).toBe(true);
     expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
       .toContain('Keep revising here, or review and save this version when ready.');

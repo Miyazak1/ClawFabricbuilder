@@ -1087,7 +1087,7 @@ describe('BuilderApp v2', () => {
     expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     expect(continueDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
-      .toBe('Describe the next change to this draft...');
+      .toBe('Ask about this draft, or describe the next change...');
 
     const draftTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     act(() => {
