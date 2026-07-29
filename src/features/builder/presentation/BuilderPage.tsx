@@ -1251,27 +1251,6 @@ function ActivityPanel({
   );
 }
 
-function StarterPrompt() {
-  return (
-    <div
-      aria-label="Conversation starter"
-      className="cf-builder-starter-card cf-builder-chat-flow-surface"
-      data-builder-starter-card="true"
-    >
-      <div className="cf-builder-starter-icon" aria-hidden="true">
-        <Bot className="size-3.5" />
-      </div>
-      <div
-        className="cf-builder-starter-content min-w-0"
-        data-builder-message-surface="plain"
-      >
-        <div className="cf-builder-starter-title">ClawFabric Builder</div>
-        <p className="cf-builder-starter-body">What would you like to do today?</p>
-      </div>
-    </div>
-  );
-}
-
 export function BuilderPage({
   instruction,
   onApprovePlanSourceRead,
@@ -1944,14 +1923,6 @@ export function BuilderPage({
     }
     return null;
   })();
-  const showStarterPrompt = status === 'new'
-    && !showActivity
-    && !hasUnsavedDraft
-    && !busy
-    && sourceFile === null
-    && showResultFlow === false
-    && conversationNotice === null;
-
   const draftReview = hasUnsavedDraft ? (
     <section
       aria-label="Draft review"
@@ -2443,8 +2414,6 @@ export function BuilderPage({
                   snapshot={activity}
                 />
               ) : null}
-              {showStarterPrompt ? <StarterPrompt /> : null}
-
               {planSourceReadApprovalCard}
 
               {hasUnsavedDraft ? (

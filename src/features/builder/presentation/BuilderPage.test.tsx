@@ -1005,15 +1005,11 @@ describe('BuilderPage v2', () => {
       .toBe('Ask a question, or describe what to build or change');
     expect(composerTextarea?.placeholder)
       .toBe('Ask a question, or describe what to build or change...');
-    expect(container.querySelector('[data-builder-starter-card="true"]')?.textContent)
-      .toContain('What would you like to do today?');
+    expect(container.querySelector('[data-builder-starter-card="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('What would you like to do today?');
     expect(container.textContent).not.toContain('What are we building today?');
-    expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-role]')).toBeNull();
-    expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-card]')).toBeNull();
-    expect(
-      container.querySelector('[data-builder-starter-card="true"] [data-builder-message-surface]')
-        ?.getAttribute('data-builder-message-surface'),
-    ).toBe('plain');
+    expect(container.querySelector('[data-builder-activity-card="Assistant"]')).toBeNull();
+    expect(container.querySelector('[data-builder-message-surface="plain"]')).toBeNull();
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
