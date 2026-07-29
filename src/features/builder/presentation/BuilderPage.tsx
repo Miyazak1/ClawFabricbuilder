@@ -185,6 +185,7 @@ function activityItems(
 
 function activityEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
   const entries: ActivityEntry[] = [];
+  const completedRuns = new Set<string>();
   const workEntries = new Map<string, ActivityWorkStatusEntry>();
   const toolRequestEntries = new Map<string, ActivityItemEntry>();
   for (const item of activityItems(snapshot)) {
@@ -236,8 +237,17 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       continue;
     }
     if (item.item_kind === 'run_completed') {
-      const workEntry = workEntries.get(`${item.turn_id}:${item.run_id}`);
+      const key = `${item.turn_id}:${item.run_id}`;
+      completedRuns.add(key);
+      const workEntry = workEntries.get(key);
       if (workEntry !== undefined) workEntry.hidden = true;
+    }
+    if (
+      item.item_kind === 'turn_completed'
+      && item.run_id !== null
+      && completedRuns.has(`${item.turn_id}:${item.run_id}`)
+    ) {
+      continue;
     }
     entries.push({ entry_kind: 'item', item, hidden: false });
   }
