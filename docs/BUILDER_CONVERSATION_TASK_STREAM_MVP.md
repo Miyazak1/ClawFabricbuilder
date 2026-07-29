@@ -219,12 +219,17 @@ The model may receive only bounded, explicit context:
 
 - current trusted Project Revision;
 - selected prior Messages needed for the current request;
+- the latest bounded plan with its proposed, approved, or rejected state;
 - current Task and prior attempt summary;
 - approved tool results when later Permission gates exist.
 
 Conversation history must not become an unbounded prompt transcript. Context
 selection is deterministic, resource-bounded, and private data remains local
 unless explicitly sent through the dedicated Builder provider authority.
+Plan text is not treated as implementation approval by itself. The prompt
+context preserves whether the latest plan is merely proposed, explicitly
+approved, or rejected, so later "do it" style turns can be grounded without
+silently reviving a rejected plan.
 
 ## UI Contract
 

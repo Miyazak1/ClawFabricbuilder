@@ -481,6 +481,18 @@ Evidence requirements:
   read-only Task Stream for active saved-project work; the hint carries no
   source, receipt, provider, credential, tool output, save, Git, revision, or
   project-save authority and does not mark the project saved;
+- the current conversation-grounded prompt checkpoint upgrades the bounded
+  prompt conversation brief to `builder-conversation-brief.v2`. Main-owned
+  generation prompt construction still receives only replayed Conversation
+  events and excludes the current request turn, but it now derives a structured
+  `latest_plan` object with `proposed`, `approved`, or `rejected` state from
+  admitted plan result and plan review events. Code generation prompts may use
+  an approved latest plan as implementation context, must not treat merely
+  proposed plans as write approval, and must not implement rejected plans. This
+  adds no renderer authority, IPC/preload surface, provider/credential
+  exposure, source mutation, Git evidence, Save authority, or Project Revision
+  fact; it only makes the existing main-owned prompt context more faithful to
+  the conversation;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,
   `provider_response_received`, `result_preparing`) before terminal generation,

@@ -135,6 +135,7 @@ const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
   'Prefer a small coherent change over a broad scaffold when the request is ambiguous.',
+  'Use conversation_brief as context. If it contains latest_plan, treat its state as meaningful: approved plans may guide implementation, proposed plans are not approval to change files, and rejected plans must not be implemented.',
 ].join('\n');
 
 const EXPLANATION_SYSTEM_INSTRUCTION = [
@@ -147,6 +148,7 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
   'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
+  'Use conversation_brief as context, including latest_plan state when explaining prior planning decisions.',
 ].join('\n');
 const PLAN_SYSTEM_INSTRUCTION = [
   'Propose one bounded implementation plan for the current local software project.',
@@ -161,6 +163,7 @@ const PLAN_SYSTEM_INSTRUCTION = [
   'Do not include source-change operations, complete file content, host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
+  'Use conversation_brief as context. If it contains latest_plan, treat its state as meaningful when preparing the next plan.',
 ].join('\n');
 
 const CODE_CHANGE_OUTPUT_CONTRACT = Object.freeze({
@@ -386,15 +389,22 @@ function conversationBriefKind(value, fallback) {
   return typeof value === 'string' && /^[a-z_]{1,40}$/u.test(value) ? value : fallback;
 }
 
+function conversationRunKey(turnId, runId) {
+  return typeof turnId === 'string' && typeof runId === 'string' ? `${turnId}:${runId}` : null;
+}
+
 function conversationBriefFromEvents(events, requestDigest) {
   const currentTurnIds = currentPromptTurnIds(events, requestDigest);
   const entries = [];
+  const planTextsByRun = new Map();
+  let latestPlan = null;
   for (const event of events) {
     const eventType = optionalOwnValue(event, 'event_type');
     const payload = optionalOwnValue(event, 'payload');
     if (!isPlainObject(payload)) continue;
     const turnId = optionalOwnValue(payload, 'turn_id');
     if (typeof turnId === 'string' && currentTurnIds.has(turnId)) continue;
+    const runKey = conversationRunKey(turnId, optionalOwnValue(payload, 'run_id'));
 
     if (eventType === 'turn_submitted' || eventType === 'turn_steered') {
       const message = optionalOwnValue(payload, 'message');
@@ -410,19 +420,39 @@ function conversationBriefFromEvents(events, requestDigest) {
     }
 
     if (eventType === 'run_completed') {
+      const resultKind = conversationBriefKind(optionalOwnValue(payload, 'result_kind'), 'result');
       const message = optionalOwnValue(payload, 'assistant_message');
       const text = safeConversationBriefText(optionalOwnValue(message, 'text'));
+      if (resultKind === 'plan') {
+        if (runKey !== null && text !== null) {
+          planTextsByRun.set(runKey, text);
+          latestPlan = { state: 'proposed', text };
+        }
+        continue;
+      }
       appendConversationBriefEntry(entries, {
         role: 'assistant',
-        kind: conversationBriefKind(optionalOwnValue(payload, 'result_kind'), 'result'),
+        kind: resultKind,
         text,
       });
+      continue;
+    }
+
+    if (eventType === 'plan_reviewed' && runKey !== null && planTextsByRun.has(runKey)) {
+      const decision = optionalOwnValue(payload, 'decision');
+      if (decision === 'approved' || decision === 'rejected') {
+        latestPlan = {
+          state: decision,
+          text: planTextsByRun.get(runKey),
+        };
+      }
     }
   }
   return freezeDeep({
-    context_version: 'builder-conversation-brief.v1',
-    selection: 'recent_prior_user_and_assistant_messages',
+    context_version: 'builder-conversation-brief.v2',
+    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
     entries,
+    latest_plan: latestPlan,
   });
 }
 

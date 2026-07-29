@@ -278,6 +278,57 @@ function priorConversationEvents(currentRequest) {
   ];
 }
 
+function planConversationEvents(currentRequest, decision = 'approved') {
+  return [
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:prior-plan',
+        mode: 'work',
+        message: {
+          text: '先规划这个作品集首页。',
+        },
+      },
+    },
+    {
+      event_type: 'run_completed',
+      payload: {
+        turn_id: 'builder-turn:prior-plan',
+        run_id: 'builder-run:prior-plan',
+        result_kind: 'plan',
+        assistant_message: {
+          text: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
+        },
+      },
+    },
+    {
+      event_type: 'plan_reviewed',
+      payload: {
+        turn_id: 'builder-turn:prior-plan',
+        run_id: 'builder-run:prior-plan',
+        decision,
+      },
+    },
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:current-plan-followup',
+        mode: 'work',
+        message: {
+          text: currentRequest.instruction,
+        },
+      },
+    },
+    {
+      event_type: 'run_started',
+      payload: {
+        turn_id: 'builder-turn:current-plan-followup',
+        input_digest: currentRequest.request_digest,
+      },
+    },
+  ];
+}
+
 function generatedText(overrides = {}) {
   return JSON.stringify({
     kind: BUILDER_GENERATED_OPERATIONS_KIND,
@@ -403,9 +454,10 @@ test('builds a deterministic operations prompt without exposing host identities'
     instruction: 'Make a calm focus timer.',
     mode: 'create',
     conversation_brief: {
-      context_version: 'builder-conversation-brief.v1',
-      selection: 'recent_prior_user_and_assistant_messages',
+      context_version: 'builder-conversation-brief.v2',
+      selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
       entries: [],
+      latest_plan: null,
     },
     current_source_tree: { files: [] },
   });
@@ -423,8 +475,8 @@ test('includes a bounded prior conversation brief for context-grounded build pro
 
   assert.equal(context.instruction, '按刚才方案实现');
   assert.deepEqual(context.conversation_brief, {
-    context_version: 'builder-conversation-brief.v1',
-    selection: 'recent_prior_user_and_assistant_messages',
+    context_version: 'builder-conversation-brief.v2',
+    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
     entries: [
       {
         role: 'user',
@@ -437,12 +489,64 @@ test('includes a bounded prior conversation brief for context-grounded build pro
         text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
       },
     ],
+    latest_plan: null,
   });
   assert.match(descriptor.user_instruction, /星空背景/u);
   assert.match(descriptor.user_instruction, /单页静态作品集/u);
   assert.doesNotMatch(
     descriptor.user_instruction,
     /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer|按刚才方案实现.*按刚才方案实现/iu,
+  );
+});
+
+test('includes the latest approved plan as structured build context', () => {
+  const rawRequest = request({ instruction: '按这个做', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree([{ path: 'src/app.js', content: 'export const existing = true;\n' }]),
+    conversation_events: planConversationEvents(rawRequest, 'approved'),
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.deepEqual(context.conversation_brief.latest_plan, {
+    state: 'approved',
+    text: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
+  });
+  assert.deepEqual(context.conversation_brief.entries, [
+    {
+      role: 'user',
+      kind: 'work',
+      text: '先规划这个作品集首页。',
+    },
+  ]);
+  assert.match(descriptor.system_instruction, /approved plans may guide implementation/u);
+  assert.match(descriptor.system_instruction, /rejected plans must not be implemented/u);
+  assert.match(descriptor.user_instruction, /starfield hero/u);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
+  );
+});
+
+test('marks rejected plans without promoting them to approved build context', () => {
+  const rawRequest = request({ instruction: '按这个做', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree([{ path: 'src/app.js', content: 'export const existing = true;\n' }]),
+    conversation_events: planConversationEvents(rawRequest, 'rejected'),
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.deepEqual(context.conversation_brief.latest_plan, {
+    state: 'rejected',
+    text: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
+  });
+  assert.notEqual(context.conversation_brief.latest_plan.state, 'approved');
+  assert.match(descriptor.system_instruction, /proposed plans are not approval/u);
+  assert.match(descriptor.system_instruction, /rejected plans must not be implemented/u);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
   );
 });
 
@@ -492,9 +596,10 @@ test('builds a route-specific plan prompt from bounded private source context', 
   assert.match(descriptor.user_instruction, /Plan a smaller settings panel/u);
   assert.match(descriptor.user_instruction, /export const Settings/u);
   assert.deepEqual(JSON.parse(descriptor.user_instruction).conversation_brief, {
-    context_version: 'builder-conversation-brief.v1',
-    selection: 'recent_prior_user_and_assistant_messages',
+    context_version: 'builder-conversation-brief.v2',
+    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
     entries: [],
+    latest_plan: null,
   });
   assert.deepEqual(JSON.parse(descriptor.user_instruction).current_source_context.files, [
     { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
@@ -520,8 +625,8 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
 
   assert.equal(context.mode, 'plan');
   assert.deepEqual(context.conversation_brief, {
-    context_version: 'builder-conversation-brief.v1',
-    selection: 'recent_prior_user_and_assistant_messages',
+    context_version: 'builder-conversation-brief.v2',
+    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
     entries: [
       {
         role: 'user',
@@ -534,6 +639,7 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
         text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
       },
     ],
+    latest_plan: null,
   });
   assert.match(descriptor.user_instruction, /星空背景/u);
   assert.match(descriptor.user_instruction, /export const Gallery/u);
@@ -1022,6 +1128,7 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     'builder-generation-request.v2',
     'builder-generation-result.v2',
     'builder-code-project.v3',
+    'builder-conversation-brief.v2',
     'builder_code_change_operations',
     'builder-project-plan.v1',
     'builder_project_plan_proposal',
