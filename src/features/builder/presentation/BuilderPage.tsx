@@ -15,10 +15,8 @@ import {
   LockKeyhole,
   Play,
   RefreshCw,
-  Save,
   Search,
   StopCircle,
-  Trash2,
   UserRound,
 } from 'lucide-react';
 
@@ -56,10 +54,8 @@ import {
   type BuilderSourceTreeChange,
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
-import type {
-  BuilderSourceTreePreviewProjection,
-  BuilderSourceTreePreviewRuntimeLimitation,
-} from '../preview/builderSourceTreePreview';
+import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
+import { builderChangesSummary } from './builderReviewText';
 
 export type BuilderFileName = string;
 
@@ -614,53 +610,6 @@ function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
     : 'Activity shows this draft summary only. Review appears only after Builder verifies and restores the files.';
 }
 
-function changesSummary(changes: BuilderSourceTreeChanges): string {
-  if (changes.comparison_kind === 'no_draft') return 'No unsaved changes to review.';
-  if (changes.total_count === 0) return 'This draft has no file changes.';
-  const parts = [
-    changes.added_count === 0 ? null : `${changes.added_count} added`,
-    changes.modified_count === 0 ? null : `${changes.modified_count} changed`,
-    changes.deleted_count === 0 ? null : `${changes.deleted_count} removed`,
-  ].filter((part): part is string => part !== null);
-  return `${changes.total_count} file ${changes.total_count === 1 ? 'change' : 'changes'}: ${parts.join(', ')}.`;
-}
-
-function reviewPreviewStatus(preview: BuilderSourceTreePreviewProjection | null, hasContent: boolean): string {
-  if (preview !== null) {
-    const runtimeOnlyLimitations = preview.preview_runtime_limitations.filter(
-      (limitation) => limitation !== 'javascript_removed',
-    );
-    const runtimeOnlyLabels = previewLimitationLabels(runtimeOnlyLimitations);
-    if (runtimeOnlyLabels.length > 0) {
-      return `Preview may need live support here: ${runtimeOnlyLabels.join(', ')} cannot run in the static preview. The files may still be ready; open Changes before saving.`;
-    }
-    if (preview.preview_runtime_limitations.includes('javascript_removed')) {
-      return 'Static preview is ready. HTML and CSS are shown here; JavaScript is disabled in this preview.';
-    }
-    return 'Static preview is ready. HTML and CSS are shown here.';
-  }
-  return hasContent
-    ? 'Preview unavailable. JavaScript modules, Three.js, canvas animation, network assets, local servers, or backend code need live preview support.'
-    : 'Review this draft before saving.';
-}
-
-function previewLimitationLabels(
-  limitations: readonly BuilderSourceTreePreviewRuntimeLimitation[],
-): readonly string[] {
-  const labels: string[] = [];
-  for (const limitation of limitations) {
-    if (limitation === 'javascript_module') labels.push('JavaScript modules');
-    else if (limitation === 'three_js') labels.push('Three.js/WebGL');
-    else if (limitation === 'canvas_animation') labels.push('canvas animation');
-    else if (limitation === 'network_or_external_asset') labels.push('external assets');
-    else if (limitation === 'backend_or_local_server') labels.push('local app runtime');
-    else if (limitation === 'javascript_removed' && !limitations.includes('javascript_module')) {
-      labels.push('JavaScript');
-    }
-  }
-  return labels.slice(0, 4);
-}
-
 function failedStatusMessage(
   status: BuilderProjectControllerStatus,
   error: BuilderProjectControllerSnapshot['error'],
@@ -755,7 +704,7 @@ function ChangesPanel({
           <span className="cf-builder-changes-summary-main">
             <span className="cf-builder-changes-title">Changes</span>
             <span className="cf-builder-changes-summary" data-builder-changes-summary="true">
-              {changesSummary(changes)}
+              {builderChangesSummary(changes)}
             </span>
           </span>
         </summary>
@@ -1934,68 +1883,23 @@ export function BuilderPage({
     return null;
   })();
   const draftReview = hasUnsavedDraft ? (
-    <section
-      aria-label="Draft review"
-      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
-      data-builder-review-layout="desktop-stacked-actions"
-      data-builder-review-checkpoint="true"
-      ref={draftReviewRef}
-      tabIndex={-1}
-    >
-      <div className="cf-builder-review-copy" data-builder-review-copy="true">
-        <div className="cf-builder-review-icon" aria-hidden="true">
-          <GitCompareArrows className="size-4" />
-        </div>
-        <div className="cf-builder-review-copy-body min-w-0" data-builder-review-copy-body="true">
-          <h2 className="cf-builder-review-title" data-builder-review-title="true">Review before saving</h2>
-          <p className="cf-builder-review-summary" data-builder-review-summary="true">
-            {changesSummary(changes)}
-          </p>
-          <p className="cf-builder-review-note" data-builder-review-note="true">
-            {reviewPreviewStatus(preview, hasContent)}
-          </p>
-        </div>
-      </div>
-      <div
-        className="cf-builder-review-actions"
-        data-builder-draft-review-actions="true"
-        data-builder-review-actions="true"
-      >
-        <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-          data-builder-review-open-changes="true"
-          onClick={openChangesPanel}
-          type="button"
-        >
-          <GitCompareArrows aria-hidden="true" className="size-3.5" />
-          Changes
-        </button>
-        <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-discard-draft="true"
-          disabled={!canReject}
-          onClick={onRejectDraft}
-          type="button"
-        >
-          <Trash2 aria-hidden="true" className="size-3.5" />
-          {status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
-        </button>
-        <button
-          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-save-version="true"
-          disabled={!canSave}
-          onClick={onSave}
-          type="button"
-        >
-          <Save aria-hidden="true" className="size-3.5" />
-          {status === 'saving'
-            ? 'Saving...'
-            : status === 'save_unknown'
-              ? 'Try Save again'
-              : 'Save version'}
-        </button>
-      </div>
-    </section>
+    <BuilderReviewCheckpoint
+      canReject={canReject}
+      canSave={canSave}
+      changes={changes}
+      checkpointRef={draftReviewRef}
+      discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
+      hasContent={hasContent}
+      onOpenChanges={openChangesPanel}
+      onRejectDraft={onRejectDraft}
+      onSave={onSave}
+      preview={preview}
+      saveLabel={status === 'saving'
+        ? 'Saving...'
+        : status === 'save_unknown'
+          ? 'Try Save again'
+          : 'Save version'}
+    />
   ) : null;
 
   const planSourceReadApprovalCard = planSourceReadApproval === null ? null : (
