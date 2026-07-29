@@ -115,6 +115,60 @@ function createContextualBuildTaskStreamWire() {
   };
 }
 
+function createReadOnlyPageQuestionTaskStreamWire() {
+  const wire = createAnswerTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
+            text: '为什么这个页面预览空白？',
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          assistant_message: {
+            message_id: 'builder-message:223e4567-e89b-42d3-a456-426614174000',
+            text: '这个页面可能因为静态预览不运行 JavaScript 而空白，可以先查看预览限制和文件内容。',
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'answered',
+        },
+      ],
+    },
+  };
+}
+
 async function setup(options: Readonly<{
   answerActivity?: boolean;
   contextualBuildActivity?: boolean;
@@ -139,6 +193,7 @@ async function setup(options: Readonly<{
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
   runningActivity?: boolean;
+  readOnlyPageQuestionActivity?: boolean;
   validHistoryPreview?: boolean;
   multipleWorkspaceOnlyCatalog?: boolean;
   workspaceOnlyCatalog?: boolean;
@@ -507,6 +562,8 @@ async function setup(options: Readonly<{
             ? createRejectedTaskStreamWire()
             : options.answerActivity === true
               ? createAnswerTaskStreamWire()
+              : options.readOnlyPageQuestionActivity === true
+                ? createReadOnlyPageQuestionTaskStreamWire()
               : options.contextualBuildActivity === true
                 ? createContextualBuildTaskStreamWire()
                 : options.acceptedPendingActivity === true
@@ -1555,6 +1612,41 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('就这样做');
+  });
+
+  it('keeps execution phrases in chat after explanatory page questions without a proposal', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      initiallySaved: true,
+      readOnlyPageQuestionActivity: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('为什么这个页面预览空白？');
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '开始吧');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '开始吧' });
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
   it('routes natural approval phrases to submit once a workspace is bound', async () => {

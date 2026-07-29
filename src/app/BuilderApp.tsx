@@ -133,6 +133,10 @@ const WINDOW_CONTROL_RESULT_KEYS = new Set(['result_version', 'ok']);
 const WINDOW_STATE_KEYS = new Set(['state_version', 'maximized']);
 const PRIOR_BUILD_CONTEXT_TEXT_PATTERN =
   /(?:方案|计划|实现|创建|生成|做一个|做个|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:plan|build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const PRIOR_BUILD_COMMITMENT_TEXT_PATTERN =
+  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现).*(?:做一个|做个|创建|生成|实现|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:confirmed|decided|goal|requirements?).*\b(?:build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const PRIOR_BUILD_PROPOSAL_TEXT_PATTERN =
+  /(?:(?:方案是|计划是|我会|我将|接下来会|可以按|建议先).*(?:做一个|做个|创建|生成|实现|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:plan is|proposal is|i will|i would|next i will|we can).*\b(?:build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -498,7 +502,7 @@ function hasPriorBuildContext(
       continue;
     }
     if (item.item_kind === 'user_message') {
-      if (PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.message.text)) hasContext = true;
+      if (PRIOR_BUILD_COMMITMENT_TEXT_PATTERN.test(item.message.text)) hasContext = true;
       continue;
     }
     if (item.item_kind !== 'run_completed' || item.terminal_status !== 'succeeded') continue;
@@ -512,7 +516,13 @@ function hasPriorBuildContext(
     }
     if (
       item.assistant_message !== null
-      && PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.assistant_message.text)
+      && (
+        PRIOR_BUILD_PROPOSAL_TEXT_PATTERN.test(item.assistant_message.text)
+        || (
+          hasContext
+          && PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.assistant_message.text)
+        )
+      )
     ) {
       hasContext = true;
     }
