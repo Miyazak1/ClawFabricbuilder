@@ -1006,7 +1006,8 @@ describe('BuilderPage v2', () => {
     expect(composerTextarea?.placeholder)
       .toBe('Ask a question, or describe what to build or change...');
     expect(container.querySelector('[data-builder-starter-card="true"]')?.textContent)
-      .toContain('What are we building today?');
+      .toContain('What would you like to do today?');
+    expect(container.textContent).not.toContain('What are we building today?');
     expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-role]')).toBeNull();
     expect(container.querySelector('[data-builder-starter-card="true"] [data-builder-activity-card]')).toBeNull();
     expect(

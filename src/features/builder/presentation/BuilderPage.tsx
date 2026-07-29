@@ -1266,7 +1266,7 @@ function StarterPrompt() {
         data-builder-message-surface="plain"
       >
         <div className="cf-builder-starter-title">ClawFabric Builder</div>
-        <p className="cf-builder-starter-body">What are we building today?</p>
+        <p className="cf-builder-starter-body">What would you like to do today?</p>
       </div>
     </div>
   );
