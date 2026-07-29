@@ -241,12 +241,13 @@ unless explicitly sent through the dedicated Builder provider authority.
   Clear build intent without an opened/saved project opens that project picker
   and preserves the user's text instead of immediately submitting or silently
   creating a target. Choosing New project is an explicit entry into the
-  main-owned local workspace selection flow; cancellation fails closed with
-  user-facing guidance, while successful selection creates a working local
-  project identity. The renderer receives only the working Project identity,
-  bounded project title, and source-folder display name/count, not the folder
-  path or any write authority. The project remains unsaved until the user
-  explicitly accepts a verified candidate as a Version.
+  main-owned local workspace selection flow; the first desktop path asks for an
+  empty local folder as the project read/write boundary. Cancellation fails
+  closed with user-facing guidance, while successful selection creates a
+  working local project identity. The renderer receives only the working
+  Project identity, bounded project title, and source-folder display name/count,
+  not the folder path or any write authority. The project remains unsaved until
+  the user explicitly accepts a verified candidate as a Version.
 - Source/preview tools stay accessible without dominating the conversation.
 
 Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`

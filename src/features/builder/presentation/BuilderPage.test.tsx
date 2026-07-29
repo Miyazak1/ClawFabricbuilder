@@ -1200,7 +1200,8 @@ describe('BuilderPage v2', () => {
     expect(newProjectPanel?.textContent).toContain('Project name');
     expect(newProjectPanel?.textContent).toContain('Source folders');
     expect(newProjectPanel?.textContent).toContain('No source folder selected.');
-    expect(newProjectPanel?.textContent).toContain('Choose the local folder Builder can read and edit for this project.');
+    expect(newProjectPanel?.textContent)
+      .toContain('Choose an empty local folder that Builder can read and edit for this project.');
     const title = container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]');
     expect(title?.value).toBe('New project');
 

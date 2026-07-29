@@ -2141,7 +2141,9 @@ export function BuilderPage({
                 <section className="cf-builder-source-folders-box" aria-label="Source folders">
                   <div>
                     <h3>Source folders</h3>
-                    <p>No source folder selected. Choose the local folder Builder can read and edit for this project.</p>
+                    <p>
+                      No source folder selected. Choose an empty local folder that Builder can read and edit for this project.
+                    </p>
                   </div>
                   <button
                     className="cf-builder-workspace-new-project"

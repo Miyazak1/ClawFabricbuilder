@@ -293,7 +293,7 @@ class FakeLocator {
       return 'Choose or create a project before I build. Add a source folder so Builder knows where it can work. Search projects No saved projects yet. New project';
     }
     if (this.selector === SELECTORS.newProjectPanel) {
-      return 'New project Project name Source folders No source folder selected. Choose the local folder Builder can read and edit for this project. Add source folder';
+      return 'New project Project name Source folders No source folder selected. Choose an empty local folder that Builder can read and edit for this project. Add source folder';
     }
     return null;
   }
