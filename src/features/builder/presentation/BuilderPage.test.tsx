@@ -2180,7 +2180,7 @@ describe('BuilderPage v2', () => {
       expect(landing).not.toBeNull();
       expect(review).not.toBeNull();
       expect(spy).toHaveBeenCalled();
-      expect(spy.mock.contexts.at(-1)).toBe(landing);
+      expect(spy.mock.contexts.at(-1)).toBe(review);
       expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
       expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
@@ -2200,6 +2200,71 @@ describe('BuilderPage v2', () => {
       expect(Boolean(review!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING))
         .toBe(true);
     } finally {
+      restore();
+    }
+  });
+
+  it('keeps the completed draft review inside the chat scroll viewport', async () => {
+    const { saved } = await snapshots();
+    const draftReady = await changedDraftSnapshot();
+    const activity = await candidateActivity();
+    const { restore, spy } = installScrollIntoViewSpy();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    let setSnapshot!: (value: typeof saved) => void;
+
+    function rect(top: number, height: number): DOMRect {
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 860,
+        top,
+        width: 860,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    }
+
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+      this: HTMLElement,
+    ) {
+      if (this.matches('[data-builder-chat-scroll="true"]')) return rect(100, 500);
+      if (this.matches('[data-builder-review-checkpoint="true"]')) return rect(60, 130);
+      return originalRect.call(this);
+    });
+
+    function DraftLandingBuilderPage() {
+      const [snapshot, updateSnapshot] = useState(saved);
+      setSnapshot = updateSnapshot;
+      return (
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          snapshot={snapshot}
+        />
+      );
+    }
+
+    try {
+      const container = render(<DraftLandingBuilderPage />);
+      const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+      expect(scroll).not.toBeNull();
+      setScrollMetrics(scroll!, { clientHeight: 500, scrollHeight: 1200, scrollTop: 220 });
+      spy.mockClear();
+
+      act(() => setSnapshot(draftReady));
+
+      expect(scroll?.scrollTop).toBe(168);
+      expect(spy).not.toHaveBeenCalledWith({ block: 'start' });
+      expect(requestFrame).toHaveBeenCalledOnce();
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      vi.restoreAllMocks();
       restore();
     }
   });

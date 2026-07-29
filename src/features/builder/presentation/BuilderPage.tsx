@@ -247,6 +247,28 @@ function isNearChatBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_FOLLOW_BOTTOM_THRESHOLD_PX;
 }
 
+function scrollElementToChatStart(
+  scroll: HTMLElement | null,
+  target: HTMLElement,
+): void {
+  if (scroll !== null) {
+    const scrollBox = scroll.getBoundingClientRect();
+    const targetBox = target.getBoundingClientRect();
+    if (
+      Number.isFinite(scrollBox.top)
+      && Number.isFinite(scrollBox.height)
+      && Number.isFinite(targetBox.top)
+      && Number.isFinite(targetBox.height)
+      && scrollBox.height > 0
+      && targetBox.height > 0
+    ) {
+      scroll.scrollTop += targetBox.top - scrollBox.top - 12;
+      return;
+    }
+  }
+  target.scrollIntoView?.({ block: 'start' });
+}
+
 function planReviewKey(turnId: string, runId: string): string {
   return `${turnId}:${runId}`;
 }
@@ -1524,18 +1546,37 @@ export function BuilderPage({
   }, [sourceDisclosureOpen, sourceFile?.path]);
 
   useEffect(() => {
+    if (hasUnsavedDraft) return;
     if (!shouldFollowChatRef.current) return;
     chatTailRef.current?.scrollIntoView?.({ block: 'end' });
-  }, [chatFollowKey]);
+  }, [chatFollowKey, hasUnsavedDraft]);
 
   useEffect(() => {
     if (!hasUnsavedDraft) return;
-    const landingTarget = draftLandingRef.current
-      ?? draftReviewRef.current
-      ?? (showResultFlow ? resultFlowRef.current : null);
     shouldFollowChatRef.current = false;
-    landingTarget?.scrollIntoView?.({ block: 'start' });
-  }, [draft?.draft_id, hasUnsavedDraft, showResultFlow]);
+    let cancelled = false;
+    const scrollDraftReviewIntoView = () => {
+      if (cancelled) return;
+      const landingTarget = draftReviewRef.current
+        ?? draftLandingRef.current
+        ?? (showResultFlow ? resultFlowRef.current : null);
+      if (landingTarget !== null) {
+        scrollElementToChatStart(chatScrollRef.current, landingTarget);
+      }
+    };
+    scrollDraftReviewIntoView();
+    const frame = window.requestAnimationFrame(scrollDraftReviewIntoView);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [
+    draft?.draft_id,
+    hasUnsavedDraft,
+    preview?.source_tree_digest,
+    showPreviewUnavailableResult,
+    showResultFlow,
+  ]);
 
   useEffect(() => {
     if (!pendingChangesFocusRef.current || !showChangesPanel) return;
