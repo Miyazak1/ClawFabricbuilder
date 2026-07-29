@@ -146,6 +146,159 @@ function events({ requestDigest = request().request_digest, baseRevision = null 
   return [first, second];
 }
 
+function priorProposalEvents(currentRequest) {
+  const conversationId = `builder-conversation:${UUID}`;
+  const authority = {
+    context_authority: 'project_local_conversation',
+    permission_admission: 'not_granted',
+    execution_admission: 'not_granted',
+    revision_admission: 'not_created',
+  };
+  const priorTurnId = 'builder-turn:123e4567-e89b-42d3-a456-426614174101';
+  const priorRunId = 'builder-run:123e4567-e89b-42d3-a456-426614174102';
+  const priorSubmitted = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 1,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174103',
+    event_type: 'turn_submitted',
+    previous_event: null,
+    payload: {
+      message: {
+        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174104',
+        text: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+      },
+      turn_id: priorTurnId,
+      mode: 'question',
+      task: null,
+      base_revision: null,
+    },
+    authority,
+  });
+  const priorStarted = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 2,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174105',
+    event_type: 'run_started',
+    previous_event: {
+      sequence: priorSubmitted.sequence,
+      event_id: priorSubmitted.event_id,
+      event_digest: priorSubmitted.event_digest,
+    },
+    payload: {
+      turn_id: priorTurnId,
+      run_id: priorRunId,
+      task_id: null,
+      attempt_number: 1,
+      retry_of_run_id: null,
+      input_digest: `sha256:${'3'.repeat(64)}`,
+    },
+    authority,
+  });
+  const priorCompleted = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 3,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174106',
+    event_type: 'run_completed',
+    previous_event: {
+      sequence: priorStarted.sequence,
+      event_id: priorStarted.event_id,
+      event_digest: priorStarted.event_digest,
+    },
+    payload: {
+      turn_id: priorTurnId,
+      run_id: priorRunId,
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      result_digest: `sha256:${'4'.repeat(64)}`,
+      assistant_message: {
+        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174107',
+        text: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+      },
+      candidate_result: null,
+      plan_admission: null,
+    },
+    authority,
+  });
+  const priorTurnCompleted = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 4,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174108',
+    event_type: 'turn_completed',
+    previous_event: {
+      sequence: priorCompleted.sequence,
+      event_id: priorCompleted.event_id,
+      event_digest: priorCompleted.event_digest,
+    },
+    payload: {
+      turn_id: priorTurnId,
+      run_id: priorRunId,
+      outcome: 'answered',
+    },
+    authority,
+  });
+  const currentSubmitted = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 5,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174109',
+    event_type: 'turn_submitted',
+    previous_event: {
+      sequence: priorTurnCompleted.sequence,
+      event_id: priorTurnCompleted.event_id,
+      event_digest: priorTurnCompleted.event_digest,
+    },
+    payload: {
+      message: {
+        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174110',
+        text: currentRequest.instruction,
+      },
+      turn_id: TURN_ID,
+      mode: 'work',
+      task: { task_id: TASK_ID, title: 'Create Builder project' },
+      base_revision: null,
+    },
+    authority,
+  });
+  const currentStarted = createBuilderConversationEvent({
+    record_version: 'builder-conversation-event.v2',
+    record_kind: 'builder_conversation_event',
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 6,
+    command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174111',
+    event_type: 'run_started',
+    previous_event: {
+      sequence: currentSubmitted.sequence,
+      event_id: currentSubmitted.event_id,
+      event_digest: currentSubmitted.event_digest,
+    },
+    payload: {
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      attempt_number: 1,
+      retry_of_run_id: null,
+      input_digest: currentRequest.request_digest,
+    },
+    authority,
+  });
+  return [priorSubmitted, priorStarted, priorCompleted, priorTurnCompleted, currentSubmitted, currentStarted];
+}
+
 function builderId(kind, index) {
   return `builder-${kind}:123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
 }
@@ -352,6 +505,46 @@ test('generates an unsaved code-change candidate from verified base context', as
   assert.match(transportInput[0].messages[0].content, /builder_code_change_operations/u);
   assert.doesNotMatch(transportInput[0].messages[0].content, /builder_conversation_explanation/u);
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
+});
+
+test('passes a main-derived working brief into contextual build provider prompts', async () => {
+  const rawRequest = request({ instruction: '好，开始吧' });
+  let transportInput;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildGenerationContext: (raw) => contextFor(raw, {
+      conversation_events: priorProposalEvents(raw),
+    }),
+    transport: async (...args) => {
+      transportInput = args;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Portfolio homepage',
+          summary: 'Builds the discussed portfolio homepage.',
+        })),
+      };
+    },
+  }));
+
+  const result = await adapter.generate(rawRequest);
+  const userPrompt = JSON.parse(transportInput[0].messages[1].content);
+
+  assert.equal(result.title, 'Portfolio homepage');
+  assert.equal(userPrompt.instruction, '好，开始吧');
+  assert.deepEqual(userPrompt.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'recent_chat_proposal',
+    latest_user_goal: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+    assistant_proposal: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+  assert.match(transportInput[0].messages[0].content, /working_brief is requirements context/u);
+  assert.match(transportInput[0].messages[1].content, /三维项目卡片/u);
+  assert.doesNotMatch(
+    transportInput[0].messages[1].content,
+    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
+  );
 });
 
 test('reports fixed generation progress stages around provider transport', async () => {
