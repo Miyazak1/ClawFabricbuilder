@@ -115,6 +115,12 @@ describe('Builder desktop layout styles', () => {
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
     const changesFlow = styleBlock(source, '.cf-builder-changes-flow');
     const changesPanel = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
+    const summaryRowOverride = styleBlock(source, '.cf-builder-panel-toolbar.cf-builder-changes-summary-row');
+    const changesBody = styleBlock(source, '.cf-builder-changes-body');
+    const changesList = styleBlock(source, '.cf-builder-changes-list');
+    const changeItem = styleBlock(source, '.cf-builder-change-item');
+    const firstChangeItem = styleBlock(source, '.cf-builder-change-item:first-child');
+    const changeDiff = styleBlock(source, '.cf-builder-change-diff');
 
     expect(draftLanding).toContain('display: grid;');
     expect(draftLanding).toContain('position: relative;');
@@ -133,13 +139,39 @@ describe('Builder desktop layout styles', () => {
     expect(changesFlow).toContain('scroll-margin-block-start: 12px;');
     expect(changesFlow).not.toContain('position: absolute;');
     expect(changesFlow).not.toContain('margin-top: -');
-    expect(changesPanel).toContain('border-radius: 8px;');
+    expect(changesPanel).toContain('border-top: 1px solid var(--cf-border);');
+    expect(changesPanel).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(changesPanel).toContain('border-left: 0;');
+    expect(changesPanel).toContain('border-right: 0;');
+    expect(changesPanel).toContain('border-radius: 0;');
+    expect(changesPanel).toContain('box-shadow: none;');
+    expect(changesPanel).not.toContain('border-radius: 8px;');
+    expect(changesPanel).not.toContain('box-shadow: var(--cf-shadow-sm);');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
+    expect(summaryRowOverride).toContain('display: grid;');
+    expect(summaryRowOverride).toContain('grid-template-columns: 20px minmax(0, 1fr);');
+    expect(summaryRowOverride).toContain('background: transparent;');
+    expect(summaryRowOverride).toContain('padding: 0 0 8px;');
     expect(summaryMain).toContain('display: grid;');
     expect(summaryText).toContain('overflow: hidden;');
     expect(summaryText).toContain('text-overflow: ellipsis;');
     expect(summaryText).toContain('white-space: nowrap;');
     expect(summaryText).not.toContain('overflow-wrap: anywhere;');
+    expect(changesBody).toContain('gap: 0;');
+    expect(changesBody).toContain('padding: 12px 0 2px;');
+    expect(changesList).toContain('gap: 0;');
+    expect(changeItem).toContain('grid-template-columns: 72px minmax(0, 1fr);');
+    expect(changeItem).toContain('border-top: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);');
+    expect(changeItem).toContain('border-radius: 0;');
+    expect(changeItem).toContain('background: transparent;');
+    expect(changeItem).not.toContain('border: 1px solid var(--cf-border);');
+    expect(changeItem).not.toContain('background: var(--cf-surface-muted);');
+    expect(firstChangeItem).toContain('border-top: 0;');
+    expect(changeDiff).toContain('border-top: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);');
+    expect(changeDiff).toContain('border-bottom: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);');
+    expect(changeDiff).toContain('border-radius: 0;');
+    expect(changeDiff).not.toContain('border: 1px solid var(--cf-border);');
+    expect(changeDiff).not.toContain('border-radius: 7px;');
   });
 
   it('keeps restart-restored workspace catalog entries compact in the sidebar', () => {
