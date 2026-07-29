@@ -1875,6 +1875,62 @@ describe('BuilderApp v2', () => {
     expect(JSON.stringify(approvePlanSourceRead.mock.calls)).not.toMatch(/resource_id|permission_id|source_tree/iu);
   });
 
+  it('restores the plan request to the composer when project-read approval is dismissed', async () => {
+    const {
+      approvePlanSourceRead,
+      container,
+      generate,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      saveDraft,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      planAfterPropose: true,
+      planSourceReadApprovalRequired: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Plan the next project update.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-propose-plan="true"]')).not.toBeNull();
+    });
+
+    click(container, 'Plan first');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')?.textContent)
+        .toContain('Allow project reading?');
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    });
+
+    click(container, 'Not now');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')).toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
+        .toBe('Plan the next project update.');
+    });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(approvePlanSourceRead).not.toHaveBeenCalled();
+    expect(proposePlan).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
   it('records plan approval then continues into an unsaved draft without saving', async () => {
     const {
       container,
