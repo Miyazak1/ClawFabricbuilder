@@ -914,30 +914,34 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: grid;
   position: relative;
   z-index: 2;
+  box-sizing: border-box;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
+  align-content: start;
   row-gap: 12px;
   border-top: 1px solid var(--cf-border);
   border-bottom: 1px solid var(--cf-border);
   background: var(--cf-bg);
   isolation: isolate;
   margin-block: 6px 2px;
-  overflow: visible;
-  padding: 14px 0 12px;
+  overflow: hidden;
+  padding: 14px;
   scroll-margin-block-start: 12px;
 }
 
 .cf-builder-review-copy {
   display: grid;
   min-width: 0;
+  max-width: 100%;
   grid-template-columns: 28px minmax(0, 1fr);
   align-items: start;
   gap: 10px;
 }
 
-.cf-builder-review-copy > .min-w-0 {
+.cf-builder-review-copy-body {
   display: grid;
+  min-width: 0;
   gap: 2px;
 }
 
@@ -955,7 +959,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-title,
 .cf-builder-review-summary,
 .cf-builder-review-note {
+  max-width: 100%;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .cf-builder-review-title {
@@ -976,6 +982,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: flex;
   flex-wrap: wrap;
   min-width: 0;
+  max-width: 100%;
   align-self: start;
   justify-self: start;
   justify-content: flex-start;
@@ -987,6 +994,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-actions > button {
   flex: 0 1 auto;
   width: auto;
+  min-height: 32px;
   min-width: 116px;
   max-width: 100%;
   white-space: nowrap;

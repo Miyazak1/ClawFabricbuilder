@@ -70,6 +70,7 @@ function reviewDiffEvidence() {
     review_actions_layout_stable: true,
     review_changes_do_not_overlap: true,
     review_checkpoint_visible: true,
+    review_internal_layout_stable: true,
   };
 }
 
@@ -567,14 +568,19 @@ class FakePage {
     this.reviewLayoutBoxes = new Map([
       [SELECTORS.conversationActivity, { x: 360, y: 96, width: 860, height: 112 }],
       [SELECTORS.userMessage, { x: 760, y: 104, width: 460, height: 64 }],
-      [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 116 }],
-      [SELECTORS.reviewOpenChanges, { x: 760, y: 286, width: 112, height: 32 }],
-      [SELECTORS.discardDraft, { x: 880, y: 286, width: 128, height: 32 }],
-      [SELECTORS.saveVersion, { x: 1016, y: 286, width: 120, height: 32 }],
-      [SELECTORS.changesFlow, { x: 360, y: 340, width: 860, height: 320 }],
-      [SELECTORS.changesPanel, { x: 360, y: 340, width: 860, height: 320 }],
-      [SELECTORS.changeCard, { x: 380, y: 390, width: 820, height: 240 }],
-      [SELECTORS.changeDiff, { x: 400, y: 440, width: 780, height: 160 }],
+      [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 136 }],
+      [SELECTORS.reviewCopy, { x: 374, y: 234, width: 832, height: 62 }],
+      [SELECTORS.reviewTitle, { x: 412, y: 234, width: 200, height: 18 }],
+      [SELECTORS.reviewSummary, { x: 412, y: 254, width: 420, height: 17 }],
+      [SELECTORS.reviewNote, { x: 412, y: 274, width: 760, height: 22 }],
+      [SELECTORS.reviewActions, { x: 374, y: 308, width: 392, height: 32 }],
+      [SELECTORS.reviewOpenChanges, { x: 374, y: 308, width: 112, height: 32 }],
+      [SELECTORS.discardDraft, { x: 494, y: 308, width: 128, height: 32 }],
+      [SELECTORS.saveVersion, { x: 630, y: 308, width: 120, height: 32 }],
+      [SELECTORS.changesFlow, { x: 360, y: 362, width: 860, height: 320 }],
+      [SELECTORS.changesPanel, { x: 360, y: 362, width: 860, height: 320 }],
+      [SELECTORS.changeCard, { x: 380, y: 412, width: 820, height: 240 }],
+      [SELECTORS.changeDiff, { x: 400, y: 462, width: 780, height: 160 }],
     ]);
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
@@ -2026,6 +2032,11 @@ test('observes draft review diff before Save without leaking internal evidence',
     page.events.filter((event) => event[0] === 'boundingBox').map((event) => event[1]),
     [
       SELECTORS.reviewCheckpoint,
+      SELECTORS.reviewCopy,
+      SELECTORS.reviewTitle,
+      SELECTORS.reviewSummary,
+      SELECTORS.reviewNote,
+      SELECTORS.reviewActions,
       SELECTORS.reviewOpenChanges,
       SELECTORS.discardDraft,
       SELECTORS.saveVersion,
@@ -2064,6 +2075,39 @@ test('rejects squeezed draft review actions before Save', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 1016, y: 286, width: 24, height: 96 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
+});
+
+test('rejects draft review copy that visually overlaps itself', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.reviewSummary, { x: 412, y: 246, width: 420, height: 17 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
+});
+
+test('rejects draft review actions that overlap the preview explanation', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 374, y: 288, width: 392, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewOpenChanges, { x: 374, y: 288, width: 112, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.discardDraft, { x: 494, y: 288, width: 128, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 630, y: 288, width: 120, height: 32 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -4369,7 +4413,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v13/u);
+  assert.match(source, /builder-packaged-canary-result\.v14/u);
   assert.match(source, /run_progress_recorded/u);
   assert.match(source, /tool_call_requested/u);
   assert.match(source, /tool_call_result_recorded/u);

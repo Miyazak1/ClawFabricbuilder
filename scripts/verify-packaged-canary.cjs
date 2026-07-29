@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v13';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v14';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state summary below the timer before changing files.';
@@ -87,9 +87,14 @@ const SELECTORS = Object.freeze({
   previewRuntimeBlocked: '[data-builder-preview-runtime-blocked="true"]',
   previewUnavailable: '[data-builder-preview-unavailable="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
+  reviewActions: '[data-builder-review-actions="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
+  reviewCopy: '[data-builder-review-copy="true"]',
+  reviewNote: '[data-builder-review-note="true"]',
   discardDraft: '[data-builder-discard-draft="true"]',
   reviewOpenChanges: '[data-builder-review-open-changes="true"]',
+  reviewSummary: '[data-builder-review-summary="true"]',
+  reviewTitle: '[data-builder-review-title="true"]',
   saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
   timeout: '#builder-provider-timeout',
@@ -1871,22 +1876,44 @@ async function assertConversationActivityBeforeReviewViaUi(page, review) {
 
 async function assertDraftReviewLayoutViaUi(page) {
   const review = await boundedBox(page.locator(SELECTORS.reviewCheckpoint));
+  const copy = await boundedBox(page.locator(SELECTORS.reviewCopy));
+  const title = await boundedBox(page.locator(SELECTORS.reviewTitle));
+  const summary = await boundedBox(page.locator(SELECTORS.reviewSummary));
+  const note = await boundedBox(page.locator(SELECTORS.reviewNote));
+  const actionGroup = await boundedBox(page.locator(SELECTORS.reviewActions));
   const actions = [
     await boundedBox(page.locator(SELECTORS.reviewOpenChanges)),
     await boundedBox(page.locator(SELECTORS.discardDraft)),
     await boundedBox(page.locator(SELECTORS.saveVersion)),
   ];
-  if (review.width < 560 || review.height > 240) fail('canary_review_diff_failed');
+  const reviewChildren = [copy, title, summary, note, actionGroup, ...actions];
+  if (
+    review.width < 560
+    || review.height < 96
+    || review.height > 280
+    || copy.width < 320
+    || title.height < 12
+    || summary.height < 12
+    || note.height < 12
+    || actionGroup.height < 28
+    || actionGroup.height > 96
+    || boxBottom(title) > summary.y + 1
+    || boxBottom(summary) > note.y + 1
+    || actionGroup.y < boxBottom(note) + 4
+    || boxesOverlap(title, summary)
+    || boxesOverlap(summary, note)
+    || boxesOverlap(note, actionGroup)
+  ) fail('canary_review_diff_failed');
+  for (const child of reviewChildren) {
+    if (!boxContains(review, child)) fail('canary_review_diff_failed');
+  }
   for (const action of actions) {
     if (
       action.width < 88
       || action.height < 28
       || action.height > 48
       || action.width / action.height < 2
-      || action.x < review.x - 1
-      || action.y < review.y - 1
-      || boxRight(action) > boxRight(review) + 1
-      || boxBottom(action) > boxBottom(review) + 1
+      || !boxContains(actionGroup, action)
     ) fail('canary_review_diff_failed');
   }
   for (let outer = 0; outer < actions.length; outer += 1) {
@@ -1961,6 +1988,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       review_actions_layout_stable: true,
       review_changes_do_not_overlap: true,
       review_checkpoint_visible: true,
+      review_internal_layout_stable: true,
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;

@@ -1898,21 +1898,25 @@ export function BuilderPage({
       ref={draftReviewRef}
       tabIndex={-1}
     >
-      <div className="cf-builder-review-copy">
+      <div className="cf-builder-review-copy" data-builder-review-copy="true">
         <div className="cf-builder-review-icon" aria-hidden="true">
           <GitCompareArrows className="size-4" />
         </div>
-        <div className="min-w-0">
-          <h2 className="cf-builder-review-title">Review before saving</h2>
+        <div className="cf-builder-review-copy-body min-w-0" data-builder-review-copy-body="true">
+          <h2 className="cf-builder-review-title" data-builder-review-title="true">Review before saving</h2>
           <p className="cf-builder-review-summary" data-builder-review-summary="true">
             {changesSummary(changes)}
           </p>
-          <p className="cf-builder-review-note">
+          <p className="cf-builder-review-note" data-builder-review-note="true">
             {reviewPreviewStatus(preview, hasContent)}
           </p>
         </div>
       </div>
-      <div className="cf-builder-review-actions" data-builder-draft-review-actions="true">
+      <div
+        className="cf-builder-review-actions"
+        data-builder-draft-review-actions="true"
+        data-builder-review-actions="true"
+      >
         <button
           className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
           data-builder-review-open-changes="true"
