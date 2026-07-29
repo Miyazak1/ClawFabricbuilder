@@ -144,24 +144,168 @@ const CHINESE_EXPLANATION_INTENT_PATTERN =
   /(?:是什么|为什么|怎么|如何|怎样|解释|说明|介绍|总结|对比|分析|原因|含义|意思|做什么|干什么|能做什么|会做什么)/u;
 const CASUAL_CHAT_INTENT_PATTERN =
   /^(?:hi|hello|hey|你好|您好|在吗|你在吗|在不在)[.!?。！？]*$/iu;
+const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
+  /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
+  /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
+]);
+const CONTEXTUAL_WORK_INTENT_PATTERNS = Object.freeze([
+  /^(?:就这样(?:做|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:做|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:做|实现|执行)|开始(?:做|实现|执行)|可以开始了)[。.!！]*$/u,
+  /^(?:(?:好|好的|可以|行|嗯)[，,\s]*)?(?:(?:就)?(?:照|按)(?:这个|刚才(?:说的|聊的|讨论的|确认的)?|上面(?:说的)?|前面(?:说的)?|我们刚才(?:说的|聊的|讨论的|确认的)?)(?:方案|计划)?(?:做|实现|执行|来)|(?:开始|执行)(?:吧|了)?|可以开始(?:了|吧)?)[。.!！]*$/u,
+  /^(?:do it|go ahead|start|let'?s do it|implement that|build that|make that)[.?!]*$/u,
+  /^(?:(?:ok|okay|yes|sounds good|great)[,\s]*)?(?:go ahead|start(?: building| implementing)?|implement (?:it|this|that|the plan)|build (?:it|this|that)|do it|let'?s do it|make that)[.?!]*$/u,
+]);
+const PRIOR_BUILD_CONFIRMED_USER_PATTERN =
+  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现|想要|希望|需要).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:confirmed|decided|goal|requirements?|want|need).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const PRIOR_BUILD_ASSISTANT_PROPOSAL_PATTERN =
+  /(?:(?:方案是|计划是|建议|可以先|我会|我将|接下来会|可以按).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:plan is|proposal is|approach is|recommend|suggest|i will|i would|next i will|we can).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const BUILDER_TASK_STREAM_READ_RESULT_VERSION = 'builder-task-stream-read-result.v1';
 
-function shouldSubmitAsExplanation(instruction, existingProjectId = null) {
-  const text = String(instruction).trim();
+function normalizedIntentText(instruction) {
+  return String(instruction).trim().normalize('NFKC').toLocaleLowerCase('en-US').replace(/\s+/gu, ' ');
+}
+
+function matchesAny(patterns, text) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function isContextualWorkIntent(instruction) {
+  const text = normalizedIntentText(instruction);
   if (text.length === 0) return false;
-  const lower = text.toLowerCase();
+  return matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text);
+}
+
+function shouldSubmitAsExplanation(
+  instruction,
+  hasContextualBuildContext = false,
+) {
+  const text = normalizedIntentText(instruction);
+  if (text.length === 0) return false;
   if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return true;
   const hasQuestionMark = /[?\uFF1F]\s*$/u.test(text);
   const hasExplanationIntent =
-    ENGLISH_EXPLANATION_INTENT_PATTERN.test(lower)
+    ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
   if (hasQuestionMark && hasExplanationIntent) return true;
   if (hasExplanationIntent) return true;
+  if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) return true;
+  if (matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)) {
+    return hasContextualBuildContext !== true;
+  }
   if (
-    ENGLISH_WORK_INTENT_PATTERN.test(lower)
+    ENGLISH_WORK_INTENT_PATTERN.test(text)
     || CHINESE_WORK_INTENT_PATTERN.test(text)
   ) return false;
-  if (existingProjectId === null) return false;
-  return hasQuestionMark;
+  return true;
+}
+
+function denseTaskStreamItems(value) {
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || value.length > 128
+  ) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
+  const items = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (
+      !descriptor
+      || descriptor.enumerable !== true
+      || !Object.hasOwn(descriptor, 'value')
+      || !isPlainObject(descriptor.value)
+    ) fail();
+    items.push(descriptor.value);
+  }
+  return items;
+}
+
+function taskStreamItemsForSubmitContext(value, expectedProjectId) {
+  exactObject(value, ['stream_version', 'project_id', 'conversation', 'authority']);
+  if (
+    valueAt(value, 'stream_version') !== BUILDER_TASK_STREAM_READ_RESULT_VERSION
+    || valueAt(value, 'project_id') !== expectedProjectId
+  ) fail();
+  const conversation = valueAt(value, 'conversation');
+  if (conversation === null) return [];
+  exactObject(conversation, [
+    'conversation_id',
+    'created_at_ms',
+    'head_sequence',
+    'recorded_active_turn_id',
+    'window',
+    'items',
+  ]);
+  return denseTaskStreamItems(valueAt(conversation, 'items'));
+}
+
+function messageTextFromTaskStreamItem(item, key) {
+  const message = optionalValueAt(item, key);
+  const text = optionalValueAt(message, 'text');
+  return typeof text === 'string' ? text : null;
+}
+
+function taskStreamRunKey(item) {
+  const turnId = optionalValueAt(item, 'turn_id');
+  const runId = optionalValueAt(item, 'run_id');
+  return typeof turnId === 'string' && typeof runId === 'string' ? `${turnId}:${runId}` : null;
+}
+
+function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
+  try {
+    const items = taskStreamItemsForSubmitContext(value, expectedProjectId);
+    let latestUserGoal = null;
+    let latestAssistantProposal = null;
+    let latestPlan = null;
+    const planTextsByRun = new Map();
+    for (const item of items) {
+      const itemKind = optionalValueAt(item, 'item_kind');
+      if (itemKind === 'user_message') {
+        const text = messageTextFromTaskStreamItem(item, 'message');
+        if (text !== null && PRIOR_BUILD_CONFIRMED_USER_PATTERN.test(text)) {
+          latestUserGoal = text;
+        }
+        continue;
+      }
+      if (itemKind === 'run_completed') {
+        const resultKind = optionalValueAt(item, 'result_kind');
+        const text = messageTextFromTaskStreamItem(item, 'assistant_message');
+        const runKey = taskStreamRunKey(item);
+        if (resultKind === 'plan') {
+          if (runKey !== null && text !== null) {
+            planTextsByRun.set(runKey, text);
+            latestPlan = { state: 'proposed', text };
+          }
+          continue;
+        }
+        if (
+          resultKind === 'explanation'
+          && latestUserGoal !== null
+          && text !== null
+          && PRIOR_BUILD_ASSISTANT_PROPOSAL_PATTERN.test(text)
+        ) {
+          latestAssistantProposal = text;
+        }
+        continue;
+      }
+      if (itemKind === 'plan_reviewed') {
+        const runKey = taskStreamRunKey(item);
+        const decision = optionalValueAt(item, 'decision');
+        if (
+          runKey !== null
+          && planTextsByRun.has(runKey)
+          && (decision === 'approved' || decision === 'rejected')
+        ) {
+          latestPlan = { state: decision, text: planTextsByRun.get(runKey) };
+        }
+      }
+    }
+    if (latestPlan !== null) return latestPlan.state === 'approved';
+    return latestAssistantProposal !== null;
+  } catch {
+    return false;
+  }
 }
 
 function isPlainObject(value) {
@@ -204,6 +348,15 @@ function ownMethod(value, key) {
     || !Object.hasOwn(descriptor, 'value')
     || typeof descriptor.value !== 'function'
   ) fail();
+  return descriptor.value;
+}
+
+function optionalValueAt(value, key) {
+  if (!isPlainObject(value)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+    return undefined;
+  }
   return descriptor.value;
 }
 
@@ -940,6 +1093,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
   const readApprovedPlan = ownMethod(options.conversationService, 'read_approved_plan');
+  const readConversationStream = ownMethod(options.conversationService, 'read_stream');
   const admitApprovedPlanContinuation = ownMethod(
     options.conversationService,
     'admit_approved_plan_continuation',
@@ -2152,7 +2306,23 @@ function createBuilderGenerationMainService(rawOptions) {
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    const shouldAnswer = shouldSubmitAsExplanation(request.instruction, request.existing_project_id);
+    let hasContextualBuildContext = false;
+    if (request.existing_project_id !== null && isContextualWorkIntent(request.instruction)) {
+      try {
+        hasContextualBuildContext = hasContextualBuildContextInTaskStream(
+          Reflect.apply(readConversationStream, options.conversationService, [{
+            project_id: request.existing_project_id,
+          }]),
+          request.existing_project_id,
+        );
+      } catch {
+        hasContextualBuildContext = false;
+      }
+    }
+    const shouldAnswer = shouldSubmitAsExplanation(
+      request.instruction,
+      hasContextualBuildContext,
+    );
     if (!shouldAnswer && request.existing_project_id === null) {
       return Promise.reject(new BuilderGenerationMainServiceError(
         'builder_generation_project_workspace_required',

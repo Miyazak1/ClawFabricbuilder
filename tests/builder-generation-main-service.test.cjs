@@ -261,10 +261,84 @@ function sourceContextResult(context, rawFiles = [
   };
 }
 
-function conversationService() {
+function taskStreamAbsent(projectId = PROJECT_ID) {
+  return {
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: projectId,
+    conversation: null,
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  };
+}
+
+function taskStreamWithItems(projectId, items) {
+  return {
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: projectId,
+    conversation: {
+      conversation_id: `builder-conversation:${projectId.slice('builder-project:'.length)}`,
+      created_at_ms: 1,
+      head_sequence: items.at(-1).sequence,
+      recorded_active_turn_id: null,
+      window: {
+        first_sequence: items[0].sequence,
+        last_sequence: items.at(-1).sequence,
+        has_earlier: false,
+      },
+      items,
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  };
+}
+
+function recentChatProposalTaskStream(projectId = PROJECT_ID) {
+  const turnId = `builder-turn:${UUIDS[1]}`;
+  const runId = `builder-run:${UUIDS[2]}`;
+  return taskStreamWithItems(projectId, [
+    {
+      item_kind: 'user_message',
+      sequence: 1,
+      turn_id: turnId,
+      message: {
+        message_id: `builder-message:${UUIDS[3]}`,
+        text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      },
+      message_kind: 'submitted',
+      mode: 'question',
+      task: null,
+    },
+    {
+      item_kind: 'run_completed',
+      sequence: 2,
+      turn_id: turnId,
+      run_id: runId,
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[4]}`,
+        text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+      },
+      candidate: null,
+    },
+  ]);
+}
+
+function conversationService(options = {}) {
   let generation = 0;
   const candidateDrafts = new Map();
   const rejectedDrafts = new Set();
+  const readStreamResult = Object.hasOwn(options, 'readStreamResult')
+    ? options.readStreamResult
+    : null;
   const calls = {
     begin: [],
     question: [],
@@ -279,6 +353,7 @@ function conversationService() {
     steering: [],
     readCandidate: [],
     rejectCandidate: [],
+    readStream: [],
     readApprovedPlan: [],
     approvedPlanWork: [],
     approvedPlanContinuation: [],
@@ -637,6 +712,12 @@ function conversationService() {
         conversation_id: candidate.conversation_id,
         rejection_admission: 'sqlite_recorded',
       };
+    },
+    read_stream(input) {
+      calls.readStream.push(input);
+      if (typeof readStreamResult === 'function') return readStreamResult(input);
+      if (readStreamResult !== null) return readStreamResult;
+      return taskStreamAbsent(input.project_id);
     },
     read_approved_plan(input) {
       calls.readApprovedPlan.push(input);
@@ -1956,7 +2037,8 @@ test('submits one composer turn through main-owned work or explanation routing',
     },
     transport: async (input) => ({
       transport_version: 'builder-openai-compatible-transport.v1',
-      generated_text: input.messages[1].content.includes('What does this project do')
+      generated_text: input.messages[1].content.includes('"instruction":"开始吧"')
+        || input.messages[1].content.includes('What does this project do')
         || input.messages[1].content.includes('这个项目是做什么')
         || input.messages[1].content.includes('怎么把按钮改红')
         ? JSON.stringify(providerExplanation())
@@ -1990,6 +2072,10 @@ test('submits one composer turn through main-owned work or explanation routing',
   const chineseHowToAnswer = await service.submit(request({
     instruction: '怎么把按钮改红？',
   }));
+  const contextualWithoutBriefAnswer = await service.submit(request({
+    instruction: '开始吧',
+    existingProjectId: PROJECT_ID,
+  }));
 
   assert.equal(draft.version, 'builder-generation-result.v2');
   assert.equal(draft.admissions.draft, 'candidate_not_saved');
@@ -2004,12 +2090,17 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(chineseHowToAnswer.result_kind, 'explanation');
   assert.equal(chineseHowToAnswer.admissions.draft, 'not_created');
   assert.equal(chineseHowToAnswer.existing_project_id, null);
+  assert.equal(contextualWithoutBriefAnswer.result_kind, 'explanation');
+  assert.equal(contextualWithoutBriefAnswer.admissions.draft, 'not_created');
+  assert.equal(contextualWithoutBriefAnswer.project_id, PROJECT_ID);
   assert.equal(lifecycle.calls.begin.length, 3);
-  assert.equal(lifecycle.calls.question.length, 3);
+  assert.equal(lifecycle.calls.question.length, 4);
   assert.equal(lifecycle.calls.candidate.length, 3);
-  assert.equal(lifecycle.calls.explanation.length, 3);
+  assert.equal(lifecycle.calls.explanation.length, 4);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 3);
   assert.deepEqual(startedEvents.map((event) => event.event_version), [
+    'builder-generation-started.v1',
     'builder-generation-started.v1',
     'builder-generation-started.v1',
     'builder-generation-started.v1',
@@ -2024,6 +2115,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     answer.request_id,
     chineseAnswer.request_id,
     chineseHowToAnswer.request_id,
+    contextualWithoutBriefAnswer.request_id,
   ]);
   assert.deepEqual(startedEvents.map((event) => event.project_id), [
     draft.project_id,
@@ -2032,6 +2124,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     answer.project_id,
     chineseAnswer.project_id,
     chineseHowToAnswer.project_id,
+    contextualWithoutBriefAnswer.project_id,
   ]);
   assert.doesNotMatch(
     JSON.stringify([
@@ -2041,9 +2134,48 @@ test('submits one composer turn through main-owned work or explanation routing',
       answer,
       chineseAnswer,
       chineseHowToAnswer,
+      contextualWithoutBriefAnswer,
     ]),
     /credential|provider\.example|builder-model|git_request_id/iu,
   );
+});
+
+test('allows contextual composer submit only with main-owned build context', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: recentChatProposalTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+
+  const draft = await service.submit(request({
+    instruction: '好，开始吧',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.admissions.draft, 'candidate_not_saved');
+  assert.equal(draft.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 0);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 1);
 });
 
 test('records a retryable terminal run outcome when provider generation fails', async () => {

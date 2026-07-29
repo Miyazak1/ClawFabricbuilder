@@ -505,10 +505,14 @@ Evidence requirements:
   Plan first result must still go through the plan review authority, either via
   the visible approve/reject action or an explicit contextual composer approval
   phrase. It cannot become an ordinary build submit, and a rejected plan cannot
-  be revived by a short execution phrase. This is a renderer-only routing guard
-  over the already read-only Task Stream projection and existing review path: it
-  creates no renderer-owned draft, provider call, Git evidence, Save fact,
-  Project Revision, IPC/preload surface, or compatibility path;
+  be revived by a short execution phrase. The visible renderer guard is backed
+  by a main-owned submit guard: for contextual execution phrases, main re-reads
+  the renderer-safe Task Stream projection and permits build only when that
+  projection contains an approved plan or a recent confirmed user goal plus
+  assistant proposal. Missing, malformed, or explanatory-only context falls
+  closed to ordinary answer. This creates no renderer-owned draft, provider
+  call, Git evidence, Save fact, Project Revision, IPC/preload surface, or
+  compatibility path;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,
   `provider_response_received`, `result_preparing`) before terminal generation,
