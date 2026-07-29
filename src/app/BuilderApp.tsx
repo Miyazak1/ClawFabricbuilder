@@ -463,7 +463,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
   const [approvedPlanContinuationFailure, setApprovedPlanContinuationFailure] =
     useState<BuilderPlanReviewInFlight | null>(null);
+  const [catalogNewProjectPending, setCatalogNewProjectPending] = useState(false);
   const [workspacePickerRequest, setWorkspacePickerRequest] = useState(0);
+  const [workspaceNewProjectRequest, setWorkspaceNewProjectRequest] = useState(0);
   const [planSourceReadApproval, setPlanSourceReadApproval] =
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
@@ -574,6 +576,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     projectSnapshotRef.current = project.snapshot;
   }, [project.snapshot]);
 
+  useEffect(() => {
+    if (!catalogNewProjectPending) return;
+    if (project.snapshot.busy || project.snapshot.status !== 'new') return;
+    const handle = window.setTimeout(() => {
+      setCatalogNewProjectPending(false);
+      setWorkspaceNewProjectRequest((request) => request + 1);
+    });
+    return () => window.clearTimeout(handle);
+  }, [catalogNewProjectPending, project.snapshot]);
+
   useLayoutEffect(() => {
     liveOutputRef.current = liveOutput;
   }, [liveOutput]);
@@ -657,8 +669,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(nextProjectId, { preserveIdea: true });
   }, [resetWorkspace]);
 
-  const newProject = useCallback(() => {
+  const startNewProjectFromCatalog = useCallback(() => {
     resetWorkspace(undefined);
+    setCatalogNewProjectPending(true);
   }, [resetWorkspace]);
 
   useEffect(() => {
@@ -1210,7 +1223,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
           <div className="cf-builder-context-body">
             <BuilderProjectCatalog
-              onCreateProject={newProject}
+              onCreateProject={startNewProjectFromCatalog}
               onOpenProject={openProject}
               onRefresh={refreshCatalog}
               snapshot={catalog.snapshot}
@@ -1248,6 +1261,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               planReviewInFlight={planReviewInFlight}
               planReviewRecorded={planReviewRecorded}
               planSourceReadApproval={planSourceReadApproval}
+              workspaceNewProjectRequest={workspaceNewProjectRequest}
               workspacePickerRequest={workspacePickerRequest}
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}

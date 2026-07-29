@@ -95,6 +95,7 @@ export type BuilderPageProps = {
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
   planSourceReadApproval?: BuilderPlanSourceReadApprovalPrompt | null;
   workspacePickerRequest?: number;
+  workspaceNewProjectRequest?: number;
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onCancel?: () => void;
@@ -1304,6 +1305,7 @@ export function BuilderPage({
   planReviewInFlight = null,
   planReviewRecorded = null,
   planSourceReadApproval = null,
+  workspaceNewProjectRequest = 0,
   workspacePickerRequest = 0,
   onSelectFile,
 }: BuilderPageProps) {
@@ -1461,6 +1463,7 @@ export function BuilderPage({
   );
   const [workspacePickerState, setWorkspacePickerState] = useState<Readonly<{
     buildPrompt: boolean;
+    createRequest: number;
     creating: boolean;
     open: boolean;
     request: number;
@@ -1468,6 +1471,7 @@ export function BuilderPage({
     title: string;
   }>>(() => ({
     buildPrompt: false,
+    createRequest: 0,
     creating: false,
     open: false,
     request: 0,
@@ -1476,11 +1480,17 @@ export function BuilderPage({
   }));
   const [workspacePickerDismissedBuildPrompt, setWorkspacePickerDismissedBuildPrompt] = useState(false);
   const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
-  const workspacePickerOpen = workspacePickerState.open || pendingWorkspacePickerRequest;
+  const pendingWorkspaceNewProjectRequest = workspaceNewProjectRequest > workspacePickerState.createRequest;
+  const workspacePickerOpen = workspacePickerState.open
+    || pendingWorkspacePickerRequest
+    || pendingWorkspaceNewProjectRequest;
   const workspacePickerBuildPrompt = workspacePickerState.buildPrompt || pendingWorkspacePickerRequest;
+  const workspacePickerCreating = workspacePickerState.creating || pendingWorkspaceNewProjectRequest;
   const workspaceSearch = workspacePickerState.search;
   const newProjectTitle = workspacePickerState.title;
-  const canCreateProjectFromPicker = typeof onCreateProject === 'function' && newProjectTitle.trim().length > 0;
+  const canCreateProjectFromPicker = typeof onCreateProject === 'function'
+    && newProjectTitle.trim().length > 0
+    && !busy;
   const normalizedWorkspaceSearch = workspaceSearch.trim().toLocaleLowerCase('en-US');
   const workingProjectFolderLabel = sourceFolderBoundaryLabel(workingProject?.source_folders[0]?.name);
   const showCurrentWorkingProject = workingProject !== null
@@ -1633,6 +1643,7 @@ export function BuilderPage({
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
+      createRequest: workspaceNewProjectRequest,
       creating: false,
       open: false,
       request: workspacePickerRequest,
@@ -1649,6 +1660,7 @@ export function BuilderPage({
     setWorkspacePickerState((picker) => ({
       ...picker,
       buildPrompt: false,
+      createRequest: workspaceNewProjectRequest,
       creating: false,
       open: true,
       request: workspacePickerRequest,
@@ -1659,7 +1671,10 @@ export function BuilderPage({
     setWorkspacePickerDismissedBuildPrompt(false);
     setWorkspacePickerState((picker) => ({
       ...picker,
+      createRequest: workspaceNewProjectRequest,
       creating: true,
+      open: true,
+      request: workspacePickerRequest,
       search: '',
     }));
   }
@@ -1667,7 +1682,10 @@ export function BuilderPage({
   function hideNewProjectPanel(): void {
     setWorkspacePickerState((picker) => ({
       ...picker,
+      createRequest: workspaceNewProjectRequest,
       creating: false,
+      open: true,
+      request: workspacePickerRequest,
     }));
   }
 
@@ -2158,7 +2176,7 @@ export function BuilderPage({
             data-builder-workspace-picker="true"
             role="dialog"
           >
-            {workspacePickerState.creating ? (
+            {workspacePickerCreating ? (
               <div className="cf-builder-new-project-panel" data-builder-new-project-panel="true">
                 <div className="cf-builder-workspace-picker-heading">
                   <h2>New project</h2>

@@ -1211,6 +1211,32 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
   });
 
+  it('opens the source-folder new project panel from an external project command', async () => {
+    const { fresh } = await snapshots();
+    const onCreateProject = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        onCreateProject={onCreateProject}
+        projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
+        snapshot={fresh}
+        workspaceNewProjectRequest={1}
+      />,
+    );
+
+    const panel = container.querySelector('[data-builder-new-project-panel="true"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain('Project name');
+    expect(panel?.textContent).toContain('Source folders');
+    expect(panel?.textContent).not.toContain('Choose or create a project before I build.');
+    expect(onCreateProject).not.toHaveBeenCalled();
+
+    click(container, '[data-builder-add-source-folder="true"]');
+
+    expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('New project');
+  });
+
   it('explains a dismissed build workspace picker without sending work', async () => {
     const { fresh } = await snapshots();
     const onCreateProject = vi.fn();

@@ -55,6 +55,7 @@ export function BuilderProjectCatalog({
       <div className="cf-builder-catalog-command">
         <button
           className="cf-builder-primary-button cf-builder-command-button inline-flex min-h-9 w-full items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-catalog-new-project="true"
           disabled={busy || typeof onCreateProject !== 'function'}
           onClick={onCreateProject}
           type="button"

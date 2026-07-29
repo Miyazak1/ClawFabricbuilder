@@ -902,6 +902,47 @@ describe('BuilderApp v2', () => {
     expect(railLabels).not.toContain('Chat');
   });
 
+  it('routes the sidebar new-project command into source folder binding before work starts', async () => {
+    const { container, createLocalProject, generate, submit } = await setup();
+
+    click(container, '[data-builder-catalog-new-project="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
+        .toContain('Source folders');
+    });
+    expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
+      .toContain('No source folder selected.');
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+      .not.toContain('Choose or create a project before I build.');
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
+        .toBe('new');
+    });
+    expect(container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]')?.value)
+      .toBe('New project');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-add-source-folder="true"]')?.disabled)
+      .toBe(false);
+
+    click(container, '[data-builder-add-source-folder="true"]');
+    await waitFor(() => {
+      expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+        project_id: null,
+        project_title: 'New project',
+      });
+    });
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('Source folder: focus-timer');
+    });
+  });
+
   it('continues a gated build turn after the user binds a source folder', async () => {
     const { container, createLocalProject, generate, listCurrent, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
