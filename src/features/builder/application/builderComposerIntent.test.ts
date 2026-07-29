@@ -27,6 +27,10 @@ describe('routeBuilderComposerIntent', () => {
     '按刚才方案实现',
     '按这个做',
     '开始执行',
+    '好，开始吧',
+    '就照这个来',
+    '按刚才说的做',
+    'sounds good, go ahead',
     'Go ahead',
     '',
   ])('routes %s to answer by default', (instruction) => {
@@ -63,6 +67,11 @@ describe('routeBuilderComposerIntent', () => {
     '按刚才方案实现',
     '按这个做',
     '开始执行',
+    '好，开始吧',
+    '就照这个来',
+    '按刚才说的做',
+    'sounds good, go ahead',
+    'yes, implement it',
     'Go ahead',
     "Let's do it",
   ])('routes %s to build only when prior build context exists', (instruction) => {
@@ -80,6 +89,9 @@ describe('routeBuilderComposerIntent', () => {
   it('detects only contextual execution phrases for pending-plan approval shortcuts', () => {
     expect(isBuilderComposerContextualBuildIntent('按这个做')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('就按刚才方案实现')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('好，开始吧')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('按刚才说的做')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('sounds good, go ahead')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('Go ahead')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('这个方案是什么')).toBe(false);
     expect(isBuilderComposerContextualBuildIntent('帮我做一个网页3D')).toBe(false);

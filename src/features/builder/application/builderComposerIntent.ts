@@ -19,7 +19,9 @@ const VAGUE_CHANGE_PATTERNS = Object.freeze([
 
 const CONTEXTUAL_BUILD_PATTERNS = Object.freeze([
   /^(?:就这样(?:做|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:做|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:做|实现|执行)|开始(?:做|实现|执行)|可以开始了)[。.!！]*$/u,
+  /^(?:(?:好|好的|可以|行|嗯)[，,\s]*)?(?:(?:就)?(?:照|按)(?:这个|刚才(?:说的|聊的|讨论的|确认的)?|上面(?:说的)?|前面(?:说的)?|我们刚才(?:说的|聊的|讨论的|确认的)?)(?:方案|计划)?(?:做|实现|执行|来)|(?:开始|执行)(?:吧|了)?|可以开始(?:了|吧)?)[。.!！]*$/u,
   /^(?:do it|go ahead|start|let'?s do it|implement that|build that|make that)[.?!]*$/u,
+  /^(?:(?:ok|okay|yes|sounds good|great)[,\s]*)?(?:go ahead|start(?: building| implementing)?|implement (?:it|this|that|the plan)|build (?:it|this|that)|do it|let'?s do it|make that)[.?!]*$/u,
 ]);
 
 const CLEAR_BUILD_PATTERNS = Object.freeze([

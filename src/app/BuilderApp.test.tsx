@@ -1557,7 +1557,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('就这样做');
   });
 
-  it('routes contextual execution phrases to submit once a workspace is bound', async () => {
+  it('routes natural approval phrases to submit once a workspace is bound', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       contextualBuildActivity: true,
       initiallySaved: true,
@@ -1571,7 +1571,7 @@ describe('BuilderApp v2', () => {
     act(() => {
       if (textarea) {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-          ?.call(textarea, '按这个做');
+          ?.call(textarea, '好，开始吧');
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
         textarea.dispatchEvent(new Event('change', { bubbles: true }));
       }
@@ -1580,7 +1580,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '按这个做' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '好，开始吧' });
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();

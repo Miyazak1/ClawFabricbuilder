@@ -494,9 +494,10 @@ Evidence requirements:
   fact; it only makes the existing main-owned prompt context more faithful to
   the conversation;
 - the current composer contextual-execution checkpoint aligns renderer routing
-  with that plan-state contract. Contextual phrases such as "do it" or
-  "按这个做" may enter build only when the visible conversation has live build
-  context that is not blocked by a newer proposed or rejected plan. A proposed
+  with that plan-state contract. Contextual phrases such as "do it",
+  "好，开始吧", "就照这个来", or "按刚才说的做" may enter build only when
+  the visible conversation has live build context that is not blocked by a
+  newer proposed or rejected plan. A proposed
   Plan first result must still go through the plan review authority, either via
   the visible approve/reject action or an explicit contextual composer approval
   phrase. It cannot become an ordinary build submit, and a rejected plan cannot
