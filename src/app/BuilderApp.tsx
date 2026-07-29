@@ -46,7 +46,10 @@ import {
   BuilderDesktopPlanReviewPortError,
   createBuilderDesktopPlanReviewPort,
 } from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
-import { routeBuilderComposerIntent } from '../features/builder/application/builderComposerIntent';
+import {
+  isBuilderComposerContextualBuildIntent,
+  routeBuilderComposerIntent,
+} from '../features/builder/application/builderComposerIntent';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
@@ -425,6 +428,55 @@ function latestRestorableDraft(
     }
   }
   return null;
+}
+
+function planReviewKey(turnId: string, runId: string): string {
+  return `${turnId}:${runId}`;
+}
+
+function pendingPlanReviewRequest(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): BuilderPlanReviewRequest | null {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (
+    visibleProjectId === null
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+  ) return null;
+  const planRuns = new Set<string>();
+  const pending = new Map<string, BuilderPlanReviewRequest>();
+  const conversation = conversationSnapshot.conversation.conversation;
+  for (const item of conversation.items) {
+    if (
+      item.item_kind === 'run_completed'
+      && item.terminal_status === 'succeeded'
+      && item.result_kind === 'plan'
+    ) {
+      planRuns.add(planReviewKey(item.turn_id, item.run_id));
+      continue;
+    }
+    if (
+      item.item_kind === 'turn_completed'
+      && item.outcome === 'plan_proposed'
+      && item.run_id !== null
+      && planRuns.has(planReviewKey(item.turn_id, item.run_id))
+    ) {
+      pending.set(planReviewKey(item.turn_id, item.run_id), Object.freeze({
+        project_id: visibleProjectId,
+        conversation_id: conversation.conversation_id,
+        turn_id: item.turn_id,
+        run_id: item.run_id,
+        decision: 'approved',
+      }));
+      continue;
+    }
+    if (item.item_kind === 'plan_reviewed') {
+      pending.delete(planReviewKey(item.turn_id, item.run_id));
+    }
+  }
+  return [...pending.values()].at(-1) ?? null;
 }
 
 function hasPriorBuildContext(
@@ -868,6 +920,77 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [conversation, idea, project]);
 
+  const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
+    if (planReviewInFlightRef.current !== null) return;
+    const inFlight = Object.freeze({
+      project_id: request.project_id,
+      conversation_id: request.conversation_id,
+      turn_id: request.turn_id,
+      run_id: request.run_id,
+    });
+    const inFlightKey = planReviewInFlightKey(inFlight);
+    setPlanReviewFailure(null);
+    setPlanReviewRecorded(null);
+    setApprovedPlanContinuationFailure(null);
+    publishPlanReviewInFlight(inFlight);
+    const commandEpoch = workspaceEpochRef.current;
+    let reviewed = false;
+    let reviewFailed = false;
+    try {
+      await ports.planReview.review(request);
+      reviewed = true;
+      setPlanReviewRecorded(inFlight);
+    } catch {
+      reviewFailed = true;
+      reviewed = false;
+    } finally {
+      if (
+        !reviewed
+        && planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
+      }
+    }
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await conversation.load(request.project_id).catch(() => undefined);
+    if (!reviewed || request.decision !== 'approved') {
+      setPlanReviewFailure(reviewFailed ? inFlight : null);
+      if (
+        planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
+      }
+      return;
+    }
+    setLiveOutput(null);
+    approvedPlanWaitingProjectRef.current = request.project_id;
+    let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
+    try {
+      result = await project.generateApprovedPlan({
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        turn_id: request.turn_id,
+        run_id: request.run_id,
+      });
+    } finally {
+      if (approvedPlanWaitingProjectRef.current === request.project_id) {
+        approvedPlanWaitingProjectRef.current = null;
+      }
+      if (
+        planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
+      }
+    }
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    setApprovedPlanContinuationFailure(result.status === 'generation_failed' ? inFlight : null);
+    await readActivityAfterTerminal(result, commandEpoch, request.project_id);
+    setLiveOutput(null);
+  }, [conversation, ports.planReview, project, publishPlanReviewInFlight, readActivityAfterTerminal]);
+
   const submitInstruction = useCallback(async () => {
     if (projectSnapshotRef.current.busy) {
       await steerInstruction();
@@ -881,6 +1004,21 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     );
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
+    const pendingPlan = pendingPlanReviewRequest(
+      conversationSnapshotRef.current,
+      projectSnapshotRef.current,
+    );
+    if (pendingPlan !== null && isBuilderComposerContextualBuildIntent(submittedIdea)) {
+      submitInFlightRef.current = true;
+      setIdea('');
+      setLiveOutput(null);
+      try {
+        await reviewPlan(pendingPlan);
+      } finally {
+        submitInFlightRef.current = false;
+      }
+      return;
+    }
     if (route === 'build' && !hasBuildWorkspace(projectSnapshotRef.current)) {
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
         epoch: workspaceEpochRef.current,
@@ -906,7 +1044,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [idea, project, readActivityAfterTerminal, steerInstruction]);
+  }, [idea, project, readActivityAfterTerminal, reviewPlan, steerInstruction]);
 
   const runPlanProposal = useCallback(async (
     submittedIdea: string,
@@ -1052,76 +1190,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [catalog, history, project, readActivityAfterTerminal]);
-  const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
-    if (planReviewInFlightRef.current !== null) return;
-    const inFlight = Object.freeze({
-      project_id: request.project_id,
-      conversation_id: request.conversation_id,
-      turn_id: request.turn_id,
-      run_id: request.run_id,
-    });
-    const inFlightKey = planReviewInFlightKey(inFlight);
-    setPlanReviewFailure(null);
-    setPlanReviewRecorded(null);
-    setApprovedPlanContinuationFailure(null);
-    publishPlanReviewInFlight(inFlight);
-    const commandEpoch = workspaceEpochRef.current;
-    let reviewed = false;
-    let reviewFailed = false;
-    try {
-      await ports.planReview.review(request);
-      reviewed = true;
-      setPlanReviewRecorded(inFlight);
-    } catch {
-      reviewFailed = true;
-      reviewed = false;
-    } finally {
-      if (
-        !reviewed
-        && planReviewInFlightRef.current !== null
-        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
-      ) {
-        publishPlanReviewInFlight(null);
-      }
-    }
-    if (workspaceEpochRef.current !== commandEpoch) return;
-    await conversation.load(request.project_id).catch(() => undefined);
-    if (!reviewed || request.decision !== 'approved') {
-      setPlanReviewFailure(reviewFailed ? inFlight : null);
-      if (
-        planReviewInFlightRef.current !== null
-        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
-      ) {
-        publishPlanReviewInFlight(null);
-      }
-      return;
-    }
-    setLiveOutput(null);
-    approvedPlanWaitingProjectRef.current = request.project_id;
-    let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
-    try {
-      result = await project.generateApprovedPlan({
-        project_id: request.project_id,
-        conversation_id: request.conversation_id,
-        turn_id: request.turn_id,
-        run_id: request.run_id,
-      });
-    } finally {
-      if (approvedPlanWaitingProjectRef.current === request.project_id) {
-        approvedPlanWaitingProjectRef.current = null;
-      }
-      if (
-        planReviewInFlightRef.current !== null
-        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
-      ) {
-        publishPlanReviewInFlight(null);
-      }
-    }
-    if (workspaceEpochRef.current !== commandEpoch) return;
-    setApprovedPlanContinuationFailure(result.status === 'generation_failed' ? inFlight : null);
-    await readActivityAfterTerminal(result, commandEpoch, request.project_id);
-    setLiveOutput(null);
-  }, [conversation, ports.planReview, project, publishPlanReviewInFlight, readActivityAfterTerminal]);
   const inspectRevision = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
     setActiveFile(null);
     await project.inspectRevision(targetProjectId, revisionReceiptDigest);

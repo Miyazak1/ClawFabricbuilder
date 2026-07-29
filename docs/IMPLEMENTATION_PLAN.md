@@ -497,10 +497,12 @@ Evidence requirements:
   with that plan-state contract. Contextual phrases such as "do it" or
   "按这个做" may enter build only when the visible conversation has live build
   context that is not blocked by a newer proposed or rejected plan. A proposed
-  Plan first result must still go through the visible approve/reject action, and
-  a rejected plan cannot be revived by a short execution phrase. This is a
-  renderer-only routing guard over the already read-only Task Stream projection:
-  it creates no draft, approval, provider call, Git evidence, Save fact,
+  Plan first result must still go through the plan review authority, either via
+  the visible approve/reject action or an explicit contextual composer approval
+  phrase. It cannot become an ordinary build submit, and a rejected plan cannot
+  be revived by a short execution phrase. This is a renderer-only routing guard
+  over the already read-only Task Stream projection and existing review path: it
+  creates no renderer-owned draft, provider call, Git evidence, Save fact,
   Project Revision, IPC/preload surface, or compatibility path;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,

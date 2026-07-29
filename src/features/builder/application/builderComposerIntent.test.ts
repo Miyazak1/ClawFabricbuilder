@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { routeBuilderComposerIntent } from './builderComposerIntent';
+import {
+  isBuilderComposerContextualBuildIntent,
+  routeBuilderComposerIntent,
+} from './builderComposerIntent';
 
 describe('routeBuilderComposerIntent', () => {
   it.each([
@@ -72,5 +75,14 @@ describe('routeBuilderComposerIntent', () => {
 
   it('keeps explicit plan selection outside the automatic chat/build route', () => {
     expect(routeBuilderComposerIntent('先规划一下这个项目')).toBe('answer');
+  });
+
+  it('detects only contextual execution phrases for pending-plan approval shortcuts', () => {
+    expect(isBuilderComposerContextualBuildIntent('按这个做')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('就按刚才方案实现')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('Go ahead')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('这个方案是什么')).toBe(false);
+    expect(isBuilderComposerContextualBuildIntent('帮我做一个网页3D')).toBe(false);
+    expect(isBuilderComposerContextualBuildIntent('')).toBe(false);
   });
 });

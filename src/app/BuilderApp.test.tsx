@@ -1593,8 +1593,17 @@ describe('BuilderApp v2', () => {
     });
   });
 
-  it('does not bypass pending plan review with a contextual execution phrase', async () => {
-    const { answer, container, createLocalProject, generate, reviewPlan, saveDraft, submit } = await setup({
+  it('approves a pending plan from a contextual execution phrase through review authority', async () => {
+    const {
+      answer,
+      container,
+      createLocalProject,
+      generate,
+      generateApprovedPlan,
+      reviewPlan,
+      saveDraft,
+      submit,
+    } = await setup({
       initiallySaved: true,
       pendingPlanActivity: true,
     });
@@ -1616,16 +1625,31 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '按这个做' });
+      expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+        decision: 'approved',
+      });
+      expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+      });
     });
-    expect(reviewPlan).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
   it('does not revive a rejected plan with a contextual execution phrase', async () => {

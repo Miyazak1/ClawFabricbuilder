@@ -42,6 +42,12 @@ function normalizeComposerInstruction(instruction: string): string {
     .replace(/\s+/gu, ' ');
 }
 
+export function isBuilderComposerContextualBuildIntent(instruction: string): boolean {
+  const normalized = normalizeComposerInstruction(instruction);
+  if (normalized.length === 0) return false;
+  return CONTEXTUAL_BUILD_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 export function routeBuilderComposerIntent(
   instruction: string,
   context: BuilderComposerIntentContext = {},
@@ -50,7 +56,7 @@ export function routeBuilderComposerIntent(
   if (normalized.length === 0) return 'answer';
   if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
   if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
-  if (CONTEXTUAL_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) {
+  if (isBuilderComposerContextualBuildIntent(normalized)) {
     return context.hasPriorBuildContext === true ? 'build' : 'answer';
   }
   if (CLEAR_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) return 'build';
