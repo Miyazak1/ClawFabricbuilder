@@ -2050,7 +2050,7 @@ describe('BuilderPage v2', () => {
     expect(workspace?.getAttribute('data-builder-review-sidebar-visible')).toBe('false');
     expect(document.activeElement).toBe(changesDisclosure);
     expect(Boolean(review!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(changes!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(preview!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
@@ -2227,6 +2227,8 @@ describe('BuilderPage v2', () => {
       expect(document.activeElement).toBe(changesDisclosure);
       expect(spy).not.toHaveBeenCalled();
       expect(Boolean(review!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING))
+        .toBe(true);
+      expect(Boolean(result!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING))
         .toBe(true);
     } finally {
       restore();

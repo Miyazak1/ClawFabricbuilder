@@ -1732,6 +1732,10 @@ export function BuilderPage({
                 >
                   {draftReview}
 
+                  {showResultFlow ? (
+                    <BuilderResultPanel panelRef={resultFlowRef} projection={preview} />
+                  ) : null}
+
                   {showChangesPanel ? (
                     <div className="cf-builder-chat-flow-surface cf-builder-changes-flow" data-builder-changes-flow="true">
                       <BuilderChangesPanel
@@ -1741,10 +1745,6 @@ export function BuilderPage({
                         open={changesPanelOpen}
                       />
                     </div>
-                  ) : null}
-
-                  {showResultFlow ? (
-                    <BuilderResultPanel panelRef={resultFlowRef} projection={preview} />
                   ) : null}
                 </div>
               ) : null}
