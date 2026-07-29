@@ -490,7 +490,10 @@ Evidence requirements:
   Code generation prompts may use an approved latest plan and may use
   `working_brief` when the user gives a contextual approval such as "按刚才说的做",
   but must not treat merely proposed or rejected plans as write approval. This
-  adds no renderer authority, IPC/preload surface, provider/credential
+  working brief is derived only from confirmed user goals plus assistant
+  proposal/plan language; ordinary explanatory questions such as preview-blank
+  diagnosis remain available as recent chat entries but are not promoted into an
+  implementation target. This adds no renderer authority, IPC/preload surface, provider/credential
   exposure, source mutation, Git evidence, Save authority, or Project Revision
   fact; it only makes the existing main-owned prompt context more faithful to
   the conversation;

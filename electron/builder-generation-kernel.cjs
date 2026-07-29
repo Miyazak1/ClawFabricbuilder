@@ -56,10 +56,12 @@ const AUTHORIZATION_VALUE_PATTERN = /\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,
 const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/u;
 const CREDENTIAL_URL_PATTERN = /https?:\/\/[^\s/:@]+:[^\s/@]+@/iu;
 const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{20,})\b/u;
-const WORKING_BRIEF_USER_PATTERN =
+const WORKING_BRIEF_USER_CONTEXT_PATTERN =
   /(?:确认|想要|希望|需要|做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:build|create|implement|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
-const WORKING_BRIEF_ASSISTANT_PATTERN =
-  /(?:方案|计划|建议|可以先|包含|实现|创建|生成|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:plan|proposal|approach|recommend|suggest|include|implement|build|create|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const WORKING_BRIEF_CONFIRMED_USER_PATTERN =
+  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现|想要|希望|需要).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:confirmed|decided|goal|requirements?|want|need).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const WORKING_BRIEF_ASSISTANT_PROPOSAL_PATTERN =
+  /(?:(?:方案是|计划是|建议|可以先|我会|我将|接下来会|可以按).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:plan is|proposal is|approach is|recommend|suggest|i will|i would|next i will|we can).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
 const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
@@ -405,7 +407,7 @@ function conversationRunKey(turnId, runId) {
 function buildWorkingBrief(entries, latestPlan) {
   if (latestPlan !== null && latestPlan.state === 'approved') {
     const latestUser = [...entries].reverse().find((entry) => (
-      entry.role === 'user' && WORKING_BRIEF_USER_PATTERN.test(entry.text)
+      entry.role === 'user' && WORKING_BRIEF_USER_CONTEXT_PATTERN.test(entry.text)
     ));
     return freezeDeep({
       brief_version: 'builder-working-brief.v1',
@@ -425,13 +427,13 @@ function buildWorkingBrief(entries, latestPlan) {
   let latestAssistantProposal = null;
   for (const entry of entries) {
     if (entry.role === 'user') {
-      if (WORKING_BRIEF_USER_PATTERN.test(entry.text)) latestUserGoal = entry.text;
+      if (WORKING_BRIEF_CONFIRMED_USER_PATTERN.test(entry.text)) latestUserGoal = entry.text;
       continue;
     }
     if (
       entry.role === 'assistant'
       && latestUserGoal !== null
-      && WORKING_BRIEF_ASSISTANT_PATTERN.test(entry.text)
+      && WORKING_BRIEF_ASSISTANT_PROPOSAL_PATTERN.test(entry.text)
     ) {
       latestAssistantProposal = entry.text;
     }

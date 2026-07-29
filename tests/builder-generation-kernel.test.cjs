@@ -278,6 +278,48 @@ function priorConversationEvents(currentRequest) {
   ];
 }
 
+function readOnlyPageQuestionEvents(currentRequest) {
+  return [
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:page-question',
+        mode: 'question',
+        message: {
+          text: '为什么这个页面预览空白？',
+        },
+      },
+    },
+    {
+      event_type: 'run_completed',
+      payload: {
+        turn_id: 'builder-turn:page-question',
+        result_kind: 'explanation',
+        assistant_message: {
+          text: '这个页面可能因为静态预览不运行 JavaScript 而空白，可以先查看预览限制和文件内容。',
+        },
+      },
+    },
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:current',
+        mode: 'work',
+        message: {
+          text: currentRequest.instruction,
+        },
+      },
+    },
+    {
+      event_type: 'run_started',
+      payload: {
+        turn_id: 'builder-turn:current',
+        input_digest: currentRequest.request_digest,
+      },
+    },
+  ];
+}
+
 function planConversationEvents(currentRequest, decision = 'approved') {
   return [
     {
@@ -505,6 +547,37 @@ test('includes a bounded prior conversation brief for context-grounded build pro
   assert.doesNotMatch(
     descriptor.user_instruction,
     /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer|按刚才方案实现.*按刚才方案实现/iu,
+  );
+});
+
+test('does not promote explanatory page questions into a contextual working brief', () => {
+  const rawRequest = request({ instruction: '开始吧', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree([{ path: 'src/app.js', content: 'export const existing = true;\n' }]),
+    conversation_events: readOnlyPageQuestionEvents(rawRequest),
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.deepEqual(context.conversation_brief.entries, [
+    {
+      role: 'user',
+      kind: 'question',
+      text: '为什么这个页面预览空白？',
+    },
+    {
+      role: 'assistant',
+      kind: 'explanation',
+      text: '这个页面可能因为静态预览不运行 JavaScript 而空白，可以先查看预览限制和文件内容。',
+    },
+  ]);
+  assert.equal(context.conversation_brief.latest_plan, null);
+  assert.equal(context.conversation_brief.working_brief, null);
+  assert.match(descriptor.user_instruction, /为什么这个页面预览空白/u);
+  assert.doesNotMatch(descriptor.user_instruction, /builder-working-brief|recent_chat_proposal/u);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
   );
 });
 
