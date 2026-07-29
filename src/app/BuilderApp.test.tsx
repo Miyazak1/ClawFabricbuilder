@@ -1418,6 +1418,38 @@ describe('BuilderApp v2', () => {
       .toBe('把按钮颜色改红');
   });
 
+  it('routes clear Chinese 3D build turns to submit once a workspace is bound', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '帮我做一个网页3D');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '帮我做一个网页3D' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+  });
+
   it('keeps one composer turn editable and retryable after submit failure', async () => {
     const { container, generate, readTaskStream, retry, saveDraft, submit } = await setup({
       failSubmitOnce: true,
