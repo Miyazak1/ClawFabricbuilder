@@ -2274,6 +2274,35 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
+  it('keeps vague improvement requests in chat until the user gives a clear target', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, '帮我优化一下');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+        .toContain('This answer does not change files.');
+    });
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '帮我优化一下' });
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
   it('restores a pending draft from project activity after opening a saved project', async () => {
     const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
       initiallySaved: true,

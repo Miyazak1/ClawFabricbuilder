@@ -8,10 +8,16 @@ const READ_ONLY_PATTERNS = Object.freeze([
   /\b(?:explain|describe|tell me|status|what's|whats)\b/u,
 ]);
 
+const VAGUE_CHANGE_PATTERNS = Object.freeze([
+  /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
+  /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
+]);
+
 const CLEAR_BUILD_PATTERNS = Object.freeze([
   /(?:帮我|请|麻烦).*(?:做|创建|生成|实现|修改|更改|改成|改为|换成|换为|替换|设为|设置|新增|添加|加个|加一个|删除|删掉|去掉|移除|修复|调整|调成|调为|放大|缩小|移动|移到|优化|重构|开发|搭建|写)/u,
   /(?:把|将).*(?:改|换|替换|设为|设置|新增|添加|加个|加一个|删除|删掉|去掉|移除|修复|调整|调成|调为|放大|缩小|移动|移到)/u,
   /(?:做一个|做个|创建|生成|实现|修改|更改|改成|改为|换成|换为|替换|设为|设置|新增|添加|加个|加一个|删除|删掉|去掉|移除|修复|调整|调成|调为|放大|缩小|移动|移到|优化|重构|开发|搭建|写一个|写个|完成)/u,
+  /\bimprove\s+(?:this|that|the|my|our)\s+(?:app|button|component|dashboard|form|layout|page|project|screen|site|tool|view|website)\b/u,
   /\b(?:build|create|generate|implement|modify|update|add|remove|delete|fix|refactor|redesign)\b/u,
   /\bchange\b/u,
   /\bmake\s+(?:me\s+)?(?:a|an|the)\s+[\w-]+/u,
@@ -31,6 +37,7 @@ export function routeBuilderComposerIntent(instruction: string): BuilderComposer
   const normalized = normalizeComposerInstruction(instruction);
   if (normalized.length === 0) return 'answer';
   if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
+  if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
   if (CLEAR_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) return 'build';
   return 'answer';
 }
