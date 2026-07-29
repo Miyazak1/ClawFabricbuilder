@@ -1772,7 +1772,7 @@ export function BuilderPage({
     if (status === 'restoring') return 'Restoring draft';
     if (viewingHistory) return 'Viewing a saved version';
     if (hasUnsavedDraft) return 'Continue this draft';
-    return saved ? 'Continue this project' : 'Start from an idea';
+    return null;
   })();
   const composerPlaceholder = (() => {
     if (hasUnsavedDraft) return 'Describe the next change to this draft...';
@@ -2107,9 +2107,11 @@ export function BuilderPage({
               </span>
               <ChevronDown aria-hidden="true" className="size-3.5" />
             </button>
-            <span className="cf-builder-status-pill">
-              {composerStatusLabel}
-            </span>
+            {composerStatusLabel === null ? null : (
+              <span className="cf-builder-status-pill" data-builder-composer-status="true">
+                {composerStatusLabel}
+              </span>
+            )}
             {canProposePlan ? (
               <button
                 className="cf-builder-composer-tool-button"

@@ -1022,6 +1022,8 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Start from an idea');
     expect(container.textContent).not.toContain('Select a project to see activity.');
     expect(container.textContent).not.toContain('No activity yet.');
     expect(container.textContent).not.toContain('Your result will appear here.');
