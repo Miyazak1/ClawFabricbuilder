@@ -3,7 +3,6 @@ import {
   AlertCircle,
   Bot,
   CheckCircle2,
-  FileCode2,
   History,
   LockKeyhole,
   Play,
@@ -48,6 +47,7 @@ import { BuilderChangesPanel } from './BuilderChangesPanel';
 import { BuilderComposer } from './BuilderComposer';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
+import { BuilderSourceDisclosure } from './BuilderSourceDisclosure';
 
 export type BuilderFileName = string;
 
@@ -1754,63 +1754,15 @@ export function BuilderPage({
               ) : null}
 
               {sourceFile === null ? null : (
-                <details
-                  aria-label="Project source"
-                  className="cf-builder-source-disclosure cf-builder-chat-flow-surface"
-                  data-builder-source-flow="true"
-                  id="builder-source-disclosure"
+                <BuilderSourceDisclosure
+                  canToggle={selected === null}
+                  disclosureRef={sourceDisclosureRef}
+                  files={files}
+                  onOpenChange={setSourceDisclosureOpen}
+                  onSelectFile={onSelectFile}
                   open={sourceDisclosureOpen}
-                  ref={sourceDisclosureRef}
-                  tabIndex={-1}
-                >
-                  <summary
-                    aria-expanded={sourceDisclosureOpen}
-                    className="cf-builder-source-summary"
-                    data-builder-source-summary="true"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      if (selected !== null) return;
-                      setSourceDisclosureOpen(!sourceDisclosureOpen);
-                    }}
-                  >
-                    <span className="cf-builder-source-title">
-                      <FileCode2 aria-hidden="true" className="size-3.5" />
-                      Source files
-                    </span>
-                    <span className="cf-builder-source-meta">
-                      {files.length} {files.length === 1 ? 'file' : 'files'} - {sourceFile.path}
-                    </span>
-                  </summary>
-                  {sourceDisclosureOpen ? (
-                    <div className="cf-builder-source-body">
-                      <div className="cf-builder-source-files" aria-label="Project source files">
-                        {files.map((file) => {
-                          const active = sourceFile.path === file.path;
-                          return (
-                            <button
-                              className="cf-builder-source-file"
-                              data-active={active ? 'true' : undefined}
-                              data-builder-source-file={file.path}
-                              disabled={typeof onSelectFile !== 'function' || active}
-                              key={file.path}
-                              onClick={() => selectFile(file.path)}
-                              type="button"
-                            >
-                              <FileCode2 aria-hidden="true" className="size-3.5" />
-                              {file.path}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <pre
-                        className="cf-builder-source-code"
-                        data-builder-source-code={sourceFile.path}
-                      >
-                        <code>{sourceFile.content}</code>
-                      </pre>
-                    </div>
-                  ) : null}
-                </details>
+                  sourceFile={sourceFile}
+                />
               )}
 
               {conversationNotice}
