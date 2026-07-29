@@ -71,9 +71,13 @@ function builderId(kind, index) {
   return `builder-${kind}:123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
 }
 
-function planSourceContextResult(rawRequest = request({ existingProjectId: PROJECT_ID }), rawFiles = [
-  { path: 'src/app.tsx', content: 'export const ready = true;\n' },
-]) {
+function planSourceContextResult(
+  rawRequest = request({ existingProjectId: PROJECT_ID }),
+  rawFiles = [
+    { path: 'src/app.tsx', content: 'export const ready = true;\n' },
+  ],
+  conversationEventRecords = conversationEvents({ requestDigest: rawRequest.request_digest }),
+) {
   const tree = sourceTree(rawFiles);
   const files = tree.files.map((file) => ({
     path: file.path,
@@ -105,7 +109,7 @@ function planSourceContextResult(rawRequest = request({ existingProjectId: PROJE
         event_digest: `sha256:${'b'.repeat(64)}`,
       },
       attempt_number: 1,
-      events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+      events: conversationEventRecords,
       run_terminal_failure_code: null,
       ids: {
         turn_command_id: builderId('command', 1),
@@ -487,12 +491,55 @@ test('builds a route-specific plan prompt from bounded private source context', 
   assert.match(descriptor.system_instruction, /Do not include source-change operations/u);
   assert.match(descriptor.user_instruction, /Plan a smaller settings panel/u);
   assert.match(descriptor.user_instruction, /export const Settings/u);
+  assert.deepEqual(JSON.parse(descriptor.user_instruction).conversation_brief, {
+    context_version: 'builder-conversation-brief.v1',
+    selection: 'recent_prior_user_and_assistant_messages',
+    entries: [],
+  });
   assert.deepEqual(JSON.parse(descriptor.user_instruction).current_source_context.files, [
     { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
   ]);
   assert.doesNotMatch(
     descriptor.user_instruction,
     /builder-project:|request_digest|context_digest|record_digest|tool_call_id|credential|provider/iu,
+  );
+});
+
+test('includes a bounded prior conversation brief for context-grounded plan prompts', () => {
+  const rawRequest = request({ instruction: '先规划一下', existingProjectId: PROJECT_ID });
+  const sourceContext = planSourceContextResult(
+    rawRequest,
+    [{ path: 'src/app.tsx', content: 'export const Gallery = () => null;\n' }],
+    priorConversationEvents(rawRequest),
+  );
+  const descriptor = createBuilderPlanPromptDescriptor({
+    request: rawRequest,
+    source_context_result: sourceContext,
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.equal(context.mode, 'plan');
+  assert.deepEqual(context.conversation_brief, {
+    context_version: 'builder-conversation-brief.v1',
+    selection: 'recent_prior_user_and_assistant_messages',
+    entries: [
+      {
+        role: 'user',
+        kind: 'question',
+        text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      },
+      {
+        role: 'assistant',
+        kind: 'explanation',
+        text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+      },
+    ],
+  });
+  assert.match(descriptor.user_instruction, /星空背景/u);
+  assert.match(descriptor.user_instruction, /export const Gallery/u);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|context_digest|credential|provider|api[_-]?key|Bearer|先规划一下.*先规划一下/iu,
   );
 });
 

@@ -524,15 +524,24 @@ function sanitizePlanPromptInput(value) {
   const request = sanitizeBuilderGenerationRequestInternal(
     valueAt(value, 'request', 'builder_generation_request_invalid'),
   );
+  const rawSourceContext = valueAt(value, 'source_context_result', 'builder_generation_base_unavailable');
   let sourceContextResult;
   try {
     sourceContextResult = sanitizePlanPromptSourceContextResult(
-      valueAt(value, 'source_context_result', 'builder_generation_base_unavailable'),
+      rawSourceContext,
     );
   } catch {
     fail('builder_generation_base_unavailable');
   }
-  return { request, sourceContextResult };
+  const rawContext = valueAt(rawSourceContext, 'context', 'builder_generation_base_unavailable');
+  const conversationEvents = sanitizeConversationPromptEvents(
+    valueAt(rawContext, 'events', 'builder_generation_base_unavailable'),
+  );
+  return {
+    request,
+    sourceContextResult,
+    conversationBrief: conversationBriefFromEvents(conversationEvents, request.request_digest),
+  };
 }
 
 function sanitizePlanPromptSourceContextResult(value) {
@@ -614,10 +623,11 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
 
 function planPromptDescriptor(value, promptVersion, systemInstruction, outputContract) {
   try {
-    const { request, sourceContextResult } = sanitizePlanPromptInput(value);
+    const { request, sourceContextResult, conversationBrief } = sanitizePlanPromptInput(value);
     const userContext = {
       instruction: request.instruction,
       mode: 'plan',
+      conversation_brief: conversationBrief,
       current_source_context: {
         files: sourceContextResult.private_source_context.files.map((file) => ({
           path: file.path,
