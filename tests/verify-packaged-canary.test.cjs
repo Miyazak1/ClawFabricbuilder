@@ -64,6 +64,7 @@ function reviewDiffEvidence() {
     activity_review_do_not_overlap: true,
     changes_diff_nested_in_panel: true,
     changes_panel_follows_review: true,
+    changes_panel_follows_result: true,
     changes_panel_visible: true,
     completion_landing_review_and_result_visible: true,
     inline_diff_visible: true,
@@ -580,10 +581,10 @@ class FakePage {
       [SELECTORS.discardDraft, { x: 494, y: 308, width: 128, height: 32 }],
       [SELECTORS.saveVersion, { x: 630, y: 308, width: 120, height: 32 }],
       [SELECTORS.resultFlow, { x: 360, y: 362, width: 860, height: 286 }],
-      [SELECTORS.changesFlow, { x: 360, y: 362, width: 860, height: 320 }],
-      [SELECTORS.changesPanel, { x: 360, y: 362, width: 860, height: 320 }],
-      [SELECTORS.changeCard, { x: 380, y: 412, width: 820, height: 240 }],
-      [SELECTORS.changeDiff, { x: 400, y: 462, width: 780, height: 160 }],
+      [SELECTORS.changesFlow, { x: 360, y: 662, width: 860, height: 320 }],
+      [SELECTORS.changesPanel, { x: 360, y: 662, width: 860, height: 320 }],
+      [SELECTORS.changeCard, { x: 380, y: 712, width: 820, height: 240 }],
+      [SELECTORS.changeDiff, { x: 400, y: 762, width: 780, height: 160 }],
     ]);
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
@@ -2145,6 +2146,24 @@ test('rejects draft changes panels that overlap the review checkpoint', async ()
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.changesFlow, { x: 360, y: 300, width: 860, height: 320 });
   page.reviewLayoutBoxes.set(SELECTORS.changesPanel, { x: 360, y: 300, width: 860, height: 320 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), true);
+});
+
+test('rejects draft changes panels that appear before the result preview', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.changesFlow, { x: 360, y: 430, width: 860, height: 320 });
+  page.reviewLayoutBoxes.set(SELECTORS.changesPanel, { x: 360, y: 430, width: 860, height: 320 });
+  page.reviewLayoutBoxes.set(SELECTORS.changeCard, { x: 380, y: 480, width: 820, height: 220 });
+  page.reviewLayoutBoxes.set(SELECTORS.changeDiff, { x: 400, y: 530, width: 780, height: 150 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -4434,7 +4453,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v15/u);
+  assert.match(source, /builder-packaged-canary-result\.v16/u);
   assert.match(source, /run_progress_recorded/u);
   assert.match(source, /tool_call_requested/u);
   assert.match(source, /tool_call_result_recorded/u);

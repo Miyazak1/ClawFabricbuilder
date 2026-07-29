@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v15';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v16';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state summary below the timer before changing files.';
@@ -1941,9 +1941,10 @@ async function assertDraftCompletionLandingViaUi(page, review) {
     || result.y > boxBottom(scroll) - 120
     || boxesOverlap(review, result)
   ) fail('canary_review_diff_failed');
+  return result;
 }
 
-async function assertChangesPanelLayoutViaUi(page, review) {
+async function assertChangesPanelLayoutViaUi(page, review, result) {
   const flow = await boundedBox(page.locator(SELECTORS.changesFlow));
   const panel = await boundedBox(page.locator(SELECTORS.changesPanel));
   const card = await boundedBox(page.locator(SELECTORS.changeCard).first());
@@ -1955,8 +1956,11 @@ async function assertChangesPanelLayoutViaUi(page, review) {
     || flow.height < 80
     || panel.height < 80
     || flow.y < boxBottom(review) - 1
+    || flow.y < boxBottom(result) - 1
     || boxesOverlap(review, flow)
     || boxesOverlap(review, panel)
+    || boxesOverlap(result, flow)
+    || boxesOverlap(result, panel)
     || !boxContains(flow, panel)
     || !boxContains(panel, card)
     || !boxContains(card, diff)
@@ -1980,14 +1984,14 @@ async function inspectDraftReviewDiffViaUi(page) {
 
     const reviewBox = await assertDraftReviewLayoutViaUi(page);
     await assertConversationActivityBeforeReviewViaUi(page, reviewBox);
-    await assertDraftCompletionLandingViaUi(page, reviewBox);
+    const resultBox = await assertDraftCompletionLandingViaUi(page, reviewBox);
     await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.reviewOpenChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeCard).first().waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeDiff).first().waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeDiffLine).first().waitFor({ state: 'visible' });
-    await assertChangesPanelLayoutViaUi(page, reviewBox);
+    await assertChangesPanelLayoutViaUi(page, reviewBox, resultBox);
     const summaryText = await page.locator(SELECTORS.changesSummary).textContent();
     const changesText = await page.locator(SELECTORS.changesPanel).textContent();
     if (
@@ -2002,6 +2006,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       activity_review_do_not_overlap: true,
       changes_diff_nested_in_panel: true,
       changes_panel_follows_review: true,
+      changes_panel_follows_result: true,
       changes_panel_visible: true,
       completion_landing_review_and_result_visible: true,
       inline_diff_visible: true,
