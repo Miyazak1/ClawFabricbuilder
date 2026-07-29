@@ -74,6 +74,37 @@ describe('BuilderProjectCatalog v2', () => {
     expect(container.querySelectorAll('button')).toHaveLength(2);
   });
 
+  it('renders restart-restored unsaved workspace projects in the sidebar', async () => {
+    const wire = await createCatalogWire();
+    const controller = createBuilderProjectCatalogController({
+      listCurrent: async () => ({ ...wire, projects: [] }),
+      listWorkspaces: async () => createWorkspaceCatalogWire([{
+        project_id: PROJECT_ID,
+        title: 'Unsaved dashboard',
+        source_folders: [{ name: 'site-source', status: 'selected' }],
+        bound_at_ms: 20,
+        has_current_revision: false,
+        current_revision_number: 0,
+      }]),
+    });
+    const onOpenProject = vi.fn();
+    const container = render(
+      <BuilderProjectCatalog
+        onOpenProject={onOpenProject}
+        snapshot={await controller.load()}
+      />,
+    );
+
+    expect(container.textContent).toContain('In progress');
+    expect(container.textContent).toContain('Unsaved dashboard');
+    expect(container.textContent).toContain('Not saved yet - site-source');
+    expect(container.textContent).not.toContain('No saved projects yet.');
+    expect(container.textContent).not.toMatch(/sha256|commit_oid|tree_oid|SQLite|Git|[A-Za-z]:\\/u);
+
+    click(container, 'Unsaved dashboard');
+    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
+  });
+
   it('labels stale data without dropping the previous list', async () => {
     const listCurrent = vi.fn()
       .mockResolvedValueOnce(await createCatalogWire())

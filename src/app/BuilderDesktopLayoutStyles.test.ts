@@ -131,6 +131,20 @@ describe('Builder desktop layout styles', () => {
     expect(summaryText).not.toContain('overflow-wrap: anywhere;');
   });
 
+  it('keeps restart-restored workspace catalog entries compact in the sidebar', () => {
+    const source = styles();
+    const workspaceCatalog = styleBlock(source, '.cf-builder-workspace-catalog');
+    const sectionLabel = styleBlock(source, '.cf-builder-catalog-section-label');
+
+    expect(workspaceCatalog).toContain('display: grid;');
+    expect(workspaceCatalog).toContain('gap: 6px;');
+    expect(workspaceCatalog).toContain('padding-top: 12px;');
+    expect(sectionLabel).toContain('font-size: 11px;');
+    expect(sectionLabel).toContain('text-transform: uppercase;');
+    expect(sectionLabel).not.toContain('border:');
+    expect(workspaceCatalog).not.toContain('border:');
+  });
+
   it('keeps draft review actions stable as a desktop conversation checkpoint', () => {
     const source = styles();
     const review = styleBlock(source, '.cf-builder-review-checkpoint');

@@ -84,6 +84,7 @@ async function setup(options: Readonly<{
   restoreAvailable?: boolean;
   runningActivity?: boolean;
   validHistoryPreview?: boolean;
+  multipleWorkspaceOnlyCatalog?: boolean;
   workspaceOnlyCatalog?: boolean;
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
@@ -248,7 +249,9 @@ async function setup(options: Readonly<{
         },
       };
     }
-    restoredDraft = await createRestoredDraftForReadWire(readWire);
+    restoredDraft = options.workspaceOnlyCatalog === true && !saved
+      ? await createRestoredDraftForUnsavedWorkspaceWire(readWire)
+      : await createRestoredDraftForReadWire(readWire);
     expect(request).toEqual({ draft_id: restoredDraft.draft_id });
     return {
       version: 'builder-generation-ipc-result.v1',
@@ -467,7 +470,7 @@ async function setup(options: Readonly<{
         project_id: null,
       };
     }
-    if (options.workspaceOnlyCatalog === true && !saved) {
+    if ((options.workspaceOnlyCatalog === true || options.multipleWorkspaceOnlyCatalog === true) && !saved) {
       return {
         result_version: 'builder-project-selection-result.v1',
         operation: 'local_project_bound',
@@ -501,7 +504,26 @@ async function setup(options: Readonly<{
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
   const listWorkspaces = vi.fn(async () => createWorkspaceCatalogWire(
-    options.workspaceOnlyCatalog === true
+    options.multipleWorkspaceOnlyCatalog === true
+      ? [
+        {
+          project_id: PROJECT_ID,
+          title: 'Unsaved dashboard',
+          source_folders: [{ name: 'site-source', status: 'selected' }],
+          bound_at_ms: 20,
+          has_current_revision: false,
+          current_revision_number: 0,
+        },
+        {
+          project_id: 'builder-project:22222222-2222-4222-8222-222222222222',
+          title: 'Second unsaved dashboard',
+          source_folders: [{ name: 'second-source', status: 'selected' }],
+          bound_at_ms: 10,
+          has_current_revision: false,
+          current_revision_number: 0,
+        },
+      ]
+      : options.workspaceOnlyCatalog === true
       ? [{
         project_id: PROJECT_ID,
         title: 'Unsaved dashboard',
@@ -789,6 +811,18 @@ async function createRestoredDraftForReadWire(
       commit_oid: readWire.product_revision_receipt.commit_oid,
       source_tree_digest: readWire.source_tree.source_tree_digest,
     },
+  };
+}
+
+async function createRestoredDraftForUnsavedWorkspaceWire(
+  readWire: Awaited<ReturnType<typeof createReadWire>>,
+) {
+  const request = await createBuilderGenerationRequest('Add a local-project change.');
+  const draft = await createGenerationDraft(request, readWire.source_tree);
+  return {
+    ...draft,
+    request_id: null,
+    restart_restore: 'git_sqlite_verified' as const,
   };
 }
 
@@ -1133,7 +1167,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('reopens a bound unsaved workspace from the composer picker after restart', async () => {
+  it('auto-opens a single bound unsaved workspace after restart', async () => {
     const { container, createLocalProject, listCurrent, listWorkspaces, open, submit } = await setup({
       workspaceOnlyCatalog: true,
     });
@@ -1141,18 +1175,6 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(listCurrent).toHaveBeenCalled();
       expect(listWorkspaces).toHaveBeenCalled();
-    });
-    click(container, '[data-builder-workspace-chip="true"]');
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Not saved yet - site-source');
-    });
-
-    click(container, `[data-builder-workspace-bound-project="${PROJECT_ID}"]`);
-
-    await waitFor(() => {
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
       expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
         .toContain('Unsaved dashboard');
@@ -1177,9 +1199,35 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('restores a pending draft after auto-opening a single unsaved workspace', async () => {
+    const { container, listCurrent, listWorkspaces, open, readTaskStream, restoreDraft, saveDraft } = await setup({
+      pendingActivity: true,
+      restoreAvailable: true,
+      workspaceOnlyCatalog: true,
+    });
+
+    await waitFor(() => {
+      expect(listCurrent).toHaveBeenCalled();
+      expect(listWorkspaces).toHaveBeenCalled();
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+      .toContain('Unsaved dashboard');
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('opens an existing bound workspace from a gated build without auto-submit', async () => {
     const { container, createLocalProject, listCurrent, listWorkspaces, open, submit } = await setup({
-      workspaceOnlyCatalog: true,
+      multipleWorkspaceOnlyCatalog: true,
     });
 
     await waitFor(() => {

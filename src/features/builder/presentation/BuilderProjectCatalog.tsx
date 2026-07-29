@@ -21,6 +21,10 @@ export function BuilderProjectCatalog({
   const trusted = isTrustedBuilderProjectCatalogSnapshot(snapshot);
   const status = trusted ? snapshot.status : 'unavailable';
   const projects = trusted ? snapshot.projects : [];
+  const savedProjectIds = new Set(projects.map((project) => project.project_id));
+  const workspaceProjects = trusted
+    ? snapshot.workspaceProjects.filter((project) => !savedProjectIds.has(project.project_id))
+    : [];
   const busy = status === 'loading' || status === 'refreshing';
 
   return (
@@ -81,7 +85,9 @@ export function BuilderProjectCatalog({
           Saved projects could not be refreshed. Showing the previous list.
         </p>
       ) : null}
-      {(status === 'ready' || status === 'stale' || status === 'refreshing') && projects.length === 0 ? (
+      {(status === 'ready' || status === 'stale' || status === 'refreshing')
+      && projects.length === 0
+      && workspaceProjects.length === 0 ? (
         <p className="cf-builder-alert cf-builder-alert-info m-3 text-sm">No saved projects yet.</p>
       ) : null}
       {projects.length > 0 ? (
@@ -107,6 +113,33 @@ export function BuilderProjectCatalog({
             </li>
           ))}
         </ul>
+      ) : null}
+      {workspaceProjects.length > 0 ? (
+        <div className="cf-builder-workspace-catalog" data-builder-workspace-catalog="true">
+          <p className="cf-builder-catalog-section-label">In progress</p>
+          <ul className="cf-builder-project-list" aria-label="Unsaved projects">
+            {workspaceProjects.map((project) => (
+              <li key={project.project_id}>
+                <button
+                  className="cf-builder-project-row grid min-h-16 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                  data-builder-workspace-catalog-project={project.project_id}
+                  disabled={busy || typeof onOpenProject !== 'function'}
+                  onClick={() => onOpenProject?.(project.project_id)}
+                  type="button"
+                >
+                  <FolderOpen aria-hidden="true" className="mt-0.5 size-4" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{project.title}</span>
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">
+                      Not saved yet - {project.source_folders[0]?.name ?? 'Source folder selected'}
+                    </span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">Draft</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </section>
   );

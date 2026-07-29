@@ -384,18 +384,21 @@ function latestRestorableDraft(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
 ): Readonly<{ draftId: string; restoreKey: string }> | null {
+  const visibleProjectId = projectSnapshot.savedProject?.target.project_id
+    ?? projectSnapshot.workingProjectId
+    ?? null;
   if (
     projectSnapshot.busy
     || projectSnapshot.draft !== null
     || projectSnapshot.inspectedRevision !== null
-    || projectSnapshot.savedProject === null
+    || visibleProjectId === null
     || !['ready', 'generation_failed', 'preview_unavailable'].includes(projectSnapshot.status)
     || conversationSnapshot.status !== 'ready'
     || conversationSnapshot.conversation?.state !== 'ready'
-    || conversationSnapshot.project_id !== projectSnapshot.savedProject.target.project_id
+    || conversationSnapshot.project_id !== visibleProjectId
   ) return null;
   const items = conversationSnapshot.conversation.conversation.items;
-  const savedTarget = projectSnapshot.savedProject.target;
+  const savedTarget = projectSnapshot.savedProject?.target ?? null;
   const reviewedDraftIds = new Set<string>();
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
@@ -405,7 +408,7 @@ function latestRestorableDraft(
     }
     if (item.item_kind === 'run_completed' && item.candidate !== null) {
       if (reviewedDraftIds.has(item.candidate.draft_id)) continue;
-      if (item.turn_id === savedTarget.turn_id && item.run_id === savedTarget.run_id) {
+      if (savedTarget !== null && item.turn_id === savedTarget.turn_id && item.run_id === savedTarget.run_id) {
         return null;
       }
       return Object.freeze({
@@ -413,7 +416,7 @@ function latestRestorableDraft(
         restoreKey: [
           conversationSnapshot.project_id,
           conversationSnapshot.conversation.conversation.head_sequence,
-          savedTarget.revision_receipt_digest,
+          savedTarget?.revision_receipt_digest ?? 'working-project',
           item.candidate.draft_id,
         ].join(':'),
       });
@@ -465,6 +468,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
+  const initialWorkspaceAutoOpenRef = useRef(false);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
@@ -656,6 +660,22 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const newProject = useCallback(() => {
     resetWorkspace(undefined);
   }, [resetWorkspace]);
+
+  useEffect(() => {
+    if (initialWorkspaceAutoOpenRef.current || catalog.snapshot.busy) return;
+    if (projectId !== undefined || projectSnapshotRef.current.status !== 'new') return;
+    if (catalog.snapshot.status !== 'ready' && catalog.snapshot.status !== 'stale') return;
+    initialWorkspaceAutoOpenRef.current = true;
+    const savedProjectIds = new Set(catalog.snapshot.projects.map((candidate) => candidate.project_id));
+    const workspaceOnlyProjects = catalog.snapshot.workspaceProjects
+      .filter((candidate) => !savedProjectIds.has(candidate.project_id));
+    if (catalog.snapshot.projects.length !== 0 || workspaceOnlyProjects.length !== 1) return;
+    const workspaceProjectId = workspaceOnlyProjects[0].project_id;
+    window.setTimeout(() => {
+      if (projectSnapshotRef.current.status !== 'new') return;
+      openProject(workspaceProjectId);
+    });
+  }, [catalog.snapshot, openProject, projectId]);
 
   const dismissWorkspacePicker = useCallback(() => {
     pendingBuildAfterWorkspaceRef.current = null;
