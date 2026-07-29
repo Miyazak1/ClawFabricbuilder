@@ -40,6 +40,10 @@ const MAX_PLAN_STEP_TEXT_CODE_POINTS = 360;
 const MAX_PLAN_STEP_TEXT_UTF8_BYTES = 1536;
 const MAX_GENERATED_TEXT_BYTES = MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES;
 const MAX_PROMPT_DESCRIPTOR_BYTES = MAX_SOURCE_TREE_UTF8_BYTES + (96 * 1024);
+const MAX_CONVERSATION_EVENTS_FOR_PROMPT = 128;
+const MAX_CONVERSATION_BRIEF_ENTRIES = 8;
+const MAX_CONVERSATION_BRIEF_TEXT_CODE_POINTS = 1200;
+const MAX_CONVERSATION_BRIEF_TEXT_UTF8_BYTES = 4096;
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -53,7 +57,7 @@ const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-
 
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
 const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
-const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree']);
+const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree', 'conversation_events']);
 const PLAN_PROMPT_INPUT_KEYS = Object.freeze(['request', 'source_context_result']);
 const RESULT_INPUT_KEYS = Object.freeze([
   'request',
@@ -316,6 +320,112 @@ function safeDigest(value, code) {
   return value;
 }
 
+function optionalOwnValue(value, key) {
+  if (!isPlainObject(value)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return undefined;
+  return descriptor.value;
+}
+
+function sanitizeConversationPromptEvents(value) {
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || value.length > MAX_CONVERSATION_EVENTS_FOR_PROMPT
+  ) fail('builder_generation_request_invalid');
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) {
+    fail('builder_generation_request_invalid');
+  }
+  const events = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      fail('builder_generation_request_invalid');
+    }
+    if (!isPlainObject(descriptor.value)) fail('builder_generation_request_invalid');
+    events.push(descriptor.value);
+  }
+  return events;
+}
+
+function safeConversationBriefText(value) {
+  try {
+    return safeText(
+      value,
+      MAX_CONVERSATION_BRIEF_TEXT_CODE_POINTS,
+      MAX_CONVERSATION_BRIEF_TEXT_UTF8_BYTES,
+      true,
+      'builder_generation_request_invalid',
+    );
+  } catch {
+    return null;
+  }
+}
+
+function currentPromptTurnIds(events, requestDigest) {
+  const turnIds = new Set();
+  for (const event of events) {
+    if (optionalOwnValue(event, 'event_type') !== 'run_started') continue;
+    const payload = optionalOwnValue(event, 'payload');
+    if (!isPlainObject(payload)) continue;
+    if (optionalOwnValue(payload, 'input_digest') !== requestDigest) continue;
+    const turnId = optionalOwnValue(payload, 'turn_id');
+    if (typeof turnId === 'string') turnIds.add(turnId);
+  }
+  return turnIds;
+}
+
+function appendConversationBriefEntry(entries, entry) {
+  if (entry.text === null) return;
+  entries.push(entry);
+  while (entries.length > MAX_CONVERSATION_BRIEF_ENTRIES) entries.shift();
+}
+
+function conversationBriefKind(value, fallback) {
+  return typeof value === 'string' && /^[a-z_]{1,40}$/u.test(value) ? value : fallback;
+}
+
+function conversationBriefFromEvents(events, requestDigest) {
+  const currentTurnIds = currentPromptTurnIds(events, requestDigest);
+  const entries = [];
+  for (const event of events) {
+    const eventType = optionalOwnValue(event, 'event_type');
+    const payload = optionalOwnValue(event, 'payload');
+    if (!isPlainObject(payload)) continue;
+    const turnId = optionalOwnValue(payload, 'turn_id');
+    if (typeof turnId === 'string' && currentTurnIds.has(turnId)) continue;
+
+    if (eventType === 'turn_submitted' || eventType === 'turn_steered') {
+      const message = optionalOwnValue(payload, 'message');
+      const text = safeConversationBriefText(optionalOwnValue(message, 'text'));
+      appendConversationBriefEntry(entries, {
+        role: 'user',
+        kind: eventType === 'turn_steered'
+          ? 'steer'
+          : conversationBriefKind(optionalOwnValue(payload, 'mode'), 'message'),
+        text,
+      });
+      continue;
+    }
+
+    if (eventType === 'run_completed') {
+      const message = optionalOwnValue(payload, 'assistant_message');
+      const text = safeConversationBriefText(optionalOwnValue(message, 'text'));
+      appendConversationBriefEntry(entries, {
+        role: 'assistant',
+        kind: conversationBriefKind(optionalOwnValue(payload, 'result_kind'), 'result'),
+        text,
+      });
+    }
+  }
+  return freezeDeep({
+    context_version: 'builder-conversation-brief.v1',
+    selection: 'recent_prior_user_and_assistant_messages',
+    entries,
+  });
+}
+
 function deterministicUuidFromText(value) {
   const bytes = nodeCrypto.createHash('sha256').update(value, 'utf8').digest();
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -393,13 +503,20 @@ function sanitizePromptInput(value) {
   const request = sanitizeBuilderGenerationRequestInternal(
     valueAt(value, 'request', 'builder_generation_request_invalid'),
   );
+  const conversationEvents = sanitizeConversationPromptEvents(
+    valueAt(value, 'conversation_events', 'builder_generation_request_invalid'),
+  );
   let baseSourceTree;
   try {
     baseSourceTree = sanitizeBuilderProjectSourceTree(valueAt(value, 'base_source_tree', 'builder_generation_base_unavailable'));
   } catch {
     fail('builder_generation_base_unavailable');
   }
-  return { request, baseSourceTree };
+  return {
+    request,
+    baseSourceTree,
+    conversationBrief: conversationBriefFromEvents(conversationEvents, request.request_digest),
+  };
 }
 
 function sanitizePlanPromptInput(value) {
@@ -463,10 +580,11 @@ function sanitizePlanPromptSourceContextResult(value) {
 
 function promptDescriptor(value, promptVersion, systemInstruction, outputContract) {
   try {
-    const { request, baseSourceTree } = sanitizePromptInput(value);
+    const { request, baseSourceTree, conversationBrief } = sanitizePromptInput(value);
     const userContext = {
       instruction: request.instruction,
       mode: request.existing_project_id === null ? 'create' : 'revise',
+      conversation_brief: conversationBrief,
       current_source_tree: {
         files: baseSourceTree.files.map((file) => ({
           path: file.path,

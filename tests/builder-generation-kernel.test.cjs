@@ -222,6 +222,58 @@ function conversationEvents({
   return [first, second];
 }
 
+function priorConversationEvents(currentRequest) {
+  return [
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:prior-discussion',
+        mode: 'question',
+        message: {
+          text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+        },
+      },
+    },
+    {
+      event_type: 'run_completed',
+      payload: {
+        turn_id: 'builder-turn:prior-discussion',
+        result_kind: 'explanation',
+        assistant_message: {
+          text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+        },
+      },
+    },
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:unsafe-discussion',
+        mode: 'work',
+        message: {
+          text: `api_key=${'x'.repeat(24)}`,
+        },
+      },
+    },
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:current',
+        mode: 'work',
+        message: {
+          text: currentRequest.instruction,
+        },
+      },
+    },
+    {
+      event_type: 'run_started',
+      payload: {
+        turn_id: 'builder-turn:current',
+        input_digest: currentRequest.request_digest,
+      },
+    },
+  ];
+}
+
 function generatedText(overrides = {}) {
   return JSON.stringify({
     kind: BUILDER_GENERATED_OPERATIONS_KIND,
@@ -316,8 +368,17 @@ test('creates the full deterministic v2 request only from host-owned project sel
 test('builds a deterministic operations prompt without exposing host identities', () => {
   const rawRequest = request();
   const base = sourceTree();
-  const first = createBuilderGenerationPromptDescriptor({ request: rawRequest, base_source_tree: base });
-  const second = createBuilderGenerationPromptDescriptor({ request: structuredClone(rawRequest), base_source_tree: base });
+  const currentEvents = conversationEvents({ requestDigest: rawRequest.request_digest });
+  const first = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: base,
+    conversation_events: currentEvents,
+  });
+  const second = createBuilderGenerationPromptDescriptor({
+    request: structuredClone(rawRequest),
+    base_source_tree: base,
+    conversation_events: structuredClone(currentEvents),
+  });
 
   assert.deepEqual(first, second);
   assert.equal(first.version, BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION);
@@ -337,15 +398,58 @@ test('builds a deterministic operations prompt without exposing host identities'
   assert.deepEqual(JSON.parse(first.user_instruction), {
     instruction: 'Make a calm focus timer.',
     mode: 'create',
+    conversation_brief: {
+      context_version: 'builder-conversation-brief.v1',
+      selection: 'recent_prior_user_and_assistant_messages',
+      entries: [],
+    },
     current_source_tree: { files: [] },
   });
   assert.doesNotMatch(first.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
 });
 
+test('includes a bounded prior conversation brief for context-grounded build prompts', () => {
+  const rawRequest = request({ instruction: '按刚才方案实现', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree([{ path: 'src/app.js', content: 'export const existing = true;\n' }]),
+    conversation_events: priorConversationEvents(rawRequest),
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.equal(context.instruction, '按刚才方案实现');
+  assert.deepEqual(context.conversation_brief, {
+    context_version: 'builder-conversation-brief.v1',
+    selection: 'recent_prior_user_and_assistant_messages',
+    entries: [
+      {
+        role: 'user',
+        kind: 'question',
+        text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      },
+      {
+        role: 'assistant',
+        kind: 'explanation',
+        text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+      },
+    ],
+  });
+  assert.match(descriptor.user_instruction, /星空背景/u);
+  assert.match(descriptor.user_instruction, /单页静态作品集/u);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer|按刚才方案实现.*按刚才方案实现/iu,
+  );
+});
+
 test('builds a route-specific explanation prompt without allowing source operations', () => {
   const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
   const base = sourceTree([{ path: 'src/app.js', content: 'export const saved = true;\n' }]);
-  const descriptor = createBuilderExplanationPromptDescriptor({ request: rawRequest, base_source_tree: base });
+  const descriptor = createBuilderExplanationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: base,
+    conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+  });
 
   assert.equal(descriptor.version, BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION);
   assert.equal(descriptor.prompt_version, 'builder-project-explanation.v1');
@@ -397,7 +501,11 @@ test('includes verified source text for existing-project revision prompts', () =
   const base = sourceTree([
     { path: 'src/app.js', content: 'export const count = 1;\n' },
   ]);
-  const descriptor = createBuilderGenerationPromptDescriptor({ request: rawRequest, base_source_tree: base });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: base,
+    conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+  });
   const context = JSON.parse(descriptor.user_instruction);
 
   assert.equal(context.mode, 'revise');

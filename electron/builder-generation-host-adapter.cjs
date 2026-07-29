@@ -360,6 +360,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
       descriptor = createBuilderGenerationPromptDescriptor({
         request,
         base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
+        conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
       });
     } catch (error) {
       mapKernelError(error);
@@ -435,6 +436,11 @@ function createBuilderGenerationHostAdapter(options = {}) {
         base_source_tree: ownValue(
           context,
           'prompt_base_source_tree',
+          'builder_generation_base_unavailable',
+        ),
+        conversation_events: ownValue(
+          context,
+          'conversation_events',
           'builder_generation_base_unavailable',
         ),
       });
@@ -537,6 +543,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
       descriptor = createBuilderExplanationPromptDescriptor({
         request,
         base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
+        conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
       });
     } catch (error) {
       mapKernelError(error);
