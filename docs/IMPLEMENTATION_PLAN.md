@@ -482,13 +482,14 @@ Evidence requirements:
   source, receipt, provider, credential, tool output, save, Git, revision, or
   project-save authority and does not mark the project saved;
 - the current conversation-grounded prompt checkpoint upgrades the bounded
-  prompt conversation brief to `builder-conversation-brief.v2`. Main-owned
+  prompt conversation brief to `builder-conversation-brief.v3`. Main-owned
   generation prompt construction still receives only replayed Conversation
-  events and excludes the current request turn, but it now derives a structured
-  `latest_plan` object with `proposed`, `approved`, or `rejected` state from
-  admitted plan result and plan review events. Code generation prompts may use
-  an approved latest plan as implementation context, must not treat merely
-  proposed plans as write approval, and must not implement rejected plans. This
+  events and excludes the current request turn, but it now derives both a
+  structured `latest_plan` object with `proposed`, `approved`, or `rejected`
+  state and a bounded `working_brief` object from recent confirmed discussion.
+  Code generation prompts may use an approved latest plan and may use
+  `working_brief` when the user gives a contextual approval such as "按刚才说的做",
+  but must not treat merely proposed or rejected plans as write approval. This
   adds no renderer authority, IPC/preload surface, provider/credential
   exposure, source mutation, Git evidence, Save authority, or Project Revision
   fact; it only makes the existing main-owned prompt context more faithful to

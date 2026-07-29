@@ -454,10 +454,11 @@ test('builds a deterministic operations prompt without exposing host identities'
     instruction: 'Make a calm focus timer.',
     mode: 'create',
     conversation_brief: {
-      context_version: 'builder-conversation-brief.v2',
-      selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
+      context_version: 'builder-conversation-brief.v3',
+      selection: 'recent_prior_messages_latest_plan_and_working_brief',
       entries: [],
       latest_plan: null,
+      working_brief: null,
     },
     current_source_tree: { files: [] },
   });
@@ -475,8 +476,8 @@ test('includes a bounded prior conversation brief for context-grounded build pro
 
   assert.equal(context.instruction, '按刚才方案实现');
   assert.deepEqual(context.conversation_brief, {
-    context_version: 'builder-conversation-brief.v2',
-    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
+    context_version: 'builder-conversation-brief.v3',
+    selection: 'recent_prior_messages_latest_plan_and_working_brief',
     entries: [
       {
         role: 'user',
@@ -490,6 +491,14 @@ test('includes a bounded prior conversation brief for context-grounded build pro
       },
     ],
     latest_plan: null,
+    working_brief: {
+      brief_version: 'builder-working-brief.v1',
+      source: 'recent_chat_proposal',
+      latest_user_goal: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      assistant_proposal: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+      approved_plan: null,
+      use_when_instruction_is_contextual: true,
+    },
   });
   assert.match(descriptor.user_instruction, /星空背景/u);
   assert.match(descriptor.user_instruction, /单页静态作品集/u);
@@ -511,6 +520,17 @@ test('includes the latest approved plan as structured build context', () => {
   assert.deepEqual(context.conversation_brief.latest_plan, {
     state: 'approved',
     text: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
+  });
+  assert.deepEqual(context.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'approved_plan',
+    latest_user_goal: '先规划这个作品集首页。',
+    assistant_proposal: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
+    approved_plan: {
+      state: 'approved',
+      text: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
+    },
+    use_when_instruction_is_contextual: true,
   });
   assert.deepEqual(context.conversation_brief.entries, [
     {
@@ -541,6 +561,7 @@ test('marks rejected plans without promoting them to approved build context', ()
     state: 'rejected',
     text: 'Plan: build a starfield hero, add three-dimensional project cards, and keep contact details static.',
   });
+  assert.equal(context.conversation_brief.working_brief, null);
   assert.notEqual(context.conversation_brief.latest_plan.state, 'approved');
   assert.match(descriptor.system_instruction, /proposed plans are not approval/u);
   assert.match(descriptor.system_instruction, /rejected plans must not be implemented/u);
@@ -596,10 +617,11 @@ test('builds a route-specific plan prompt from bounded private source context', 
   assert.match(descriptor.user_instruction, /Plan a smaller settings panel/u);
   assert.match(descriptor.user_instruction, /export const Settings/u);
   assert.deepEqual(JSON.parse(descriptor.user_instruction).conversation_brief, {
-    context_version: 'builder-conversation-brief.v2',
-    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
+    context_version: 'builder-conversation-brief.v3',
+    selection: 'recent_prior_messages_latest_plan_and_working_brief',
     entries: [],
     latest_plan: null,
+    working_brief: null,
   });
   assert.deepEqual(JSON.parse(descriptor.user_instruction).current_source_context.files, [
     { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
@@ -625,8 +647,8 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
 
   assert.equal(context.mode, 'plan');
   assert.deepEqual(context.conversation_brief, {
-    context_version: 'builder-conversation-brief.v2',
-    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
+    context_version: 'builder-conversation-brief.v3',
+    selection: 'recent_prior_messages_latest_plan_and_working_brief',
     entries: [
       {
         role: 'user',
@@ -640,6 +662,14 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
       },
     ],
     latest_plan: null,
+    working_brief: {
+      brief_version: 'builder-working-brief.v1',
+      source: 'recent_chat_proposal',
+      latest_user_goal: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      assistant_proposal: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+      approved_plan: null,
+      use_when_instruction_is_contextual: true,
+    },
   });
   assert.match(descriptor.user_instruction, /星空背景/u);
   assert.match(descriptor.user_instruction, /export const Gallery/u);
@@ -1128,7 +1158,8 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     'builder-generation-request.v2',
     'builder-generation-result.v2',
     'builder-code-project.v3',
-    'builder-conversation-brief.v2',
+    'builder-conversation-brief.v3',
+    'builder-working-brief.v1',
     'builder_code_change_operations',
     'builder-project-plan.v1',
     'builder_project_plan_proposal',

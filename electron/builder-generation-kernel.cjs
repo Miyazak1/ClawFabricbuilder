@@ -44,6 +44,8 @@ const MAX_CONVERSATION_EVENTS_FOR_PROMPT = 128;
 const MAX_CONVERSATION_BRIEF_ENTRIES = 8;
 const MAX_CONVERSATION_BRIEF_TEXT_CODE_POINTS = 1200;
 const MAX_CONVERSATION_BRIEF_TEXT_UTF8_BYTES = 4096;
+const CONVERSATION_BRIEF_CONTEXT_VERSION = 'builder-conversation-brief.v3';
+const CONVERSATION_BRIEF_SELECTION = 'recent_prior_messages_latest_plan_and_working_brief';
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -54,6 +56,10 @@ const AUTHORIZATION_VALUE_PATTERN = /\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,
 const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/u;
 const CREDENTIAL_URL_PATTERN = /https?:\/\/[^\s/:@]+:[^\s/@]+@/iu;
 const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{20,})\b/u;
+const WORKING_BRIEF_USER_PATTERN =
+  /(?:确认|想要|希望|需要|做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:build|create|implement|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const WORKING_BRIEF_ASSISTANT_PATTERN =
+  /(?:方案|计划|建议|可以先|包含|实现|创建|生成|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:plan|proposal|approach|recommend|suggest|include|implement|build|create|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
 const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
@@ -136,6 +142,7 @@ const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
   'Prefer a small coherent change over a broad scaffold when the request is ambiguous.',
   'Use conversation_brief as context. If it contains latest_plan, treat its state as meaningful: approved plans may guide implementation, proposed plans are not approval to change files, and rejected plans must not be implemented.',
+  'If the current instruction is a short contextual approval, use conversation_brief.working_brief as the implementation target; working_brief is requirements context, not execution, save, review, or runtime evidence.',
 ].join('\n');
 
 const EXPLANATION_SYSTEM_INSTRUCTION = [
@@ -149,6 +156,7 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
   'Use conversation_brief as context, including latest_plan state when explaining prior planning decisions.',
+  'Treat conversation_brief.working_brief as prior discussion context only, not as evidence that files changed.',
 ].join('\n');
 const PLAN_SYSTEM_INSTRUCTION = [
   'Propose one bounded implementation plan for the current local software project.',
@@ -164,6 +172,7 @@ const PLAN_SYSTEM_INSTRUCTION = [
   'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
   'Use conversation_brief as context. If it contains latest_plan, treat its state as meaningful when preparing the next plan.',
+  'Use conversation_brief.working_brief to avoid losing the user\'s prior goals, but do not treat it as approval to edit files.',
 ].join('\n');
 
 const CODE_CHANGE_OUTPUT_CONTRACT = Object.freeze({
@@ -393,6 +402,51 @@ function conversationRunKey(turnId, runId) {
   return typeof turnId === 'string' && typeof runId === 'string' ? `${turnId}:${runId}` : null;
 }
 
+function buildWorkingBrief(entries, latestPlan) {
+  if (latestPlan !== null && latestPlan.state === 'approved') {
+    const latestUser = [...entries].reverse().find((entry) => (
+      entry.role === 'user' && WORKING_BRIEF_USER_PATTERN.test(entry.text)
+    ));
+    return freezeDeep({
+      brief_version: 'builder-working-brief.v1',
+      source: 'approved_plan',
+      latest_user_goal: latestUser?.text ?? null,
+      assistant_proposal: latestPlan.text,
+      approved_plan: {
+        state: 'approved',
+        text: latestPlan.text,
+      },
+      use_when_instruction_is_contextual: true,
+    });
+  }
+  if (latestPlan !== null) return null;
+
+  let latestUserGoal = null;
+  let latestAssistantProposal = null;
+  for (const entry of entries) {
+    if (entry.role === 'user') {
+      if (WORKING_BRIEF_USER_PATTERN.test(entry.text)) latestUserGoal = entry.text;
+      continue;
+    }
+    if (
+      entry.role === 'assistant'
+      && latestUserGoal !== null
+      && WORKING_BRIEF_ASSISTANT_PATTERN.test(entry.text)
+    ) {
+      latestAssistantProposal = entry.text;
+    }
+  }
+  if (latestAssistantProposal === null) return null;
+  return freezeDeep({
+    brief_version: 'builder-working-brief.v1',
+    source: 'recent_chat_proposal',
+    latest_user_goal: latestUserGoal,
+    assistant_proposal: latestAssistantProposal,
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+}
+
 function conversationBriefFromEvents(events, requestDigest) {
   const currentTurnIds = currentPromptTurnIds(events, requestDigest);
   const entries = [];
@@ -449,10 +503,11 @@ function conversationBriefFromEvents(events, requestDigest) {
     }
   }
   return freezeDeep({
-    context_version: 'builder-conversation-brief.v2',
-    selection: 'recent_prior_user_and_assistant_messages_with_latest_plan',
+    context_version: CONVERSATION_BRIEF_CONTEXT_VERSION,
+    selection: CONVERSATION_BRIEF_SELECTION,
     entries,
     latest_plan: latestPlan,
+    working_brief: buildWorkingBrief(entries, latestPlan),
   });
 }
 
