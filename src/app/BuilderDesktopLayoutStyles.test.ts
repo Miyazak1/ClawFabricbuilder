@@ -23,6 +23,17 @@ function styleBlock(source: string, selector: string): string {
   return source.slice(start, end + 2);
 }
 
+function styleBlockContaining(source: string, selector: string, expected: string): string {
+  let start = source.indexOf(`${selector} {`);
+  while (start >= 0) {
+    const end = source.indexOf('\n}', start);
+    const block = end < 0 ? source.slice(start) : source.slice(start, end + 2);
+    if (block.includes(expected)) return block;
+    start = source.indexOf(`${selector} {`, end < 0 ? source.length : end + 2);
+  }
+  return '';
+}
+
 describe('Builder desktop layout styles', () => {
   it('pins the desktop shell and lets only the conversation body scroll', () => {
     const source = styles();
@@ -276,6 +287,28 @@ describe('Builder desktop layout styles', () => {
     expect(unavailable).toContain('border-top: 1px solid var(--cf-border);');
     expect(unavailable).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(unavailable).not.toContain('border-radius');
+  });
+
+  it('keeps source code disclosure lightweight instead of a competing artifact card', () => {
+    const source = styles();
+    const disclosure = styleBlockContaining(source, '.cf-builder-source-disclosure', 'display: block;');
+    const disclosureOpen = styleBlock(source, '.cf-builder-source-disclosure[open]');
+    const summary = styleBlock(source, '.cf-builder-source-summary');
+    const summaryControl = styleBlock(source, '.cf-builder-source-summary::after');
+    const body = styleBlock(source, '.cf-builder-source-body');
+
+    expect(disclosure).toContain('border-top: 1px solid var(--cf-border);');
+    expect(disclosure).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(disclosure).toContain('background: transparent;');
+    expect(disclosure).not.toContain('border: 1px solid var(--cf-border);');
+    expect(disclosure).not.toContain('border-radius');
+    expect(disclosureOpen).toContain('background: transparent;');
+    expect(summary).toContain('min-height: 36px;');
+    expect(summary).toContain('padding: 0 2px;');
+    expect(summaryControl).not.toContain('border:');
+    expect(summaryControl).not.toContain('border-radius');
+    expect(body).toContain('border-top: 1px solid var(--cf-border);');
+    expect(body).toContain('padding: 10px 0 0;');
   });
 
   it('keeps the draft-gated composer as a lightweight status row', () => {

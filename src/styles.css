@@ -1266,13 +1266,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-source-disclosure {
   display: block;
-  border: 1px solid var(--cf-border);
-  border-radius: 8px;
-  background: var(--cf-surface-muted);
+  border-top: 1px solid var(--cf-border);
+  border-bottom: 1px solid var(--cf-border);
+  background: transparent;
 }
 
 .cf-builder-source-disclosure[open] {
-  background: var(--cf-surface);
+  background: transparent;
 }
 
 .cf-builder-source-disclosure:focus-visible {
@@ -1282,14 +1282,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-source-summary {
   display: flex;
-  min-height: 40px;
+  min-height: 36px;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   cursor: pointer;
   list-style: none;
-  padding: 0 12px;
+  padding: 0 2px;
 }
 
 .cf-builder-source-summary::-webkit-details-marker {
@@ -1304,8 +1304,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--cf-border);
-  border-radius: 7px;
   color: var(--cf-text-muted);
   font-size: 14px;
   font-weight: 700;
@@ -1340,7 +1338,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   gap: 10px;
   border-top: 1px solid var(--cf-border);
-  padding: 10px;
+  padding: 10px 0 0;
 }
 
 .cf-builder-source-files {
