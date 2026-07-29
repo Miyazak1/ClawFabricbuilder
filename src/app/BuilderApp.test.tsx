@@ -903,6 +903,12 @@ function click(container: HTMLElement, label: string): void {
   act(() => button?.click());
 }
 
+function artifactPreviewSrcdoc(container: HTMLElement): string | null {
+  return container
+    .querySelector('[data-builder-artifact-sidebar="true"] [data-builder-result-flow="true"] iframe')
+    ?.getAttribute('srcdoc') ?? null;
+}
+
 async function openSavedProject(container: HTMLElement): Promise<void> {
   await waitFor(() => {
     expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
@@ -2859,8 +2865,9 @@ describe('BuilderApp v2', () => {
     });
     click(container, 'Hello project');
     await waitFor(() => {
-      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Current</main>');
       expect(container.querySelector('[data-builder-view-version="Version 1"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+        .toBe('versions');
     });
 
     act(() => {
@@ -2869,7 +2876,9 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-history-preview="true"]')?.textContent)
         .toContain('Viewing Version 1');
-      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
+      expect(artifactPreviewSrcdoc(container)).toContain('<main>Earlier</main>');
+      expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+        .toBe('preview');
     });
     expect(loadRevision).toHaveBeenCalledOnce();
     expect(container.querySelectorAll('[data-builder-show-current-version="true"]')).toHaveLength(1);
@@ -2877,7 +2886,9 @@ describe('BuilderApp v2', () => {
     click(container, 'Back to current');
     await waitFor(() => {
       expect(container.querySelector('[data-builder-history-preview="true"]')).toBeNull();
-      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('<main>Current</main>');
+      expect(artifactPreviewSrcdoc(container)).toContain('<main>Current</main>');
+      expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+        .toBe('preview');
     });
   });
 

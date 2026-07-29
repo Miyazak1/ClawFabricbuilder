@@ -1,5 +1,5 @@
 import type { Ref } from 'react';
-import { GitCompareArrows, Save, Trash2 } from 'lucide-react';
+import { Eye, GitCompareArrows, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
 import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourceTreePreview';
@@ -12,6 +12,7 @@ export type BuilderReviewCheckpointProps = Readonly<{
   discardLabel: string;
   hasContent: boolean;
   onOpenChanges: () => void;
+  onOpenPreview: () => void;
   onRejectDraft?: () => void;
   onSave?: () => void;
   preview: BuilderSourceTreePreviewProjection | null;
@@ -26,6 +27,7 @@ export function BuilderReviewCheckpoint({
   discardLabel,
   hasContent,
   onOpenChanges,
+  onOpenPreview,
   onRejectDraft,
   onSave,
   preview,
@@ -60,6 +62,15 @@ export function BuilderReviewCheckpoint({
         data-builder-draft-review-actions="true"
         data-builder-review-actions="true"
       >
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+          data-builder-review-open-preview="true"
+          onClick={onOpenPreview}
+          type="button"
+        >
+          <Eye aria-hidden="true" className="size-3.5" />
+          Preview
+        </button>
         <button
           className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
           data-builder-review-open-changes="true"

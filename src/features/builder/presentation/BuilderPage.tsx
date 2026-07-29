@@ -1,14 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type Ref,
+} from 'react';
 import {
   AlertCircle,
   Bot,
   CheckCircle2,
+  Eye,
+  FileCode2,
+  GitCompareArrows,
   History,
   LockKeyhole,
   Play,
   RefreshCw,
   StopCircle,
   UserRound,
+  X,
 } from 'lucide-react';
 
 import {
@@ -42,12 +55,14 @@ import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot'
 import {
   createBuilderSourceTreeChanges,
   type BuilderSourceTreeChange,
+  type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
 import { BuilderComposer } from './BuilderComposer';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
 import { BuilderSourceDisclosure } from './BuilderSourceDisclosure';
+import { builderChangesSummary, builderReviewPreviewStatus } from './builderReviewText';
 
 export type BuilderFileName = string;
 
@@ -122,6 +137,22 @@ const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'preview_unavailable',
 ]);
 const CHAT_FOLLOW_BOTTOM_THRESHOLD_PX = 96;
+const ARTIFACT_DEFAULT_WIDTH_PX = 480;
+const ARTIFACT_MIN_WIDTH_PX = 360;
+const ARTIFACT_MAX_WIDTH_PX = 760;
+const ARTIFACT_MIN_CHAT_WIDTH_PX = 520;
+type BuilderArtifactTab = 'changes' | 'preview' | 'source' | 'versions';
+
+function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
+  if (!Number.isFinite(value)) return ARTIFACT_DEFAULT_WIDTH_PX;
+  const safeMaximum = Math.max(ARTIFACT_MIN_WIDTH_PX, Math.min(ARTIFACT_MAX_WIDTH_PX, Math.round(maximum)));
+  return Math.min(safeMaximum, Math.max(ARTIFACT_MIN_WIDTH_PX, Math.round(value)));
+}
+
+function artifactMaxWidthForShell(shellWidth: number): number {
+  if (!Number.isFinite(shellWidth)) return ARTIFACT_MAX_WIDTH_PX;
+  return Math.max(ARTIFACT_MIN_WIDTH_PX, shellWidth - ARTIFACT_MIN_CHAT_WIDTH_PX);
+}
 
 function isBuilderGenerationDiagnosticCode(
   value: BuilderProjectControllerSnapshot['error'],
@@ -1049,6 +1080,228 @@ function ActivityPanel({
   );
 }
 
+function artifactTabLabel(tab: BuilderArtifactTab): string {
+  if (tab === 'preview') return 'Preview';
+  if (tab === 'changes') return 'Changes';
+  if (tab === 'source') return 'Source';
+  return 'Versions';
+}
+
+function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
+  if (tab === 'preview') return <Eye aria-hidden="true" className="size-3.5" />;
+  if (tab === 'changes') return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
+  if (tab === 'source') return <FileCode2 aria-hidden="true" className="size-3.5" />;
+  return <History aria-hidden="true" className="size-3.5" />;
+}
+
+function BuilderArtifactSummary({
+  activeTab,
+  changes,
+  hasContent,
+  onOpenChanges,
+  onOpenPreview,
+  preview,
+  showChanges,
+  showPreview,
+}: Readonly<{
+  activeTab: BuilderArtifactTab | null;
+  changes: BuilderSourceTreeChanges;
+  hasContent: boolean;
+  onOpenChanges: () => void;
+  onOpenPreview: () => void;
+  preview: BuilderProjectControllerSnapshot['preview'];
+  showChanges: boolean;
+  showPreview: boolean;
+}>) {
+  return (
+    <section
+      aria-label="Draft result summary"
+      className="cf-builder-artifact-summary cf-builder-chat-flow-surface"
+      data-builder-artifact-summary="true"
+    >
+      <div className="cf-builder-artifact-summary-copy">
+        <div className="cf-builder-artifact-summary-icon" aria-hidden="true">
+          <Eye className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="cf-builder-artifact-summary-title">Result ready</h2>
+          <p className="cf-builder-artifact-summary-text" data-builder-artifact-summary-preview="true">
+            {builderReviewPreviewStatus(preview, hasContent)}
+          </p>
+          <p className="cf-builder-artifact-summary-text" data-builder-artifact-summary-changes="true">
+            {builderChangesSummary(changes)}
+          </p>
+        </div>
+      </div>
+      <div className="cf-builder-artifact-summary-actions">
+        {showPreview ? (
+          <button
+            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+            data-active={activeTab === 'preview' ? 'true' : undefined}
+            data-builder-open-artifact-preview="true"
+            onClick={onOpenPreview}
+            type="button"
+          >
+            <Eye aria-hidden="true" className="size-3.5" />
+            Preview
+          </button>
+        ) : null}
+        {showChanges ? (
+          <button
+            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+            data-active={activeTab === 'changes' ? 'true' : undefined}
+            data-builder-open-artifact-changes="true"
+            onClick={onOpenChanges}
+            type="button"
+          >
+            <GitCompareArrows aria-hidden="true" className="size-3.5" />
+            Changes
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function BuilderArtifactSidebar({
+  activeTab,
+  changes,
+  changesOpen,
+  files,
+  hasSavedProject,
+  inspectedRevisionReceiptDigest,
+  onClose,
+  onInspectRevision,
+  onOpenFile,
+  onRefreshHistory,
+  onRestoreRevisionAsDraft,
+  onResizeStart,
+  onSelectFile,
+  onSelectTab,
+  onSourceOpenChange,
+  preview,
+  previewPanelRef,
+  sidebarRef,
+  sourceDisclosureOpen,
+  sourceDisclosureRef,
+  sourceFile,
+  tabs,
+  history,
+}: Readonly<{
+  activeTab: BuilderArtifactTab;
+  changes: BuilderSourceTreeChanges;
+  changesOpen: boolean;
+  files: readonly BuilderProjectSourceFile[];
+  hasSavedProject: boolean;
+  history: BuilderProjectHistorySnapshot | null;
+  inspectedRevisionReceiptDigest: string | null;
+  onClose: () => void;
+  onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onOpenFile: (change: BuilderSourceTreeChange) => void;
+  onRefreshHistory?: () => Promise<unknown> | void;
+  onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onSelectFile?: (file: BuilderFileName) => void;
+  onSelectTab: (tab: BuilderArtifactTab) => void;
+  onSourceOpenChange: (open: boolean) => void;
+  preview: BuilderProjectControllerSnapshot['preview'];
+  previewPanelRef?: Ref<HTMLElement>;
+  sidebarRef?: Ref<HTMLElement>;
+  sourceDisclosureOpen: boolean;
+  sourceDisclosureRef: Ref<HTMLDetailsElement>;
+  sourceFile: BuilderProjectSourceFile | null;
+  tabs: readonly BuilderArtifactTab[];
+}>) {
+  return (
+    <aside
+      aria-label="Project artifact"
+      className="cf-builder-artifact-sidebar"
+      data-builder-artifact-sidebar="true"
+      data-builder-artifact-tab-active={activeTab}
+      ref={sidebarRef}
+    >
+      <button
+        aria-label="Resize artifact"
+        className="cf-builder-artifact-resize-handle"
+        data-builder-artifact-resize-handle="true"
+        onPointerDown={onResizeStart}
+        type="button"
+      />
+      <header className="cf-builder-artifact-header">
+        <div className="min-w-0">
+          <p className="cf-builder-artifact-kicker">Artifact</p>
+          <h3 className="cf-builder-artifact-title">{artifactTabLabel(activeTab)}</h3>
+        </div>
+        <div className="cf-builder-artifact-header-actions">
+          <div className="cf-builder-artifact-tabs" role="tablist" aria-label="Artifact views">
+            {tabs.map((tab) => (
+              <button
+                aria-selected={activeTab === tab}
+                className="cf-builder-artifact-tab"
+                data-active={activeTab === tab ? 'true' : undefined}
+                data-builder-artifact-tab={tab}
+                key={tab}
+                onClick={() => onSelectTab(tab)}
+                role="tab"
+                type="button"
+              >
+                <ArtifactTabIcon tab={tab} />
+                <span>{artifactTabLabel(tab)}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            aria-label="Close artifact"
+            className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
+            data-builder-close-artifact-sidebar="true"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" className="size-3.5" />
+          </button>
+        </div>
+      </header>
+      <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
+        {activeTab === 'preview' ? (
+          <BuilderResultPanel panelRef={previewPanelRef} placement="artifact" projection={preview} />
+        ) : null}
+        {activeTab === 'changes' ? (
+          <div className="cf-builder-artifact-changes" data-builder-changes-flow="true">
+            <BuilderChangesPanel
+              changes={changes}
+              onOpenChange={() => undefined}
+              onOpenFile={onOpenFile}
+              open={changesOpen}
+            />
+          </div>
+        ) : null}
+        {activeTab === 'source' && sourceFile !== null ? (
+          <BuilderSourceDisclosure
+            canToggle
+            disclosureRef={sourceDisclosureRef}
+            files={files}
+            onOpenChange={onSourceOpenChange}
+            onSelectFile={onSelectFile}
+            open={sourceDisclosureOpen}
+            placement="artifact"
+            sourceFile={sourceFile}
+          />
+        ) : null}
+        {activeTab === 'versions' ? (
+          <VersionHistoryPanel
+            hasSavedProject={hasSavedProject}
+            inspectedRevisionReceiptDigest={inspectedRevisionReceiptDigest}
+            onInspectRevision={onInspectRevision}
+            onRefresh={onRefreshHistory}
+            onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
+            snapshot={history}
+          />
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
 export function BuilderPage({
   instruction,
   onApprovePlanSourceRead,
@@ -1183,15 +1436,19 @@ export function BuilderPage({
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
   const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
   const showResultFlow = preview !== null || showPreviewUnavailableResult;
+  const showVersionHistoryPanel = saved !== null && !hasUnsavedDraft;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
   const draftLandingRef = useRef<HTMLDivElement | null>(null);
   const draftReviewRef = useRef<HTMLElement | null>(null);
   const resultFlowRef = useRef<HTMLElement | null>(null);
+  const artifactSidebarRef = useRef<HTMLElement | null>(null);
   const pendingChangesFocusRef = useRef(false);
   const pendingSourceFocusRef = useRef(false);
+  const chatShellRef = useRef<HTMLElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTailRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowChatRef = useRef(true);
+  const [artifactWidth, setArtifactWidth] = useState(ARTIFACT_DEFAULT_WIDTH_PX);
   const changesPanelIdentity = [
     draft?.draft_id ?? 'no-draft',
     inspected?.target.revision_receipt_digest ?? 'no-inspected',
@@ -1228,8 +1485,89 @@ export function BuilderPage({
       && sourceDisclosureState.open
     )
   );
-  const showChangesPanel = hasUnsavedDraft && changesPanelOpen;
-  const showReviewSidebar = saved !== null && !hasUnsavedDraft;
+  const currentFiles = draft?.source_tree.files ?? saved?.source_tree.files ?? [];
+  const currentSelected = currentFiles.find((file) => file.path === activeFile) ?? null;
+  const currentSourceFile = currentSelected ?? (preview === null ? currentFiles[0] ?? null : null);
+  const currentArtifactPanelIdentity = [
+    draft?.draft_id ?? 'no-draft',
+    'no-inspected',
+    saved?.target.revision_receipt_digest ?? 'no-saved',
+    currentSourceFile?.path ?? 'no-source',
+    currentFiles.length,
+    showResultFlow ? 'result' : 'no-result',
+    showVersionHistoryPanel ? 'versions' : 'no-versions',
+  ].join('|');
+  const artifactPanelIdentity = [
+    draft?.draft_id ?? 'no-draft',
+    inspected?.target.revision_receipt_digest ?? 'no-inspected',
+    saved?.target.revision_receipt_digest ?? 'no-saved',
+    sourceFile?.path ?? 'no-source',
+    files.length,
+    showResultFlow ? 'result' : 'no-result',
+    showVersionHistoryPanel ? 'versions' : 'no-versions',
+  ].join('|');
+  const artifactTabs = useMemo(() => {
+    const tabs: BuilderArtifactTab[] = [];
+    if (showResultFlow) tabs.push('preview');
+    if (hasUnsavedDraft) tabs.push('changes');
+    if (sourceFile !== null) tabs.push('source');
+    if (showVersionHistoryPanel) tabs.push('versions');
+    return tabs;
+  }, [hasUnsavedDraft, showResultFlow, showVersionHistoryPanel, sourceFile]);
+  const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && sourceFile !== null
+    ? 'source'
+    : viewingHistory && showResultFlow
+      ? 'preview'
+    : hasUnsavedDraft && showResultFlow
+      ? 'preview'
+      : showVersionHistoryPanel
+        ? 'versions'
+        : showResultFlow
+          ? 'preview'
+          : sourceFile !== null
+            ? 'source'
+            : hasUnsavedDraft
+              ? 'changes'
+              : null;
+  const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
+    active: BuilderArtifactTab | null;
+    identity: string;
+  }>>(() => ({
+    active: defaultArtifactTab,
+    identity: artifactPanelIdentity,
+  }));
+  const requestedArtifactTab = artifactPanelState.identity === artifactPanelIdentity
+    ? artifactPanelState.active
+    : defaultArtifactTab;
+  const activeArtifactTab = requestedArtifactTab !== null && artifactTabs.includes(requestedArtifactTab)
+    ? requestedArtifactTab
+    : null;
+  const showArtifactSidebar = activeArtifactTab !== null;
+  const showChangesPanel = activeArtifactTab === 'changes' && hasUnsavedDraft;
+  const artifactShellStyle = showArtifactSidebar
+    ? ({
+      '--cf-builder-artifact-width': `${artifactWidth}px`,
+    } as CSSProperties)
+    : undefined;
+
+  useLayoutEffect(() => {
+    if (!showArtifactSidebar) return undefined;
+    const shell = chatShellRef.current;
+    if (shell === null) return undefined;
+    const shellElement = shell;
+
+    function clampForCurrentShell(): void {
+      const maximum = artifactMaxWidthForShell(shellElement.getBoundingClientRect().width);
+      setArtifactWidth((currentWidth) => clampArtifactWidth(currentWidth, maximum));
+    }
+
+    clampForCurrentShell();
+    window.addEventListener('resize', clampForCurrentShell);
+    return () => {
+      window.removeEventListener('resize', clampForCurrentShell);
+    };
+  }, [showArtifactSidebar]);
+
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
       ? 'no-live-output'
@@ -1335,6 +1673,55 @@ export function BuilderPage({
     });
   }
 
+  function setActiveArtifactTab(active: BuilderArtifactTab | null): void {
+    setArtifactPanelState((panelState) => {
+      if (panelState.identity === artifactPanelIdentity && panelState.active === active) {
+        return panelState;
+      }
+      return {
+        active,
+        identity: artifactPanelIdentity,
+      };
+    });
+  }
+
+  function openArtifactTab(tab: BuilderArtifactTab): void {
+    shouldFollowChatRef.current = false;
+    setActiveArtifactTab(tab);
+    if (tab === 'changes') setChangesPanelOpen(true);
+    if (tab === 'source') setSourceDisclosureOpen(true);
+  }
+
+  function closeArtifactSidebar(): void {
+    shouldFollowChatRef.current = false;
+    setActiveArtifactTab(null);
+  }
+
+  function startArtifactResize(event: ReactPointerEvent<HTMLButtonElement>): void {
+    event.preventDefault();
+    const sidebar = artifactSidebarRef.current;
+    const startWidth = sidebar?.getBoundingClientRect().width ?? artifactWidth;
+    const startX = event.clientX;
+
+    function onPointerMove(moveEvent: globalThis.PointerEvent): void {
+      const shellWidth = chatShellRef.current?.getBoundingClientRect().width ?? Number.NaN;
+      setArtifactWidth(clampArtifactWidth(
+        startWidth + startX - moveEvent.clientX,
+        artifactMaxWidthForShell(shellWidth),
+      ));
+    }
+
+    function stopResize(): void {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+    }
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', stopResize, { once: true });
+    window.addEventListener('pointercancel', stopResize, { once: true });
+  }
+
   function selectFile(path: string): boolean {
     if (typeof onSelectFile !== 'function') return false;
     onSelectFile(path);
@@ -1345,6 +1732,7 @@ export function BuilderPage({
     if (change.change_kind === 'deleted') return;
     if (!selectFile(change.path)) return;
     pendingSourceFocusRef.current = true;
+    openArtifactTab('source');
     const disclosure = sourceDisclosureRef.current;
     if (disclosure !== null) {
       pendingSourceFocusRef.current = false;
@@ -1355,7 +1743,7 @@ export function BuilderPage({
   function openChangesPanel(): void {
     pendingChangesFocusRef.current = true;
     shouldFollowChatRef.current = false;
-    setChangesPanelOpen(true);
+    openArtifactTab('changes');
     const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     if (disclosure !== null) {
       pendingChangesFocusRef.current = false;
@@ -1364,6 +1752,13 @@ export function BuilderPage({
       return;
     }
     document.getElementById('builder-tool-changes')?.focus({ preventScroll: true });
+  }
+
+  function openPreviewPanel(): void {
+    openArtifactTab('preview');
+    window.requestAnimationFrame(() => {
+      document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
+    });
   }
 
   function focusDraftReview(): void {
@@ -1546,6 +1941,7 @@ export function BuilderPage({
       discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
       hasContent={hasContent}
       onOpenChanges={openChangesPanel}
+      onOpenPreview={openPreviewPanel}
       onRejectDraft={onRejectDraft}
       onSave={onSave}
       preview={preview}
@@ -1644,6 +2040,47 @@ export function BuilderPage({
     />
   );
 
+  const showArtifactSummary = hasUnsavedDraft && (showResultFlow || hasContent);
+  const artifactSummary = showArtifactSummary ? (
+    <BuilderArtifactSummary
+      activeTab={activeArtifactTab}
+      changes={changes}
+      hasContent={hasContent}
+      onOpenChanges={openChangesPanel}
+      onOpenPreview={openPreviewPanel}
+      preview={preview}
+      showChanges={hasUnsavedDraft}
+      showPreview={showResultFlow}
+    />
+  ) : null;
+  const artifactSidebar = showArtifactSidebar && activeArtifactTab !== null ? (
+    <BuilderArtifactSidebar
+      activeTab={activeArtifactTab}
+      changes={changes}
+      changesOpen={activeArtifactTab === 'changes' || changesPanelOpen}
+      files={files}
+      hasSavedProject={saved !== null}
+      history={history}
+      inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
+      onClose={closeArtifactSidebar}
+      onInspectRevision={onInspectRevision}
+      onOpenFile={openChangedFile}
+      onRefreshHistory={onRefreshHistory}
+      onResizeStart={startArtifactResize}
+      onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
+      onSelectFile={onSelectFile}
+      onSelectTab={openArtifactTab}
+      onSourceOpenChange={setSourceDisclosureOpen}
+      preview={preview}
+      previewPanelRef={resultFlowRef}
+      sidebarRef={artifactSidebarRef}
+      sourceDisclosureOpen={sourceDisclosureOpen}
+      sourceDisclosureRef={sourceDisclosureRef}
+      sourceFile={sourceFile}
+      tabs={artifactTabs}
+    />
+  ) : null;
+
   return (
     <div
       className="cf-builder-page bg-background text-foreground"
@@ -1682,6 +2119,10 @@ export function BuilderPage({
               data-builder-show-current-version="true"
               disabled={busy || typeof onShowCurrentRevision !== 'function'}
               onClick={() => {
+                setArtifactPanelState({
+                  active: showResultFlow ? 'preview' : 'versions',
+                  identity: currentArtifactPanelIdentity,
+                });
                 void onShowCurrentRevision?.();
               }}
               type="button"
@@ -1697,9 +2138,10 @@ export function BuilderPage({
         <section
           aria-label="Project conversation workspace"
           className="cf-builder-chat-shell"
+          data-builder-artifact-sidebar-visible={showArtifactSidebar ? 'true' : 'false'}
           data-builder-chat-workspace="true"
-          data-builder-review-sidebar-mode={showReviewSidebar ? 'summary' : 'hidden'}
-          data-builder-review-sidebar-visible={showReviewSidebar ? 'true' : 'false'}
+          ref={chatShellRef}
+          style={artifactShellStyle}
         >
           <div className="cf-builder-chat-main" data-builder-chat-main="true">
             <div
@@ -1731,39 +2173,9 @@ export function BuilderPage({
                   ref={draftLandingRef}
                 >
                   {draftReview}
-
-                  {showResultFlow ? (
-                    <BuilderResultPanel panelRef={resultFlowRef} projection={preview} />
-                  ) : null}
-
-                  {showChangesPanel ? (
-                    <div className="cf-builder-chat-flow-surface cf-builder-changes-flow" data-builder-changes-flow="true">
-                      <BuilderChangesPanel
-                        changes={changes}
-                        onOpenChange={setChangesPanelOpen}
-                        onOpenFile={openChangedFile}
-                        open={changesPanelOpen}
-                      />
-                    </div>
-                  ) : null}
+                  {artifactSummary}
                 </div>
               ) : null}
-
-              {!hasUnsavedDraft && showResultFlow ? (
-                <BuilderResultPanel panelRef={resultFlowRef} projection={preview} />
-              ) : null}
-
-              {sourceFile === null ? null : (
-                <BuilderSourceDisclosure
-                  canToggle={selected === null}
-                  disclosureRef={sourceDisclosureRef}
-                  files={files}
-                  onOpenChange={setSourceDisclosureOpen}
-                  onSelectFile={onSelectFile}
-                  open={sourceDisclosureOpen}
-                  sourceFile={sourceFile}
-                />
-              )}
 
               {conversationNotice}
               <div
@@ -1777,22 +2189,7 @@ export function BuilderPage({
             {composer}
           </div>
 
-          {showReviewSidebar ? (
-            <aside
-              aria-label="Project versions"
-              className="cf-builder-review-sidebar"
-              data-builder-review-sidebar="true"
-            >
-              <VersionHistoryPanel
-                hasSavedProject={saved !== null}
-                inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
-                onInspectRevision={onInspectRevision}
-                onRefresh={onRefreshHistory}
-                onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
-                snapshot={history}
-              />
-            </aside>
-          ) : null}
+          {artifactSidebar}
         </section>
       </div>
     </div>

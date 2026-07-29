@@ -62,11 +62,14 @@ const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs'
 function reviewDiffEvidence() {
   return {
     activity_review_do_not_overlap: true,
+    artifact_preview_default_visible: true,
+    artifact_resize_handle_visible: true,
+    artifact_sidebar_visible: true,
+    chat_summary_compact_visible: true,
     changes_diff_nested_in_panel: true,
-    changes_panel_follows_review: true,
-    changes_panel_follows_result: true,
+    changes_panel_in_artifact_sidebar: true,
     changes_panel_visible: true,
-    completion_landing_review_and_result_visible: true,
+    completion_landing_review_and_artifact_preview_visible: true,
     inline_diff_visible: true,
     internal_evidence_hidden: true,
     review_actions_layout_stable: true,
@@ -253,6 +256,16 @@ class FakeLocator {
   async inputValue() {
     if (this.page.keepPasswordValue && this.selector === SELECTORS.apiKey) return 'secret-marker';
     return this.page.values.get(this.selector) ?? '';
+  }
+
+  async isVisible() {
+    this.page.events.push(['isVisible', this.selector]);
+    if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
+    if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
+    if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
+      return this.page.unsavedDraftVisible;
+    }
+    return true;
   }
 
   async textContent() {
@@ -568,23 +581,27 @@ class FakePage {
     this.reviewTextOverride = null;
     this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
-      [SELECTORS.chatScroll, { x: 348, y: 44, width: 920, height: 620 }],
-      [SELECTORS.conversationActivity, { x: 360, y: 96, width: 860, height: 112 }],
-      [SELECTORS.userMessage, { x: 760, y: 104, width: 460, height: 64 }],
-      [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 136 }],
-      [SELECTORS.reviewCopy, { x: 374, y: 234, width: 832, height: 62 }],
-      [SELECTORS.reviewTitle, { x: 412, y: 234, width: 200, height: 18 }],
-      [SELECTORS.reviewSummary, { x: 412, y: 254, width: 420, height: 17 }],
-      [SELECTORS.reviewNote, { x: 412, y: 274, width: 760, height: 22 }],
-      [SELECTORS.reviewActions, { x: 374, y: 308, width: 392, height: 32 }],
-      [SELECTORS.reviewOpenChanges, { x: 374, y: 308, width: 112, height: 32 }],
-      [SELECTORS.discardDraft, { x: 494, y: 308, width: 128, height: 32 }],
-      [SELECTORS.saveVersion, { x: 630, y: 308, width: 120, height: 32 }],
-      [SELECTORS.resultFlow, { x: 360, y: 362, width: 860, height: 286 }],
-      [SELECTORS.changesFlow, { x: 360, y: 662, width: 860, height: 320 }],
-      [SELECTORS.changesPanel, { x: 360, y: 662, width: 860, height: 320 }],
-      [SELECTORS.changeCard, { x: 380, y: 712, width: 820, height: 240 }],
-      [SELECTORS.changeDiff, { x: 400, y: 762, width: 780, height: 160 }],
+      [SELECTORS.chatScroll, { x: 300, y: 44, width: 620, height: 620 }],
+      [SELECTORS.artifactSidebar, { x: 936, y: 44, width: 360, height: 620 }],
+      [SELECTORS.artifactResizeHandle, { x: 931, y: 44, width: 10, height: 620 }],
+      [SELECTORS.conversationActivity, { x: 312, y: 96, width: 596, height: 112 }],
+      [SELECTORS.userMessage, { x: 628, y: 104, width: 280, height: 64 }],
+      [SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 136 }],
+      [SELECTORS.reviewCopy, { x: 326, y: 234, width: 568, height: 62 }],
+      [SELECTORS.reviewTitle, { x: 364, y: 234, width: 200, height: 18 }],
+      [SELECTORS.reviewSummary, { x: 364, y: 254, width: 420, height: 17 }],
+      [SELECTORS.reviewNote, { x: 364, y: 274, width: 500, height: 22 }],
+      [SELECTORS.reviewActions, { x: 326, y: 308, width: 500, height: 32 }],
+      [SELECTORS.reviewOpenPreview, { x: 326, y: 308, width: 96, height: 32 }],
+      [SELECTORS.reviewOpenChanges, { x: 430, y: 308, width: 104, height: 32 }],
+      [SELECTORS.discardDraft, { x: 542, y: 308, width: 128, height: 32 }],
+      [SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 }],
+      [SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 }],
+      [SELECTORS.resultFlow, { x: 948, y: 96, width: 324, height: 520 }],
+      [SELECTORS.changesFlow, { x: 948, y: 96, width: 324, height: 520 }],
+      [SELECTORS.changesPanel, { x: 948, y: 96, width: 324, height: 520 }],
+      [SELECTORS.changeCard, { x: 960, y: 146, width: 300, height: 260 }],
+      [SELECTORS.changeDiff, { x: 970, y: 196, width: 280, height: 170 }],
     ]);
     this.savedActivityRevision = 0;
     this.savedActivityTextOverride = null;
@@ -2041,14 +2058,19 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.reviewSummary,
       SELECTORS.reviewNote,
       SELECTORS.reviewActions,
+      SELECTORS.reviewOpenPreview,
       SELECTORS.reviewOpenChanges,
       SELECTORS.discardDraft,
       SELECTORS.saveVersion,
       SELECTORS.conversationActivity,
       SELECTORS.userMessage,
       SELECTORS.chatScroll,
+      SELECTORS.artifactSummary,
+      SELECTORS.artifactSidebar,
+      SELECTORS.artifactResizeHandle,
       SELECTORS.resultFlow,
       SELECTORS.saveVersion,
+      SELECTORS.chatScroll,
       SELECTORS.changesFlow,
       SELECTORS.changesPanel,
       SELECTORS.changeCard,
@@ -2126,7 +2148,7 @@ test('rejects draft review actions that overlap the preview explanation', async 
   )), false);
 });
 
-test('rejects draft completion landing when the result starts below the visible chat area', async () => {
+test('rejects draft artifact preview rendered inside the chat area', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.resultFlow, { x: 360, y: 620, width: 860, height: 286 });
@@ -2157,13 +2179,10 @@ test('rejects draft changes panels that overlap the review checkpoint', async ()
   )), true);
 });
 
-test('rejects draft changes panels that appear before the result preview', async () => {
+test('rejects draft artifact sidebar without a draggable resize handle', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.changesFlow, { x: 360, y: 430, width: 860, height: 320 });
-  page.reviewLayoutBoxes.set(SELECTORS.changesPanel, { x: 360, y: 430, width: 860, height: 320 });
-  page.reviewLayoutBoxes.set(SELECTORS.changeCard, { x: 380, y: 480, width: 820, height: 220 });
-  page.reviewLayoutBoxes.set(SELECTORS.changeDiff, { x: 400, y: 530, width: 780, height: 150 });
+  page.reviewLayoutBoxes.set(SELECTORS.artifactResizeHandle, { x: 936, y: 44, width: 2, height: 620 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -2172,7 +2191,7 @@ test('rejects draft changes panels that appear before the result preview', async
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
     && event[1] === SELECTORS.reviewOpenChanges
-  )), true);
+  )), false);
 });
 
 test('rejects draft diffs rendered outside the changes panel', async () => {
@@ -4453,7 +4472,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v16/u);
+  assert.match(source, /builder-packaged-canary-result\.v17/u);
   assert.match(source, /run_progress_recorded/u);
   assert.match(source, /tool_call_requested/u);
   assert.match(source, /tool_call_result_recorded/u);

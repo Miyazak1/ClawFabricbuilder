@@ -47,6 +47,7 @@ function changes(overrides: Partial<BuilderSourceTreeChanges> = {}): BuilderSour
 describe('BuilderReviewCheckpoint', () => {
   it('renders the draft review actions without changing public selectors', () => {
     const onOpenChanges = vi.fn();
+    const onOpenPreview = vi.fn();
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
     const checkpointRef = createRef<HTMLElement>();
@@ -59,6 +60,7 @@ describe('BuilderReviewCheckpoint', () => {
         discardLabel="Discard draft"
         hasContent
         onOpenChanges={onOpenChanges}
+        onOpenPreview={onOpenPreview}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}
@@ -76,9 +78,11 @@ describe('BuilderReviewCheckpoint', () => {
     expect(container.querySelector('[data-builder-review-note="true"]')?.textContent)
       .toContain('Preview unavailable.');
 
+    click(container, '[data-builder-review-open-preview="true"]');
     click(container, '[data-builder-review-open-changes="true"]');
     click(container, '[data-builder-discard-draft="true"]');
     click(container, '[data-builder-save-version="true"]');
+    expect(onOpenPreview).toHaveBeenCalledTimes(1);
     expect(onOpenChanges).toHaveBeenCalledTimes(1);
     expect(onRejectDraft).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
@@ -95,6 +99,7 @@ describe('BuilderReviewCheckpoint', () => {
         discardLabel="Discarding..."
         hasContent={false}
         onOpenChanges={() => undefined}
+        onOpenPreview={() => undefined}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}

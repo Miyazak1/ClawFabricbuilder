@@ -10,6 +10,7 @@ export type BuilderSourceDisclosureProps = Readonly<{
   onOpenChange: (open: boolean) => void;
   onSelectFile?: (path: string) => void;
   open: boolean;
+  placement?: 'artifact' | 'flow';
   sourceFile: BuilderProjectSourceFile;
 }>;
 
@@ -20,12 +21,17 @@ export function BuilderSourceDisclosure({
   onOpenChange,
   onSelectFile,
   open,
+  placement = 'flow',
   sourceFile,
 }: BuilderSourceDisclosureProps) {
+  const className = placement === 'artifact'
+    ? 'cf-builder-source-disclosure cf-builder-artifact-source-disclosure'
+    : 'cf-builder-source-disclosure cf-builder-chat-flow-surface';
   return (
     <details
       aria-label="Project source"
-      className="cf-builder-source-disclosure cf-builder-chat-flow-surface"
+      className={className}
+      data-builder-source-placement={placement}
       data-builder-source-flow="true"
       id="builder-source-disclosure"
       open={open}

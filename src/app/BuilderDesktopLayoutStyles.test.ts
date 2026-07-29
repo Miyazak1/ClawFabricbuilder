@@ -64,16 +64,22 @@ describe('Builder desktop layout styles', () => {
     expect(chatScroll).not.toContain('display: grid;');
   });
 
-  it('keeps the desktop review sidebar compact and out of unsaved draft changes', () => {
+  it('keeps the desktop artifact sidebar resizable without taking over the chat shell', () => {
     const source = styles();
+    const sidebar = styleBlock(source, '.cf-builder-artifact-sidebar');
+    const handle = styleBlock(source, '.cf-builder-artifact-resize-handle');
 
     expect(source).toContain('.cf-builder-chat-shell {');
-    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(176px, 196px);');
-    expect(source).toContain('.cf-builder-chat-shell[data-builder-review-sidebar-visible="false"]');
+    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, var(--cf-builder-artifact-width, 480px));');
+    expect(source).toContain('.cf-builder-chat-shell[data-builder-artifact-sidebar-visible="false"]');
+    expect(sidebar).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(sidebar).toContain('overflow: hidden;');
+    expect(sidebar).toContain('border-left: 1px solid var(--cf-border);');
+    expect(handle).toContain('cursor: col-resize;');
+    expect(handle).toContain('left: -5px;');
     expect(source).not.toContain(
       '.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"]',
     );
-    expect(source).not.toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, min(42vw, 520px));');
     expect(source).not.toMatch(
       /@media \(max-width: 1280px\)[\s\S]*?\.cf-builder-chat-shell[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/u,
     );
@@ -90,13 +96,13 @@ describe('Builder desktop layout styles', () => {
       /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell \{[\s\S]*?height: 100%;[\s\S]*?min-height: 0;[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?grid-template-rows: minmax\(0, 1fr\) auto/u,
     );
     expect(source).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell\[data-builder-review-sidebar-visible="false"\] \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\)/u,
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell\[data-builder-artifact-sidebar-visible="false"\] \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\)/u,
     );
     expect(source).toMatch(
       /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-main \{[\s\S]*?min-height: 0/u,
     );
     expect(source).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-review-sidebar \{[\s\S]*?border-top: 1px solid var\(--cf-border\)/u,
+      /@media \(min-width: 721px\) and \(max-width: 1160px\)[\s\S]*?\.cf-builder-artifact-sidebar \{[\s\S]*?border-top: 1px solid var\(--cf-border\)/u,
     );
     expect(source).not.toMatch(
       /@media \(max-width: 1160px\)[\s\S]*?\.cf-builder-chat-shell \{[\s\S]*?height: auto/u,
@@ -106,15 +112,18 @@ describe('Builder desktop layout styles', () => {
     );
   });
 
-  it('keeps on-demand change summaries compact inside the conversation flow', () => {
+  it('keeps chat artifact summaries compact while changes expand in the artifact drawer', () => {
     const source = styles();
     const draftLanding = styleBlock(source, '.cf-builder-draft-landing');
     const draftLandingSurfaces = styleBlock(source, '.cf-builder-draft-landing > .cf-builder-chat-flow-surface');
+    const artifactSummary = styleBlock(source, '.cf-builder-artifact-summary');
+    const artifactSummaryActions = styleBlock(source, '.cf-builder-artifact-summary-actions');
     const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
     const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
-    const changesFlow = styleBlock(source, '.cf-builder-changes-flow');
-    const changesPanel = styleBlock(source, '.cf-builder-changes-flow .cf-builder-changes-panel');
+    const changesFlow = styleBlock(source, '.cf-builder-artifact-changes');
+    const changesPanel = styleBlock(source, '.cf-builder-artifact-changes .cf-builder-changes-panel');
+    const changesDisclosure = styleBlock(source, '.cf-builder-artifact-changes .cf-builder-changes-disclosure[open]');
     const summaryRowOverride = styleBlock(source, '.cf-builder-panel-toolbar.cf-builder-changes-summary-row');
     const changesBody = styleBlock(source, '.cf-builder-changes-body');
     const changesList = styleBlock(source, '.cf-builder-changes-list');
@@ -133,18 +142,17 @@ describe('Builder desktop layout styles', () => {
     expect(draftLanding).not.toContain('border:');
     expect(draftLanding).not.toContain('border-radius');
     expect(draftLandingSurfaces).toContain('width: 100%;');
-    expect(changesFlow).toContain('position: relative;');
-    expect(changesFlow).toContain('z-index: 1;');
-    expect(changesFlow).toContain('margin-top: 2px;');
-    expect(changesFlow).toContain('scroll-margin-block-start: 12px;');
-    expect(changesFlow).not.toContain('position: absolute;');
-    expect(changesFlow).not.toContain('margin-top: -');
-    expect(changesPanel).toContain('border-top: 1px solid var(--cf-border);');
-    expect(changesPanel).toContain('border-bottom: 1px solid var(--cf-border);');
-    expect(changesPanel).toContain('border-left: 0;');
-    expect(changesPanel).toContain('border-right: 0;');
-    expect(changesPanel).toContain('border-radius: 0;');
-    expect(changesPanel).toContain('box-shadow: none;');
+    expect(artifactSummary).toContain('grid-template-columns: minmax(0, 1fr) auto;');
+    expect(artifactSummary).toContain('border-top: 1px solid var(--cf-border);');
+    expect(artifactSummary).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(artifactSummary).not.toContain('border-radius');
+    expect(artifactSummaryActions).toContain('flex-wrap: wrap;');
+    expect(changesFlow).toContain('display: grid;');
+    expect(changesFlow).toContain('overflow: hidden;');
+    expect(changesPanel).toContain('height: 100%;');
+    expect(changesPanel).toContain('border: 0;');
+    expect(changesDisclosure).toContain('height: 100%;');
+    expect(changesDisclosure).toContain('max-height: none;');
     expect(changesPanel).not.toContain('border-radius: 8px;');
     expect(changesPanel).not.toContain('box-shadow: var(--cf-shadow-sm);');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
@@ -305,12 +313,17 @@ describe('Builder desktop layout styles', () => {
     expect(previewFrame).not.toContain('48vh');
   });
 
-  it('keeps the draft completion preview compact enough for review and result to share the desktop landing', () => {
+  it('gives artifact preview an independent desktop viewing height', () => {
     const source = styles();
+    const previewCard = styleBlock(source, '.cf-builder-artifact-preview-card');
+    const previewBody = styleBlock(source, '.cf-builder-artifact-preview-card .cf-builder-flow-card-body');
+    const previewFrame = styleBlock(source, '.cf-builder-artifact-preview-card .cf-builder-preview-frame');
 
-    expect(source).toMatch(
-      /@media \(min-width: 721px\)[\s\S]*?\.cf-builder-draft-landing \.cf-builder-static-preview \.cf-builder-preview-frame \{[\s\S]*?min-height: clamp\(220px, 28vh, 340px\);/u,
-    );
+    expect(previewCard).toContain('height: 100%;');
+    expect(previewCard).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(previewBody).toContain('overflow: auto;');
+    expect(previewFrame).toContain('min-height: clamp(420px, calc(100vh - 220px), 760px);');
+    expect(source).not.toContain('.cf-builder-draft-landing .cf-builder-static-preview .cf-builder-preview-frame');
   });
 
   it('uses lightweight preview explanation instead of another nested card', () => {
@@ -332,7 +345,9 @@ describe('Builder desktop layout styles', () => {
     const disclosureOpen = styleBlock(source, '.cf-builder-source-disclosure[open]');
     const summary = styleBlock(source, '.cf-builder-source-summary');
     const summaryControl = styleBlock(source, '.cf-builder-source-summary::after');
-    const body = styleBlock(source, '.cf-builder-source-body');
+    const body = styleBlockContaining(source, '.cf-builder-source-body', 'border-top: 1px solid var(--cf-border);');
+    const artifactDisclosure = styleBlock(source, '.cf-builder-artifact-source-disclosure');
+    const artifactBody = styleBlock(source, '.cf-builder-artifact-source-disclosure .cf-builder-source-body');
 
     expect(disclosure).toContain('border-top: 1px solid var(--cf-border);');
     expect(disclosure).toContain('border-bottom: 1px solid var(--cf-border);');
@@ -346,6 +361,10 @@ describe('Builder desktop layout styles', () => {
     expect(summaryControl).not.toContain('border-radius');
     expect(body).toContain('border-top: 1px solid var(--cf-border);');
     expect(body).toContain('padding: 10px 0 0;');
+    expect(artifactDisclosure).toContain('height: 100%;');
+    expect(artifactDisclosure).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(artifactBody).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(artifactBody).toContain('overflow: hidden;');
   });
 
   it('keeps the draft-gated composer as a lightweight status row', () => {

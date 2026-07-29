@@ -1014,11 +1014,11 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
       .toBe('new');
     const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
-    expect(workspace?.getAttribute('data-builder-review-sidebar-visible'))
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible'))
       .toBe('false');
     expect(workspace?.classList.contains('border')).toBe(false);
     expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-version-history="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
@@ -1946,7 +1946,7 @@ describe('BuilderPage v2', () => {
     expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
-  it('keeps the composer, result, and review in the main conversation while opening changes on demand', async () => {
+  it('keeps the composer and review in chat while opening preview and changes in the artifact sidebar', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
     const history = await savedHistory();
@@ -1974,19 +1974,24 @@ describe('BuilderPage v2', () => {
     const draftLanding = container.querySelector('[data-builder-draft-landing="true"]');
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const composer = container.querySelector('[data-builder-composer="true"]');
+    const artifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
+    const artifactSummary = container.querySelector('[data-builder-artifact-summary="true"]');
     const preview = container.querySelector('[data-builder-preview-flow="true"]');
     const code = container.querySelector('[data-builder-code-flow="true"]');
     const source = container.querySelector('[data-builder-source-flow="true"]');
     const draftActions = container.querySelector('[data-builder-draft-review-actions="true"]');
     expect(chatMain).not.toBeNull();
-    expect(workspace?.getAttribute('data-builder-review-sidebar-visible')).toBe('false');
-    expect(workspace?.getAttribute('data-builder-review-sidebar-mode')).toBe('hidden');
-    expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
+    expect(artifactSidebar).not.toBeNull();
+    expect(artifactSidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('preview');
+    const artifactResizeHandle = artifactSidebar?.querySelector('[data-builder-artifact-resize-handle="true"]');
+    expect(artifactResizeHandle).not.toBeNull();
     expect(conversation).not.toBeNull();
     expect(draftLanding).not.toBeNull();
     expect(review).not.toBeNull();
     expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(composer).not.toBeNull();
+    expect(artifactSummary).not.toBeNull();
     expect(preview).not.toBeNull();
     expect(code).toBeNull();
     expect(source).toBeNull();
@@ -1994,17 +1999,21 @@ describe('BuilderPage v2', () => {
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(draftLanding?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(preview?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(artifactSummary?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
+    expect(preview?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(preview?.closest('[data-builder-artifact-sidebar="true"]')).toBe(artifactSidebar);
     expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
-    expect(preview?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
+    expect(artifactSummary?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
+    expect(preview?.closest('[data-builder-draft-landing="true"]')).toBeNull();
     expect(conversation?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(review?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
-    expect(preview?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
+    expect(artifactSummary?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
+    expect(preview?.classList.contains('cf-builder-chat-flow-surface')).toBe(false);
     expect(preview?.getAttribute('aria-label')).toBe('Project result');
     expect(preview?.textContent).toContain('Result');
     expect(preview?.textContent).not.toContain('Preview is isolated');
     expect(composer?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(composer?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(composer?.closest('[data-builder-artifact-sidebar="true"]')).toBeNull();
     expect(composer?.querySelector('.cf-builder-alert')).toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-disclosure="true"]')).toBeNull();
@@ -2015,30 +2024,55 @@ describe('BuilderPage v2', () => {
     expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')).not.toBeNull();
     expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
       .toBe(chatMain);
-    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-review-sidebar="true"]'))
+    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-artifact-sidebar="true"]'))
       .toBeNull();
     expect(Boolean(conversation!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(Boolean(review!.compareDocumentPosition(preview!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(review!.compareDocumentPosition(artifactSummary!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(Boolean(preview!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(artifactSummary!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
     expect(composer?.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(composer?.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
     expect(draftActions?.closest('[data-builder-review-checkpoint="true"]')).toBe(review);
     expect(draftActions?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     expect(draftActions?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    Object.defineProperty(workspace, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ bottom: 720, height: 640, left: 0, right: 920, top: 80, width: 920 }),
+    });
+    Object.defineProperty(artifactSidebar, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ bottom: 720, height: 640, left: 440, right: 920, top: 80, width: 480 }),
+    });
+    act(() => {
+      artifactResizeHandle?.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 900,
+      }));
+      window.dispatchEvent(new MouseEvent('pointermove', {
+        bubbles: true,
+        clientX: 500,
+      }));
+      window.dispatchEvent(new MouseEvent('pointerup', {
+        bubbles: true,
+      }));
+    });
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('400px');
     click(container, '[data-builder-review-open-changes="true"]');
-    const reviewSidebar = container.querySelector('[data-builder-review-sidebar="true"]');
+    const updatedArtifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const changesFlow = container.querySelector('[data-builder-changes-flow="true"]');
     const changes = container.querySelector('[data-builder-changes-panel="true"]');
     const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     const versions = container.querySelector('[data-builder-version-history="true"]');
-    expect(reviewSidebar).toBeNull();
+    expect(updatedArtifactSidebar).not.toBeNull();
+    expect(updatedArtifactSidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('changes');
     expect(changesFlow).not.toBeNull();
     expect(changes).not.toBeNull();
-    expect(changes?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(changes?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(changes?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(changes?.closest('[data-builder-artifact-sidebar="true"]')).toBe(updatedArtifactSidebar);
     expect(changes?.closest('[data-builder-changes-flow="true"]')).toBe(changesFlow);
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
@@ -2046,11 +2080,8 @@ describe('BuilderPage v2', () => {
     expect(changesDisclosure?.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('file');
     expect(versions).toBeNull();
-    expect(workspace?.getAttribute('data-builder-review-sidebar-mode')).toBe('hidden');
-    expect(workspace?.getAttribute('data-builder-review-sidebar-visible')).toBe('false');
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
     expect(document.activeElement).toBe(changesDisclosure);
-    expect(Boolean(review!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(preview!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
@@ -2213,9 +2244,8 @@ describe('BuilderPage v2', () => {
       expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
       expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
-      expect(result?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
-      expect(Boolean(review!.compareDocumentPosition(result!) & Node.DOCUMENT_POSITION_FOLLOWING))
-        .toBe(true);
+      expect(result?.closest('[data-builder-draft-landing="true"]')).toBeNull();
+      expect(result?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
 
       spy.mockClear();
       click(container, '[data-builder-review-open-changes="true"]');
@@ -2226,10 +2256,7 @@ describe('BuilderPage v2', () => {
       expect(changesDisclosure?.open).toBe(true);
       expect(document.activeElement).toBe(changesDisclosure);
       expect(spy).not.toHaveBeenCalled();
-      expect(Boolean(review!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING))
-        .toBe(true);
-      expect(Boolean(result!.compareDocumentPosition(changes!) & Node.DOCUMENT_POSITION_FOLLOWING))
-        .toBe(true);
+      expect(changes?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     } finally {
       restore();
     }
@@ -2630,7 +2657,7 @@ describe('BuilderPage v2', () => {
     expect(reviewStrip?.textContent).not.toMatch(
       /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
     );
-    expect(container.querySelector('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-disclosure="true"]')).toBeNull();
     click(container, '[data-builder-review-open-changes="true"]');
@@ -2639,8 +2666,8 @@ describe('BuilderPage v2', () => {
     const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
     expect(changesPanel).not.toBeNull();
     expect(changesFlow).not.toBeNull();
-    expect(changesPanel?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(changesPanel?.closest('[data-builder-review-sidebar="true"]')).toBeNull();
+    expect(changesPanel?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(changesPanel?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     expect(changesPanel?.closest('[data-builder-changes-flow="true"]')).toBe(changesFlow);
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
@@ -2740,7 +2767,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('opens and focuses inline source after choosing a changed file from the sidebar', async () => {
+  it('opens and focuses source in the artifact sidebar after choosing a changed file', async () => {
     const draftReady = await changedDraftSnapshot();
     const onSelectFile = vi.fn();
 
@@ -2768,7 +2795,10 @@ describe('BuilderPage v2', () => {
     const source = container.querySelector('[data-builder-source-flow="true"]');
     expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
     expect(source).not.toBeNull();
-    expect(source?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(source?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(source?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('source');
     expect(document.activeElement).toBe(source);
     expect(container.querySelector('[data-builder-source-code="src/add.ts"] code')?.textContent)
       .toContain('const added = true;');
@@ -2809,7 +2839,7 @@ describe('BuilderPage v2', () => {
       .toContain('Version 1');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-result-flow="true"]')?.closest('[data-builder-draft-landing="true"]'))
+    expect(container.querySelector('[data-builder-result-flow="true"]')?.closest('[data-builder-draft-landing="true"]') ?? null)
       .toBeNull();
   });
 
@@ -2900,6 +2930,9 @@ describe('BuilderPage v2', () => {
     const previewFrame = inspectedContainer.querySelector('iframe');
     expect(previewFrame).not.toBeNull();
     expect(previewFrame?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
+    expect(inspectedContainer.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('preview');
+    click(inspectedContainer, '[data-builder-artifact-tab="versions"]');
     expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"]')?.textContent)
       .toContain('Current');
     expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"] [data-builder-show-current-version="true"]'))
@@ -3182,7 +3215,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('shows a selected source file as an inline conversation disclosure', async () => {
+  it('shows a selected source file in the artifact sidebar', async () => {
     const { draftReady } = await snapshots();
     const onSelectFile = vi.fn();
     const container = render(
@@ -3198,9 +3231,13 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-source-flow="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-source-flow="true"]')?.closest('[data-builder-chat-main="true"]'))
+      .toBeNull();
+    expect(container.querySelector('[data-builder-source-flow="true"]')?.closest('[data-builder-artifact-sidebar="true"]'))
       .not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('source');
     expect(container.querySelector('[data-builder-source-flow="true"]')?.classList.contains('cf-builder-chat-flow-surface'))
-      .toBe(true);
+      .toBe(false);
     expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
       .toBe('');
     expect(container.querySelector('[data-builder-source-file="src/tool.py"]')?.getAttribute('data-active'))
@@ -3210,7 +3247,7 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toContain('app.js');
   });
 
-  it('keeps source files accessible but collapsed when a project has no static preview', async () => {
+  it('keeps source files accessible from the artifact sidebar when a project has no static preview', async () => {
     const draftReady = await draftSnapshotFromSourceTrees(
       await createSourceTree([{ path: 'src/tool.py', content: 'print("old")\n' }]),
       await createSourceTree([{ path: 'src/tool.py', content: 'print("new")\n' }]),
@@ -3235,22 +3272,25 @@ describe('BuilderPage v2', () => {
       .toContain('Preview unavailable');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('need live preview support');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('preview');
+    expect(container.querySelector('details[data-builder-source-flow="true"]')).toBeNull();
+    click(container, '[data-builder-artifact-tab="source"]');
     const source = container.querySelector<HTMLDetailsElement>('details[data-builder-source-flow="true"]');
     expect(source).not.toBeNull();
-    expect(source?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(source?.getAttribute('open')).toBeNull();
+    expect(source?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(source?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+    expect(source?.getAttribute('open')).toBe('');
     expect(source?.querySelector('[data-builder-source-summary="true"]')?.textContent)
       .toContain('1 file - src/tool.py');
-    expect(container.querySelector('[data-builder-source-code="src/tool.py"]')).toBeNull();
-    expect(container.textContent).not.toContain('print("new")');
-    expect(container.textContent).toContain('this preview cannot run this kind of project yet');
-    expect(container.textContent).toContain('3D/WebGL');
-    expect(container.textContent).not.toContain('This project has files, but no visual preview.');
-
-    click(container, '[data-builder-source-summary="true"]');
-    expect(source?.open).toBe(true);
     expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
+    expect(container.textContent).toContain('Preview unavailable');
+    expect(container.textContent).toContain('Three.js');
+    expect(container.textContent).not.toContain('This project has files, but no visual preview.');
+
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('source');
   });
 
   it('keeps the provider-settings recovery action limited to configuration failures', async () => {

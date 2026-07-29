@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v16';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v17';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state summary below the timer before changing files.';
@@ -44,6 +44,11 @@ const WINDOWS_ENV_ALLOWLIST = Object.freeze([
 ]);
 const SELECTORS = Object.freeze({
   apiKey: '#builder-provider-api-key',
+  artifactResizeHandle: '[data-builder-artifact-resize-handle="true"]',
+  artifactSidebar: '[data-builder-artifact-sidebar="true"]',
+  artifactSummary: '[data-builder-artifact-summary="true"]',
+  artifactTabChanges: '[data-builder-artifact-tab="changes"]',
+  artifactTabPreview: '[data-builder-artifact-tab="preview"]',
   baseUrl: '#builder-provider-base-url',
   changeCard: '[data-builder-change-card]',
   changeDiff: '[data-builder-change-diff]',
@@ -94,6 +99,7 @@ const SELECTORS = Object.freeze({
   reviewNote: '[data-builder-review-note="true"]',
   discardDraft: '[data-builder-discard-draft="true"]',
   reviewOpenChanges: '[data-builder-review-open-changes="true"]',
+  reviewOpenPreview: '[data-builder-review-open-preview="true"]',
   reviewSummary: '[data-builder-review-summary="true"]',
   reviewTitle: '[data-builder-review-title="true"]',
   saveVersion: '[data-builder-save-version="true"]',
@@ -1723,16 +1729,24 @@ async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
     const pickerText = await page.locator(SELECTORS.workspacePicker).textContent();
     const preservedBeforeBinding = await page.locator(SELECTORS.idea).inputValue();
+    const newProjectPanelAlreadyVisible = await page.locator(SELECTORS.newProjectPanel).isVisible();
     if (
       typeof pickerText !== 'string'
-      || !pickerText.includes('Choose or create a project before I build.')
-      || !pickerText.includes('New project')
+      || (
+        !newProjectPanelAlreadyVisible
+        && (
+          !pickerText.includes('Choose or create a project before I build.')
+          || !pickerText.includes('New project')
+        )
+      )
       || preservedBeforeBinding !== idea
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(pickerText)
     ) fail('canary_build_workspace_required_failed');
 
-    await page.locator(SELECTORS.workspaceNewProject).click();
-    await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible' });
+    if (!newProjectPanelAlreadyVisible) {
+      await page.locator(SELECTORS.workspaceNewProject).click();
+      await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible' });
+    }
     const newProjectText = await page.locator(SELECTORS.newProjectPanel).textContent();
     if (
       typeof newProjectText !== 'string'
@@ -1883,6 +1897,7 @@ async function assertDraftReviewLayoutViaUi(page) {
   const note = await boundedBox(page.locator(SELECTORS.reviewNote));
   const actionGroup = await boundedBox(page.locator(SELECTORS.reviewActions));
   const actions = [
+    await boundedBox(page.locator(SELECTORS.reviewOpenPreview)),
     await boundedBox(page.locator(SELECTORS.reviewOpenChanges)),
     await boundedBox(page.locator(SELECTORS.discardDraft)),
     await boundedBox(page.locator(SELECTORS.saveVersion)),
@@ -1925,42 +1940,55 @@ async function assertDraftReviewLayoutViaUi(page) {
   return review;
 }
 
-async function assertDraftCompletionLandingViaUi(page, review) {
+async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
   const scroll = await boundedBox(page.locator(SELECTORS.chatScroll));
+  const summary = await boundedBox(page.locator(SELECTORS.artifactSummary));
+  const sidebar = await boundedBox(page.locator(SELECTORS.artifactSidebar));
+  const resize = await boundedBox(page.locator(SELECTORS.artifactResizeHandle));
   const result = await boundedBox(page.locator(SELECTORS.resultFlow));
   const save = await boundedBox(page.locator(SELECTORS.saveVersion));
   if (
     scroll.width < 560
     || scroll.height < 360
-    || result.width < 560
+    || summary.width < 360
+    || sidebar.width < 340
+    || result.width < 320
+    || resize.width < 6
+    || resize.height < 320
     || !boxContains(scroll, review)
+    || !boxContains(scroll, summary)
     || !boxContains(scroll, save)
-    || result.x < scroll.x - 1
-    || boxRight(result) > boxRight(scroll) + 1
-    || result.y < boxBottom(review) - 1
-    || result.y > boxBottom(scroll) - 120
+    || !boxContains(sidebar, result)
+    || resize.x > sidebar.x + 2
+    || boxRight(resize) < sidebar.x - 1
+    || resize.y > sidebar.y + 1
+    || boxBottom(resize) < boxBottom(sidebar) - 1
+    || boxRight(scroll) > sidebar.x + 1
+    || summary.y < boxBottom(review) - 1
+    || boxContains(scroll, result)
     || boxesOverlap(review, result)
+    || boxesOverlap(summary, result)
   ) fail('canary_review_diff_failed');
-  return result;
+  return Object.freeze({ result, sidebar, summary });
 }
 
-async function assertChangesPanelLayoutViaUi(page, review, result) {
+async function assertChangesPanelLayoutViaUi(page, review, artifact) {
+  const scroll = await boundedBox(page.locator(SELECTORS.chatScroll));
   const flow = await boundedBox(page.locator(SELECTORS.changesFlow));
   const panel = await boundedBox(page.locator(SELECTORS.changesPanel));
   const card = await boundedBox(page.locator(SELECTORS.changeCard).first());
   const diff = await boundedBox(page.locator(SELECTORS.changeDiff).first());
 
   if (
-    flow.width < 560
-    || panel.width < 560
+    flow.width < 320
+    || panel.width < 320
     || flow.height < 80
     || panel.height < 80
-    || flow.y < boxBottom(review) - 1
-    || flow.y < boxBottom(result) - 1
+    || !boxContains(artifact.sidebar, flow)
+    || !boxContains(artifact.sidebar, panel)
+    || boxContains(scroll, panel)
     || boxesOverlap(review, flow)
     || boxesOverlap(review, panel)
-    || boxesOverlap(result, flow)
-    || boxesOverlap(result, panel)
     || !boxContains(flow, panel)
     || !boxContains(panel, card)
     || !boxContains(card, diff)
@@ -1984,14 +2012,14 @@ async function inspectDraftReviewDiffViaUi(page) {
 
     const reviewBox = await assertDraftReviewLayoutViaUi(page);
     await assertConversationActivityBeforeReviewViaUi(page, reviewBox);
-    const resultBox = await assertDraftCompletionLandingViaUi(page, reviewBox);
+    const artifactBox = await assertDraftArtifactPreviewLayoutViaUi(page, reviewBox);
     await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.reviewOpenChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeCard).first().waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeDiff).first().waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeDiffLine).first().waitFor({ state: 'visible' });
-    await assertChangesPanelLayoutViaUi(page, reviewBox, resultBox);
+    await assertChangesPanelLayoutViaUi(page, reviewBox, artifactBox);
     const summaryText = await page.locator(SELECTORS.changesSummary).textContent();
     const changesText = await page.locator(SELECTORS.changesPanel).textContent();
     if (
@@ -2004,11 +2032,14 @@ async function inspectDraftReviewDiffViaUi(page) {
     ) fail('canary_review_diff_failed');
     return Object.freeze({
       activity_review_do_not_overlap: true,
+      artifact_preview_default_visible: true,
+      artifact_resize_handle_visible: true,
+      artifact_sidebar_visible: true,
+      chat_summary_compact_visible: true,
       changes_diff_nested_in_panel: true,
-      changes_panel_follows_review: true,
-      changes_panel_follows_result: true,
+      changes_panel_in_artifact_sidebar: true,
       changes_panel_visible: true,
-      completion_landing_review_and_result_visible: true,
+      completion_landing_review_and_artifact_preview_visible: true,
       inline_diff_visible: true,
       internal_evidence_hidden: true,
       review_actions_layout_stable: true,
