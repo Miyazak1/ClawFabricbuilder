@@ -981,12 +981,15 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-review-actions {
   display: flex;
   flex-wrap: wrap;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
-  align-self: start;
-  justify-self: start;
-  justify-content: flex-start;
+  align-self: stretch;
+  justify-self: stretch;
+  justify-content: flex-end;
   gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);
+  padding-top: 10px;
   padding-left: 0;
   row-gap: 8px;
 }
@@ -998,6 +1001,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 116px;
   max-width: 100%;
   white-space: nowrap;
+}
+
+.cf-builder-review-actions > [data-builder-save-version="true"] {
+  min-width: 132px;
 }
 
 .cf-builder-tab-strip {

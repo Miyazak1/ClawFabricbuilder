@@ -175,6 +175,7 @@ describe('Builder desktop layout styles', () => {
     const copyBody = styleBlock(source, '.cf-builder-review-copy-body');
     const actions = styleBlock(source, '.cf-builder-review-actions');
     const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
+    const saveAction = styleBlock(source, '.cf-builder-review-actions > [data-builder-save-version="true"]');
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
 
     expect(review).toContain('position: relative;');
@@ -200,10 +201,13 @@ describe('Builder desktop layout styles', () => {
     expect(copyBody).toContain('gap: 2px;');
     expect(actions).toContain('display: flex;');
     expect(actions).toContain('flex-wrap: wrap;');
+    expect(actions).toContain('width: 100%;');
     expect(actions).toContain('max-width: 100%;');
-    expect(actions).toContain('align-self: start;');
-    expect(actions).toContain('justify-self: start;');
-    expect(actions).toContain('justify-content: flex-start;');
+    expect(actions).toContain('align-self: stretch;');
+    expect(actions).toContain('justify-self: stretch;');
+    expect(actions).toContain('justify-content: flex-end;');
+    expect(actions).toContain('border-top: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);');
+    expect(actions).toContain('padding-top: 10px;');
     expect(actions).toContain('padding-left: 0;');
     expect(actions).toContain('row-gap: 8px;');
     expect(actions).not.toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
@@ -212,6 +216,7 @@ describe('Builder desktop layout styles', () => {
     expect(actionButtons).toContain('min-height: 32px;');
     expect(actionButtons).toContain('min-width: 116px;');
     expect(actionButtons).toContain('white-space: nowrap;');
+    expect(saveAction).toContain('min-width: 132px;');
     expect(versionAction).toContain('grid-column: 2;');
     expect(source).not.toMatch(/\.cf-builder-review-actions \{[\s\S]*?padding-left: 38px/u);
   });
