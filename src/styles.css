@@ -1986,6 +1986,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-height: clamp(260px, 34vh, 420px);
 }
 
+@media (min-width: 721px) {
+  .cf-builder-draft-landing .cf-builder-static-preview .cf-builder-preview-frame {
+    min-height: clamp(220px, 28vh, 340px);
+  }
+}
+
 .cf-builder-empty {
   background: var(--cf-surface-muted);
   border-color: var(--cf-border-strong);

@@ -257,6 +257,14 @@ describe('Builder desktop layout styles', () => {
     expect(previewFrame).not.toContain('48vh');
   });
 
+  it('keeps the draft completion preview compact enough for review and result to share the desktop landing', () => {
+    const source = styles();
+
+    expect(source).toMatch(
+      /@media \(min-width: 721px\)[\s\S]*?\.cf-builder-draft-landing \.cf-builder-static-preview \.cf-builder-preview-frame \{[\s\S]*?min-height: clamp\(220px, 28vh, 340px\);/u,
+    );
+  });
+
   it('uses lightweight preview explanation instead of another nested card', () => {
     const source = styles();
     const runtimeNotice = styleBlock(source, '.cf-builder-preview-runtime-notice');

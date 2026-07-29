@@ -65,6 +65,7 @@ function reviewDiffEvidence() {
     changes_diff_nested_in_panel: true,
     changes_panel_follows_review: true,
     changes_panel_visible: true,
+    completion_landing_review_and_result_visible: true,
     inline_diff_visible: true,
     internal_evidence_hidden: true,
     review_actions_layout_stable: true,
@@ -566,6 +567,7 @@ class FakePage {
     this.reviewTextOverride = null;
     this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
+      [SELECTORS.chatScroll, { x: 348, y: 44, width: 920, height: 620 }],
       [SELECTORS.conversationActivity, { x: 360, y: 96, width: 860, height: 112 }],
       [SELECTORS.userMessage, { x: 760, y: 104, width: 460, height: 64 }],
       [SELECTORS.reviewCheckpoint, { x: 360, y: 220, width: 860, height: 136 }],
@@ -577,6 +579,7 @@ class FakePage {
       [SELECTORS.reviewOpenChanges, { x: 374, y: 308, width: 112, height: 32 }],
       [SELECTORS.discardDraft, { x: 494, y: 308, width: 128, height: 32 }],
       [SELECTORS.saveVersion, { x: 630, y: 308, width: 120, height: 32 }],
+      [SELECTORS.resultFlow, { x: 360, y: 362, width: 860, height: 286 }],
       [SELECTORS.changesFlow, { x: 360, y: 362, width: 860, height: 320 }],
       [SELECTORS.changesPanel, { x: 360, y: 362, width: 860, height: 320 }],
       [SELECTORS.changeCard, { x: 380, y: 412, width: 820, height: 240 }],
@@ -2042,6 +2045,9 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.saveVersion,
       SELECTORS.conversationActivity,
       SELECTORS.userMessage,
+      SELECTORS.chatScroll,
+      SELECTORS.resultFlow,
+      SELECTORS.saveVersion,
       SELECTORS.changesFlow,
       SELECTORS.changesPanel,
       SELECTORS.changeCard,
@@ -2108,6 +2114,21 @@ test('rejects draft review actions that overlap the preview explanation', async 
   page.reviewLayoutBoxes.set(SELECTORS.reviewOpenChanges, { x: 374, y: 288, width: 112, height: 32 });
   page.reviewLayoutBoxes.set(SELECTORS.discardDraft, { x: 494, y: 288, width: 128, height: 32 });
   page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 630, y: 288, width: 120, height: 32 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
+});
+
+test('rejects draft completion landing when the result starts below the visible chat area', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.resultFlow, { x: 360, y: 620, width: 860, height: 286 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -4413,7 +4434,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v14/u);
+  assert.match(source, /builder-packaged-canary-result\.v15/u);
   assert.match(source, /run_progress_recorded/u);
   assert.match(source, /tool_call_requested/u);
   assert.match(source, /tool_call_result_recorded/u);

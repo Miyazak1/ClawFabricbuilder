@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v14';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v15';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state summary below the timer before changing files.';
@@ -87,6 +87,7 @@ const SELECTORS = Object.freeze({
   previewRuntimeBlocked: '[data-builder-preview-runtime-blocked="true"]',
   previewUnavailable: '[data-builder-preview-unavailable="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
+  resultFlow: '[data-builder-result-flow="true"]',
   reviewActions: '[data-builder-review-actions="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   reviewCopy: '[data-builder-review-copy="true"]',
@@ -1924,6 +1925,24 @@ async function assertDraftReviewLayoutViaUi(page) {
   return review;
 }
 
+async function assertDraftCompletionLandingViaUi(page, review) {
+  const scroll = await boundedBox(page.locator(SELECTORS.chatScroll));
+  const result = await boundedBox(page.locator(SELECTORS.resultFlow));
+  const save = await boundedBox(page.locator(SELECTORS.saveVersion));
+  if (
+    scroll.width < 560
+    || scroll.height < 360
+    || result.width < 560
+    || !boxContains(scroll, review)
+    || !boxContains(scroll, save)
+    || result.x < scroll.x - 1
+    || boxRight(result) > boxRight(scroll) + 1
+    || result.y < boxBottom(review) - 1
+    || result.y > boxBottom(scroll) - 120
+    || boxesOverlap(review, result)
+  ) fail('canary_review_diff_failed');
+}
+
 async function assertChangesPanelLayoutViaUi(page, review) {
   const flow = await boundedBox(page.locator(SELECTORS.changesFlow));
   const panel = await boundedBox(page.locator(SELECTORS.changesPanel));
@@ -1961,6 +1980,7 @@ async function inspectDraftReviewDiffViaUi(page) {
 
     const reviewBox = await assertDraftReviewLayoutViaUi(page);
     await assertConversationActivityBeforeReviewViaUi(page, reviewBox);
+    await assertDraftCompletionLandingViaUi(page, reviewBox);
     await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.reviewOpenChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
@@ -1983,6 +2003,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       changes_diff_nested_in_panel: true,
       changes_panel_follows_review: true,
       changes_panel_visible: true,
+      completion_landing_review_and_result_visible: true,
       inline_diff_visible: true,
       internal_evidence_hidden: true,
       review_actions_layout_stable: true,
