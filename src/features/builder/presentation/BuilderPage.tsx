@@ -1332,7 +1332,7 @@ export function BuilderPage({
     && (!busy || canAddContext);
   const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
   const canRetryGenerate = typeof onRetryGenerate === 'function'
-    && status === 'generation_failed'
+    && (status === 'generation_failed' || status === 'submit_failed')
     && current?.retryableGeneration === true
     && isRetryableGenerationError(current.error);
   const canOpenSettings = failed

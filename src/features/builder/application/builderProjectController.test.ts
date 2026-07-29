@@ -738,7 +738,7 @@ describe('Builder project controller v2', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
-  it('keeps submit failures neutral and allows the next composer turn', async () => {
+  it('keeps retryable submit failures recoverable without using draft retry authority', async () => {
     let attempts = 0;
     const { controller, retry, submit } = setup({
       submit: async (request) => {
@@ -755,14 +755,45 @@ describe('Builder project controller v2', () => {
     expect(failed).toMatchObject({
       status: 'submit_failed',
       error: 'builder_generation_provider_http_error',
-      retryableGeneration: false,
+      retryableGeneration: true,
     });
-    expect(await controller.retryGenerate()).toBe(failed);
+    const retryResult = await controller.retryGenerate();
+
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      instruction: 'What should happen?',
+      existing_project_id: PROJECT_ID,
+    }));
+    expect(retry).not.toHaveBeenCalled();
+    expect(retryResult.status).toBe('draft_ready');
+    expect(retryResult.retryableGeneration).toBe(false);
+  });
+
+  it('starts distinct new submit work after a submit failure without using retry authority', async () => {
+    let attempts = 0;
+    const { controller, retry, submit } = setup({
+      submit: async (request) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+        }
+        return createGenerationDraft(request);
+      },
+    });
+    await controller.open(PROJECT_ID);
+
+    const failed = await controller.submit('What should happen?');
+    expect(failed.retryableGeneration).toBe(true);
     const result = await controller.submit('Make a timer.');
 
     expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      instruction: 'Make a timer.',
+      existing_project_id: PROJECT_ID,
+    }));
     expect(retry).not.toHaveBeenCalled();
     expect(result.status).toBe('draft_ready');
+    expect(result.retryableGeneration).toBe(false);
   });
 
   it('answers against the selected saved project without saving or replacing the preview', async () => {

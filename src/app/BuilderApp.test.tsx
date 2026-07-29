@@ -1329,7 +1329,7 @@ describe('BuilderApp v2', () => {
       .toBe('把按钮颜色改红');
   });
 
-  it('keeps one composer turn editable after submit failure without draft retry', async () => {
+  it('keeps one composer turn editable and retryable after submit failure', async () => {
     const { container, generate, readTaskStream, retry, saveDraft, submit } = await setup({
       failSubmitOnce: true,
       initiallySaved: true,
@@ -1352,9 +1352,47 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
         .toContain('The AI service could not complete this request.');
     });
-    expect(container.querySelector('[data-builder-retry-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
       .toBe('Make a timer.');
+
+    click(container, '[data-builder-retry-draft="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls[0][0]).toEqual({ instruction: 'Make a timer.' });
+    expect(submit.mock.calls[1][0]).toEqual({ instruction: 'Make a timer.' });
+    expect(generate).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+  });
+
+  it('starts a different composer turn after submit failure without using retry', async () => {
+    const { container, generate, readTaskStream, retry, saveDraft, submit } = await setup({
+      failSubmitOnce: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    });
+    readTaskStream.mockClear();
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
+    });
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
         ?.call(textarea, 'Make a different timer.');
