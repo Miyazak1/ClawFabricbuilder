@@ -1,0 +1,42 @@
+// @vitest-environment jsdom
+import { act, createRef, type ReactNode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { BuilderResultPanel } from './BuilderResultPanel';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const mounted: Array<{ container: HTMLDivElement; root: Root }> = [];
+
+afterEach(() => {
+  for (const entry of mounted.splice(0)) {
+    act(() => entry.root.unmount());
+    entry.container.remove();
+  }
+});
+
+function render(element: ReactNode): HTMLDivElement {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  mounted.push({ container, root });
+  act(() => root.render(element));
+  return container;
+}
+
+describe('BuilderResultPanel', () => {
+  it('preserves the chat-flow result shell around the static preview', () => {
+    const panelRef = createRef<HTMLElement>();
+    const container = render(<BuilderResultPanel panelRef={panelRef} projection={null} />);
+
+    const panel = container.querySelector('[data-builder-result-flow="true"]');
+    expect(panel).toBe(panelRef.current);
+    expect(panel?.getAttribute('aria-label')).toBe('Project result');
+    expect(panel?.getAttribute('id')).toBe('builder-tool-preview');
+    expect(panel?.className).toContain('cf-builder-result-card');
+    expect(container.querySelector('[data-builder-preview-flow="true"]')).toBe(panel);
+    expect(container.querySelector('.cf-builder-result-toolbar')?.textContent).toContain('Result');
+    expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
+      .toContain('Preview unavailable');
+  });
+});

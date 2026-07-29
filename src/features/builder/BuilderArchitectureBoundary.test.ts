@@ -35,6 +35,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'presentation/BuilderProjectCatalog.tsx',
   'presentation/BuilderProviderSettingsPanel.tsx',
   'presentation/BuilderProviderSettingsRouteAdapter.tsx',
+  'presentation/BuilderResultPanel.tsx',
   'presentation/BuilderReviewCheckpoint.tsx',
   'presentation/builderReviewText.ts',
   'preview/builderSourceTreePreview.ts',

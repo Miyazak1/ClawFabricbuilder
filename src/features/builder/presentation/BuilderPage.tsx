@@ -5,7 +5,6 @@ import {
   Bot,
   ChevronDown,
   CheckCircle2,
-  Eye,
   FileCode2,
   FolderOpen,
   FolderPlus,
@@ -42,7 +41,6 @@ import {
   isTrustedBuilderProjectCatalogSnapshot,
   type BuilderProjectCatalogSnapshot,
 } from '../application/builderProjectCatalogController';
-import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
 import type {
   BuilderConversationItem,
   BuilderConversationRunProgressStage,
@@ -55,6 +53,7 @@ import {
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
+import { BuilderResultPanel } from './BuilderResultPanel';
 import { builderChangesSummary } from './builderReviewText';
 
 export type BuilderFileName = string;
@@ -2350,43 +2349,13 @@ export function BuilderPage({
                   ) : null}
 
                   {showResultFlow ? (
-                    <section
-                      aria-label="Project result"
-                      className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"
-                      data-builder-preview-flow="true"
-                      data-builder-result-flow="true"
-                      id="builder-tool-preview"
-                      ref={resultFlowRef}
-                    >
-                      <div className="cf-builder-result-toolbar">
-                        <Eye aria-hidden="true" className="size-4" />
-                        Result
-                      </div>
-                      <div className="cf-builder-flow-card-body">
-                        <BuilderStaticPreview projection={preview} />
-                      </div>
-                    </section>
+                    <BuilderResultPanel panelRef={resultFlowRef} projection={preview} />
                   ) : null}
                 </div>
               ) : null}
 
               {!hasUnsavedDraft && showResultFlow ? (
-                <section
-                  aria-label="Project result"
-                  className="cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface"
-                  data-builder-preview-flow="true"
-                  data-builder-result-flow="true"
-                  id="builder-tool-preview"
-                  ref={resultFlowRef}
-                >
-                  <div className="cf-builder-result-toolbar">
-                    <Eye aria-hidden="true" className="size-4" />
-                    Result
-                  </div>
-                  <div className="cf-builder-flow-card-body">
-                    <BuilderStaticPreview projection={preview} />
-                  </div>
-                </section>
+                <BuilderResultPanel panelRef={resultFlowRef} projection={preview} />
               ) : null}
 
               {sourceFile === null ? null : (
