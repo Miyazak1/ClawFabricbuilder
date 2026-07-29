@@ -61,8 +61,63 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
+function createContextualBuildTaskStreamWire() {
+  const wire = createAnswerTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
+            text: '我们刚才确认要做一个带星空背景和项目列表的作品集首页。',
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          assistant_message: {
+            message_id: 'builder-message:223e4567-e89b-42d3-a456-426614174000',
+            text: '方案是先做单页静态作品集，包含 hero、项目卡片和联系入口。',
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'answered',
+        },
+      ],
+    },
+  };
+}
+
 async function setup(options: Readonly<{
   answerActivity?: boolean;
+  contextualBuildActivity?: boolean;
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
@@ -449,7 +504,9 @@ async function setup(options: Readonly<{
             ? createRejectedTaskStreamWire()
             : options.answerActivity === true
               ? createAnswerTaskStreamWire()
-              : options.acceptedPendingActivity === true
+              : options.contextualBuildActivity === true
+                ? createContextualBuildTaskStreamWire()
+                : options.acceptedPendingActivity === true
                 ? pendingCandidateTaskStreamWire('accepted')
                 : options.rejectedPendingActivity === true
                   ? pendingCandidateTaskStreamWire('rejected')
@@ -1438,6 +1495,89 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '帮我做一个网页3D' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+  });
+
+  it('routes contextual execution phrases to the project picker before a workspace is bound', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '这个方案是什么');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '这个方案是什么' });
+      expect(container.textContent).toContain('作品集首页');
+    });
+
+    const executionTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(executionTextarea).not.toBeNull();
+    act(() => {
+      if (executionTextarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(executionTextarea, '就这样做');
+        executionTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        executionTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Choose or create a project before I build.');
+    });
+    expect(answer).toHaveBeenCalledOnce();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('就这样做');
+  });
+
+  it('routes contextual execution phrases to submit once a workspace is bound', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('作品集首页');
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '按这个做');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '按这个做' });
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();

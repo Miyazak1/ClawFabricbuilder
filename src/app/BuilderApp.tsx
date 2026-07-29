@@ -128,6 +128,8 @@ type BuilderWindowControlsBridge = Readonly<{
 const WINDOW_CONTROL_KEYS = new Set(['close', 'minimize', 'readState', 'toggleMaximize']);
 const WINDOW_CONTROL_RESULT_KEYS = new Set(['result_version', 'ok']);
 const WINDOW_STATE_KEYS = new Set(['state_version', 'maximized']);
+const PRIOR_BUILD_CONTEXT_TEXT_PATTERN =
+  /(?:方案|计划|实现|创建|生成|做一个|做个|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:plan|build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -425,6 +427,39 @@ function latestRestorableDraft(
   return null;
 }
 
+function hasPriorBuildContext(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): boolean {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (
+    visibleProjectId === null
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+  ) return false;
+
+  return conversationSnapshot.conversation.conversation.items.some((item) => {
+    if (item.item_kind === 'plan_reviewed') return item.plan_state === 'approved';
+    if (item.item_kind === 'user_message') {
+      return PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.message.text);
+    }
+    if (item.item_kind !== 'run_completed' || item.terminal_status !== 'succeeded') return false;
+    if (item.result_kind === 'plan' || item.result_kind === 'candidate') return true;
+    return item.assistant_message !== null
+      && PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.assistant_message.text);
+  });
+}
+
+function composerIntentContext(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+) {
+  return Object.freeze({
+    hasPriorBuildContext: hasPriorBuildContext(conversationSnapshot, projectSnapshot),
+  });
+}
+
 function shouldClearSubmittedIdea(snapshot: BuilderVisibleProjectSnapshot): boolean {
   return snapshot.draft !== null || (
     snapshot.answer !== null
@@ -571,10 +606,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     visibleHistoryProjectId(project.snapshot),
   );
   const projectSnapshotRef = useRef(project.snapshot);
+  const conversationSnapshotRef = useRef(conversation.snapshot);
 
   useLayoutEffect(() => {
     projectSnapshotRef.current = project.snapshot;
   }, [project.snapshot]);
+
+  useLayoutEffect(() => {
+    conversationSnapshotRef.current = conversation.snapshot;
+  }, [conversation.snapshot]);
 
   useEffect(() => {
     if (!catalogNewProjectPending) return;
@@ -740,7 +780,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       const submittedIdea = pendingBuild.instruction;
       if (
-        routeBuilderComposerIntent(submittedIdea) !== 'build'
+        routeBuilderComposerIntent(
+          submittedIdea,
+          composerIntentContext(conversationSnapshotRef.current, result),
+        ) !== 'build'
         || !hasBuildWorkspace(result)
         || result.busy
         || result.draft !== null
@@ -815,7 +858,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     if (submitInFlightRef.current || idea.trim().length === 0) return;
     const submittedIdea = idea;
-    const route = routeBuilderComposerIntent(submittedIdea);
+    const route = routeBuilderComposerIntent(
+      submittedIdea,
+      composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current),
+    );
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
     if (route === 'build' && !hasBuildWorkspace(projectSnapshotRef.current)) {

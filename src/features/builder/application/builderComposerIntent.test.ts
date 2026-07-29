@@ -20,6 +20,11 @@ describe('routeBuilderComposerIntent', () => {
     '请调整一下',
     '重构一下',
     'Make it better',
+    '就这样做',
+    '按刚才方案实现',
+    '按这个做',
+    '开始执行',
+    'Go ahead',
     '',
   ])('routes %s to answer by default', (instruction) => {
     expect(routeBuilderComposerIntent(instruction)).toBe('answer');
@@ -48,6 +53,21 @@ describe('routeBuilderComposerIntent', () => {
     'Fix the preview layout.',
   ])('routes %s to build when the edit intent is clear', (instruction) => {
     expect(routeBuilderComposerIntent(instruction)).toBe('build');
+  });
+
+  it.each([
+    '就这样做',
+    '按刚才方案实现',
+    '按这个做',
+    '开始执行',
+    'Go ahead',
+    "Let's do it",
+  ])('routes %s to build only when prior build context exists', (instruction) => {
+    expect(routeBuilderComposerIntent(instruction, { hasPriorBuildContext: true })).toBe('build');
+  });
+
+  it('keeps casual greetings in chat even when prior build context exists', () => {
+    expect(routeBuilderComposerIntent('hi', { hasPriorBuildContext: true })).toBe('answer');
   });
 
   it('keeps explicit plan selection outside the automatic chat/build route', () => {
