@@ -391,7 +391,13 @@ Evidence requirements:
   through one controlled preload/IPC command, but the renderer sends only
   Project/Conversation/Turn/Run IDs and cannot send plan text, provider config,
   source content, source receipt authority, Save authority, or Project
-  Revision;
+  Revision. If that continuation generation fails with a retryable provider or
+  preparation diagnostic after the Review decision was recorded, the visible
+  workspace keeps the approved-plan context, explains that the plan was approved
+  but no draft was created, and exposes an explicit Retry that re-enters only
+  this approved-plan generation path. It does not fall back to generic submit,
+  generic draft retry, hidden plan text, source authority, Save authority, or
+  Project Revision creation;
 - the current main-only plan-proposal generation checkpoint lets the Generation
   main service propose a plan for an existing project without creating a code
   candidate. Main first re-reads the current Git/SQLite project state, starts a

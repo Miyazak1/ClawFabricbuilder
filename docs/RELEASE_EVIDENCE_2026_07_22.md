@@ -1081,6 +1081,53 @@ projects.
   evidence, credential stored status, source profile unchanged, and zero
   unexpected renderer network requests.
 
+## 2026-07-29 Approved Plan Retry Package Check
+
+This addendum records checkpoint `b8fb5fc`, after approved-plan continuation
+failures became user-visible and retryable without falling back to generic
+draft retry or submit. It extends the packaged desktop MVP evidence only; it
+does not extend installer evidence, code-signing status, mobile evidence,
+generated-code execution, arbitrary tool execution, or external-network
+permissions inside generated projects.
+
+- If the Review decision is recorded but the approved-plan continuation draft
+  is not created because of a retryable generation diagnostic, the desktop
+  conversation now says that the plan was approved but no draft was created and
+  shows one explicit Retry action.
+- The controller stores that retry as an approved-plan continuation request and
+  reruns only `generateApprovedPlan` with the same Project/Conversation/Turn/Run
+  IDs. It does not call ordinary `submit`, ordinary draft `retry`, `generate`,
+  or Save, and it does not ask the renderer for plan text, source content,
+  provider config, credential, Git evidence, or revision authority.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\application\builderProjectController.test.ts`
+  and `npm.cmd exec vitest run src\app\BuilderApp.test.tsx`; the focused suites
+  reported 44 and 36 passing tests respectively. `npm.cmd exec tsc -b --pretty
+  false` also passed.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd run test:unit`, and `npm.cmd run test:boundaries`; the suites
+  reported 436 passing Vitest tests and 615 passing Node boundary tests.
+- `npm.cmd run pack` passed and refreshed
+  `release\win-unpacked\ClawFabric Builder.exe`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The packaged executable timestamp was `2026-07-29 07:50:06` local
+  time.
+- A real packaged DeepSeek V4 saved-profile canary passed by invoking
+  `scripts\verify-deepseek-packaged-canary.cjs --execute` with the saved
+  main-only profile at
+  `C:\Users\Administrator\AppData\Roaming\clawfabric-builder`. The result was
+  `builder-packaged-canary-result.v13`, verified the official DeepSeek V4
+  profile through redacted endpoint/model digests only, kept the source profile
+  unchanged, and reported zero unexpected renderer network requests.
+- That canary covered the source-folder workspace gate, live output, initial
+  draft Review/Changes, explicit Save Version 1, saved-project question without
+  advancing candidate count, update draft, pending draft restart restore,
+  explicit Save Version 2, restart reopen, history view/return, plan proposal
+  with three successful project-context tool results, approved plan continuation
+  into a new pending draft, Git/SQLite revision continuity, and static preview
+  evidence with the current first-release runtime-limit explanation.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
