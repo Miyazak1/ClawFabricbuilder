@@ -1101,7 +1101,7 @@ describe('BuilderPage v2', () => {
     expect(picker?.querySelector('[data-builder-workspace-section="current"]')?.textContent)
       .toContain('Current project');
     expect(picker?.querySelector('[data-builder-workspace-current-project="true"]')?.textContent)
-      .toContain('Current project - site-source');
+      .toContain('Draft workspace - Source folder: site-source');
     expect(picker?.textContent).not.toContain('No saved projects yet.');
     expect(picker?.textContent).toContain('New project');
     expect(onOpenProject).not.toHaveBeenCalled();
@@ -1137,7 +1137,7 @@ describe('BuilderPage v2', () => {
     expect(picker?.querySelector('[data-builder-workspace-section="in-progress"]')?.textContent)
       .toContain('In progress');
     expect(picker?.textContent).toContain('Unsaved dashboard');
-    expect(picker?.textContent).toContain('Not saved yet - site-source');
+    expect(picker?.textContent).toContain('Draft workspace - Source folder: site-source');
     expect(picker?.textContent).not.toContain('No projects yet.');
 
     click(container, `[data-builder-workspace-bound-project="${workspaceOnlyProjectId}"]`);

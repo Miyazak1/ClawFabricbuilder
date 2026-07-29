@@ -97,7 +97,7 @@ describe('BuilderProjectCatalog v2', () => {
 
     expect(container.textContent).toContain('In progress');
     expect(container.textContent).toContain('Unsaved dashboard');
-    expect(container.textContent).toContain('Not saved yet - site-source');
+    expect(container.textContent).toContain('Source folder: site-source');
     expect(container.textContent).not.toContain('No saved projects yet.');
     expect(container.textContent).not.toMatch(/sha256|commit_oid|tree_oid|SQLite|Git|[A-Za-z]:\\/u);
 

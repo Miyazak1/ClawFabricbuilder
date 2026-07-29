@@ -247,6 +247,10 @@ function isNearChatBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_FOLLOW_BOTTOM_THRESHOLD_PX;
 }
 
+function sourceFolderBoundaryLabel(folderName: string | undefined): string {
+  return `Source folder: ${folderName ?? 'selected folder'}`;
+}
+
 function scrollElementToChatStart(
   scroll: HTMLElement | null,
   target: HTMLElement,
@@ -1332,7 +1336,7 @@ export function BuilderPage({
   const workspaceDetail = saved !== null
     ? `Version ${saved.target.revision_number}`
     : workingProject !== null
-      ? workingProject.source_folders[0]?.name ?? 'Source folder selected'
+      ? sourceFolderBoundaryLabel(workingProject.source_folders[0]?.name)
       : 'Chat only until you choose a folder';
   const version = saved?.target.revision_number ?? null;
   const canAddContext = typeof onSteerInstruction === 'function'
@@ -1478,7 +1482,7 @@ export function BuilderPage({
   const newProjectTitle = workspacePickerState.title;
   const canCreateProjectFromPicker = typeof onCreateProject === 'function' && newProjectTitle.trim().length > 0;
   const normalizedWorkspaceSearch = workspaceSearch.trim().toLocaleLowerCase('en-US');
-  const workingProjectFolderLabel = workingProject?.source_folders[0]?.name ?? 'Source folder selected';
+  const workingProjectFolderLabel = sourceFolderBoundaryLabel(workingProject?.source_folders[0]?.name);
   const showCurrentWorkingProject = workingProject !== null
     && saved === null
     && (
@@ -2259,7 +2263,7 @@ export function BuilderPage({
                         <span className="min-w-0">
                           <span className="cf-builder-workspace-project-title">{workingProject.title}</span>
                           <span className="cf-builder-workspace-project-summary">
-                            Current project - {workingProjectFolderLabel}
+                            Draft workspace - {workingProjectFolderLabel}
                           </span>
                         </span>
                       </div>
@@ -2308,7 +2312,7 @@ export function BuilderPage({
                   <span className="min-w-0">
                     <span className="cf-builder-workspace-project-title">{project.title}</span>
                     <span className="cf-builder-workspace-project-summary">
-                      Not saved yet - {project.source_folders[0]?.name ?? 'Source folder selected'}
+                      Draft workspace - {sourceFolderBoundaryLabel(project.source_folders[0]?.name)}
                     </span>
                   </span>
                 </button>

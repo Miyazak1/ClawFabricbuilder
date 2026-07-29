@@ -12,6 +12,10 @@ export type BuilderProjectCatalogProps = Readonly<{
   onRefresh?: () => void;
 }>;
 
+function sourceFolderBoundaryLabel(folderName: string | undefined): string {
+  return `Source folder: ${folderName ?? 'selected folder'}`;
+}
+
 export function BuilderProjectCatalog({
   snapshot,
   onOpenProject,
@@ -130,8 +134,8 @@ export function BuilderProjectCatalog({
                   <FolderOpen aria-hidden="true" className="mt-0.5 size-4" />
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{project.title}</span>
-                    <span className="mt-1 block truncate text-xs text-muted-foreground">
-                      Not saved yet - {project.source_folders[0]?.name ?? 'Source folder selected'}
+                    <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
+                      {sourceFolderBoundaryLabel(project.source_folders[0]?.name)}
                     </span>
                   </span>
                   <span className="text-xs text-muted-foreground">Draft</span>
