@@ -144,6 +144,15 @@ preview and review an unsaved candidate, but it does not become a saved Version
 until explicit Save verifies the Git candidate and selects a SQLite Project
 Revision receipt.
 
+The desktop artifact surface is a renderer-safe projection over already public
+project snapshots and Task Stream reads. It can show full Preview, Changes,
+Source, and Versions in a resizable right panel, while the chat flow keeps only
+conversation, status, review, and compact result-summary UI. Resizing, opening,
+closing, and tab selection do not grant file access, dispatch tools, expose
+paths, create Git evidence, accept Reviews, save Versions, or change Project
+Revision authority. Preview remains a constrained projection of generated files,
+not a runtime authority for executing arbitrary generated code.
+
 The OpenAI-compatible provider transport also has a streaming observer path.
 When the Generation host supplies an internal observer, the request uses a
 bounded `text/event-stream` response and assembles the same terminal

@@ -1128,6 +1128,45 @@ permissions inside generated projects.
   into a new pending draft, Git/SQLite revision continuity, and static preview
   evidence with the current first-release runtime-limit explanation.
 
+## 2026-07-30 Resizable Artifact Drawer Package Check
+
+This addendum records checkpoint `fb317e0`, after the desktop conversation
+workspace moved large generated artifacts out of the chat flow and into a
+resizable right artifact panel. It extends local desktop UI/package evidence
+only; it does not extend installer evidence, real-provider DeepSeek canary
+coverage, arbitrary generated-code execution, external-network permissions, or
+general-purpose tool execution readiness.
+
+- The chat flow now keeps conversation, status, Review actions, and a compact
+  result summary. Full Preview, Changes, Source, and Versions render in the
+  right artifact panel instead of being embedded as large chat cards.
+- The artifact panel supports Preview/Changes/Source/Versions tabs, can be
+  closed, and has a desktop resize handle. The resize clamp preserves a minimum
+  usable chat/review width so the Review actions do not collapse while the panel
+  is widened.
+- Draft-ready and history-preview states open the Preview artifact tab by
+  default when a preview exists. Review actions and compact Preview/Changes
+  buttons switch the artifact tab rather than creating nested chat panels.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx src\app\BuilderDesktopLayoutStyles.test.ts`;
+  the command reported 121 passing Vitest tests.
+- Repository validation also passed through `npm.cmd exec tsc -b --pretty
+  false`, `npm.cmd run lint`, `npm.cmd run test:unit`, `npm.cmd run
+  test:boundaries`, and targeted canary Node tests through `node --test
+  tests\verify-packaged-canary.test.cjs tests\verify-deepseek-packaged-canary.test.cjs`.
+  The suites reported 501 passing Vitest unit tests, 626 passing boundary
+  tests, and 61 passing targeted canary Node tests.
+- `npm.cmd run build` and `npm.cmd run pack` passed. Package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+- A packaged desktop screenshot using a temporary local OpenAI-compatible mock
+  provider was captured at
+  `C:\Users\ADMINI~1\AppData\Local\Temp\clawfabric-builder-artifact-drawer-current.png`.
+  This screenshot is local visual evidence only and is not a real-provider or
+  DeepSeek canary.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

@@ -428,25 +428,24 @@ Evidence requirements:
   main content bottom. The composer owns a single primary action: idle turns send
   with Enter or the send button, and active AI work replaces that same action
   with Stop instead of adding a second command in the chat flow. Assistant
-  activity, draft review summary, preview, and source-file cards appear in that
-  same flow. Plan-first work is exposed as a secondary composer tool for saved
-  projects, not as a second send button. For an unsaved draft, the Review/Save
-  action strip appears before
-  the Result preview and becomes the generation-complete landing target, so the
-  next user decision is visible before any large preview surface. Draft changes
-  stay summarized in the review card and open as an on-demand disclosure in the
-  same conversation flow when the user asks to inspect them, so an unsaved result
-  does not squeeze the primary preview and Save actions. The preview
-  surface explicitly marks the first-release
-  static-only runtime boundary, so JavaScript, Three.js, canvas, server, network,
-  or backend-dependent drafts can explain a blank preview without claiming the
-  generated files failed. Saved Versions can remain in the secondary right review
-  sidebar outside the unsaved-draft landing state. Restoring a pending draft
-  from project activity uses its own visible restoring state before Review
-  appears, without implying a Save. This adds no fake edit
-  command, does not add a dedicated code workbench, and still uses only the
-  existing read-only task stream, plan review, generation, draft reject, cancel,
-  and explicit Save bridges;
+  activity, draft review summary, and compact result/artifact summaries remain
+  in the chat flow. Full Preview, Changes, Source, and Versions render in a
+  separate right artifact panel that can be opened, closed, switched by tab, and
+  resized by the user while preserving a minimum usable chat width. Plan-first
+  work is exposed as a secondary composer tool for saved projects, not as a
+  second send button. For an unsaved draft, the Review/Save action strip appears
+  before the compact result summary and becomes the generation-complete landing
+  target, so the next user decision is visible before any large artifact surface.
+  Preview and Changes actions open the corresponding artifact tab instead of
+  placing large panes inside the conversation scroll. The preview surface
+  explicitly marks the first-release static-only runtime boundary, so
+  JavaScript, Three.js, canvas, server, network, or backend-dependent drafts can
+  explain a blank preview without claiming the generated files failed. Restoring
+  a pending draft from project activity uses its own visible restoring state
+  before Review appears, without implying a Save. This adds no fake edit command,
+  does not add a dedicated code workbench, and still uses only the existing
+  read-only task stream, plan review, generation, draft reject, cancel, and
+  explicit Save bridges;
 - the current build-workspace binding checkpoint keeps logical New project
   conversation available for ordinary chat while requiring an explicit local
   project folder before any build/draft work. The visible composer now includes

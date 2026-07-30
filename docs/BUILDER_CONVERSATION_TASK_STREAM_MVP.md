@@ -233,7 +233,9 @@ silently reviving a rejected plan.
 
 ## UI Contract
 
-- The main stage prioritizes the current preview/result.
+- The main stage prioritizes the continuing conversation and the next review
+  decision. Large artifacts must not turn the chat transcript into a preview
+  container.
 - A lightweight conversation and task stream shows user messages, AI status,
   explanations, candidate outcomes, failures, and save decisions.
 - The composer remains available as the continuing input surface with one
@@ -253,7 +255,14 @@ silently reviving a rejected plan.
   Project identity, bounded project title, and source-folder display name/count,
   not the folder path or any write authority. The project remains unsaved until
   the user explicitly accepts a verified candidate as a Version.
-- Source/preview tools stay accessible without dominating the conversation.
+- Chat flow may show only compact result summaries, thumbnails, and action rows.
+  Full Preview, Changes, Source, Versions, and later Logs belong in a separate
+  artifact surface such as a right drawer/panel. That surface can be opened on
+  demand, switched by tab, resized on desktop, and closed without losing the
+  conversation position.
+- A generated draft may auto-open the Preview artifact tab, but the chat scroll
+  remains readable and the Review/Save decision remains visible. Full preview
+  height is independent from the chat scroll height.
 
 Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`
 deltas while preserving the same terminal generation result. Raw provider deltas
