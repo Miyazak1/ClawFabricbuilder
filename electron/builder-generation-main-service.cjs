@@ -146,7 +146,18 @@ const CASUAL_CHAT_INTENT_PATTERN =
   /^(?:hi|hello|hey|你好|您好|在吗|你在吗|在不在)[.!?。！？]*$/iu;
 const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
+  /^(?:能不能|可以不可以|可不可以)(?:更|再)?好看(?:一点|点)?[?？。.!！]*$/u,
+  /^(?:can|could)\s+(?:this|it|that)\s+look\s+better[.?!]*$/u,
   /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
+]);
+const WORK_DISCUSSION_INTENT_PATTERNS = Object.freeze([
+  /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
+  /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|requirements|style direction)\b/u,
+]);
+const EXPLORATORY_WORK_INTENT_PATTERNS = Object.freeze([
+  /^(?:(?:我|我们)?(?:想|想要|希望|需要|打算|准备|计划|考虑))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|3d|ui)/u,
+  /^(?:i|we)\s+(?:want|would like|need|hope|plan|intend)\s+to\s+(?:build|create|make|implement|design|develop|add|change|modify|update)\b/u,
+  /^(?:i|we)\s+(?:am|are|'m|'re)\s+(?:thinking|considering|planning)\s+(?:about\s+)?(?:building|creating|making|implementing|designing)\b/u,
 ]);
 const CONTEXTUAL_WORK_INTENT_PATTERNS = Object.freeze([
   /^(?:就这样(?:做|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:做|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:做|实现|执行)|开始(?:做|实现|执行)|可以开始了)[。.!！]*$/u,
@@ -185,9 +196,11 @@ function shouldSubmitAsExplanation(
   const hasExplanationIntent =
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
+  if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) return true;
   if (hasQuestionMark && hasExplanationIntent) return true;
   if (hasExplanationIntent) return true;
   if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) return true;
+  if (matchesAny(EXPLORATORY_WORK_INTENT_PATTERNS, text)) return true;
   if (matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)) {
     return hasContextualBuildContext !== true;
   }

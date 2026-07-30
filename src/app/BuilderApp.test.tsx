@@ -1588,6 +1588,108 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('keeps exploratory workspace turns in chat after a source folder is bound', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    for (const instruction of [
+      '我想先聊一下这个页面怎么做',
+      '我们先确定风格',
+      '我想创建一个登录页，你觉得怎么设计',
+      '我想做一个登录页',
+    ]) {
+      const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+      expect(textarea).not.toBeNull();
+      act(() => {
+        if (textarea) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+            ?.call(textarea, instruction);
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          textarea.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      await waitFor(() => {
+        expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
+          .toBe(false);
+      });
+
+      click(container, '[data-builder-submit-turn="true"]');
+
+      await waitFor(() => {
+        expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction });
+      });
+      expect(submit).not.toHaveBeenCalled();
+      expect(createLocalProject).not.toHaveBeenCalled();
+      expect(generate).not.toHaveBeenCalled();
+      expect(saveDraft).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+      answer.mockClear();
+    }
+  });
+
+  it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('作品集首页');
+    });
+
+    const discussionTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(discussionTextarea).not.toBeNull();
+    act(() => {
+      if (discussionTextarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(discussionTextarea, '我想先聊一下这个页面怎么做');
+        discussionTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        discussionTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    await waitFor(() => {
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
+        .toBe(false);
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想先聊一下这个页面怎么做' });
+    });
+    expect(submit).not.toHaveBeenCalled();
+
+    const executeTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(executeTextarea).not.toBeNull();
+    act(() => {
+      if (executeTextarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(executeTextarea, '按刚才方案做');
+        executeTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        executeTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    await waitFor(() => {
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
+        .toBe(false);
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '按刚才方案做' });
+    });
+    expect(answer).toHaveBeenCalledOnce();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
   it('routes contextual execution phrases to the project picker before a workspace is bound', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       contextualBuildActivity: true,

@@ -1,4 +1,4 @@
-export type BuilderComposerIntentRoute = 'answer' | 'build';
+export type BuilderComposerIntentRoute = 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
 
 export type BuilderComposerIntentContext = Readonly<{
   hasPriorBuildContext?: boolean;
@@ -14,7 +14,25 @@ const READ_ONLY_PATTERNS = Object.freeze([
 
 const VAGUE_CHANGE_PATTERNS = Object.freeze([
   /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
+  /^(?:能不能|可以不可以|可不可以)(?:更|再)?好看(?:一点|点)?[?？。.!！]*$/u,
+  /^(?:can|could)\s+(?:this|it|that)\s+look\s+better[.?!]*$/u,
   /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
+]);
+
+const EXPLICIT_PLAN_PATTERNS = Object.freeze([
+  /^(?:先)?(?:规划|计划|制定方案|出个方案|做个方案|做一个方案|先规划一下|先计划一下|先做方案|先出方案)/u,
+  /^(?:plan first|make a plan|propose a plan|draft a plan|let'?s plan|let us plan)\b/u,
+]);
+
+const WORK_DISCUSSION_PATTERNS = Object.freeze([
+  /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
+  /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|requirements|style direction)\b/u,
+]);
+
+const EXPLORATORY_WORK_PATTERNS = Object.freeze([
+  /^(?:(?:我|我们)?(?:想|想要|希望|需要|打算|准备|计划|考虑))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|3d|ui)/u,
+  /^(?:i|we)\s+(?:want|would like|need|hope|plan|intend)\s+to\s+(?:build|create|make|implement|design|develop|add|change|modify|update)\b/u,
+  /^(?:i|we)\s+(?:am|are|'m|'re)\s+(?:thinking|considering|planning)\s+(?:about\s+)?(?:building|creating|making|implementing|designing)\b/u,
 ]);
 
 const CONTEXTUAL_BUILD_PATTERNS = Object.freeze([
@@ -56,11 +74,14 @@ export function routeBuilderComposerIntent(
 ): BuilderComposerIntentRoute {
   const normalized = normalizeComposerInstruction(instruction);
   if (normalized.length === 0) return 'answer';
+  if (WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
   if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
-  if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
+  if (EXPLICIT_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) return 'plan';
+  if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
   if (isBuilderComposerContextualBuildIntent(normalized)) {
-    return context.hasPriorBuildContext === true ? 'build' : 'answer';
+    return context.hasPriorBuildContext === true ? 'build' : 'clarify';
   }
+  if (EXPLORATORY_WORK_PATTERNS.some((pattern) => pattern.test(normalized))) return 'update_brief';
   if (CLEAR_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) return 'build';
   return 'answer';
 }
