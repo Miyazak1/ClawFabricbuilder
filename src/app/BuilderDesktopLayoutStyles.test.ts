@@ -146,11 +146,14 @@ describe('Builder desktop layout styles', () => {
     expect(draftLanding).not.toContain('border:');
     expect(draftLanding).not.toContain('border-radius');
     expect(draftLandingSurfaces).toContain('width: 100%;');
-    expect(artifactSummary).toContain('grid-template-columns: minmax(0, 1fr) auto;');
+    expect(artifactSummary).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(artifactSummary).toContain('align-items: start;');
     expect(artifactSummary).toContain('border-top: 1px solid var(--cf-border);');
     expect(artifactSummary).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(artifactSummary).not.toContain('border-radius');
     expect(artifactSummaryActions).toContain('flex-wrap: wrap;');
+    expect(artifactSummaryActions).toContain('justify-content: flex-start;');
+    expect(artifactSummaryActions).toContain('padding-left: 38px;');
     expect(changesFlow).toContain('display: grid;');
     expect(changesFlow).toContain('overflow: hidden;');
     expect(changesPanel).toContain('height: 100%;');

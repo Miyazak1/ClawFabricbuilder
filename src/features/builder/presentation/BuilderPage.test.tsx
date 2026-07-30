@@ -2060,7 +2060,7 @@ describe('BuilderPage v2', () => {
       }));
     });
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
-      .toBe('400px');
+      .toBe('560px');
     click(container, '[data-builder-review-open-changes="true"]');
     const updatedArtifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const changesFlow = container.querySelector('[data-builder-changes-flow="true"]');

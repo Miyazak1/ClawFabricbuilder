@@ -141,7 +141,7 @@ const CHAT_FOLLOW_BOTTOM_THRESHOLD_PX = 96;
 const ARTIFACT_DEFAULT_WIDTH_PX = 480;
 const ARTIFACT_MIN_WIDTH_PX = 360;
 const ARTIFACT_MAX_WIDTH_PX = 760;
-const ARTIFACT_MIN_CHAT_WIDTH_PX = 520;
+const ARTIFACT_MIN_CHAT_WIDTH_PX = 360;
 type BuilderArtifactTab = 'changes' | 'logs' | 'preview' | 'source' | 'versions';
 
 function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
