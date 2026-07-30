@@ -6,6 +6,7 @@ import {
   GitCompareArrows,
   ListChecks,
   StopCircle,
+  X,
 } from 'lucide-react';
 
 import type {
@@ -25,6 +26,12 @@ type SavedComposerProject = Readonly<{
 
 export type BuilderComposerContextStatus = 'ready_to_build' | null;
 
+export type BuilderComposerWorkingBrief = Readonly<{
+  key: string;
+  label: string;
+  summary: string;
+}>;
+
 export type BuilderComposerProps = Readonly<{
   busy: boolean;
   canAddContext: boolean;
@@ -37,10 +44,12 @@ export type BuilderComposerProps = Readonly<{
   catalogProjects: readonly BuilderProjectCatalogItem[];
   catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
   composerContextStatus?: BuilderComposerContextStatus;
+  composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   hasUnsavedDraft: boolean;
   instruction: string;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
+  onClearComposerWorkingBrief?: (key: string) => void;
   onDismissWorkspacePicker?: () => void;
   onFocusDraftReview?: () => void;
   onInstructionChange?: (value: string) => void;
@@ -82,9 +91,11 @@ export function BuilderComposer({
   catalogProjects,
   catalogWorkspaceProjects,
   composerContextStatus = null,
+  composerWorkingBrief = null,
   hasUnsavedDraft,
   instruction,
   onCancel,
+  onClearComposerWorkingBrief,
   onCreateProject,
   onDismissWorkspacePicker,
   onFocusDraftReview,
@@ -339,6 +350,30 @@ export function BuilderComposer({
             )}
           </div>
         </footer>
+        {!hasUnsavedDraft && composerWorkingBrief !== null ? (
+          <div
+            className="cf-builder-composer-brief"
+            data-builder-composer-brief="true"
+          >
+            <div className="cf-builder-composer-brief-copy">
+              <span className="cf-builder-composer-brief-label">{composerWorkingBrief.label}</span>
+              <p className="cf-builder-composer-brief-summary">{composerWorkingBrief.summary}</p>
+            </div>
+            {typeof onClearComposerWorkingBrief === 'function' ? (
+              <button
+                aria-label="Clear current brief"
+                className="cf-builder-composer-brief-clear"
+                data-builder-clear-composer-brief="true"
+                onClick={() => onClearComposerWorkingBrief(composerWorkingBrief.key)}
+                title="Clear current brief"
+                type="button"
+              >
+                <X aria-hidden="true" className="size-3.5" />
+                Clear
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {hasUnsavedDraft ? (
           <div
             className="cf-builder-composer-review-gate"

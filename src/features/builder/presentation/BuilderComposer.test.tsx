@@ -234,4 +234,30 @@ describe('BuilderComposer', () => {
     expect(draft.querySelector('[data-builder-composer-status="true"]')?.textContent)
       .toBe('Continue this draft');
   });
+
+  it('shows and clears a compact current brief without adding another send path', () => {
+    const onClearComposerWorkingBrief = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'ready_to_build',
+          composerWorkingBrief: {
+            key: 'builder-project:current-brief:1:3',
+            label: 'Current brief',
+            summary: 'Build a static portfolio homepage with a starfield hero and project cards.',
+          },
+          instruction: '',
+          onClearComposerWorkingBrief,
+        })}
+      />,
+    );
+
+    const brief = container.querySelector('[data-builder-composer-brief="true"]');
+    expect(brief?.textContent).toContain('Current brief');
+    expect(brief?.textContent).toContain('starfield hero');
+    expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+
+    click(container, '[data-builder-clear-composer-brief="true"]');
+    expect(onClearComposerWorkingBrief).toHaveBeenCalledExactlyOnceWith('builder-project:current-brief:1:3');
+  });
 });

@@ -59,6 +59,7 @@ import {
   type BuilderPlanReviewInFlight,
   type BuilderPlanSourceReadApprovalPrompt,
 } from '../features/builder/presentation/BuilderPage';
+import type { BuilderComposerWorkingBrief } from '../features/builder/presentation/BuilderComposer';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -135,9 +136,12 @@ const WINDOW_STATE_KEYS = new Set(['state_version', 'maximized']);
 const PRIOR_BUILD_CONTEXT_TEXT_PATTERN =
   /(?:方案|计划|实现|创建|生成|做一个|做个|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:plan|build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 const PRIOR_BUILD_COMMITMENT_TEXT_PATTERN =
-  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现).*(?:做一个|做个|创建|生成|实现|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:confirmed|decided|goal|requirements?).*\b(?:build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现|想要|希望|需要).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|^(?:(?:我|我们)?(?:想|想要|要|希望|需要|打算|准备|计划|考虑))(?!\s*(?:先)?(?:知道|了解|问|问一下|看看|看一下|搞清楚|确认一下|解释|说明|分析|对比))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|修改|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|作品集|3d|ui)|(?:confirmed|decided|goal|requirements?|want|would like|need|hope|plan|intend).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 const PRIOR_BUILD_PROPOSAL_TEXT_PATTERN =
   /(?:(?:方案是|计划是|我会|我将|接下来会|可以按|建议先).*(?:做一个|做个|创建|生成|实现|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:plan is|proposal is|i will|i would|next i will|we can).*\b(?:build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
+const COMPOSER_BRIEF_MAX_TEXT_LENGTH = 260;
+const COMPOSER_BRIEF_INTERNAL_TEXT_PATTERN =
+  /builder-(?:project|conversation|turn|task|run|message|conversation-event|generation-draft):|sha256:|request_digest|provider|credential|api[_-]?key|source_tree|commit_oid|tree_oid|receipt/iu;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -535,12 +539,134 @@ function hasPriorBuildContext(
   return hasContext;
 }
 
+function compactComposerBriefText(value: string): string | null {
+  const normalized = value
+    .trim()
+    .normalize('NFKC')
+    .replace(/\s+/gu, ' ');
+  if (normalized.length === 0 || COMPOSER_BRIEF_INTERNAL_TEXT_PATTERN.test(normalized)) return null;
+  if (normalized.length <= COMPOSER_BRIEF_MAX_TEXT_LENGTH) return normalized;
+  return `${normalized.slice(0, COMPOSER_BRIEF_MAX_TEXT_LENGTH - 3).trimEnd()}...`;
+}
+
+function taskStreamRunKey(item: Readonly<{ turn_id: string; run_id: string }>): string {
+  return `${item.turn_id}:${item.run_id}`;
+}
+
+function composerWorkingBrief(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): BuilderComposerWorkingBrief | null {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (
+    visibleProjectId === null
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+  ) return null;
+
+  const planTextsByRun = new Map<string, Readonly<{ sequence: number; text: string }>>();
+  let latestUserGoal: Readonly<{ sequence: number; text: string }> | null = null;
+  let latestAssistantProposal: Readonly<{ sequence: number; text: string }> | null = null;
+  let latestPlan: Readonly<{ sequence: number; state: 'approved' | 'proposed' | 'rejected'; text: string }> | null = null;
+  let latestCandidate: Readonly<{ sequence: number; text: string }> | null = null;
+
+  for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'user_message') {
+      const text = compactComposerBriefText(item.message.text);
+      if (text !== null && PRIOR_BUILD_COMMITMENT_TEXT_PATTERN.test(text)) {
+        latestUserGoal = Object.freeze({ sequence: item.sequence, text });
+      }
+      continue;
+    }
+    if (item.item_kind === 'run_completed') {
+      const text = item.assistant_message === null ? null : compactComposerBriefText(item.assistant_message.text);
+      if (item.result_kind === 'candidate' && item.candidate !== null) {
+        const candidateText = compactComposerBriefText(item.candidate.summary)
+          ?? compactComposerBriefText(item.candidate.title);
+        if (candidateText !== null) {
+          latestCandidate = Object.freeze({ sequence: item.sequence, text: candidateText });
+        }
+        continue;
+      }
+      if (item.result_kind === 'plan' && text !== null) {
+        const runKey = taskStreamRunKey(item);
+        planTextsByRun.set(runKey, Object.freeze({ sequence: item.sequence, text }));
+        latestPlan = Object.freeze({ sequence: item.sequence, state: 'proposed', text });
+        continue;
+      }
+      if (
+        item.result_kind === 'explanation'
+        && latestUserGoal !== null
+        && text !== null
+        && PRIOR_BUILD_PROPOSAL_TEXT_PATTERN.test(text)
+      ) {
+        latestAssistantProposal = Object.freeze({ sequence: item.sequence, text });
+      }
+      continue;
+    }
+    if (item.item_kind === 'plan_reviewed') {
+      const plan = planTextsByRun.get(taskStreamRunKey(item));
+      if (plan !== undefined) {
+        latestPlan = Object.freeze({
+          sequence: item.sequence,
+          state: item.plan_state,
+          text: plan.text,
+        });
+      }
+    }
+  }
+
+  const candidates: BuilderComposerWorkingBrief[] = [];
+  const candidateSequences = new Map<string, number>();
+  if (latestPlan?.state === 'approved') {
+    const key = `${visibleProjectId}:approved-plan:${latestPlan.sequence}`;
+    candidates.push(Object.freeze({
+      key,
+      label: 'Approved plan',
+      summary: latestPlan.text,
+    }));
+    candidateSequences.set(key, latestPlan.sequence);
+  }
+  if (latestCandidate !== null) {
+    const key = `${visibleProjectId}:current-result:${latestCandidate.sequence}`;
+    candidates.push(Object.freeze({
+      key,
+      label: 'Current result',
+      summary: latestCandidate.text,
+    }));
+    candidateSequences.set(key, latestCandidate.sequence);
+  }
+  if (latestUserGoal !== null && latestAssistantProposal !== null) {
+    const key = `${visibleProjectId}:current-brief:${latestUserGoal.sequence}:${latestAssistantProposal.sequence}`;
+    candidates.push(Object.freeze({
+      key,
+      label: 'Current brief',
+      summary: `${latestUserGoal.text} ${latestAssistantProposal.text}`,
+    }));
+    candidateSequences.set(key, latestAssistantProposal.sequence);
+  }
+  if (candidates.length === 0) return null;
+  return candidates.reduce((latest, candidate) => (
+    (candidateSequences.get(candidate.key) ?? 0) > (candidateSequences.get(latest.key) ?? 0)
+      ? candidate
+      : latest
+  ));
+}
+
 function composerIntentContext(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
+  hiddenComposerWorkingBriefKey: string | null = null,
 ) {
+  const currentWorkingBrief = composerWorkingBrief(conversationSnapshot, projectSnapshot);
   return Object.freeze({
-    hasPriorBuildContext: hasPriorBuildContext(conversationSnapshot, projectSnapshot),
+    hasPriorBuildContext: projectSnapshot.draft !== null
+      || (
+        hasPriorBuildContext(conversationSnapshot, projectSnapshot)
+        && currentWorkingBrief !== null
+        && currentWorkingBrief.key !== hiddenComposerWorkingBriefKey
+      ),
   });
 }
 
@@ -576,6 +702,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
+  const [hiddenComposerWorkingBriefKey, setHiddenComposerWorkingBriefKey] = useState<string | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -692,7 +819,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.workspace,
     visibleHistoryProjectId(project.snapshot),
   );
-  const currentComposerIntentContext = composerIntentContext(conversation.snapshot, project.snapshot);
+  const rawComposerWorkingBrief = composerWorkingBrief(conversation.snapshot, project.snapshot);
+  const visibleComposerWorkingBrief = rawComposerWorkingBrief !== null
+    && rawComposerWorkingBrief.key !== hiddenComposerWorkingBriefKey
+    ? rawComposerWorkingBrief
+    : null;
+  const currentComposerIntentContext = composerIntentContext(
+    conversation.snapshot,
+    project.snapshot,
+    hiddenComposerWorkingBriefKey,
+  );
   const composerContextStatus = currentComposerIntentContext.hasPriorBuildContext
     ? 'ready_to_build'
     : null;
@@ -873,7 +1009,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       if (
         routeBuilderComposerIntent(
           submittedIdea,
-          composerIntentContext(conversationSnapshotRef.current, result),
+          composerIntentContext(conversationSnapshotRef.current, result, hiddenComposerWorkingBriefKey),
         ) !== 'build'
         || !hasBuildWorkspace(result)
         || result.busy
@@ -896,7 +1032,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [catalog, idea, project, readActivityAfterTerminal]);
+  }, [catalog, hiddenComposerWorkingBriefKey, idea, project, readActivityAfterTerminal]);
 
   useEffect(() => {
     const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
@@ -1022,7 +1158,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const submittedIdea = idea;
     const route = routeBuilderComposerIntent(
       submittedIdea,
-      composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current),
+      composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current, hiddenComposerWorkingBriefKey),
     );
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
@@ -1066,7 +1202,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [idea, project, readActivityAfterTerminal, reviewPlan, steerInstruction]);
+  }, [hiddenComposerWorkingBriefKey, idea, project, readActivityAfterTerminal, reviewPlan, steerInstruction]);
 
   const runPlanProposal = useCallback(async (
     submittedIdea: string,
@@ -1409,6 +1545,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               activeFile={activeFile}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               composerContextStatus={composerContextStatus}
+              composerWorkingBrief={visibleComposerWorkingBrief}
               instruction={idea}
               liveOutput={liveOutput}
               planReviewFailure={planReviewFailure}
@@ -1431,6 +1568,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
               onCancel={cancel}
+              onClearComposerWorkingBrief={setHiddenComposerWorkingBriefKey}
               onRejectDraft={rejectDraft}
               onSave={save}
               onSelectFile={setActiveFile}

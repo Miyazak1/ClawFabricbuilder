@@ -64,7 +64,11 @@ import {
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
-import { BuilderComposer, type BuilderComposerContextStatus } from './BuilderComposer';
+import {
+  BuilderComposer,
+  type BuilderComposerContextStatus,
+  type BuilderComposerWorkingBrief,
+} from './BuilderComposer';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
 import { BuilderSourceDisclosure } from './BuilderSourceDisclosure';
@@ -98,6 +102,7 @@ export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
 export type BuilderPageProps = {
   instruction: string;
   composerContextStatus?: BuilderComposerContextStatus;
+  composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
@@ -109,6 +114,7 @@ export type BuilderPageProps = {
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onCancel?: () => void;
+  onClearComposerWorkingBrief?: (key: string) => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
@@ -1428,8 +1434,10 @@ function BuilderArtifactSidebar({
 export function BuilderPage({
   instruction,
   composerContextStatus = null,
+  composerWorkingBrief = null,
   onApprovePlanSourceRead,
   onCancel,
+  onClearComposerWorkingBrief,
   onCreateProject,
   onDismissWorkspacePicker,
   onDismissPlanSourceReadApproval,
@@ -2224,9 +2232,11 @@ export function BuilderPage({
       catalogProjects={catalogProjects}
       catalogWorkspaceProjects={catalogWorkspaceProjects}
       composerContextStatus={composerContextStatus}
+      composerWorkingBrief={composerWorkingBrief}
       hasUnsavedDraft={hasUnsavedDraft}
       instruction={instruction}
       onCancel={onCancel}
+      onClearComposerWorkingBrief={onClearComposerWorkingBrief}
       onCreateProject={onCreateProject}
       onDismissWorkspacePicker={onDismissWorkspacePicker}
       onFocusDraftReview={focusDraftReview}

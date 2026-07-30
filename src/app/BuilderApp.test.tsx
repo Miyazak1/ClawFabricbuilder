@@ -1699,6 +1699,46 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
+  it('shows a clearable current brief before contextual execution', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      const brief = container.querySelector('[data-builder-composer-brief="true"]');
+      expect(brief?.textContent).toContain('Current brief');
+      expect(brief?.textContent).toContain('星空背景');
+      expect(brief?.textContent).toContain('项目卡片');
+    });
+    expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
+      .not.toMatch(/working_brief|recent_chat_proposal|builder-conversation|sha256:|provider|credential|source_tree|receipt/iu);
+
+    click(container, '[data-builder-clear-composer-brief="true"]');
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '按刚才方案做');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '按刚才方案做' });
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('routes contextual execution phrases to the project picker before a workspace is bound', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       contextualBuildActivity: true,
