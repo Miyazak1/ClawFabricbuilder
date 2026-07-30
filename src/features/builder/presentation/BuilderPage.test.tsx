@@ -97,6 +97,14 @@ async function createLocalProjectSelection(request: Readonly<{ project_id: strin
   };
 }
 
+async function openProjectLocationSelection(request: Readonly<{ project_id: string }>) {
+  return {
+    result_version: 'builder-project-location-open-result.v1',
+    project_id: request.project_id,
+    opened: true,
+  };
+}
+
 async function snapshots() {
   const readWire = await createReadWire();
   let draft = await createGenerationDraft();
@@ -174,6 +182,7 @@ async function snapshots() {
           }
           : readWire;
       },
+      openLocation: openProjectLocationSelection,
       createLocalProject: createLocalProjectSelectionCancelled,
       async saveDraft() {
         return createSaveResult(draft, readWire);
@@ -278,6 +287,7 @@ async function workingProjectSnapshot() {
           }
           : readWire;
       },
+      openLocation: openProjectLocationSelection,
       createLocalProject: createLocalProjectSelection,
       async saveDraft() {
         return createSaveResult(draft, readWire);
@@ -775,6 +785,7 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async open() {
         return readWire;
       },
+      openLocation: openProjectLocationSelection,
       createLocalProject: createLocalProjectSelectionCancelled,
       async saveDraft() {
         return createSaveResult(draft, readWire);
@@ -886,6 +897,7 @@ async function inspectedHistorySnapshot() {
       async open() {
         return currentWire;
       },
+      openLocation: openProjectLocationSelection,
       createLocalProject: createLocalProjectSelectionCancelled,
       async saveDraft() {
         throw new Error('not used');
@@ -1510,6 +1522,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -1566,6 +1579,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -1621,6 +1635,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => null,
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -1685,6 +1700,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => null,
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -1738,6 +1754,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -1812,6 +1829,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => readWire,
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -1976,6 +1994,7 @@ describe('BuilderPage v2', () => {
     const history = await savedHistory();
     const onSubmitInstruction = vi.fn();
     const onRefreshConversation = vi.fn();
+    const onOpenProjectLocation = vi.fn();
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
     const container = render(
@@ -1985,6 +2004,7 @@ describe('BuilderPage v2', () => {
         historySnapshot={history}
         instruction="Add a timer."
         onRefreshConversation={onRefreshConversation}
+        onOpenProjectLocation={onOpenProjectLocation}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         onSubmitInstruction={onSubmitInstruction}
@@ -2019,7 +2039,9 @@ describe('BuilderPage v2', () => {
     expect(workspaceControls).not.toBeNull();
     expect(workspaceControls?.getAttribute('data-builder-workspace-drawer-visible')).toBe('true');
     expect(workspaceControls?.textContent).not.toContain('Terminal');
-    expect(workspaceControls?.textContent).not.toContain('Open location');
+    expect(workspaceControls?.textContent).toContain('Open location');
+    expect(container.querySelector('[data-builder-open-project-location="true"]')?.getAttribute('aria-label'))
+      .toBe('Open location');
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-pressed'))
       .toBe('true');
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
@@ -2190,6 +2212,8 @@ describe('BuilderPage v2', () => {
     expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
+    click(container, '[data-builder-open-project-location="true"]');
+    expect(onOpenProjectLocation).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
@@ -3461,6 +3485,7 @@ describe('BuilderPage v2', () => {
       },
       workspace: {
         open: async () => null,
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => null,
         loadCurrent: async () => null,
@@ -3516,6 +3541,7 @@ describe('BuilderPage v2', () => {
           if (request.project_id === null) return null;
           throw new Error('unavailable');
         },
+        openLocation: openProjectLocationSelection,
         createLocalProject: createLocalProjectSelectionCancelled,
         saveDraft: async () => {
           throw new Error('response lost');

@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Eye,
   FileCode2,
+  FolderOpen,
   GitCompareArrows,
   History,
   ListChecks,
@@ -128,6 +129,7 @@ export type BuilderPageProps = {
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onSave?: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onOpenProjectLocation?: (projectId: string) => Promise<unknown> | void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onShowCurrentRevision?: () => Promise<unknown> | void;
@@ -1443,6 +1445,7 @@ export function BuilderPage({
   onDismissPlanSourceReadApproval,
   onInstructionChange,
   onOpenProject,
+  onOpenProjectLocation,
   onSteerInstruction,
   onProposePlan,
   onSubmitInstruction,
@@ -1683,6 +1686,11 @@ export function BuilderPage({
     ? requestedArtifactTab
     : null;
   const showArtifactSidebar = activeArtifactTab !== null;
+  const openLocationProjectId = draft?.project_id
+    ?? inspected?.target.project_id
+    ?? saved?.target.project_id
+    ?? current?.workingProjectId
+    ?? null;
   const showChangesPanel = activeArtifactTab === 'changes' && hasUnsavedDraft;
   const previewExpandedVisible = previewExpanded && showResultFlow;
   const artifactShellStyle = showArtifactSidebar
@@ -1874,6 +1882,11 @@ export function BuilderPage({
     if (fallbackTab !== null) {
       setActiveArtifactTab(fallbackTab);
     }
+  }
+
+  function openProjectLocation(): void {
+    if (openLocationProjectId === null) return;
+    void onOpenProjectLocation?.(openLocationProjectId);
   }
 
   function startArtifactResize(event: ReactPointerEvent<HTMLButtonElement>): void {
@@ -2272,7 +2285,8 @@ export function BuilderPage({
       showPreview={showResultFlow}
     />
   ) : null;
-  const workspaceControls = artifactTabs.length > 0 ? (
+  const hasArtifactControls = artifactTabs.length > 0;
+  const workspaceControls = openLocationProjectId !== null || hasArtifactControls ? (
     <div
       aria-label="Workspace artifact controls"
       className="cf-builder-workspace-controls"
@@ -2280,48 +2294,65 @@ export function BuilderPage({
       data-builder-workspace-drawer-visible={showArtifactSidebar ? 'true' : 'false'}
       role="group"
     >
-      <div className="cf-builder-workspace-control-tabs" role="group" aria-label="Artifact views">
-        {artifactTabs.map((tab) => (
+      {openLocationProjectId !== null ? (
+        <button
+          aria-label="Open location"
+          className="cf-builder-workspace-control-button cf-builder-workspace-location-button"
+          data-builder-open-project-location="true"
+          onClick={openProjectLocation}
+          title="Open location"
+          type="button"
+        >
+          <FolderOpen aria-hidden="true" className="size-3.5" />
+          <span>Open location</span>
+        </button>
+      ) : null}
+      {hasArtifactControls ? (
+        <>
+          <div className="cf-builder-workspace-control-tabs" role="group" aria-label="Artifact views">
+            {artifactTabs.map((tab) => (
+              <button
+                aria-label={`Open ${artifactTabLabel(tab)}`}
+                aria-pressed={activeArtifactTab === tab}
+                className="cf-builder-workspace-control-button cf-builder-workspace-tab-control"
+                data-active={activeArtifactTab === tab ? 'true' : undefined}
+                data-builder-workspace-control-tab={tab}
+                key={tab}
+                onClick={() => openArtifactTab(tab)}
+                title={`Open ${artifactTabLabel(tab)}`}
+                type="button"
+              >
+                <ArtifactTabIcon tab={tab} />
+              </button>
+            ))}
+          </div>
           <button
-            aria-label={`Open ${artifactTabLabel(tab)}`}
-            aria-pressed={activeArtifactTab === tab}
-            className="cf-builder-workspace-control-button cf-builder-workspace-tab-control"
-            data-active={activeArtifactTab === tab ? 'true' : undefined}
-            data-builder-workspace-control-tab={tab}
-            key={tab}
-            onClick={() => openArtifactTab(tab)}
-            title={`Open ${artifactTabLabel(tab)}`}
+            aria-label="Minimize artifact panel"
+            className="cf-builder-workspace-control-button"
+            data-builder-minimize-artifact="true"
+            onClick={minimizeArtifactSidebar}
+            title="Minimize artifact panel"
             type="button"
           >
-            <ArtifactTabIcon tab={tab} />
+            <Minimize2 aria-hidden="true" className="size-3.5" />
           </button>
-        ))}
-      </div>
-      <button
-        aria-label="Minimize artifact panel"
-        className="cf-builder-workspace-control-button"
-        data-builder-minimize-artifact="true"
-        onClick={minimizeArtifactSidebar}
-        title="Minimize artifact panel"
-        type="button"
-      >
-        <Minimize2 aria-hidden="true" className="size-3.5" />
-      </button>
-      <button
-        aria-label={showArtifactSidebar ? 'Hide artifact panel' : 'Show artifact panel'}
-        aria-pressed={showArtifactSidebar}
-        className="cf-builder-workspace-control-button"
-        data-builder-toggle-artifact="true"
-        onClick={toggleArtifactSidebar}
-        title={showArtifactSidebar ? 'Hide artifact panel' : 'Show artifact panel'}
-        type="button"
-      >
-        {showArtifactSidebar ? (
-          <PanelRightClose aria-hidden="true" className="size-3.5" />
-        ) : (
-          <PanelRightOpen aria-hidden="true" className="size-3.5" />
-        )}
-      </button>
+          <button
+            aria-label={showArtifactSidebar ? 'Hide artifact panel' : 'Show artifact panel'}
+            aria-pressed={showArtifactSidebar}
+            className="cf-builder-workspace-control-button"
+            data-builder-toggle-artifact="true"
+            onClick={toggleArtifactSidebar}
+            title={showArtifactSidebar ? 'Hide artifact panel' : 'Show artifact panel'}
+            type="button"
+          >
+            {showArtifactSidebar ? (
+              <PanelRightClose aria-hidden="true" className="size-3.5" />
+            ) : (
+              <PanelRightOpen aria-hidden="true" className="size-3.5" />
+            )}
+          </button>
+        </>
+      ) : null}
     </div>
   ) : null;
   const artifactSidebar = showArtifactSidebar && activeArtifactTab !== null ? (

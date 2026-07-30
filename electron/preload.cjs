@@ -3,6 +3,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
+const OPEN_PROJECT_LOCATION_CHANNEL = 'clawfabric-builder:project-workspace:open-location';
 const CREATE_LOCAL_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:create-local';
 const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
@@ -44,10 +45,13 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v18',
+  bridgeVersion: 'builder-preload.v19',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
+    },
+    openLocation(request) {
+      return ipcRenderer.invoke(OPEN_PROJECT_LOCATION_CHANNEL, request);
     },
     createLocalProject(request) {
       return ipcRenderer.invoke(CREATE_LOCAL_PROJECT_CHANNEL, request);

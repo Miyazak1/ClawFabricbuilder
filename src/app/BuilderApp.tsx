@@ -206,6 +206,10 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
   },
+  openLocation(request: Parameters<BuilderProjectWorkspacePort['openLocation']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
+  },
   createLocalProject(request: Parameters<BuilderProjectWorkspacePort['createLocalProject']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopProjectWorkspacePortError());
@@ -786,6 +790,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
         return ports.workspace.open(request);
       },
+      openLocation(request: Parameters<BuilderProjectWorkspacePort['openLocation']>[0]) {
+        return ports.workspace.openLocation(request);
+      },
       createLocalProject(request: Parameters<BuilderProjectWorkspacePort['createLocalProject']>[0]) {
         return ports.workspace.createLocalProject(request);
       },
@@ -964,6 +971,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const refreshCatalog = useCallback(() => {
     void catalog.refresh().catch(() => undefined);
   }, [catalog]);
+
+  const openProjectLocation = useCallback(async (targetProjectId: string) => {
+    await ports.workspace.openLocation({ project_id: targetProjectId }).catch(() => undefined);
+  }, [ports.workspace]);
 
   const readActivityAfterTerminal = useCallback(async (
     result: BuilderVisibleProjectSnapshot,
@@ -1567,6 +1578,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onInstructionChange={setIdea}
               onInspectRevision={inspectRevision}
               onOpenProject={openProjectFromComposer}
+              onOpenProjectLocation={openProjectLocation}
               onOpenSettings={() => setView('settings')}
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}

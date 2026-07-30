@@ -630,6 +630,11 @@ async function setup(options: Readonly<{
       ],
     };
   });
+  const openLocation = vi.fn(async (request: Readonly<{ project_id: string }>) => ({
+    result_version: 'builder-project-location-open-result.v1',
+    project_id: request.project_id,
+    opened: true,
+  }));
   const listCurrent = vi.fn(async () => (
     saved ? catalogWire : { ...catalogWire, projects: [] }
   ));
@@ -721,6 +726,7 @@ async function setup(options: Readonly<{
     },
     projectWorkspace: {
       open,
+      openLocation,
       createLocalProject,
       saveDraft,
       loadCurrent,
@@ -767,6 +773,7 @@ async function setup(options: Readonly<{
     cancel,
     continueDraft,
     createLocalProject,
+    openLocation,
     generate,
     generateApprovedPlan,
     resolvePlanReview: async () => {
@@ -1038,6 +1045,15 @@ describe('BuilderApp v2', () => {
     expect(railLabels).toEqual(['Projects', 'Settings']);
     expect(railLabels).not.toContain('Canvas');
     expect(railLabels).not.toContain('Chat');
+  });
+
+  it('opens the selected project location through the main-owned workspace port', async () => {
+    const { container, openLocation } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+
+    click(container, '[data-builder-open-project-location="true"]');
+
+    expect(openLocation).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
   });
 
   it('routes the sidebar new-project command into source folder binding before work starts', async () => {

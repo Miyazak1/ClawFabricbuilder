@@ -6,8 +6,9 @@ import {
 } from './builderDesktopProjectWorkspacePort';
 
 describe('createBuilderDesktopProjectWorkspacePort', () => {
-  it('forwards only the eight v2 workspace methods with fresh plain data', async () => {
+  it('forwards only the nine v2 workspace methods with fresh plain data', async () => {
     const open = vi.fn(async (request: unknown) => ({ operation: 'project_opened', request }));
+    const openLocation = vi.fn(async (request: unknown) => ({ operation: 'project_location_opened', request }));
     const createLocalProject = vi.fn(async (request: unknown) => ({ operation: 'local_project_bound', request }));
     const saveDraft = vi.fn(async (request: unknown) => ({ operation: 'draft_saved', request }));
     const loadCurrent = vi.fn(async (request: unknown) => ({ operation: 'current_loaded', request }));
@@ -17,6 +18,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     const listHistory = vi.fn(async (request: unknown) => ({ operation: 'history_listed', request }));
     const port = createBuilderDesktopProjectWorkspacePort({
       open,
+      openLocation,
       createLocalProject,
       saveDraft,
       loadCurrent,
@@ -31,6 +33,11 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
       receipt: `sha256:${'f'.repeat(64)}`,
     } as unknown as Readonly<{ project_id: null }>;
     const openResult = await port.open(openRequest);
+    const openLocationRequest = {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      project_root_path: 'renderer-forged',
+    } as unknown as Readonly<{ project_id: string }>;
+    const openLocationResult = await port.openLocation(openLocationRequest);
     const createRequest = {
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
       project_title: 'Focus timer',
@@ -68,6 +75,10 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(open.mock.calls[0][0]).toEqual({ project_id: null });
     expect(open.mock.calls[0][0]).not.toBe(openRequest);
+    expect(openLocation).toHaveBeenCalledExactlyOnceWith({
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    });
+    expect(openLocation.mock.calls[0][0]).not.toBe(openLocationRequest);
     expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
       project_title: 'Focus timer',
@@ -98,6 +109,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     });
     expect(listHistory.mock.calls[0][0]).not.toBe(historyRequest);
     expect(Object.isFrozen(openResult)).toBe(true);
+    expect(Object.isFrozen(openLocationResult)).toBe(true);
     expect(Object.isFrozen(createLocalProjectResult)).toBe(true);
     expect(Object.isFrozen(saveResult)).toBe(true);
     expect(Object.isFrozen(loadResult)).toBe(true);
@@ -112,6 +124,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     {},
     {
       open: async (): Promise<unknown> => null,
+      openLocation: async (): Promise<unknown> => null,
       createLocalProject: async (): Promise<unknown> => null,
       saveDraft: async (): Promise<unknown> => null,
       loadCurrent: async (): Promise<unknown> => null,
@@ -121,6 +134,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     },
     {
       open: async (): Promise<unknown> => null,
+      openLocation: async (): Promise<unknown> => null,
       createLocalProject: async (): Promise<unknown> => null,
       saveDraft: async (): Promise<unknown> => null,
       loadCurrent: async (): Promise<unknown> => null,
@@ -148,6 +162,7 @@ describe('createBuilderDesktopProjectWorkspacePort', () => {
     });
     const port = createBuilderDesktopProjectWorkspacePort({
       open: async () => null,
+      openLocation: async () => null,
       createLocalProject: async () => null,
       saveDraft: async () => Object.defineProperty({}, 'secret', {
         enumerable: true,

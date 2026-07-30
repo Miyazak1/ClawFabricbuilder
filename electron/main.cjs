@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, net, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, net, session, shell } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
 const { createBuilderPermissionIpcRuntime } = require('./builder-permission-ipc-runtime.cjs');
@@ -225,6 +225,7 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
       grantPermissionForExplicitApproval: permissionRuntime.grantForExplicitApproval,
       ipcMain,
       mainWindowRef: () => mainWindow,
+      openPath: (projectRootPath) => shell.openPath(projectRootPath),
       showOpenDialog: createProjectFolderDialog(packagedCanaryProjectRootPath),
       userDataPath,
     }),

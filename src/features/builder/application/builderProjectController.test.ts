@@ -174,6 +174,11 @@ function setup(options: {
       }
       : createReadWire()
   )));
+  const openLocation = vi.fn(async (request: Readonly<{ project_id: string }>) => ({
+    result_version: 'builder-project-location-open-result.v1',
+    project_id: request.project_id,
+    opened: true,
+  }));
   const createLocalProject = vi.fn(options.createLocalProject ?? (async () => ({
     result_version: 'builder-project-selection-result.v1',
     operation: 'new_selected',
@@ -181,6 +186,7 @@ function setup(options: {
   })));
   const workspace: BuilderProjectWorkspacePort = {
     open,
+    openLocation,
     createLocalProject,
     saveDraft,
     loadCurrent,

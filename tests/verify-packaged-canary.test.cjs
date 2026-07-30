@@ -1219,7 +1219,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v18',
+      bridge_version: 'builder-preload.v19',
       legacy_namespaces_absent: true,
       plan_review_namespace: 'review_method_only',
     },
@@ -1366,7 +1366,7 @@ function addSteeringMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v18',
+    bridgeVersion: 'builder-preload.v19',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -1406,6 +1406,7 @@ function installBridge(page) {
           page.approvedPlanReviews,
         ).current;
       },
+      openLocation() { throw new Error('must not open locations through bridge canary fixture'); },
       async listCurrent() {
         return bridgeEvidence(
           null,
@@ -2005,7 +2006,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v18');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v19');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -4486,8 +4487,10 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v18['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v19['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
+  assert.match(preloadSource, /openLocation/u);
+  assert.match(preloadSource, /project-workspace:open-location/u);
   assert.match(preloadSource, /preparePlanSourceReadApproval/u);
   assert.match(preloadSource, /approvePlanSourceRead/u);
   assert.match(preloadSource, /code-generator:prepare-plan-source-read-approval/u);

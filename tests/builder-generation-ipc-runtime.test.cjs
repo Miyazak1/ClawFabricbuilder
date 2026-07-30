@@ -32,6 +32,7 @@ const {
 const {
   CREATE_LOCAL_PROJECT_CHANNEL,
   OPEN_PROJECT_CHANNEL,
+  OPEN_PROJECT_LOCATION_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,
@@ -286,14 +287,17 @@ function runtimeWithService(service, probes = {}) {
         return {
           CREATE_LOCAL_PROJECT_CHANNEL,
           OPEN_PROJECT_CHANNEL,
+          OPEN_PROJECT_LOCATION_CHANNEL,
           SAVE_DRAFT_CHANNEL,
           LOAD_CURRENT_CHANNEL,
           LOAD_REVISION_CHANNEL,
           LIST_CURRENT_CHANNEL,
+          LIST_WORKSPACES_CHANNEL,
           LIST_HISTORY_CHANNEL,
           createBuilderProjectWorkspaceIpcAdapter: (options) => ({
             channels: {
               open: { invoke: (_event, body) => options.openProject(body) },
+              openLocation: { invoke: (_event, body) => options.openProjectLocation(body) },
               createLocalProject: { invoke: (_event, body) => options.createLocalProject(body) },
               saveDraft: { invoke: (_event, body) => options.saveDraft(body) },
               loadCurrent: { invoke: (_event, body) => options.loadCurrent(body) },
@@ -589,6 +593,7 @@ function runtimeWithService(service, probes = {}) {
       };
       context.__mainWindow = options.mainWindow;
       context.__userDataPath = options.userDataPath;
+      context.__openPath = options.openPath;
       context.__showOpenDialog = options.showOpenDialog;
       context.__grantPermissionForExplicitApproval = options.grantPermissionForExplicitApproval ?? (async () => ({
         result_version: 'builder-permission-grant-result.v1',
@@ -602,6 +607,7 @@ function runtimeWithService(service, probes = {}) {
         grantPermissionForExplicitApproval: __grantPermissionForExplicitApproval,
         ipcMain: __ipcMain,
         mainWindowRef: () => __mainWindow,
+        ...(typeof __openPath === "function" ? { openPath: __openPath } : {}),
         ...(typeof __showOpenDialog === "function" ? { showOpenDialog: __showOpenDialog } : {}),
         userDataPath: __userDataPath,
       })`, context);
@@ -640,6 +646,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     STEER_CHANNEL,
     AVAILABILITY_CHANNEL,
     OPEN_PROJECT_CHANNEL,
+    OPEN_PROJECT_LOCATION_CHANNEL,
     CREATE_LOCAL_PROJECT_CHANNEL,
     SAVE_DRAFT_CHANNEL,
     LOAD_CURRENT_CHANNEL,
@@ -686,11 +693,16 @@ test('binds one selected empty folder as the main-owned local project workspace'
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const dialogCalls = [];
+  const openPathCalls = [];
   const runtime = createBuilderGenerationIpcRuntime({
     fetchImpl: unreachableFetch,
     grantPermissionForExplicitApproval,
     ipcMain,
     mainWindowRef: () => mainWindow,
+    openPath: async (targetPath) => {
+      openPathCalls.push(targetPath);
+      return '';
+    },
     userDataPath,
     showOpenDialog: async (windowRef, dialogOptions) => {
       dialogCalls.push({ windowRef, dialogOptions });
@@ -740,6 +752,28 @@ test('binds one selected empty folder as the main-owned local project workspace'
     current_revision_number: 0,
   }]);
   assert.equal(JSON.stringify(listedWorkspaces).includes(selectedProjectRootPath), false);
+
+  const openedLocation = await ipcMain.handlers.get(OPEN_PROJECT_LOCATION_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { project_id: selected.project_id },
+  );
+  assert.deepEqual(openedLocation, {
+    result_version: 'builder-project-location-open-result.v1',
+    project_id: selected.project_id,
+    opened: true,
+  });
+  assert.deepEqual(openPathCalls, [selectedProjectRootPath]);
+  assert.equal(JSON.stringify(openedLocation).includes(selectedProjectRootPath), false);
+  await assert.rejects(
+    ipcMain.handlers.get(OPEN_PROJECT_LOCATION_CHANNEL)(
+      { sender: mainWindow.webContents },
+      {
+        project_id: selected.project_id,
+        project_root_path: 'renderer-forged',
+      },
+    ),
+  );
+  assert.deepEqual(openPathCalls, [selectedProjectRootPath]);
 
   runtime.dispose();
   const metadata = createBuilderProductMetadataDatabase(

@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const OPEN_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:open';
+const OPEN_PROJECT_LOCATION_CHANNEL = 'clawfabric-builder:project-workspace:open-location';
 const CREATE_LOCAL_PROJECT_CHANNEL = 'clawfabric-builder:project-workspace:create-local';
 const SAVE_DRAFT_CHANNEL = 'clawfabric-builder:project-workspace:save-draft';
 const LOAD_CURRENT_CHANNEL = 'clawfabric-builder:project-workspace:load-current';
@@ -16,6 +17,7 @@ const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OPTION_KEYS = Object.freeze([
   'openProject',
+  'openProjectLocation',
   'createLocalProject',
   'saveDraft',
   'loadCurrent',
@@ -27,6 +29,7 @@ const OPTION_KEYS = Object.freeze([
 ]);
 const REQUIRED_OPTION_KEYS = Object.freeze([
   'openProject',
+  'openProjectLocation',
   'saveDraft',
   'loadCurrent',
   'loadRevision',
@@ -254,6 +257,7 @@ function safeOptions(value) {
     ) throw ipcError();
     return Object.freeze({
       openProject: stableMethod(value, 'openProject'),
+      openProjectLocation: stableMethod(value, 'openProjectLocation'),
       createLocalProject: keys.includes('createLocalProject')
         ? stableMethod(value, 'createLocalProject')
         : () => {
@@ -385,6 +389,13 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.openProject, 1, openProjectRequest);
         },
       }),
+      openLocation: Object.freeze({
+        channel: OPEN_PROJECT_LOCATION_CHANNEL,
+        method: 'openLocation',
+        invoke(event, ...rawArguments) {
+          return invoke(event, rawArguments, options.openProjectLocation, 1, loadCurrentRequest);
+        },
+      }),
       saveDraft: Object.freeze({
         channel: SAVE_DRAFT_CHANNEL,
         method: 'saveDraft',
@@ -437,6 +448,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
     }),
     exposed_methods: Object.freeze([
       'open',
+      'openLocation',
       'createLocalProject',
       'saveDraft',
       'loadCurrent',
@@ -446,7 +458,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
       'listHistory',
     ]),
     authority: Object.freeze({
-      renderer_authority: 'project_selection_or_draft_id_only',
+      renderer_authority: 'project_selection_project_id_or_draft_id_only',
       main_owned_git_authority: true,
       main_owned_sqlite_authority: true,
       active_renderer_required: true,
@@ -458,6 +470,7 @@ function createBuilderProjectWorkspaceIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   OPEN_PROJECT_CHANNEL,
+  OPEN_PROJECT_LOCATION_CHANNEL,
   CREATE_LOCAL_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,

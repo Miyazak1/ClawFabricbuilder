@@ -264,6 +264,7 @@ const packagedPlanReviewIpcAdapter = packagedSource('electron/builder-plan-revie
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
   'clawfabric-builder:project-workspace:open',
+  'clawfabric-builder:project-workspace:open-location',
   'clawfabric-builder:project-workspace:create-local',
   'clawfabric-builder:project-workspace:save-draft',
   'clawfabric-builder:project-workspace:load-current',
@@ -413,7 +414,7 @@ assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v18');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v19');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -423,6 +424,7 @@ const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, [
   'open',
+  'openLocation',
   'createLocalProject',
   'saveDraft',
   'loadCurrent',
@@ -457,6 +459,7 @@ exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -533,13 +536,14 @@ function exactSubscribeMethod(object, methodName, channelName) {
 }
 
 assert.equal(preloadConstants.get('OPEN_PROJECT_CHANNEL'), channels[0]);
-assert.equal(preloadConstants.get('CREATE_LOCAL_PROJECT_CHANNEL'), channels[1]);
-assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[2]);
-assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[3]);
-assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[4]);
-assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[5]);
-assert.equal(preloadConstants.get('LIST_WORKSPACES_CHANNEL'), channels[6]);
-assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[7]);
+assert.equal(preloadConstants.get('OPEN_PROJECT_LOCATION_CHANNEL'), channels[1]);
+assert.equal(preloadConstants.get('CREATE_LOCAL_PROJECT_CHANNEL'), channels[2]);
+assert.equal(preloadConstants.get('SAVE_DRAFT_CHANNEL'), channels[3]);
+assert.equal(preloadConstants.get('LOAD_CURRENT_CHANNEL'), channels[4]);
+assert.equal(preloadConstants.get('LOAD_REVISION_CHANNEL'), channels[5]);
+assert.equal(preloadConstants.get('LIST_CURRENT_CHANNEL'), channels[6]);
+assert.equal(preloadConstants.get('LIST_WORKSPACES_CHANNEL'), channels[7]);
+assert.equal(preloadConstants.get('LIST_HISTORY_CHANNEL'), channels[8]);
 assert.equal(preloadConstants.get('GENERATE_CHANNEL'), generationChannels[0]);
 assert.equal(preloadConstants.get('CONTINUE_DRAFT_CHANNEL'), generationChannels[1]);
 assert.equal(preloadConstants.get('GENERATE_APPROVED_PLAN_CHANNEL'), generationChannels[2]);
@@ -569,6 +573,7 @@ assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowContr
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
 assert.equal(preloadConstants.get('READ_WINDOW_STATE_CHANNEL'), windowControlsChannels[3]);
 exactInvokeMethod(workspaceBridge, 'open', 'OPEN_PROJECT_CHANNEL', ['request']);
+exactInvokeMethod(workspaceBridge, 'openLocation', 'OPEN_PROJECT_LOCATION_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'createLocalProject', 'CREATE_LOCAL_PROJECT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'saveDraft', 'SAVE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(workspaceBridge, 'loadCurrent', 'LOAD_CURRENT_CHANNEL', ['request']);
@@ -640,7 +645,7 @@ assert.match(packagedMain, /disposeIpcRuntimes/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
 assert.doesNotMatch(packagedMain, /clawfabric-builder:provider-settings:|clawfabric-builder:code-generator:|credential|safeStorage|local-provider-executor/iu);
 assert.match(packagedWorkspaceAdapter, /createBuilderProjectWorkspaceIpcAdapter/u);
-assert.match(packagedWorkspaceAdapter, /renderer_authority:\s*'project_selection_or_draft_id_only'/u);
+assert.match(packagedWorkspaceAdapter, /renderer_authority:\s*'project_selection_project_id_or_draft_id_only'/u);
 assert.doesNotMatch(packagedWorkspaceAdapter, /provider|secret|safeStorage/iu);
 assert.match(packagedGitRunner, /resolveGitBinary\(['"]['"]\)/u);
 assert.match(packagedGitRunner, /GIT_NO_REPLACE_OBJECTS:\s*['"]1['"]/u);
@@ -1015,6 +1020,7 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(packagedToolResultRecords, /builder-tool-runtime-invocation-admission\.cjs/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*OPEN_PROJECT_LOCATION_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*CREATE_LOCAL_PROJECT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*RETRY_GENERATE_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*GENERATE_APPROVED_PLAN_CHANNEL/u);
@@ -1032,6 +1038,8 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*PREPARE_PLAN_SOURCE_READ_
 assert.match(packagedGenerationIpcRuntime, /channel:\s*APPROVE_PLAN_SOURCE_READ_CHANNEL/u);
 assert.match(packagedPreload, /exposeInMainWorld\(['"]clawfabricBuilder['"]/u);
 assert.match(packagedPreload, /projectWorkspace/u);
+assert.match(packagedPreload, /openLocation/u);
+assert.match(packagedPreload, /clawfabric-builder:project-workspace:open-location/u);
 assert.match(packagedPreload, /createLocalProject/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:create-local/u);
 assert.match(packagedPreload, /loadRevision/u);
@@ -1066,7 +1074,7 @@ assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 34);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 35);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

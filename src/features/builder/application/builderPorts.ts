@@ -132,6 +132,7 @@ export interface BuilderCodeGeneratorPort {
 
 export interface BuilderProjectWorkspacePort {
   open(request: Readonly<{ project_id: string | null }>): Promise<unknown>;
+  openLocation(request: Readonly<{ project_id: string }>): Promise<unknown>;
   createLocalProject(request: Readonly<{ project_id: string | null; project_title: string }>): Promise<unknown>;
   saveDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   loadCurrent(request: Readonly<{ project_id: string }>): Promise<unknown>;

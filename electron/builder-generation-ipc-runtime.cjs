@@ -37,6 +37,7 @@ const {
 } = require('./builder-project-save-authority.cjs');
 const {
   CREATE_LOCAL_PROJECT_CHANNEL,
+  OPEN_PROJECT_LOCATION_CHANNEL,
   OPEN_PROJECT_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
@@ -96,6 +97,7 @@ const OPTION_KEYS = Object.freeze([
   'grantPermissionForExplicitApproval',
   'ipcMain',
   'mainWindowRef',
+  'openPath',
   'userDataPath',
   'showOpenDialog',
 ]);
@@ -277,6 +279,12 @@ function openProjectId(rawRequest) {
   return projectId;
 }
 
+function requiredProjectId(rawRequest) {
+  const projectId = openProjectId(rawRequest);
+  if (projectId === null) fail();
+  return projectId;
+}
+
 function safePublicWorkspaceText(value, maximum) {
   if (
     typeof value !== 'string'
@@ -417,6 +425,36 @@ function workspaceBoundProjectId(value, expectedProjectId) {
     || status.value !== 'bound'
   ) fail();
   return expectedProjectId;
+}
+
+function projectRootPathFromWorkspace(value, expectedProjectId) {
+  if (!isPlainObject(value)) fail();
+  const operation = Object.getOwnPropertyDescriptor(value, 'operation');
+  const workspace = Object.getOwnPropertyDescriptor(value, 'workspace');
+  if (
+    !operation
+    || operation.value !== 'project_workspace_bound'
+    || !workspace
+    || !isPlainObject(workspace.value)
+  ) fail();
+  const projectId = Object.getOwnPropertyDescriptor(workspace.value, 'project_id');
+  const projectRootPath = Object.getOwnPropertyDescriptor(workspace.value, 'project_root_path');
+  const status = Object.getOwnPropertyDescriptor(workspace.value, 'binding_status');
+  if (
+    !projectId
+    || projectId.value !== expectedProjectId
+    || !projectRootPath
+    || typeof projectRootPath.value !== 'string'
+    || projectRootPath.value.length === 0
+    || projectRootPath.value.length > 1024
+    || projectRootPath.value.trim() !== projectRootPath.value
+    || projectRootPath.value.includes('\0')
+    || !path.isAbsolute(projectRootPath.value)
+    || path.normalize(projectRootPath.value) !== projectRootPath.value
+    || !status
+    || status.value !== 'bound'
+  ) fail();
+  return projectRootPath.value;
 }
 
 function safeOwnErrorCode(error) {
@@ -867,6 +905,9 @@ function safeOptions(value) {
     const grantPermissionForExplicitApproval = descriptors.grantPermissionForExplicitApproval.value;
     const ipcMain = descriptors.ipcMain.value;
     const mainWindowRef = descriptors.mainWindowRef.value;
+    const openPath = keys.includes('openPath')
+      ? descriptors.openPath.value
+      : null;
     const userDataPath = descriptors.userDataPath.value;
     const showOpenDialog = keys.includes('showOpenDialog')
       ? descriptors.showOpenDialog.value
@@ -880,6 +921,7 @@ function safeOptions(value) {
       || typeof ipcMain !== 'object'
       || utilTypes.isProxy(ipcMain)
       || typeof mainWindowRef !== 'function'
+      || (openPath !== null && (typeof openPath !== 'function' || utilTypes.isProxy(openPath)))
       || (showOpenDialog !== null && (typeof showOpenDialog !== 'function' || utilTypes.isProxy(showOpenDialog)))
       || typeof userDataPath !== 'string'
       || userDataPath.length === 0
@@ -896,6 +938,7 @@ function safeOptions(value) {
       handle: stableMethod(ipcMain, 'handle'),
       removeHandler: stableMethod(ipcMain, 'removeHandler'),
       mainWindowRef,
+      openPath,
       showOpenDialog,
       userDataPath,
     });
@@ -1270,6 +1313,28 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       return result;
     }
+    async function openProjectLocation(rawRequest) {
+      if (options.openPath === null) fail();
+      const projectId = requiredProjectId(rawRequest);
+      const workspace = await projectMainAuthority.metadata_authority.load_project_workspace({
+        project_id: projectId,
+      });
+      const projectRootPath = projectRootPathFromWorkspace(workspace, projectId);
+      let stat;
+      try {
+        stat = fs.statSync(projectRootPath);
+      } catch {
+        fail();
+      }
+      if (!stat.isDirectory()) fail();
+      const openResult = await Reflect.apply(options.openPath, undefined, [projectRootPath]);
+      if (openResult !== '') fail();
+      return Object.freeze({
+        result_version: 'builder-project-location-open-result.v1',
+        project_id: projectId,
+        opened: true,
+      });
+    }
     async function createLocalProject(rawRequest) {
       const request = createLocalProjectRequest(rawRequest);
       if (options.showOpenDialog === null) fail();
@@ -1362,6 +1427,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
     workspaceAdapter = createBuilderProjectWorkspaceIpcAdapter({
       openProject,
+      openProjectLocation,
       createLocalProject,
       saveDraft,
       loadCurrent: projectMainAuthority.project_read_authority.load_current,
@@ -1415,6 +1481,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: STEER_CHANNEL, invoke: adapter.channels.steer.invoke }),
     Object.freeze({ channel: AVAILABILITY_CHANNEL, invoke: adapter.channels.availability.invoke }),
     Object.freeze({ channel: OPEN_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.open.invoke }),
+    Object.freeze({ channel: OPEN_PROJECT_LOCATION_CHANNEL, invoke: workspaceAdapter.channels.openLocation.invoke }),
     Object.freeze({ channel: CREATE_LOCAL_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.createLocalProject.invoke }),
     Object.freeze({ channel: SAVE_DRAFT_CHANNEL, invoke: workspaceAdapter.channels.saveDraft.invoke }),
     Object.freeze({ channel: LOAD_CURRENT_CHANNEL, invoke: workspaceAdapter.channels.loadCurrent.invoke }),

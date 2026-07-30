@@ -8,6 +8,7 @@ const test = require('node:test');
 const {
   CREATE_LOCAL_PROJECT_CHANNEL,
   OPEN_PROJECT_CHANNEL,
+  OPEN_PROJECT_LOCATION_CHANNEL,
   SAVE_DRAFT_CHANNEL,
   LOAD_CURRENT_CHANNEL,
   LOAD_REVISION_CHANNEL,
@@ -46,6 +47,14 @@ function adapter(overrides = {}) {
           project_id: null,
         }
         : { result_version: 'builder-project-read-result.v1', project_id: request.project_id };
+    }),
+    openProjectLocation: overrides.openProjectLocation ?? (async (request) => {
+      calls.push(['openLocation', request]);
+      return {
+        result_version: 'builder-project-location-open-result.v1',
+        project_id: request.project_id,
+        opened: true,
+      };
     }),
     saveDraft: overrides.saveDraft ?? (async (request) => {
       calls.push(['save', request]);
@@ -98,9 +107,10 @@ function adapter(overrides = {}) {
 test('workspace adapter exposes only open, save, verified reads, and catalog commands', async () => {
   const { authority, calls, value } = adapter();
   assert.equal(value.namespace, 'builderProjectWorkspace');
-  assert.deepEqual(value.exposed_methods, ['open', 'createLocalProject', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listWorkspaces', 'listHistory']);
-  assert.deepEqual(Object.keys(value.channels), ['open', 'saveDraft', 'createLocalProject', 'loadCurrent', 'loadRevision', 'listCurrent', 'listWorkspaces', 'listHistory']);
+  assert.deepEqual(value.exposed_methods, ['open', 'openLocation', 'createLocalProject', 'saveDraft', 'loadCurrent', 'loadRevision', 'listCurrent', 'listWorkspaces', 'listHistory']);
+  assert.deepEqual(Object.keys(value.channels), ['open', 'openLocation', 'saveDraft', 'createLocalProject', 'loadCurrent', 'loadRevision', 'listCurrent', 'listWorkspaces', 'listHistory']);
   assert.equal(value.channels.open.channel, OPEN_PROJECT_CHANNEL);
+  assert.equal(value.channels.openLocation.channel, OPEN_PROJECT_LOCATION_CHANNEL);
   assert.equal(value.channels.createLocalProject.channel, CREATE_LOCAL_PROJECT_CHANNEL);
   assert.equal(value.channels.saveDraft.channel, SAVE_DRAFT_CHANNEL);
   assert.equal(value.channels.loadCurrent.channel, LOAD_CURRENT_CHANNEL);
@@ -111,6 +121,9 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
 
   const selected = await value.channels.open.invoke(authority.event, {
     project_id: null,
+  });
+  const locationOpened = await value.channels.openLocation.invoke(authority.event, {
+    project_id: PROJECT_ID,
   });
   const saved = await value.channels.saveDraft.invoke(authority.event, {
     draft_id: DRAFT_ID,
@@ -133,6 +146,8 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
     limit: 32,
   });
   assert.equal(selected.operation, 'new_selected');
+  assert.equal(locationOpened.result_version, 'builder-project-location-open-result.v1');
+  assert.equal(locationOpened.opened, true);
   assert.equal(saved.result_version, 'builder-project-save-result.v1');
   assert.equal(created.operation, 'local_project_bound');
   assert.equal(loaded.result_version, 'builder-project-read-result.v1');
@@ -142,6 +157,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
   assert.equal(history.operation, 'history_listed');
   assert.deepEqual(calls, [
     ['open', { project_id: null }],
+    ['openLocation', { project_id: PROJECT_ID }],
     ['save', { draft_id: DRAFT_ID }],
     ['createLocalProject', { project_id: null, project_title: 'Focus timer' }],
     ['load', { project_id: PROJECT_ID }],
@@ -151,6 +167,7 @@ test('workspace adapter exposes only open, save, verified reads, and catalog com
     ['history', { project_id: PROJECT_ID, limit: 32 }],
   ]);
   assert.equal(Object.isFrozen(saved), true);
+  assert.equal(Object.isFrozen(locationOpened), true);
   assert.equal(Object.isFrozen(revision), true);
   assert.equal(Object.isFrozen(listed.projects), true);
   assert.equal(Object.isFrozen(history), true);
@@ -163,6 +180,13 @@ test('workspace adapter rejects inactive senders and extra arguments before auth
     value.channels.saveDraft.invoke(inactive, { draft_id: DRAFT_ID }),
     (error) => error instanceof BuilderProjectWorkspaceIpcError
       && error.code === 'builder_project_workspace_forbidden',
+  );
+  await assert.rejects(
+    value.channels.openLocation.invoke(authority.event, {
+      project_id: PROJECT_ID,
+    }, {}),
+    (error) => error instanceof BuilderProjectWorkspaceIpcError
+      && error.code === 'builder_project_workspace_invalid',
   );
   await assert.rejects(
     value.channels.listCurrent.invoke(authority.event, {}),
@@ -228,6 +252,13 @@ test('workspace adapter rejects forged request fields before authority calls', a
     }),
     () => value.channels.open.invoke(authority.event, {
       project_id: 'not-a-builder-project',
+    }),
+    () => value.channels.openLocation.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      project_root_path: 'renderer-forged',
+    }),
+    () => value.channels.openLocation.invoke(authority.event, {
+      project_id: null,
     }),
     () => value.channels.saveDraft.invoke(authority.event, {
       draft_id: DRAFT_ID,
