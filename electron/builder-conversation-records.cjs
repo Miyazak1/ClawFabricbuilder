@@ -12,6 +12,9 @@ const {
 const {
   sanitizeBuilderToolResultRecord,
 } = require('./builder-tool-result-records.cjs');
+const {
+  isPublicBuilderRouteDecisionSignal,
+} = require('./builder-route-decision-signals.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -109,7 +112,6 @@ const ROUTE_DECISION_DISPATCHES = Object.freeze([
   'ask_permission',
   'blocked',
 ]);
-const ROUTE_DECISION_SIGNAL_PATTERN = /^[a-z][a-z0-9_:-]{0,63}$/u;
 const CANDIDATE_RESULT_KEYS = Object.freeze([
   'draft_id', 'title', 'summary', 'git_candidate_receipt',
 ]);
@@ -359,7 +361,8 @@ function sanitizeRouteDecisionSignals(value) {
   for (let index = 0; index < value.length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
-    const signal = safePattern(descriptor.value, ROUTE_DECISION_SIGNAL_PATTERN, 64);
+    const signal = descriptor.value;
+    if (!isPublicBuilderRouteDecisionSignal(signal)) fail();
     if (seen.has(signal)) fail();
     seen.add(signal);
     signals.push(signal);

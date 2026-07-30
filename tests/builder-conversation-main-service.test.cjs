@@ -804,6 +804,31 @@ test('records route decision hints as main-bound turn evidence', () => {
   }
 });
 
+test('rejects route decision hints with non-public matched signals', () => {
+  const item = fixture();
+  try {
+    assert.throws(() => item.service.begin_work({
+      project_id: PROJECT_ID,
+      instruction: 'Build a focused timer',
+      request_digest: REQUEST_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'build',
+        confidence: 'high',
+        matched_signals: ['provider:deepseek'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: ['write_project'],
+        permission_result: 'allowed',
+        dispatch: 'build',
+      },
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation, null);
+  } finally {
+    item.close();
+  }
+});
+
 test('records update-brief turns as durable task capsule context without creating a draft', () => {
   const item = fixture();
   let restartedDatabase = null;

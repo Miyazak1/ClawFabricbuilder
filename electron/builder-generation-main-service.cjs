@@ -273,7 +273,7 @@ function planRouteDecisionHint() {
   });
 }
 
-function buildRouteDecisionHint(matchedSignals = ['explicit_build']) {
+function buildRouteDecisionHint(matchedSignals = ['clear_build']) {
   return routeDecisionHint({
     route: 'build',
     confidence: 'high',
@@ -291,7 +291,7 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
   const hasExplanationIntent =
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
-  if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['casual_chat']);
+  if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) {
     return routeDecisionHint({
       route: 'clarify',
@@ -306,7 +306,7 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
       matchedSignals: ['capability_question'],
     });
   }
-  if (hasQuestionMark && hasExplanationIntent) return answerRouteDecisionHint(['question_explanation']);
+  if (hasQuestionMark && hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
   if (hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) {
     return routeDecisionHint({
@@ -350,8 +350,8 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
   if (
     ENGLISH_WORK_INTENT_PATTERN.test(text)
     || CHINESE_WORK_INTENT_PATTERN.test(text)
-  ) return buildRouteDecisionHint(['explicit_build']);
-  return answerRouteDecisionHint(['default_chat']);
+  ) return buildRouteDecisionHint(['clear_build']);
+  return answerRouteDecisionHint(['chat_default']);
 }
 
 function localCasualChatReply(instruction) {
@@ -1678,7 +1678,7 @@ function createBuilderGenerationMainService(rawOptions) {
       }
       const existingProjectId = request.existing_project_id;
       const routeDecisionHint = pendingGenerateRouteDecisionHints.get(key)
-        ?? buildRouteDecisionHint(['direct_generate']);
+        ?? buildRouteDecisionHint(['clear_build']);
       const projectId = existingProjectId === null
         ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
         : existingProjectId;
@@ -1768,7 +1768,7 @@ function createBuilderGenerationMainService(rawOptions) {
     try {
       const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
       const routeDecisionHint = pendingAnswerRouteDecisionHints.get(key)
-        ?? answerRouteDecisionHint(['direct_answer']);
+        ?? answerRouteDecisionHint(['read_only']);
       const draftAnswerContext = pendingDraftAnswerContexts.get(key);
       if (draftAnswerContext !== undefined) {
         pendingDraftAnswerContexts.delete(key);
@@ -2658,7 +2658,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (routeConflict) return routeConflict;
     pendingAnswerRouteDecisionHints.set(
       key,
-      routeDecisionHint ?? answerRouteDecisionHint(['direct_answer']),
+      routeDecisionHint ?? answerRouteDecisionHint(['read_only']),
     );
     const localReply = localReadOnlyReply(request);
     const operation = Promise.resolve(localReply === null

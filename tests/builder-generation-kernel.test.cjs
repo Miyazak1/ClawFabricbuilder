@@ -81,7 +81,7 @@ function routeDecision(payload, projectId = PROJECT_ID) {
     task_id: payload.task === null ? null : payload.task.task_id,
     route,
     confidence: 'high',
-    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    matched_signals: [payload.mode === 'work' ? 'clear_build' : 'read_only'],
     downgraded_from: null,
     downgrade_reason: null,
     required_permissions: route === 'build' ? ['write_project'] : [],
@@ -664,7 +664,7 @@ test('builds a deterministic operations prompt without exposing host identities'
       route: 'build',
       dispatch: 'build',
       confidence: 'high',
-      matched_signals: [],
+      matched_signals: ['clear_build'],
       execution_basis: 'explicit_instruction',
       workspace_basis: 'new_project_request',
       working_brief: {
@@ -711,7 +711,7 @@ test('filters route decision matched signals to the public prompt allowlist', ()
               'clear_build',
               'revision_receipt',
               'api_key',
-              'test_work_turn',
+              'private_signal',
             ],
           }),
         },
@@ -735,7 +735,7 @@ test('filters route decision matched signals to the public prompt allowlist', ()
   assert.equal(context.build_context_snapshot.execution_basis, 'missing_context_not_admitted');
   assert.doesNotMatch(
     descriptor.user_instruction,
-    /provider|credential|builder-route-decision|revision_receipt|api[_-]?key|test_work_turn/iu,
+    /provider|credential|builder-route-decision|revision_receipt|api[_-]?key|private_signal/iu,
   );
 });
 
@@ -1571,6 +1571,7 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     './builder-code-change-kernel.cjs',
     './builder-project-source-tree.cjs',
     './builder-plan-proposal-records.cjs',
+    './builder-route-decision-signals.cjs',
   ]);
   for (const literal of [
     'builder-generation-request.v2',

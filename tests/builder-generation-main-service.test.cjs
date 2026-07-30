@@ -89,7 +89,7 @@ function routeDecisionForTurn({
     ? {
       route: 'build',
       confidence: 'high',
-      matched_signals: ['test_work_turn'],
+      matched_signals: ['clear_build'],
       downgraded_from: null,
       downgrade_reason: null,
       required_permissions: ['write_project'],
@@ -99,7 +99,7 @@ function routeDecisionForTurn({
     : {
       route: 'answer',
       confidence: 'high',
-      matched_signals: ['test_question_turn'],
+      matched_signals: ['read_only'],
       downgraded_from: null,
       downgrade_reason: null,
       required_permissions: [],

@@ -518,6 +518,16 @@ Evidence requirements:
   current artifact defect, or explicit instruction without becoming permission
   admission, tool execution, Git mutation, Save, renderer authority, or a new
   Conversation fact;
+- the current route-signal contract checkpoint moves `matched_signals` from a
+  broad formatted string into the fixed public Builder route-signal vocabulary.
+  Conversation records, main-owned route hints, and prompt snapshots all share
+  that allowlist, so renderer-provided hints, test fixtures, provider labels,
+  credentials, route-decision ids, receipts, or other internal evidence cannot
+  become durable route signal facts or provider prompt context. Existing public
+  routing meaning such as `read_only`, `clear_build`, `exploratory_work`,
+  `contextual_build`, and `current_artifact_defect` remains available for tests,
+  debugging, task capsules, and later "why this built" diagnostics without
+  becoming provider, Git, source, Save, IPC, or permission authority;
 - the current composer contextual-execution checkpoint aligns renderer routing
   with that plan-state contract. Contextual phrases such as "do it",
   "好，开始吧", "就照这个来", or "按刚才说的做" may enter build only when

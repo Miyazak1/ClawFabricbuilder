@@ -105,7 +105,7 @@ function routeDecision(payload, projectId = PROJECT_ID) {
     task_id: payload.task === null ? null : payload.task.task_id,
     route,
     confidence: 'high',
-    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    matched_signals: [payload.mode === 'work' ? 'clear_build' : 'read_only'],
     downgraded_from: null,
     downgrade_reason: null,
     required_permissions: route === 'build' ? ['write_project'] : [],
@@ -567,7 +567,7 @@ test('passes a main-derived working brief into contextual build provider prompts
     route: 'build',
     dispatch: 'build',
     confidence: 'high',
-    matched_signals: [],
+    matched_signals: ['clear_build'],
     execution_basis: 'working_brief',
     workspace_basis: 'new_project_request',
     working_brief: {

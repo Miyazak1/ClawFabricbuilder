@@ -19,6 +19,9 @@ const {
   createBuilderPlanProposalRecord,
   sanitizeBuilderPlanProposalSourceContextResult,
 } = require('./builder-plan-proposal-records.cjs');
+const {
+  isPublicBuilderRouteDecisionSignal,
+} = require('./builder-route-decision-signals.cjs');
 
 const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v3';
 const BUILDER_PLAN_PROJECT_PROMPT_VERSION = 'builder-project-plan.v1';
@@ -47,20 +50,6 @@ const MAX_CONVERSATION_BRIEF_TEXT_UTF8_BYTES = 4096;
 const CONVERSATION_BRIEF_CONTEXT_VERSION = 'builder-conversation-brief.v3';
 const CONVERSATION_BRIEF_SELECTION = 'recent_prior_messages_latest_plan_and_working_brief';
 const BUILD_CONTEXT_SNAPSHOT_VERSION = 'builder-build-context-snapshot.v1';
-const PUBLIC_ROUTE_DECISION_SIGNALS = new Set([
-  'capability_question',
-  'chat_default',
-  'clear_build',
-  'contextual_build',
-  'contextual_build_phrase',
-  'current_artifact_defect',
-  'empty_message',
-  'explicit_plan',
-  'exploratory_work',
-  'read_only',
-  'vague_change',
-  'work_discussion',
-]);
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -436,7 +425,7 @@ function currentPromptTurnSubmitted(events, currentTurnIds) {
 }
 
 function safeRouteDecisionSignal(value) {
-  return typeof value === 'string' && PUBLIC_ROUTE_DECISION_SIGNALS.has(value)
+  return isPublicBuilderRouteDecisionSignal(value)
     ? value
     : null;
 }

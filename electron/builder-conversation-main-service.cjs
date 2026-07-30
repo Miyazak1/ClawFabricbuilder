@@ -52,6 +52,9 @@ const {
 const {
   sanitizeBuilderDraftContinuationAdmission,
 } = require('./builder-draft-continuation-admission.cjs');
+const {
+  isPublicBuilderRouteDecisionSignal,
+} = require('./builder-route-decision-signals.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -87,7 +90,6 @@ const ROUTE_DECISION_DISPATCHES = Object.freeze([
   'ask_permission',
   'blocked',
 ]);
-const ROUTE_DECISION_SIGNAL_PATTERN = /^[a-z][a-z0-9_:-]{0,63}$/u;
 const RUN_PROGRESS_STAGES = Object.freeze([
   'context_ready',
   'provider_request_started',
@@ -313,7 +315,7 @@ function defaultRouteDecisionHint(mode) {
     return freezeDeep({
       route: 'build',
       confidence: 'high',
-      matched_signals: ['main_work_turn'],
+      matched_signals: ['clear_build'],
       downgraded_from: null,
       downgrade_reason: null,
       required_permissions: ['write_project'],
@@ -324,7 +326,7 @@ function defaultRouteDecisionHint(mode) {
   return freezeDeep({
     route: 'answer',
     confidence: 'high',
-    matched_signals: ['main_question_turn'],
+    matched_signals: ['read_only'],
     downgraded_from: null,
     downgrade_reason: null,
     required_permissions: [],
@@ -592,7 +594,8 @@ function sanitizeRouteDecisionSignalList(value) {
   for (let index = 0; index < value.length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
-    const signal = safePattern(descriptor.value, ROUTE_DECISION_SIGNAL_PATTERN);
+    const signal = descriptor.value;
+    if (!isPublicBuilderRouteDecisionSignal(signal)) fail();
     if (seen.has(signal)) fail();
     seen.add(signal);
     signals.push(signal);
