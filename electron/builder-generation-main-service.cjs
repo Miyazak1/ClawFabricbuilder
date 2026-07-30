@@ -176,6 +176,11 @@ const CONTEXTUAL_WORK_INTENT_PATTERNS = Object.freeze([
   /^(?:do it|go ahead|start|let'?s do it|implement that|build that|make that)[.?!]*$/u,
   /^(?:(?:ok|okay|yes|sounds good|great)[,\s]*)?(?:go ahead|start(?: building| implementing)?|implement (?:it|this|that|the plan)|build (?:it|this|that)|do it|let'?s do it|make that)[.?!]*$/u,
 ]);
+const NO_PROJECT_STATUS_QUESTION_PATTERNS = Object.freeze([
+  /^(?:你现在在做什么|现在在做什么|你在做什么|你能做什么|现在能做什么|当前状态|现在状态)[?？。!！]*$/u,
+  /(?:这个项目|当前项目|项目|预览|preview).{0,24}(?:是什么|做什么|干什么|为什么|为何|怎么回事|空白|blank|状态|有没有)/iu,
+  /^(?:what are you doing|what can you do)[?!.]*$/iu,
+]);
 const PRIOR_BUILD_CONFIRMED_USER_PATTERN =
   /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现|想要|希望|需要).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|^(?:(?:我|我们)?(?:想|想要|要|希望|需要|打算|准备|计划|考虑))(?!\s*(?:先)?(?:知道|了解|问|问一下|看看|看一下|搞清楚|确认一下|解释|说明|分析|对比))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|修改|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|作品集|3d|ui)|(?:confirmed|decided|goal|requirements?|want|would like|need|hope|plan|intend).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 const PRIOR_BUILD_ASSISTANT_PROPOSAL_PATTERN =
@@ -242,6 +247,31 @@ function localCasualChatReply(instruction) {
     summary: 'We can talk first; building will ask for a project folder.',
     explanation: 'Hi, I am here. We can talk through the idea first. When you want me to build or change files, I will ask you to choose a project folder before making edits.',
   });
+}
+
+function localNoProjectQuestionReply(request) {
+  if (request.existing_project_id !== null) return null;
+  const text = normalizedIntentText(request.instruction);
+  if (
+    text.length === 0
+    || !matchesAny(NO_PROJECT_STATUS_QUESTION_PATTERNS, text)
+  ) return null;
+  if (/\p{Script=Han}/u.test(request.instruction)) {
+    return Object.freeze({
+      title: '还没有选择项目',
+      summary: '可以先聊天；要查看预览或修改文件时，再选择项目文件夹。',
+      explanation: '现在还没有选中的项目或草稿，所以没有可查看的项目内容或预览。你可以先继续聊想法；等要构建、预览或修改文件时，我会让你选择项目文件夹。',
+    });
+  }
+  return Object.freeze({
+    title: 'No project selected yet',
+    summary: 'We can keep talking; choose a project folder when you want preview or file changes.',
+    explanation: 'There is no selected project or draft yet, so there is no project content or preview to inspect. We can keep talking through the idea first; when you want to build, preview, or change files, I will ask you to choose a project folder.',
+  });
+}
+
+function localReadOnlyReply(request) {
+  return localCasualChatReply(request.instruction) ?? localNoProjectQuestionReply(request);
 }
 
 function denseTaskStreamItems(value) {
@@ -2481,7 +2511,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (existing) return existing;
     const routeConflict = rejectIfOtherRouteInFlight(ANSWER_OPERATION_PREFIX, request.request_digest);
     if (routeConflict) return routeConflict;
-    const localReply = localCasualChatReply(request.instruction);
+    const localReply = localReadOnlyReply(request);
     const operation = Promise.resolve(localReply === null
       ? host.explain(request)
       : createLocalCasualChatExplanation(request, localReply)).then((internal) => {

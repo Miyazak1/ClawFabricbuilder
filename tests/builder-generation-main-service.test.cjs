@@ -1789,7 +1789,7 @@ test('records a provider explanation without creating Git candidate, draft, or s
   );
 });
 
-test('answers casual greetings locally without dispatching provider transport', async () => {
+test('answers local read-only chat without dispatching provider transport', async () => {
   const transportInputs = [];
   const startedEvents = [];
   const lifecycle = conversationService();
@@ -1813,6 +1813,8 @@ test('answers casual greetings locally without dispatching provider transport', 
 
   const english = await service.answer(request({ instruction: 'hi' }));
   const chinese = await service.answer(request({ instruction: '你好' }));
+  const status = await service.answer(request({ instruction: '你现在在做什么？' }));
+  const blankPreview = await service.answer(request({ instruction: '为什么预览空白？' }));
 
   assert.equal(english.version, 'builder-generation-result.v2');
   assert.equal(english.result_kind, 'explanation');
@@ -1832,14 +1834,23 @@ test('answers casual greetings locally without dispatching provider transport', 
     chinese.explanation,
     /缺少上下文|保存文件|之前的对话|计划|run|task|schema|provider|receipt/iu,
   );
+  assert.equal(status.result_kind, 'explanation');
+  assert.equal(status.admissions.draft, 'not_created');
+  assert.match(status.explanation, /还没有选中的项目或草稿/u);
+  assert.equal(blankPreview.result_kind, 'explanation');
+  assert.equal(blankPreview.admissions.draft, 'not_created');
+  assert.match(blankPreview.explanation, /没有可查看的项目内容或预览/u);
   assert.equal(lifecycle.calls.begin.length, 0);
-  assert.equal(lifecycle.calls.question.length, 2);
-  assert.deepEqual(lifecycle.calls.question.map((call) => call.question), ['hi', '你好']);
+  assert.equal(lifecycle.calls.question.length, 4);
+  assert.deepEqual(
+    lifecycle.calls.question.map((call) => call.question),
+    ['hi', '你好', '你现在在做什么？', '为什么预览空白？'],
+  );
   assert.equal(lifecycle.calls.candidate.length, 0);
-  assert.equal(lifecycle.calls.explanation.length, 2);
+  assert.equal(lifecycle.calls.explanation.length, 4);
   assert.deepEqual(
     lifecycle.calls.explanation.map((call) => call.assistant_text),
-    [english.explanation, chinese.explanation],
+    [english.explanation, chinese.explanation, status.explanation, blankPreview.explanation],
   );
   assert.equal(lifecycle.calls.progress.length, 0);
   assert.equal(lifecycle.calls.failure.length, 0);
@@ -1847,7 +1858,7 @@ test('answers casual greetings locally without dispatching provider transport', 
   assert.equal(transportInputs.length, 0);
   assert.deepEqual(
     startedEvents.map((event) => event.event_version),
-    ['builder-generation-started.v1', 'builder-generation-started.v1'],
+    Array(4).fill('builder-generation-started.v1'),
   );
 });
 
