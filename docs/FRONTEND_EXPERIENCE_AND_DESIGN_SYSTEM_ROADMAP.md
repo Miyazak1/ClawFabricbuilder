@@ -477,6 +477,19 @@ Exit criteria:
 - contextual execution builds from the brief;
 - ambiguous contextual execution asks for confirmation.
 
+Current checkpoint:
+
+- the desktop composer now derives a compact visible brief from the sanitized
+  Task Stream projection and shows it as `Current brief`, `Approved plan`, or
+  `Current result`;
+- the brief can be cleared in the current renderer session without deleting
+  Conversation history or changing main-owned prompt facts;
+- clearing the visible brief removes renderer-side contextual-build readiness,
+  so short execution phrases return to chat/clarification unless fresh work
+  context appears;
+- provider, credential, source tree, Git, digest, and receipt details remain
+  hidden from the visible brief.
+
 ### Slice 3 - Artifact Drawer
 
 Scope:

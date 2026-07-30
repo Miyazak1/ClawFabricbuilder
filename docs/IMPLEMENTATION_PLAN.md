@@ -523,6 +523,18 @@ Evidence requirements:
   diagnosis still falls closed to answer. This creates no renderer-owned draft, provider
   call, Git evidence, Save fact, Project Revision, IPC/preload surface, or
   compatibility path;
+- the current visible working-brief checkpoint projects that same conversation
+  grounding into the desktop composer without creating a new authority. Renderer
+  derives a compact `Current brief`, `Approved plan`, or `Current result`
+  display from the already-sanitized Task Stream window and hides any text that
+  looks like internal IDs, digests, provider, credential, source tree, Git, or
+  receipt evidence. Clearing the brief only tells the current renderer composer
+  not to use that visible context for contextual execution; it does not delete
+  or rewrite SQLite Conversation facts, Git candidates, Project Revisions, or
+  provider prompt history. After clearing, a short phrase such as "按刚才方案做"
+  falls back to an answer/clarification turn unless a fresh visible brief or
+  draft context appears. This gives ordinary users an inspectable execution
+  target while preserving the main-owned submit guard above;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,
   `provider_response_received`, `result_preparing`) before terminal generation,
