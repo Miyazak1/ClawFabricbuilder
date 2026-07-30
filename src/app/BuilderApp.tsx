@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
-  Code2,
   Compass,
   Copy,
   FolderOpen,
@@ -62,6 +61,8 @@ import {
 } from '../features/builder/presentation/BuilderPage';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
+
+const BUILDER_APP_ICON_SRC = 'app-icon.ico';
 
 export type BuilderAppProps = Readonly<{
   bridgeRoot?: unknown;
@@ -1297,7 +1298,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       <header className="cf-builder-app-chrome" aria-label="ClawFabric Builder window" data-builder-app-chrome="true">
         <div className="cf-builder-app-chrome-title min-w-0">
           <span className="cf-builder-brand-mark inline-flex size-7 items-center justify-center" aria-hidden="true">
-            <Code2 className="size-4" />
+            <img alt="" className="cf-builder-brand-icon" src={BUILDER_APP_ICON_SRC} />
           </span>
           <div className="min-w-0">
             <strong className="block truncate text-sm">ClawFabric Builder</strong>
@@ -1351,7 +1352,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
           <div className="cf-builder-rail-brand" aria-hidden="true">
             <span className="cf-builder-brand-mark inline-flex size-8 items-center justify-center">
-              <Code2 aria-hidden="true" className="size-4" />
+              <img alt="" className="cf-builder-brand-icon" src={BUILDER_APP_ICON_SRC} />
             </span>
           </div>
           <nav className="cf-builder-rail-nav" aria-label="Builder views">
