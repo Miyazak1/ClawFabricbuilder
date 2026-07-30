@@ -434,6 +434,66 @@ function planConversationEvents(currentRequest, decision = 'approved') {
   ];
 }
 
+function taskBriefConversationEvents(currentRequest) {
+  return [
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:brief-discussion',
+        mode: 'question',
+        message: {
+          text: '我想先聊一下这个作品集首页怎么做。',
+        },
+      },
+    },
+    {
+      event_type: 'run_completed',
+      payload: {
+        turn_id: 'builder-turn:brief-discussion',
+        run_id: 'builder-run:brief-discussion',
+        result_kind: 'explanation',
+        assistant_message: {
+          text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+        },
+      },
+    },
+    {
+      event_type: 'task_brief_updated',
+      payload: {
+        turn_id: 'builder-turn:brief-discussion',
+        run_id: 'builder-run:brief-discussion',
+        task_capsule: {
+          current_brief: {
+            brief_version: 'builder-working-brief.v1',
+            source: 'task_capsule_update',
+            latest_user_goal: '我想先聊一下这个作品集首页怎么做。',
+            assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+            approved_plan: null,
+            use_when_instruction_is_contextual: true,
+          },
+        },
+      },
+    },
+    {
+      event_type: 'turn_submitted',
+      payload: {
+        turn_id: 'builder-turn:current',
+        mode: 'work',
+        message: {
+          text: currentRequest.instruction,
+        },
+      },
+    },
+    {
+      event_type: 'run_started',
+      payload: {
+        turn_id: 'builder-turn:current',
+        input_digest: currentRequest.request_digest,
+      },
+    },
+  ];
+}
+
 function generatedText(overrides = {}) {
   return JSON.stringify({
     kind: BUILDER_GENERATED_OPERATIONS_KIND,
@@ -610,6 +670,30 @@ test('includes a bounded prior conversation brief for context-grounded build pro
   assert.doesNotMatch(
     descriptor.user_instruction,
     /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer|按刚才方案实现.*按刚才方案实现/iu,
+  );
+});
+
+test('prefers durable task capsule brief facts for contextual build prompts', () => {
+  const rawRequest = request({ instruction: '按刚才方案做。', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree([{ path: 'src/app.js', content: 'export const existing = true;\n' }]),
+    conversation_events: taskBriefConversationEvents(rawRequest),
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.deepEqual(context.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'task_capsule_update',
+    latest_user_goal: '我想先聊一下这个作品集首页怎么做。',
+    assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+  assert.match(descriptor.user_instruction, /task_capsule_update/u);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /route_decision|builder-route-decision|provider|credential|revision_receipt|api[_-]?key|Bearer/iu,
   );
 });
 

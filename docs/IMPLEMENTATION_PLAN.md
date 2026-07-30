@@ -496,6 +496,14 @@ Evidence requirements:
   exposure, source mutation, Git evidence, Save authority, or Project Revision
   fact; it only makes the existing main-owned prompt context more faithful to
   the conversation;
+- the current task-brief checkpoint adds a durable `task_brief_updated`
+  Conversation fact for `update_brief` turns after the assistant explanation has
+  completed. This stores a bounded `builder-task-capsule.v1` with
+  `builder-working-brief.v1` context that can survive restart and be used by
+  later contextual execution phrases. The fact is still not execution, not Save,
+  not Git evidence, not a Project Revision, and not provider/source authority;
+  the renderer receives only a compact task-brief projection and cannot forge or
+  promote route decisions;
 - the current composer contextual-execution checkpoint aligns renderer routing
   with that plan-state contract. Contextual phrases such as "do it",
   "好，开始吧", "就照这个来", or "按刚才说的做" may enter build only when

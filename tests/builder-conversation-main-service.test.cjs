@@ -804,6 +804,87 @@ test('records route decision hints as main-bound turn evidence', () => {
   }
 });
 
+test('records update-brief turns as durable task capsule context without creating a draft', () => {
+  const item = fixture();
+  let restartedDatabase = null;
+  try {
+    const context = item.service.begin_question({
+      project_id: PROJECT_ID,
+      question: '我想先聊一下这个作品集首页怎么做。',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'update_brief',
+        confidence: 'medium',
+        matched_signals: ['exploratory_work'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'brief_update',
+      },
+    });
+    assert.deepEqual(context.events.map((event) => event.event_type), [
+      'turn_submitted',
+      'run_started',
+    ]);
+    assert.equal(context.events[0].payload.route_decision.route, 'update_brief');
+    assert.equal(context.events[0].payload.route_decision.dispatch, 'brief_update');
+
+    const terminal = item.service.complete_explanation({
+      context,
+      assistant_text: '可以先做一个带星空 hero、项目卡片和联系入口的单页作品集。',
+    });
+    assert.deepEqual(terminal.events.slice(-3).map((event) => event.event_type), [
+      'run_completed',
+      'task_brief_updated',
+      'turn_completed',
+    ]);
+    const briefEvent = terminal.events.at(-2);
+    assert.equal(briefEvent.payload.task_capsule.project_id, PROJECT_ID);
+    assert.equal(briefEvent.payload.task_capsule.status, 'ready');
+    assert.equal(
+      briefEvent.payload.task_capsule.last_route_decision_id,
+      context.events[0].payload.route_decision.decision_id,
+    );
+    assert.equal(
+      briefEvent.payload.task_capsule.current_brief.use_when_instruction_is_contextual,
+      true,
+    );
+    assert.equal(terminal.snapshot.turns[0].task, null);
+    assert.equal(terminal.snapshot.turns[0].runs[0].candidate_result, null);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(stream.conversation.items.map((entry) => entry.item_kind), [
+      'user_message',
+      'run_started',
+      'run_completed',
+      'task_brief_updated',
+      'turn_completed',
+    ]);
+    assert.equal(stream.conversation.items[3].brief.contextual_build_ready, true);
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /route_decision|candidate_digest|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission|provider|credential|source_tree/iu,
+    );
+
+    item.database.close();
+    restartedDatabase = createBuilderProductMetadataDatabase(
+      path.join(item.root, 'builder.sqlite'),
+    );
+    const restartedService = createBuilderConversationMainService({
+      metadataAuthority: restartedDatabase,
+      createUuid: uuidFactory(900),
+      nowMs: () => 9_000,
+    });
+    assert.deepEqual(restartedService.read_stream({ project_id: PROJECT_ID }), stream);
+  } finally {
+    if (restartedDatabase !== null) restartedDatabase.close();
+    try { item.database.close(); } catch { /* already closed during restart check */ }
+    removeRoot(item.root);
+  }
+});
+
 test('records a proposed plan from a run-bound plan record after successful tool context', async () => {
   const item = fixture();
   let restartedDatabase = null;

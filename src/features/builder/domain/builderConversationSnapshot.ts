@@ -30,6 +30,12 @@ export type BuilderConversationSavedRevision = Readonly<{
   revision_number: number;
 }>;
 
+export type BuilderConversationTaskBrief = Readonly<{
+  status: 'discussing' | 'ready';
+  summary: string;
+  contextual_build_ready: boolean;
+}>;
+
 export type BuilderConversationToolAction =
   | 'context.read'
   | 'project.read'
@@ -128,6 +134,15 @@ export type BuilderConversationItem =
     turn_id: string;
     run_id: string;
     action: 'cancel' | 'interrupt';
+  }>
+  | Readonly<{
+    item_kind: 'task_brief_updated';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    task: BuilderConversationTask;
+    brief: BuilderConversationTaskBrief;
+    recorded_state: 'updated';
   }>
   | Readonly<{
     item_kind: 'tool_call_requested';
@@ -317,6 +332,15 @@ const RUN_PROGRESS_KEYS = Object.freeze([
   'stage',
   'recorded_state',
 ]);
+const TASK_BRIEF_UPDATED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task',
+  'brief',
+  'recorded_state',
+]);
 const TOOL_CALL_REQUESTED_KEYS = Object.freeze([
   'item_kind',
   'sequence',
@@ -441,6 +465,7 @@ const TURN_COMPLETED_KEYS = Object.freeze([
 ]);
 const MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const TASK_KEYS = Object.freeze(['task_id', 'title']);
+const TASK_BRIEF_KEYS = Object.freeze(['status', 'summary', 'contextual_build_ready']);
 const CANDIDATE_KEYS = Object.freeze([
   'draft_id',
   'title',
@@ -665,6 +690,26 @@ function sanitizeTask(value: unknown): BuilderConversationTask | null {
   };
 }
 
+function sanitizeRequiredTask(value: unknown): BuilderConversationTask {
+  const task = sanitizeTask(value);
+  if (task === null) throw unavailable();
+  return task;
+}
+
+function sanitizeTaskBrief(value: unknown): BuilderConversationTaskBrief {
+  const source = exactRecord(value, TASK_BRIEF_KEYS);
+  if (
+    (source.status !== 'discussing' && source.status !== 'ready')
+    || typeof source.contextual_build_ready !== 'boolean'
+    || (source.status !== 'ready' && source.contextual_build_ready)
+  ) throw unavailable();
+  return {
+    status: source.status,
+    summary: safeText(source.summary, 4096, 16 * 1024, true),
+    contextual_build_ready: source.contextual_build_ready,
+  };
+}
+
 function sanitizeCandidate(value: unknown): BuilderConversationCandidate | null {
   if (value === null) return null;
   const source = exactRecord(value, CANDIDATE_KEYS);
@@ -770,6 +815,22 @@ function sanitizeRunProgress(
     run_id: safePattern(source.run_id, RUN_ID_PATTERN),
     stage: source.stage as BuilderConversationRunProgressStage,
     recorded_state: 'recorded' as const,
+  };
+}
+
+function sanitizeTaskBriefUpdated(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'task_brief_updated' }> {
+  if (source.recorded_state !== 'updated') throw unavailable();
+  return {
+    item_kind: 'task_brief_updated' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    task: sanitizeRequiredTask(source.task),
+    brief: sanitizeTaskBrief(source.brief),
+    recorded_state: 'updated' as const,
   };
 }
 
@@ -1050,6 +1111,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_CONTROL_KEYS);
   } else if (itemKind === 'run_progress_recorded') {
     source = exactRecord(value, RUN_PROGRESS_KEYS);
+  } else if (itemKind === 'task_brief_updated') {
+    source = exactRecord(value, TASK_BRIEF_UPDATED_KEYS);
   } else if (itemKind === 'tool_call_result_recorded') {
     source = exactRecord(value, TOOL_CALL_RESULT_RECORDED_KEYS);
   } else if (itemKind === 'tool_call_requested') {
@@ -1070,6 +1133,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
   if (itemKind === 'run_progress_recorded') return sanitizeRunProgress(source, sequence);
+  if (itemKind === 'task_brief_updated') return sanitizeTaskBriefUpdated(source, sequence);
   if (itemKind === 'tool_call_result_recorded') {
     return sanitizeToolCallResultRecorded(source, sequence);
   }
@@ -1242,6 +1306,20 @@ function validateCompleteWindow(
       continue;
     }
     if (currentRun === null || currentRun.run_id !== item.run_id) throw unavailable();
+    if (item.item_kind === 'task_brief_updated') {
+      if (
+        activeTurn.mode !== 'question'
+        || activeTurn.task !== null
+        || currentRun.status !== 'completed'
+        || currentRun.terminal_status !== 'succeeded'
+        || currentRun.result_kind !== 'explanation'
+        || taskIds.has(item.task.task_id)
+        || item.brief.status !== 'ready'
+        || !item.brief.contextual_build_ready
+      ) throw unavailable();
+      taskIds.add(item.task.task_id);
+      continue;
+    }
     if (item.item_kind === 'run_progress_recorded') {
       const previousStage = currentRun.progress_stages.at(-1) ?? null;
       const previousIndex = previousStage === null ? -1 : RUN_PROGRESS_STAGES.indexOf(previousStage);
@@ -1806,6 +1884,42 @@ function validateTruncatedWindow(
       currentRun.terminal_status = item.terminal_status;
       currentRun.result_kind = item.result_kind;
       currentRun.candidate_draft_id = item.candidate?.draft_id ?? null;
+      continue;
+    }
+
+    if (item.item_kind === 'task_brief_updated') {
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix' || !mayUsePrefixState) throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.mode = 'question';
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'completed',
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          candidate_draft_id: null,
+          plan_review: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+          progress_stages: [],
+        };
+      }
+      const currentRun = activeTurn.current_run;
+      if (
+        activeTurn.mode !== 'question'
+        || activeTurn.task_id !== null
+        || currentRun.run_id !== item.run_id
+        || currentRun.status !== 'completed'
+        || currentRun.terminal_status !== 'succeeded'
+        || currentRun.result_kind !== 'explanation'
+        || taskIds.has(item.task.task_id)
+        || item.brief.status !== 'ready'
+        || !item.brief.contextual_build_ready
+      ) throw unavailable();
+      taskIds.add(item.task.task_id);
       continue;
     }
 

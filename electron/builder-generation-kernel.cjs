@@ -408,7 +408,7 @@ function conversationRunKey(turnId, runId) {
   return typeof turnId === 'string' && typeof runId === 'string' ? `${turnId}:${runId}` : null;
 }
 
-function buildWorkingBrief(entries, latestPlan) {
+function buildWorkingBrief(entries, latestPlan, latestTaskBrief) {
   if (latestPlan !== null && latestPlan.state === 'approved') {
     const latestUser = [...entries].reverse().find((entry) => (
       entry.role === 'user' && WORKING_BRIEF_USER_CONTEXT_PATTERN.test(entry.text)
@@ -426,6 +426,7 @@ function buildWorkingBrief(entries, latestPlan) {
     });
   }
   if (latestPlan !== null) return null;
+  if (latestTaskBrief !== null) return freezeDeep({ ...latestTaskBrief });
 
   let latestUserGoal = null;
   let latestAssistantProposal = null;
@@ -458,6 +459,7 @@ function conversationBriefFromEvents(events, requestDigest) {
   const entries = [];
   const planTextsByRun = new Map();
   let latestPlan = null;
+  let latestTaskBrief = null;
   for (const event of events) {
     const eventType = optionalOwnValue(event, 'event_type');
     const payload = optionalOwnValue(event, 'payload');
@@ -476,6 +478,12 @@ function conversationBriefFromEvents(events, requestDigest) {
           : conversationBriefKind(optionalOwnValue(payload, 'mode'), 'message'),
         text,
       });
+      continue;
+    }
+
+    if (eventType === 'task_brief_updated') {
+      if (typeof turnId === 'string' && currentTurnIds.has(turnId)) continue;
+      latestTaskBrief = { ...payload.task_capsule.current_brief };
       continue;
     }
 
@@ -513,7 +521,7 @@ function conversationBriefFromEvents(events, requestDigest) {
     selection: CONVERSATION_BRIEF_SELECTION,
     entries,
     latest_plan: latestPlan,
-    working_brief: buildWorkingBrief(entries, latestPlan),
+    working_brief: buildWorkingBrief(entries, latestPlan, latestTaskBrief),
   });
 }
 

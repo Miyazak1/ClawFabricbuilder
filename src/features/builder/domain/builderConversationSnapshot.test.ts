@@ -34,6 +34,11 @@ type MutableConversationItem = {
   message_kind?: string;
   mode?: string | null;
   task?: { task_id: string; title: string } | null;
+  brief?: {
+    status: string;
+    summary: string;
+    contextual_build_ready: boolean;
+  };
   run_id?: string | null;
   task_id?: string | null;
   attempt_number?: number;
@@ -206,6 +211,87 @@ function rejectedCandidateWire(): MutableWire {
     saved_revision: null,
   });
   return wire;
+}
+
+function taskBriefWire(): MutableWire {
+  const turnId = id('turn', 11);
+  const runId = id('run', 12);
+  return {
+    stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1000,
+      head_sequence: 5,
+      recorded_active_turn_id: null,
+      window: {
+        first_sequence: 1,
+        last_sequence: 5,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: turnId,
+          message: {
+            message_id: id('message', 13),
+            text: '我想先聊一下这个作品集首页怎么做。',
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: turnId,
+          run_id: runId,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 3,
+          turn_id: turnId,
+          run_id: runId,
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          assistant_message: {
+            message_id: id('message', 14),
+            text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'task_brief_updated',
+          sequence: 4,
+          turn_id: turnId,
+          run_id: runId,
+          task: {
+            task_id: id('task', 15),
+            title: 'Current project brief',
+          },
+          brief: {
+            status: 'ready',
+            summary: '我想先聊一下这个作品集首页怎么做。 可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+            contextual_build_ready: true,
+          },
+          recorded_state: 'updated',
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 5,
+          turn_id: turnId,
+          run_id: runId,
+          outcome: 'answered',
+        },
+      ],
+    },
+    authority: authority(),
+  };
 }
 
 function progressWire(): MutableWire {
@@ -513,6 +599,32 @@ describe('Builder conversation snapshot', () => {
     expect(Object.isFrozen(snapshot.conversation)).toBe(true);
     expect(Object.isFrozen(snapshot.conversation.items)).toBe(true);
     expect(Object.isFrozen(snapshot.conversation.items[2])).toBe(true);
+  });
+
+  it('accepts a durable task brief update after a question explanation', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(taskBriefWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[3]).toEqual({
+      item_kind: 'task_brief_updated',
+      sequence: 4,
+      turn_id: id('turn', 11),
+      run_id: id('run', 12),
+      task: {
+        task_id: id('task', 15),
+        title: 'Current project brief',
+      },
+      brief: {
+        status: 'ready',
+        summary: '我想先聊一下这个作品集首页怎么做。 可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+        contextual_build_ready: true,
+      },
+      recorded_state: 'updated',
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /route_decision|provider|credential|source_tree|revision_receipt|commit_oid/iu,
+    );
   });
 
   it('represents an absent conversation without treating it as unavailable', () => {

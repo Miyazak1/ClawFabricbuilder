@@ -134,6 +134,7 @@ function applyTurnSubmitted(state, payload) {
     status: 'active',
     task: payload.task === null ? null : { ...payload.task },
     base_revision: payload.base_revision === null ? null : { ...payload.base_revision },
+    route_decision: { ...payload.route_decision },
     runs: [],
     messages: [message],
     outcome: null,
@@ -438,6 +439,28 @@ function applyRunCompleted(state, payload) {
   }
 }
 
+function applyTaskBriefUpdated(state, payload) {
+  const turn = requireActiveTurn(state, payload.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  if (
+    turn.mode !== 'question'
+    || turn.task !== null
+    || turn.route_decision.route !== 'update_brief'
+    || turn.route_decision.dispatch !== 'brief_update'
+    || turn.route_decision.message_id !== payload.message_id
+    || payload.task_capsule.last_route_decision_id !== turn.route_decision.decision_id
+    || payload.task_capsule.project_id !== state.projectId
+    || payload.task_capsule.status !== 'ready'
+    || state.taskIds.has(payload.task_capsule.task_id)
+    || run === null
+    || run.run_id !== payload.run_id
+    || run.status !== 'completed'
+    || run.terminal_status !== 'succeeded'
+    || run.result_kind !== 'explanation'
+  ) fail();
+  state.taskIds.add(payload.task_capsule.task_id);
+}
+
 function applyTurnCompleted(state, payload) {
   const turn = requireActiveTurn(state, payload.turn_id);
   const run = turn.runs.at(-1) ?? null;
@@ -470,6 +493,7 @@ const TRANSITIONS = Object.freeze({
   tool_call_requested: applyToolCallRequested,
   tool_call_result_recorded: applyToolCallResultRecorded,
   run_completed: applyRunCompleted,
+  task_brief_updated: applyTaskBriefUpdated,
   turn_completed: applyTurnCompleted,
 });
 

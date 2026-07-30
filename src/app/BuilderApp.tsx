@@ -511,6 +511,10 @@ function hasPriorBuildContext(
 
   let hasContext = false;
   for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'task_brief_updated') {
+      hasContext = item.brief.contextual_build_ready;
+      continue;
+    }
     if (item.item_kind === 'plan_reviewed') {
       hasContext = item.plan_state === 'approved';
       continue;
@@ -575,8 +579,15 @@ function composerWorkingBrief(
   let latestAssistantProposal: Readonly<{ sequence: number; text: string }> | null = null;
   let latestPlan: Readonly<{ sequence: number; state: 'approved' | 'proposed' | 'rejected'; text: string }> | null = null;
   let latestCandidate: Readonly<{ sequence: number; text: string }> | null = null;
+  let latestTaskBrief: Readonly<{ sequence: number; text: string }> | null = null;
 
   for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'task_brief_updated') {
+      if (item.brief.contextual_build_ready) {
+        latestTaskBrief = Object.freeze({ sequence: item.sequence, text: item.brief.summary });
+      }
+      continue;
+    }
     if (item.item_kind === 'user_message') {
       const text = compactComposerBriefText(item.message.text);
       if (text !== null && PRIOR_BUILD_COMMITMENT_TEXT_PATTERN.test(text)) {
@@ -641,6 +652,15 @@ function composerWorkingBrief(
       summary: latestCandidate.text,
     }));
     candidateSequences.set(key, latestCandidate.sequence);
+  }
+  if (latestTaskBrief !== null) {
+    const key = `${visibleProjectId}:task-brief:${latestTaskBrief.sequence}`;
+    candidates.push(Object.freeze({
+      key,
+      label: 'Current brief',
+      summary: latestTaskBrief.text,
+    }));
+    candidateSequences.set(key, latestTaskBrief.sequence);
   }
   if (latestUserGoal !== null && latestAssistantProposal !== null) {
     const key = `${visibleProjectId}:current-brief:${latestUserGoal.sequence}:${latestAssistantProposal.sequence}`;

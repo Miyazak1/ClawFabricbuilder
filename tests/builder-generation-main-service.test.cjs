@@ -2433,7 +2433,20 @@ test('submits one composer turn through main-owned work or explanation routing',
   );
   assert.deepEqual(
     lifecycle.calls.question.map((input) => input.route_decision_hint.dispatch),
-    Array(12).fill('reply'),
+    [
+      'reply',
+      'reply',
+      'brief_update',
+      'brief_update',
+      'reply',
+      'reply',
+      'reply',
+      'reply',
+      'reply',
+      'reply',
+      'reply',
+      'reply',
+    ],
   );
   assert.deepEqual(
     lifecycle.calls.question.slice(-2).map((input) => input.route_decision_hint.downgrade_reason),
@@ -2700,6 +2713,91 @@ test('passes prior conversation working brief into contextual submit provider pr
   assert.doesNotMatch(
     transportInput.messages[1].content,
     /builder-(?:project|conversation|turn|task|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
+  );
+});
+
+test('uses a durable task capsule brief as contextual submit build context', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-brief-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  t.after(() => {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  let now = 8_000;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(710),
+    nowMs: () => now++,
+  });
+  const priorRequest = request({
+    instruction: '我想先聊一下这个作品集首页怎么做。',
+    existingProjectId: PROJECT_ID,
+  });
+  const prior = conversation.begin_question({
+    project_id: PROJECT_ID,
+    question: priorRequest.instruction,
+    request_digest: priorRequest.request_digest,
+    base_revision: null,
+    route_decision_hint: {
+      route: 'update_brief',
+      confidence: 'medium',
+      matched_signals: ['exploratory_work'],
+      downgraded_from: null,
+      downgrade_reason: null,
+      required_permissions: [],
+      permission_result: 'not_required',
+      dispatch: 'brief_update',
+    },
+  });
+  conversation.complete_explanation({
+    context: prior,
+    assistant_text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+  });
+  let transportInput;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+          }));
+        },
+      },
+      createUuid: createUniqueUuidFactory(820),
+    }),
+    transport: async (input) => {
+      transportInput = input;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Portfolio from brief',
+          summary: 'Builds from the durable task brief.',
+        })),
+      };
+    },
+  });
+
+  const draft = await service.submit(request({
+    instruction: '按刚才方案做',
+    existingProjectId: PROJECT_ID,
+  }));
+  const providerPrompt = JSON.parse(transportInput.messages[1].content);
+
+  assert.equal(draft.title, 'Portfolio from brief');
+  assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'task_capsule_update',
+    latest_user_goal: '我想先聊一下这个作品集首页怎么做。',
+    assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+  assert.match(transportInput.messages[1].content, /task_capsule_update/u);
+  assert.doesNotMatch(
+    transportInput.messages[1].content,
+    /route_decision|builder-route-decision|credential|provider|api[_-]?key|Bearer/iu,
   );
 });
 

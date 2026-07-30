@@ -349,6 +349,86 @@ test('supports command payloads with exact run attempt and terminal result evide
   assert.deepEqual(Object.keys(terminal.payload).sort(), ['outcome', 'run_id', 'turn_id']);
 });
 
+test('supports durable task brief updates without source or execution authority', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: '我想先聊一下这个作品集首页怎么做。' },
+    turn_id: typedId('turn', 1),
+    mode: 'question',
+    task: null,
+    base_revision: null,
+    route_decision: routeDecision({
+      message: { message_id: typedId('message', 1), text: '我想先聊一下这个作品集首页怎么做。' },
+      mode: 'question',
+      task: null,
+    }, 1, {
+      route: 'update_brief',
+      confidence: 'medium',
+      matched_signals: ['exploratory_work'],
+      dispatch: 'brief_update',
+    }),
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: null,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const completed = create('run_completed', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    terminal_status: 'succeeded',
+    result_kind: 'explanation',
+    result_digest: DIGEST_A,
+    assistant_message: {
+      message_id: typedId('message', 2),
+      text: '可以先做一个带星空 hero、项目卡片和联系入口的单页作品集。',
+    },
+    candidate_result: null,
+  }, started, 3);
+  const brief = create('task_brief_updated', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    message_id: typedId('message', 1),
+    task_capsule: {
+      capsule_version: 'builder-task-capsule.v1',
+      task_id: typedId('task', 2),
+      project_id: PROJECT_ID,
+      title: 'Current project brief',
+      goal: '我想先聊一下这个作品集首页怎么做。',
+      status: 'ready',
+      current_brief: {
+        brief_version: 'builder-working-brief.v1',
+        source: 'task_capsule_update',
+        latest_user_goal: '我想先聊一下这个作品集首页怎么做。',
+        assistant_proposal: '可以先做一个带星空 hero、项目卡片和联系入口的单页作品集。',
+        approved_plan: null,
+        use_when_instruction_is_contextual: true,
+      },
+      last_route_decision_id: submitted.payload.route_decision.decision_id,
+      updated_at_ms: 4,
+    },
+  }, completed, 4);
+
+  assert.equal(brief.payload.task_capsule.status, 'ready');
+  assert.equal(brief.payload.task_capsule.current_brief.use_when_instruction_is_contextual, true);
+  assert.doesNotMatch(
+    JSON.stringify(brief),
+    /candidate_digest|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission|provider|credential|source_tree/iu,
+  );
+  assert.throws(() => create('task_brief_updated', {
+    ...brief.payload,
+    task_capsule: {
+      ...brief.payload.task_capsule,
+      current_brief: {
+        ...brief.payload.task_capsule.current_brief,
+        latest_user_goal: 'Read C:/secret/project.txt before doing it.',
+      },
+    },
+  }, completed, 5), assertRecordError());
+});
+
 test('supports fixed run progress payloads without provider or source authority', () => {
   const submitted = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Build a quiet timer.' },

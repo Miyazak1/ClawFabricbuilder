@@ -177,6 +177,25 @@ function itemFromEvent(event) {
         mode: null,
         task: null,
       };
+    case 'task_brief_updated': {
+      const capsule = payload.task_capsule;
+      return {
+        item_kind: 'task_brief_updated',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        task: {
+          task_id: capsule.task_id,
+          title: capsule.title,
+        },
+        brief: {
+          status: capsule.status,
+          summary: `${capsule.current_brief.latest_user_goal} ${capsule.current_brief.assistant_proposal}`,
+          contextual_build_ready: capsule.current_brief.use_when_instruction_is_contextual,
+        },
+        recorded_state: 'updated',
+      };
+    }
     case 'run_started':
       return {
         item_kind: 'run_started',

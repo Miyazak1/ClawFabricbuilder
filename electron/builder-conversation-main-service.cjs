@@ -289,6 +289,25 @@ function routeDecisionIdForMessage(messageId) {
   return `builder-route-decision:${safeUuid(messageId.slice(prefix.length))}`;
 }
 
+function taskBriefCommandIdForMessage(messageId) {
+  const prefix = 'builder-message:';
+  if (typeof messageId !== 'string' || !messageId.startsWith(prefix)) fail();
+  return `builder-command:${safeUuid(messageId.slice(prefix.length))}`;
+}
+
+function taskBriefIdForMessage(messageId) {
+  const prefix = 'builder-message:';
+  if (typeof messageId !== 'string' || !messageId.startsWith(prefix)) fail();
+  return `builder-task:${safeUuid(messageId.slice(prefix.length))}`;
+}
+
+function compactTaskBriefText(value, maximumCodePoints = 1_000) {
+  const normalized = value.normalize('NFC').replace(/\s+/gu, ' ').trim();
+  const codePoints = Array.from(normalized);
+  if (codePoints.length <= maximumCodePoints) return normalized;
+  return `${codePoints.slice(0, maximumCodePoints - 3).join('').trimEnd()}...`;
+}
+
 function defaultRouteDecisionHint(mode) {
   if (mode === 'work') {
     return freezeDeep({
@@ -339,6 +358,59 @@ function routeDecisionEvidence({ decisionId, projectId, messageId, taskId, mode,
     permission_result: normalizedHint.permission_result,
     dispatch: normalizedHint.dispatch,
     decided_at_ms: decidedAtMs,
+  });
+}
+
+function turnSubmittedEventFromContext(context) {
+  const submitted = context.events.find((event) => (
+    event.event_type === 'turn_submitted'
+    && event.payload.turn_id === context.ids.turn_id
+  )) ?? null;
+  if (
+    submitted === null
+    || submitted.payload.turn_id !== context.ids.turn_id
+    || submitted.payload.message.message_id !== context.ids.message_id
+  ) fail();
+  return submitted;
+}
+
+function routeDecisionFromContext(context) {
+  return turnSubmittedEventFromContext(context).payload.route_decision;
+}
+
+function userMessageTextFromContext(context) {
+  return turnSubmittedEventFromContext(context).payload.message.text;
+}
+
+function shouldRecordTaskBrief(context) {
+  const routeDecision = routeDecisionFromContext(context);
+  return context.mode === 'question'
+    && context.ids.task_id === null
+    && routeDecision.route === 'update_brief'
+    && routeDecision.dispatch === 'brief_update';
+}
+
+function taskBriefCapsule(context, assistantText, updatedAtMs) {
+  const routeDecision = routeDecisionFromContext(context);
+  const latestUserGoal = compactTaskBriefText(userMessageTextFromContext(context));
+  const assistantProposal = compactTaskBriefText(assistantText, 2_000);
+  return freezeDeep({
+    capsule_version: 'builder-task-capsule.v1',
+    task_id: taskBriefIdForMessage(context.ids.message_id),
+    project_id: context.project.project_id,
+    title: 'Current project brief',
+    goal: latestUserGoal,
+    status: 'ready',
+    current_brief: {
+      brief_version: 'builder-working-brief.v1',
+      source: 'task_capsule_update',
+      latest_user_goal: latestUserGoal,
+      assistant_proposal: assistantProposal,
+      approved_plan: null,
+      use_when_instruction_is_contextual: true,
+    },
+    last_route_decision_id: routeDecision.decision_id,
+    updated_at_ms: updatedAtMs,
   });
 }
 
@@ -2009,24 +2081,47 @@ function createBuilderConversationMainService(rawOptions) {
         plan_admission: null,
       },
     });
+    const terminalEvents = [first];
+    let previous = eventHead(first);
+    let nextSequence = first.sequence + 1;
+    if (shouldRecordTaskBrief(context)) {
+      const briefUpdated = eventAt({
+        projectId: context.project.project_id,
+        conversationId: context.conversation.conversation_id,
+        sequence: nextSequence,
+        commandId: taskBriefCommandIdForMessage(context.ids.message_id),
+        eventType: 'task_brief_updated',
+        previous,
+        payload: {
+          turn_id: context.ids.turn_id,
+          run_id: context.ids.run_id,
+          message_id: context.ids.message_id,
+          task_capsule: taskBriefCapsule(context, assistantText, recordedAtMs),
+        },
+      });
+      terminalEvents.push(briefUpdated);
+      previous = eventHead(briefUpdated);
+      nextSequence += 1;
+    }
     const second = eventAt({
       projectId: context.project.project_id,
       conversationId: context.conversation.conversation_id,
-      sequence: first.sequence + 1,
+      sequence: nextSequence,
       commandId: context.ids.turn_terminal_command_id,
       eventType: 'turn_completed',
-      previous: eventHead(first),
+      previous,
       payload: {
         turn_id: context.ids.turn_id,
         run_id: context.ids.run_id,
         outcome: 'answered',
       },
     });
+    terminalEvents.push(second);
     return append({
       project: context.project,
       conversation: context.conversation,
       expectedHead: context.start_head,
-      events: [first, second],
+      events: terminalEvents,
       recordedAtMs,
     });
   }

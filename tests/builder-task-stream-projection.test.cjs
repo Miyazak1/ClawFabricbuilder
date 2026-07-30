@@ -59,7 +59,7 @@ function id(kind, index) {
   return `builder-${kind}:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 }
 
-function routeDecision(payload) {
+function routeDecision(payload, overrides = {}) {
   const route = payload.mode === 'work' ? 'build' : 'answer';
   return {
     decision_id: `builder-route-decision:${payload.message.message_id.slice('builder-message:'.length)}`,
@@ -76,6 +76,7 @@ function routeDecision(payload) {
     permission_result: route === 'build' ? 'allowed' : 'not_required',
     dispatch: route === 'build' ? 'build' : 'reply',
     decided_at_ms: 1,
+    ...overrides,
   };
 }
 
@@ -585,6 +586,98 @@ test('projects canonical events into bounded renderer-safe activity items', () =
   assert.equal(Object.isFrozen(stream), true);
   assert.equal(Object.isFrozen(stream.conversation.items), true);
   assert.equal(Object.isFrozen(stream.conversation.items[2].candidate), true);
+});
+
+test('projects task brief updates as compact renderer-safe context items', () => {
+  const events = [];
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 210), text: '我想先聊一下这个作品集首页怎么做。' },
+    turn_id: id('turn', 210),
+    mode: 'question',
+    task: null,
+    base_revision: null,
+    route_decision: routeDecision({
+      message: { message_id: id('message', 210), text: '我想先聊一下这个作品集首页怎么做。' },
+      mode: 'question',
+      task: null,
+    }, {
+      route: 'update_brief',
+      confidence: 'medium',
+      matched_signals: ['exploratory_work'],
+      dispatch: 'brief_update',
+    }),
+  }, 210);
+  append(events, 'run_started', {
+    turn_id: id('turn', 210),
+    run_id: id('run', 211),
+    task_id: null,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 211);
+  append(events, 'run_completed', {
+    turn_id: id('turn', 210),
+    run_id: id('run', 211),
+    terminal_status: 'succeeded',
+    result_kind: 'explanation',
+    result_digest: DIGEST,
+    assistant_message: {
+      message_id: id('message', 212),
+      text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+    },
+    candidate_result: null,
+  }, 212);
+  append(events, 'task_brief_updated', {
+    turn_id: id('turn', 210),
+    run_id: id('run', 211),
+    message_id: id('message', 210),
+    task_capsule: {
+      capsule_version: 'builder-task-capsule.v1',
+      task_id: id('task', 213),
+      project_id: PROJECT_ID,
+      title: 'Current project brief',
+      goal: '我想先聊一下这个作品集首页怎么做。',
+      status: 'ready',
+      current_brief: {
+        brief_version: 'builder-working-brief.v1',
+        source: 'task_capsule_update',
+        latest_user_goal: '我想先聊一下这个作品集首页怎么做。',
+        assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+        approved_plan: null,
+        use_when_instruction_is_contextual: true,
+      },
+      last_route_decision_id: events[0].payload.route_decision.decision_id,
+      updated_at_ms: 4_000,
+    },
+  }, 213);
+  append(events, 'turn_completed', {
+    turn_id: id('turn', 210),
+    run_id: id('run', 211),
+    outcome: 'answered',
+  }, 214);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.deepEqual(stream.conversation.items[3], {
+    item_kind: 'task_brief_updated',
+    sequence: 4,
+    turn_id: id('turn', 210),
+    run_id: id('run', 211),
+    task: {
+      task_id: id('task', 213),
+      title: 'Current project brief',
+    },
+    brief: {
+      status: 'ready',
+      summary: '我想先聊一下这个作品集首页怎么做。 可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+      contextual_build_ready: true,
+    },
+    recorded_state: 'updated',
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /route_decision|builder-route-decision|provider|credential|source_tree|revision_receipt|commit_oid/iu,
+  );
 });
 
 test('represents a missing conversation as a legal empty result', () => {

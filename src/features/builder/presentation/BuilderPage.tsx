@@ -288,6 +288,7 @@ function isArtifactLogEntry(entry: ActivityEntry): boolean {
   const { item } = entry;
   if (
     item.item_kind === 'run_control_requested'
+    || item.item_kind === 'task_brief_updated'
     || item.item_kind === 'tool_call_requested'
     || item.item_kind === 'tool_call_result_recorded'
     || item.item_kind === 'candidate_reviewed'
@@ -465,6 +466,7 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
   if (item.item_kind === 'run_progress_recorded') return <RefreshCw className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
+  if (item.item_kind === 'task_brief_updated') return <ListChecks className="size-3.5" />;
   if (item.item_kind === 'tool_call_requested') return <Play className="size-3.5" />;
   if (item.item_kind === 'tool_call_result_recorded') {
     if (item.result.status === 'succeeded') return <CheckCircle2 className="size-3.5" />;
@@ -497,6 +499,7 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
+  if (item.item_kind === 'task_brief_updated') return 'Brief updated';
   if (item.item_kind === 'tool_call_requested') return toolRequestTitle(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultTitle(item);
   if (item.item_kind === 'candidate_reviewed') {
@@ -622,6 +625,7 @@ function activityBody(item: BuilderConversationItem): string {
       ? 'You asked to steer the current work.'
       : 'You asked to stop the current work.';
   }
+  if (item.item_kind === 'task_brief_updated') return item.brief.summary;
   if (item.item_kind === 'tool_call_requested') return toolRequestBody(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultBody(item);
   if (item.item_kind === 'candidate_reviewed') {

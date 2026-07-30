@@ -322,7 +322,7 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
       route: 'update_brief',
       confidence: 'medium',
       matchedSignals: ['exploratory_work'],
-      dispatch: 'reply',
+      dispatch: 'brief_update',
     });
   }
   if (matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)) {
@@ -459,6 +459,11 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
     const planTextsByRun = new Map();
     for (const item of items) {
       const itemKind = optionalValueAt(item, 'item_kind');
+      if (itemKind === 'task_brief_updated') {
+        const brief = optionalValueAt(item, 'brief');
+        if (optionalValueAt(brief, 'contextual_build_ready') === true) return true;
+        continue;
+      }
       if (itemKind === 'user_message') {
         const text = messageTextFromTaskStreamItem(item, 'message');
         if (text !== null && PRIOR_BUILD_CONFIRMED_USER_PATTERN.test(text)) {
