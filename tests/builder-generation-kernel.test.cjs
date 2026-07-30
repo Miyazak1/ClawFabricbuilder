@@ -736,6 +736,34 @@ test('builds a route-specific explanation prompt without allowing source operati
   assert.doesNotMatch(descriptor.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
 });
 
+test('keeps greeting answers conversational instead of project-state diagnostics', () => {
+  const rawRequest = request({ instruction: 'hi', existingProjectId: null });
+  const descriptor = createBuilderExplanationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+  });
+
+  assert.match(descriptor.system_instruction, /Match the user language/u);
+  assert.match(descriptor.system_instruction, /greeting you or making small talk/u);
+  assert.match(descriptor.system_instruction, /answer naturally and briefly/u);
+  assert.match(descriptor.system_instruction, /Do not answer greetings by listing missing context/u);
+  assert.match(descriptor.system_instruction, /missing files, missing plans, saved state/u);
+  assert.match(descriptor.system_instruction, /Do not mention runs, tasks, schemas, receipts, providers, prompts, context digests/u);
+  assert.deepEqual(JSON.parse(descriptor.user_instruction), {
+    instruction: 'hi',
+    mode: 'create',
+    conversation_brief: {
+      context_version: 'builder-conversation-brief.v3',
+      selection: 'recent_prior_messages_latest_plan_and_working_brief',
+      entries: [],
+      latest_plan: null,
+      working_brief: null,
+    },
+    current_source_tree: { files: [] },
+  });
+});
+
 test('builds a route-specific plan prompt from bounded private source context', () => {
   const rawRequest = request({ instruction: 'Plan a smaller settings panel.', existingProjectId: PROJECT_ID });
   const sourceContext = planSourceContextResult(rawRequest, [
