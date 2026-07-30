@@ -517,7 +517,10 @@ Evidence requirements:
   such as "我想先聊一下这个作品集首页怎么做，目标是..." when they are followed by
   an assistant proposal and a later contextual execution phrase; this makes the
   approved execution use the prior discussion without treating the earlier chat
-  itself as file-change approval. This creates no renderer-owned draft, provider
+  itself as file-change approval. Read-only exploratory diagnosis such as
+  "我想知道这个网站为什么预览空白。" remains explanation context even if the
+  assistant answer begins with "可以先查看..."; a later "开始吧" after that
+  diagnosis still falls closed to answer. This creates no renderer-owned draft, provider
   call, Git evidence, Save fact, Project Revision, IPC/preload surface, or
   compatibility path;
 - the current durable run-progress checkpoint records fixed main-owned Run

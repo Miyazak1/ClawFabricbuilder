@@ -332,6 +332,38 @@ function recentChatProposalTaskStream(projectId = PROJECT_ID) {
   ]);
 }
 
+function readOnlyExplorationQuestionTaskStream(projectId = PROJECT_ID) {
+  const turnId = `builder-turn:${UUIDS[1]}`;
+  const runId = `builder-run:${UUIDS[2]}`;
+  return taskStreamWithItems(projectId, [
+    {
+      item_kind: 'user_message',
+      sequence: 1,
+      turn_id: turnId,
+      message: {
+        message_id: `builder-message:${UUIDS[3]}`,
+        text: '我想知道这个网站为什么预览空白。',
+      },
+      message_kind: 'submitted',
+      mode: 'question',
+      task: null,
+    },
+    {
+      item_kind: 'run_completed',
+      sequence: 2,
+      turn_id: turnId,
+      run_id: runId,
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[4]}`,
+        text: '可以先查看这个网站的脚本和静态预览限制，确认空白是不是因为 JavaScript 没有运行。',
+      },
+      candidate: null,
+    },
+  ]);
+}
+
 function conversationService(options = {}) {
   let generation = 0;
   const candidateDrafts = new Map();
@@ -2312,6 +2344,47 @@ test('allows contextual composer submit only with main-owned build context', asy
   assert.equal(lifecycle.calls.explanation.length, 0);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 1);
+});
+
+test('keeps contextual submit in answer route after read-only exploratory diagnosis', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: readOnlyExplorationQuestionTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Still discussing',
+        summary: 'Answered without changing files.',
+      })),
+    }),
+  });
+
+  const answer = await service.submit(request({
+    instruction: '开始吧',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(answer.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 0);
 });
 
 test('passes prior conversation working brief into contextual submit provider prompt', async (t) => {

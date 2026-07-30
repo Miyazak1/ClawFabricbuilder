@@ -1268,6 +1268,37 @@ evidence.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-30 Read-Only Exploration Brief Guard Check
+
+This addendum records the guard checkpoint after the natural discussion working
+brief was narrowed so explanatory exploration is not promoted into an
+implementation target. It extends local generation routing, prompt-context, and
+desktop package evidence only; it does not extend installer, real-provider
+DeepSeek canary, arbitrary generated-code execution, external-network
+permission, or general-purpose tool execution evidence.
+
+- Read-only diagnosis such as
+  "我想知道这个网站为什么预览空白。" followed by an assistant answer like
+  "可以先查看这个网站的脚本和静态预览限制..." remains explanation context.
+  A later contextual phrase such as "开始吧" after that diagnosis still routes
+  to answer rather than creating a Git candidate, draft, Review, Save, or
+  Project Revision fact.
+- The positive natural-discussion path from the previous checkpoint is still
+  preserved for goal exploration that is paired with an assistant proposal and
+  a later contextual execution phrase.
+- Focused validation passed through
+  `node --test tests\builder-generation-kernel.test.cjs tests\builder-generation-main-service.test.cjs`;
+  the suite reported 61 passing Node tests.
+- Repository validation passed through `npm.cmd run typecheck`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. Unit coverage reported 529 passing Vitest
+  tests; boundary coverage reported 630 passing Node tests.
+- `npm.cmd run pack` passed on the refreshed source tree. Package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
