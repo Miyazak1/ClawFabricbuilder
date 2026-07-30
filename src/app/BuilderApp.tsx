@@ -46,8 +46,8 @@ import {
   createBuilderDesktopPlanReviewPort,
 } from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
 import {
+  decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
-  routeBuilderComposerIntent,
 } from '../features/builder/application/builderComposerIntent';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
@@ -671,6 +671,7 @@ function composerIntentContext(
         && currentWorkingBrief !== null
         && currentWorkingBrief.key !== hiddenComposerWorkingBriefKey
       ),
+    hasWorkspace: hasBuildWorkspace(projectSnapshot),
   });
 }
 
@@ -1017,11 +1018,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       const submittedIdea = pendingBuild.instruction;
+      const decision = decideBuilderComposerIntent(
+        submittedIdea,
+        composerIntentContext(conversationSnapshotRef.current, result, hiddenComposerWorkingBriefKey),
+      );
       if (
-        routeBuilderComposerIntent(
-          submittedIdea,
-          composerIntentContext(conversationSnapshotRef.current, result, hiddenComposerWorkingBriefKey),
-        ) !== 'build'
+        decision.route !== 'build'
+        || decision.dispatch !== 'build'
         || !hasBuildWorkspace(result)
         || result.busy
         || result.draft !== null
@@ -1167,7 +1170,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     if (submitInFlightRef.current || idea.trim().length === 0) return;
     const submittedIdea = idea;
-    const route = routeBuilderComposerIntent(
+    const decision = decideBuilderComposerIntent(
       submittedIdea,
       composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current, hiddenComposerWorkingBriefKey),
     );
@@ -1188,7 +1191,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       return;
     }
-    if (route === 'build' && !hasBuildWorkspace(projectSnapshotRef.current)) {
+    if (decision.dispatch === 'ask_workspace') {
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,
@@ -1201,7 +1204,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setIdea('');
     setLiveOutput(null);
     try {
-      const result = route === 'build'
+      const result = decision.dispatch === 'build'
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
       if (workspaceEpochRef.current !== commandEpoch) return;

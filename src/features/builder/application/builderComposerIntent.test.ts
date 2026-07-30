@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
   routeBuilderComposerIntent,
 } from './builderComposerIntent';
@@ -142,5 +143,89 @@ describe('routeBuilderComposerIntent', () => {
     expect(isBuilderComposerContextualBuildIntent('这个方案是什么')).toBe(false);
     expect(isBuilderComposerContextualBuildIntent('帮我做一个网页3D')).toBe(false);
     expect(isBuilderComposerContextualBuildIntent('')).toBe(false);
+  });
+
+  it('emits read-only route decisions for greetings even in a ready workspace', () => {
+    expect(decideBuilderComposerIntent('hi', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+    })).toMatchObject({
+      decisionVersion: 'builder-composer-route-decision.v1',
+      route: 'answer',
+      confidence: 'high',
+      matchedSignals: ['read_only'],
+      downgradedFrom: null,
+      downgradeReason: null,
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+    });
+  });
+
+  it('records contextual execution downgrades before a brief or plan exists', () => {
+    expect(decideBuilderComposerIntent('按刚才方案做', { hasWorkspace: true })).toMatchObject({
+      route: 'clarify',
+      confidence: 'medium',
+      matchedSignals: ['contextual_build_phrase'],
+      downgradedFrom: 'build',
+      downgradeReason: 'missing_prior_build_context',
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+    });
+  });
+
+  it('separates build intent from workspace admission', () => {
+    expect(decideBuilderComposerIntent('创建登录页')).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['clear_build'],
+      downgradeReason: 'workspace_required',
+      requiredPermissions: ['write_project'],
+      permissionResult: 'ask',
+      dispatch: 'ask_workspace',
+    });
+    expect(decideBuilderComposerIntent('创建登录页', { hasWorkspace: true })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      downgradeReason: null,
+      requiredPermissions: ['write_project'],
+      permissionResult: 'allowed',
+      dispatch: 'build',
+    });
+    expect(decideBuilderComposerIntent('创建登录页', {
+      hasWorkspace: true,
+      hasWritePermission: false,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      downgradeReason: null,
+      requiredPermissions: ['write_project'],
+      permissionResult: 'ask',
+      dispatch: 'ask_permission',
+    });
+  });
+
+  it('admits contextual execution only when prior build context and workspace are both present', () => {
+    expect(decideBuilderComposerIntent('好，开始吧', {
+      hasPriorBuildContext: true,
+      hasWorkspace: false,
+    })).toMatchObject({
+      route: 'build',
+      matchedSignals: ['contextual_build_phrase'],
+      downgradeReason: 'workspace_required',
+      permissionResult: 'ask',
+      dispatch: 'ask_workspace',
+    });
+    expect(decideBuilderComposerIntent('好，开始吧', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+    })).toMatchObject({
+      route: 'build',
+      matchedSignals: ['contextual_build_phrase'],
+      downgradeReason: null,
+      permissionResult: 'allowed',
+      dispatch: 'build',
+    });
   });
 });

@@ -1,7 +1,44 @@
 export type BuilderComposerIntentRoute = 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
 
+export type BuilderComposerIntentConfidence = 'low' | 'medium' | 'high';
+
+export type BuilderComposerIntentDispatch =
+  | 'reply'
+  | 'brief_update'
+  | 'plan'
+  | 'build'
+  | 'ask_workspace'
+  | 'ask_permission'
+  | 'blocked';
+
+export type BuilderComposerIntentPermissionResult =
+  | 'not_required'
+  | 'allowed'
+  | 'ask'
+  | 'denied';
+
+export type BuilderComposerIntentDowngradeReason =
+  | 'ambiguous_build_intent'
+  | 'missing_prior_build_context'
+  | 'workspace_required'
+  | null;
+
 export type BuilderComposerIntentContext = Readonly<{
   hasPriorBuildContext?: boolean;
+  hasWorkspace?: boolean;
+  hasWritePermission?: boolean;
+}>;
+
+export type BuilderComposerRouteDecision = Readonly<{
+  decisionVersion: 'builder-composer-route-decision.v1';
+  route: BuilderComposerIntentRoute;
+  confidence: BuilderComposerIntentConfidence;
+  matchedSignals: readonly string[];
+  downgradedFrom: BuilderComposerIntentRoute | null;
+  downgradeReason: BuilderComposerIntentDowngradeReason;
+  requiredPermissions: readonly string[];
+  permissionResult: BuilderComposerIntentPermissionResult;
+  dispatch: BuilderComposerIntentDispatch;
 }>;
 
 const READ_ONLY_PATTERNS = Object.freeze([
@@ -83,20 +120,122 @@ export function routeBuilderComposerIntent(
   instruction: string,
   context: BuilderComposerIntentContext = {},
 ): BuilderComposerIntentRoute {
+  return decideBuilderComposerIntent(instruction, context).route;
+}
+
+function createDecision(
+  route: BuilderComposerIntentRoute,
+  context: BuilderComposerIntentContext,
+  options: Readonly<{
+    confidence: BuilderComposerIntentConfidence;
+    downgradedFrom?: BuilderComposerIntentRoute | null;
+    downgradeReason?: BuilderComposerIntentDowngradeReason;
+    matchedSignals: readonly string[];
+  }>,
+): BuilderComposerRouteDecision {
+  const requiresWrite = route === 'build';
+  const missingWorkspace = requiresWrite && context.hasWorkspace !== true;
+  const permissionResult: BuilderComposerIntentPermissionResult = requiresWrite
+    ? missingWorkspace || context.hasWritePermission === false
+      ? 'ask'
+      : 'allowed'
+    : 'not_required';
+  const dispatch: BuilderComposerIntentDispatch = (() => {
+    if (missingWorkspace) return 'ask_workspace';
+    if (requiresWrite && permissionResult === 'ask') return 'ask_permission';
+    if (route === 'build') return 'build';
+    if (route === 'plan') return 'plan';
+    if (route === 'update_brief') return 'brief_update';
+    return 'reply';
+  })();
+  return Object.freeze({
+    decisionVersion: 'builder-composer-route-decision.v1',
+    route,
+    confidence: options.confidence,
+    matchedSignals: Object.freeze([...options.matchedSignals]),
+    downgradedFrom: options.downgradedFrom ?? null,
+    downgradeReason: missingWorkspace
+      ? 'workspace_required'
+      : options.downgradeReason ?? null,
+    requiredPermissions: Object.freeze(requiresWrite ? ['write_project'] : []),
+    permissionResult,
+    dispatch,
+  });
+}
+
+export function decideBuilderComposerIntent(
+  instruction: string,
+  context: BuilderComposerIntentContext = {},
+): BuilderComposerRouteDecision {
   const normalized = normalizeComposerInstruction(instruction);
-  if (normalized.length === 0) return 'answer';
-  if (WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
-  if (CAPABILITY_QUESTION_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
-  if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
-  if (EXPLICIT_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) return 'plan';
-  if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
+  if (normalized.length === 0) {
+    return createDecision('answer', context, {
+      confidence: 'high',
+      matchedSignals: ['empty_message'],
+    });
+  }
+  if (WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('clarify', context, {
+      confidence: 'high',
+      matchedSignals: ['work_discussion'],
+    });
+  }
+  if (CAPABILITY_QUESTION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('clarify', context, {
+      confidence: 'high',
+      matchedSignals: ['capability_question'],
+    });
+  }
+  if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('answer', context, {
+      confidence: 'high',
+      matchedSignals: ['read_only'],
+    });
+  }
+  if (EXPLICIT_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('plan', context, {
+      confidence: 'high',
+      matchedSignals: ['explicit_plan'],
+    });
+  }
+  if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('clarify', context, {
+      confidence: 'medium',
+      downgradedFrom: 'build',
+      downgradeReason: 'ambiguous_build_intent',
+      matchedSignals: ['vague_change'],
+    });
+  }
   if (CURRENT_ARTIFACT_DEFECT_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return context.hasPriorBuildContext === true ? 'build' : 'clarify';
+    return createDecision(context.hasPriorBuildContext === true ? 'build' : 'clarify', context, {
+      confidence: 'medium',
+      downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
+      downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
+      matchedSignals: ['current_artifact_defect'],
+    });
   }
   if (isBuilderComposerContextualBuildIntent(normalized)) {
-    return context.hasPriorBuildContext === true ? 'build' : 'clarify';
+    return createDecision(context.hasPriorBuildContext === true ? 'build' : 'clarify', context, {
+      confidence: context.hasPriorBuildContext === true ? 'high' : 'medium',
+      downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
+      downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
+      matchedSignals: ['contextual_build_phrase'],
+    });
   }
-  if (EXPLORATORY_WORK_PATTERNS.some((pattern) => pattern.test(normalized))) return 'update_brief';
-  if (CLEAR_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) return 'build';
-  return 'answer';
+  if (EXPLORATORY_WORK_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('update_brief', context, {
+      confidence: 'medium',
+      matchedSignals: ['exploratory_work'],
+    });
+  }
+  if (CLEAR_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('build', context, {
+      confidence: 'high',
+      matchedSignals: ['clear_build'],
+    });
+  }
+  return createDecision('answer', context, {
+    confidence: 'low',
+    matchedSignals: ['chat_default'],
+  });
 }
