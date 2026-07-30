@@ -150,6 +150,11 @@ const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:can|could)\s+(?:this|it|that)\s+look\s+better[.?!]*$/u,
   /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
 ]);
+const CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS = Object.freeze([
+  /(?:这里|这块|这个|当前|页面|界面|聊天框|预览|按钮|文字|字|内容|布局|右侧|左侧|顶部|底部|卡片|气泡).{0,24}(?:重叠|挡住|遮住|挤(?:在一起|成|坏|爆|压)?|溢出|错位|穿出|太窄|太宽|看不清|乱了|坏了|不对|不齐|不稳|出去了)/u,
+  /(?:重叠|挡住|遮住|溢出|错位|穿出|挤坏|挤爆|看不清|布局乱了|版式坏了|样式坏了)/u,
+  /\b(?:overlap|overlapping|overflow|misaligned|clipped|covered|covering|too narrow|too wide|layout is broken|looks broken|text is cut off)\b/u,
+]);
 const WORK_DISCUSSION_INTENT_PATTERNS = Object.freeze([
   /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
   /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|should we|could we|can we|requirements|style direction)\b/u,
@@ -183,10 +188,11 @@ function matchesAny(patterns, text) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function isContextualWorkIntent(instruction) {
+function isContextualSubmitContextIntent(instruction) {
   const text = normalizedIntentText(instruction);
   if (text.length === 0) return false;
-  return matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text);
+  return matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)
+    || matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text);
 }
 
 function shouldSubmitAsExplanation(
@@ -206,6 +212,9 @@ function shouldSubmitAsExplanation(
   if (hasExplanationIntent) return true;
   if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) return true;
   if (matchesAny(EXPLORATORY_WORK_INTENT_PATTERNS, text)) return true;
+  if (matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)) {
+    return hasContextualBuildContext !== true;
+  }
   if (matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)) {
     return hasContextualBuildContext !== true;
   }
@@ -2395,7 +2404,7 @@ function createBuilderGenerationMainService(rawOptions) {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
     let hasContextualBuildContext = false;
-    if (request.existing_project_id !== null && isContextualWorkIntent(request.instruction)) {
+    if (request.existing_project_id !== null && isContextualSubmitContextIntent(request.instruction)) {
       try {
         hasContextualBuildContext = hasContextualBuildContextInTaskStream(
           Reflect.apply(readConversationStream, options.conversationService, [{

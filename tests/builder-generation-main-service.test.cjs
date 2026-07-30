@@ -2154,6 +2154,7 @@ test('submits one composer turn through main-owned work or explanation routing',
         || input.messages[1].content.includes('可以帮我做一个登录页吗')
         || input.messages[1].content.includes('Can you build a login page')
         || input.messages[1].content.includes('Should we create a dashboard')
+        || input.messages[1].content.includes('这里字都重叠了')
         ? JSON.stringify(providerExplanation())
         : JSON.stringify(providerOutput()),
     }),
@@ -2213,6 +2214,10 @@ test('submits one composer turn through main-owned work or explanation routing',
   const chineseHowToAnswer = await service.submit(request({
     instruction: '怎么把按钮改红？',
   }));
+  const defectWithoutBriefAnswer = await service.submit(request({
+    instruction: '这里字都重叠了',
+    existingProjectId: PROJECT_ID,
+  }));
   const contextualWithoutBriefAnswer = await service.submit(request({
     instruction: '开始吧',
     existingProjectId: PROJECT_ID,
@@ -2245,16 +2250,19 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(chineseHowToAnswer.result_kind, 'explanation');
   assert.equal(chineseHowToAnswer.admissions.draft, 'not_created');
   assert.equal(chineseHowToAnswer.existing_project_id, null);
+  assert.equal(defectWithoutBriefAnswer.result_kind, 'explanation');
+  assert.equal(defectWithoutBriefAnswer.admissions.draft, 'not_created');
+  assert.equal(defectWithoutBriefAnswer.project_id, PROJECT_ID);
   assert.equal(contextualWithoutBriefAnswer.result_kind, 'explanation');
   assert.equal(contextualWithoutBriefAnswer.admissions.draft, 'not_created');
   assert.equal(contextualWithoutBriefAnswer.project_id, PROJECT_ID);
   assert.equal(lifecycle.calls.begin.length, 3);
-  assert.equal(lifecycle.calls.question.length, 11);
+  assert.equal(lifecycle.calls.question.length, 12);
   assert.equal(lifecycle.calls.candidate.length, 3);
-  assert.equal(lifecycle.calls.explanation.length, 11);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(lifecycle.calls.explanation.length, 12);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 3);
-  assert.deepEqual(startedEvents.map((event) => event.event_version), Array(14).fill('builder-generation-started.v1'));
+  assert.deepEqual(startedEvents.map((event) => event.event_version), Array(15).fill('builder-generation-started.v1'));
   assert.deepEqual(startedEvents.map((event) => event.request_id), [
     draft.request_id,
     chineseDirectDraft.request_id,
@@ -2269,6 +2277,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     answer.request_id,
     chineseAnswer.request_id,
     chineseHowToAnswer.request_id,
+    defectWithoutBriefAnswer.request_id,
     contextualWithoutBriefAnswer.request_id,
   ]);
   assert.deepEqual(startedEvents.map((event) => event.project_id), [
@@ -2285,6 +2294,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     answer.project_id,
     chineseAnswer.project_id,
     chineseHowToAnswer.project_id,
+    defectWithoutBriefAnswer.project_id,
     contextualWithoutBriefAnswer.project_id,
   ]);
   assert.doesNotMatch(
@@ -2302,6 +2312,7 @@ test('submits one composer turn through main-owned work or explanation routing',
       answer,
       chineseAnswer,
       chineseHowToAnswer,
+      defectWithoutBriefAnswer,
       contextualWithoutBriefAnswer,
     ]),
     /credential|provider\.example|builder-model|git_request_id/iu,
@@ -2336,6 +2347,48 @@ test('allows contextual composer submit only with main-owned build context', asy
   }));
 
   assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.admissions.draft, 'candidate_not_saved');
+  assert.equal(draft.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 0);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 1);
+});
+
+test('allows current artifact defect feedback only with main-owned build context', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: recentChatProposalTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        title: 'Layout repair',
+        summary: 'Fixes overlapping text in the current result.',
+      })),
+    }),
+  });
+
+  const draft = await service.submit(request({
+    instruction: '这里字都重叠了',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.title, 'Layout repair');
   assert.equal(draft.admissions.draft, 'candidate_not_saved');
   assert.equal(draft.project_id, PROJECT_ID);
   assert.equal(lifecycle.calls.begin.length, 1);

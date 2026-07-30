@@ -1604,6 +1604,8 @@ describe('BuilderApp v2', () => {
       '可以帮我做一个登录页吗？',
       'Can you build a login page?',
       'Should we create a dashboard first?',
+      '这里字都重叠了',
+      '右侧内容挤坏了',
     ]) {
       const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
       expect(textarea).not.toBeNull();
@@ -1814,6 +1816,41 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
+  });
+
+  it('routes current result defect feedback to submit only when prior work context exists', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('作品集首页');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toBe('Ready to build');
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+    act(() => {
+      if (textarea) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          ?.call(textarea, '这里字都重叠了');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '这里字都重叠了' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
   it('approves a pending plan from a contextual execution phrase through review authority', async () => {

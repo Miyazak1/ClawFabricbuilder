@@ -19,6 +19,12 @@ const VAGUE_CHANGE_PATTERNS = Object.freeze([
   /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
 ]);
 
+const CURRENT_ARTIFACT_DEFECT_PATTERNS = Object.freeze([
+  /(?:这里|这块|这个|当前|页面|界面|聊天框|预览|按钮|文字|字|内容|布局|右侧|左侧|顶部|底部|卡片|气泡).{0,24}(?:重叠|挡住|遮住|挤(?:在一起|成|坏|爆|压)?|溢出|错位|穿出|太窄|太宽|看不清|乱了|坏了|不对|不齐|不稳|出去了)/u,
+  /(?:重叠|挡住|遮住|溢出|错位|穿出|挤坏|挤爆|看不清|布局乱了|版式坏了|样式坏了)/u,
+  /\b(?:overlap|overlapping|overflow|misaligned|clipped|covered|covering|too narrow|too wide|layout is broken|looks broken|text is cut off)\b/u,
+]);
+
 const EXPLICIT_PLAN_PATTERNS = Object.freeze([
   /^(?:先)?(?:规划|计划|制定方案|出个方案|做个方案|做一个方案|先规划一下|先计划一下|先做方案|先出方案)/u,
   /^(?:plan first|make a plan|propose a plan|draft a plan|let'?s plan|let us plan)\b/u,
@@ -84,6 +90,9 @@ export function routeBuilderComposerIntent(
   if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
   if (EXPLICIT_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) return 'plan';
   if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
+  if (CURRENT_ARTIFACT_DEFECT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return context.hasPriorBuildContext === true ? 'build' : 'clarify';
+  }
   if (isBuilderComposerContextualBuildIntent(normalized)) {
     return context.hasPriorBuildContext === true ? 'build' : 'clarify';
   }

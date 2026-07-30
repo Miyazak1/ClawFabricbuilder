@@ -13,6 +13,7 @@ describe('routeBuilderComposerIntent', () => {
     '你现在在做什么',
     '这个项目是什么',
     '为什么预览空白',
+    '为什么这里字重叠了',
     '怎么把按钮改红？',
     '解释一下为什么标题变大了',
     'What does this project do?',
@@ -39,6 +40,9 @@ describe('routeBuilderComposerIntent', () => {
     'Should we create a dashboard first?',
     'Let us discuss the dashboard layout first.',
     'What do you think about building a compact dashboard?',
+    '这里字都重叠了',
+    '右侧内容挤坏了',
+    'The title is overlapping the preview.',
     '就这样做',
     '按刚才方案实现',
     '按这个做',
@@ -113,6 +117,9 @@ describe('routeBuilderComposerIntent', () => {
     'yes, implement it',
     'Go ahead',
     "Let's do it",
+    '这里字都重叠了',
+    '右侧内容挤坏了',
+    'The title is overlapping the preview.',
   ])('routes %s to build only when prior build context exists', (instruction) => {
     expect(routeBuilderComposerIntent(instruction, { hasPriorBuildContext: true })).toBe('build');
   });
