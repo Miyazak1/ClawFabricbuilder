@@ -691,6 +691,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.workspace,
     visibleHistoryProjectId(project.snapshot),
   );
+  const currentComposerIntentContext = composerIntentContext(conversation.snapshot, project.snapshot);
+  const composerContextStatus = currentComposerIntentContext.hasPriorBuildContext
+    ? 'ready_to_build'
+    : null;
   const projectSnapshotRef = useRef(project.snapshot);
   const conversationSnapshotRef = useRef(conversation.snapshot);
 
@@ -1403,6 +1407,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             <BuilderPage
               activeFile={activeFile}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
+              composerContextStatus={composerContextStatus}
               instruction={idea}
               liveOutput={liveOutput}
               planReviewFailure={planReviewFailure}

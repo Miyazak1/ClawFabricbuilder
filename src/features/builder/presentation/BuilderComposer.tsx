@@ -23,6 +23,8 @@ type SavedComposerProject = Readonly<{
   title: string;
 }>;
 
+export type BuilderComposerContextStatus = 'ready_to_build' | null;
+
 export type BuilderComposerProps = Readonly<{
   busy: boolean;
   canAddContext: boolean;
@@ -34,6 +36,7 @@ export type BuilderComposerProps = Readonly<{
   catalogBusy: boolean;
   catalogProjects: readonly BuilderProjectCatalogItem[];
   catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
+  composerContextStatus?: BuilderComposerContextStatus;
   hasUnsavedDraft: boolean;
   instruction: string;
   onCancel?: () => void;
@@ -78,6 +81,7 @@ export function BuilderComposer({
   catalogBusy,
   catalogProjects,
   catalogWorkspaceProjects,
+  composerContextStatus = null,
   hasUnsavedDraft,
   instruction,
   onCancel,
@@ -144,6 +148,7 @@ export function BuilderComposer({
     if (status === 'restoring') return 'Restoring draft';
     if (viewingHistory) return 'Viewing a saved version';
     if (hasUnsavedDraft) return 'Continue this draft';
+    if (composerContextStatus === 'ready_to_build') return 'Ready to build';
     return null;
   })();
   const composerPlaceholder = (() => {

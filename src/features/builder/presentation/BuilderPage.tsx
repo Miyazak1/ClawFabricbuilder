@@ -64,7 +64,7 @@ import {
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
-import { BuilderComposer } from './BuilderComposer';
+import { BuilderComposer, type BuilderComposerContextStatus } from './BuilderComposer';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
 import { BuilderSourceDisclosure } from './BuilderSourceDisclosure';
@@ -97,6 +97,7 @@ export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
 
 export type BuilderPageProps = {
   instruction: string;
+  composerContextStatus?: BuilderComposerContextStatus;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
@@ -1426,6 +1427,7 @@ function BuilderArtifactSidebar({
 
 export function BuilderPage({
   instruction,
+  composerContextStatus = null,
   onApprovePlanSourceRead,
   onCancel,
   onCreateProject,
@@ -2221,6 +2223,7 @@ export function BuilderPage({
       catalogBusy={catalogBusy}
       catalogProjects={catalogProjects}
       catalogWorkspaceProjects={catalogWorkspaceProjects}
+      composerContextStatus={composerContextStatus}
       hasUnsavedDraft={hasUnsavedDraft}
       instruction={instruction}
       onCancel={onCancel}

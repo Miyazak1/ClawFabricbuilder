@@ -207,4 +207,31 @@ describe('BuilderComposer', () => {
     click(container, '[data-builder-add-source-folder="true"]');
     expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('Dashboard v2');
   });
+
+  it('shows ready-to-build only for confirmed conversation context', () => {
+    const ready = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'ready_to_build',
+          instruction: '',
+        })}
+      />,
+    );
+
+    expect(ready.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .toBe('Ready to build');
+
+    const draft = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'ready_to_build',
+          hasUnsavedDraft: true,
+          instruction: '',
+        })}
+      />,
+    );
+
+    expect(draft.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .toBe('Continue this draft');
+  });
 });

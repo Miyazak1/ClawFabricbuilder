@@ -1645,7 +1645,10 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toBe('Ready to build');
     });
+    expect(container.textContent).not.toMatch(/working_brief|recent_chat_proposal|builder-conversation/iu);
 
     const discussionTextarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(discussionTextarea).not.toBeNull();
@@ -1750,6 +1753,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('为什么这个页面预览空白？');
     });
+    expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
     act(() => {
