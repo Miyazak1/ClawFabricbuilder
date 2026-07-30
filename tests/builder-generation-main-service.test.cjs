@@ -1789,6 +1789,68 @@ test('records a provider explanation without creating Git candidate, draft, or s
   );
 });
 
+test('answers casual greetings locally without dispatching provider transport', async () => {
+  const transportInputs = [];
+  const startedEvents = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      providerConfigRepository: {
+        bind_current_authority() { throw new Error('unexpected provider authority bind'); },
+      },
+    }),
+    onGenerationStarted(event) {
+      startedEvents.push(event);
+    },
+    transport: async (input) => {
+      transportInputs.push(input);
+      throw new Error('unexpected provider transport');
+    },
+  });
+
+  const english = await service.answer(request({ instruction: 'hi' }));
+  const chinese = await service.answer(request({ instruction: '你好' }));
+
+  assert.equal(english.version, 'builder-generation-result.v2');
+  assert.equal(english.result_kind, 'explanation');
+  assert.equal(english.existing_project_id, null);
+  assert.equal(english.admissions.conversation, 'sqlite_recorded');
+  assert.equal(english.admissions.draft, 'not_created');
+  assert.equal(english.admissions.save, 'not_performed');
+  assert.match(english.explanation, /talk through the idea first/u);
+  assert.doesNotMatch(
+    english.explanation,
+    /missing context|saved files|prior conversation|plan|run|task|schema|provider|receipt/iu,
+  );
+  assert.equal(chinese.result_kind, 'explanation');
+  assert.equal(chinese.existing_project_id, null);
+  assert.match(chinese.explanation, /你好，我在/u);
+  assert.doesNotMatch(
+    chinese.explanation,
+    /缺少上下文|保存文件|之前的对话|计划|run|task|schema|provider|receipt/iu,
+  );
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 2);
+  assert.deepEqual(lifecycle.calls.question.map((call) => call.question), ['hi', '你好']);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.explanation.length, 2);
+  assert.deepEqual(
+    lifecycle.calls.explanation.map((call) => call.assistant_text),
+    [english.explanation, chinese.explanation],
+  );
+  assert.equal(lifecycle.calls.progress.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(git.receipts.length, 0);
+  assert.equal(transportInputs.length, 0);
+  assert.deepEqual(
+    startedEvents.map((event) => event.event_version),
+    ['builder-generation-started.v1', 'builder-generation-started.v1'],
+  );
+});
+
 test('answers pending draft questions from verified candidate source without source mutation', async () => {
   const lifecycle = conversationService();
   const git = gitAuthority();

@@ -14,8 +14,10 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 const {
+  BUILDER_GENERATED_EXPLANATION_KIND,
   BUILDER_GENERATION_RESULT_PROTOCOL,
   createBuilderGenerationRequest,
+  projectBuilderExplanationResult,
   sanitizeBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
@@ -223,6 +225,23 @@ function shouldSubmitAsExplanation(
     || CHINESE_WORK_INTENT_PATTERN.test(text)
   ) return false;
   return true;
+}
+
+function localCasualChatReply(instruction) {
+  const text = normalizedIntentText(instruction);
+  if (text.length === 0 || !CASUAL_CHAT_INTENT_PATTERN.test(text)) return null;
+  if (/\p{Script=Han}/u.test(instruction)) {
+    return Object.freeze({
+      title: '你好',
+      summary: '我在，可以先聊想法；要开始构建时再选择项目文件夹。',
+      explanation: '你好，我在。你可以先随便聊想法，等确定要做的时候再让我开始实现；需要写入本地项目时，我会先让你选择项目文件夹。',
+    });
+  }
+  return Object.freeze({
+    title: 'Ready when you are',
+    summary: 'We can talk first; building will ask for a project folder.',
+    explanation: 'Hi, I am here. We can talk through the idea first. When you want me to build or change files, I will ask you to choose a project folder before making edits.',
+  });
 }
 
 function denseTaskStreamItems(value) {
@@ -1851,6 +1870,20 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
+  async function createLocalCasualChatExplanation(request, reply) {
+    const context = await buildExplanationContext(request);
+    const answer = projectBuilderExplanationResult({
+      request,
+      generated_text: JSON.stringify({
+        kind: BUILDER_GENERATED_EXPLANATION_KIND,
+        title: reply.title,
+        summary: reply.summary,
+        explanation: reply.explanation,
+      }),
+    });
+    return freezeDeep({ ...answer, context });
+  }
+
   function failureCodeFrom(error) {
     if (error && typeof error === 'object' && !utilTypes.isProxy(error)) {
       try {
@@ -2448,7 +2481,10 @@ function createBuilderGenerationMainService(rawOptions) {
     if (existing) return existing;
     const routeConflict = rejectIfOtherRouteInFlight(ANSWER_OPERATION_PREFIX, request.request_digest);
     if (routeConflict) return routeConflict;
-    const operation = Promise.resolve(host.explain(request)).then((internal) => {
+    const localReply = localCasualChatReply(request.instruction);
+    const operation = Promise.resolve(localReply === null
+      ? host.explain(request)
+      : createLocalCasualChatExplanation(request, localReply)).then((internal) => {
       const context = valueAt(internal, 'context');
       const conversationContext = latestConversationContext(context, explanationContexts.get(context));
       if (conversationContext === undefined) fail();
