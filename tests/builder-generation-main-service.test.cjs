@@ -2274,6 +2274,84 @@ test('allows contextual composer submit only with main-owned build context', asy
   assert.equal(git.receipts.length, 1);
 });
 
+test('passes prior conversation working brief into contextual submit provider prompt', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-contextual-brief-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  t.after(() => {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  let now = 7_000;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(700),
+    nowMs: () => now++,
+  });
+  const priorRequest = request({
+    instruction: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+    existingProjectId: PROJECT_ID,
+  });
+  const prior = conversation.begin_question({
+    project_id: PROJECT_ID,
+    question: priorRequest.instruction,
+    request_digest: priorRequest.request_digest,
+    base_revision: null,
+  });
+  conversation.complete_explanation({
+    context: prior,
+    assistant_text: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+  });
+  let transportInput;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+          }));
+        },
+      },
+      createUuid: createUniqueUuidFactory(800),
+    }),
+    transport: async (input) => {
+      transportInput = input;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Portfolio homepage',
+          summary: 'Builds the discussed portfolio homepage.',
+        })),
+      };
+    },
+  });
+
+  const draft = await service.submit(request({
+    instruction: '好，开始吧',
+    existingProjectId: PROJECT_ID,
+  }));
+  const providerPrompt = JSON.parse(transportInput.messages[1].content);
+
+  assert.equal(draft.title, 'Portfolio homepage');
+  assert.equal(providerPrompt.instruction, '好，开始吧');
+  assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'recent_chat_proposal',
+    latest_user_goal: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+    assistant_proposal: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+  assert.equal(providerPrompt.conversation_brief.latest_plan, null);
+  assert.match(transportInput.messages[0].content, /working_brief is requirements context/u);
+  assert.match(transportInput.messages[1].content, /三维项目卡片/u);
+  assert.doesNotMatch(
+    transportInput.messages[1].content,
+    /builder-(?:project|conversation|turn|task|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
+  );
+});
+
 test('records a retryable terminal run outcome when provider generation fails', async () => {
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
