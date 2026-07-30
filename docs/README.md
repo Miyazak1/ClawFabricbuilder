@@ -6,15 +6,16 @@ ClawFabric Builder application.
 ## Reading Order
 
 1. [Product Vision and Roadmap](PRODUCT_VISION_AND_ROADMAP.md)
-2. [Trusted Work and Collaboration Architecture](TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md)
-3. [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
-4. [Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md)
-5. [Implementation Plan](IMPLEMENTATION_PLAN.md)
-6. [Legacy Future Plan Coverage Matrix](LEGACY_FUTURE_PLAN_COVERAGE_MATRIX.md)
-7. [Builder Architecture](ARCHITECTURE.md)
-8. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
-9. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
-10. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
+2. [Frontend Experience and Design System Roadmap](FRONTEND_EXPERIENCE_AND_DESIGN_SYSTEM_ROADMAP.md)
+3. [Trusted Work and Collaboration Architecture](TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md)
+4. [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
+5. [Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md)
+6. [Implementation Plan](IMPLEMENTATION_PLAN.md)
+7. [Legacy Future Plan Coverage Matrix](LEGACY_FUTURE_PLAN_COVERAGE_MATRIX.md)
+8. [Builder Architecture](ARCHITECTURE.md)
+9. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
+10. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
+11. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
 
 ## Authority
 
