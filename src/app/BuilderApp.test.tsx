@@ -1600,6 +1600,10 @@ describe('BuilderApp v2', () => {
       '我们先确定风格',
       '我想创建一个登录页，你觉得怎么设计',
       '我想做一个登录页',
+      '我要做一个登录页',
+      '可以帮我做一个登录页吗？',
+      'Can you build a login page?',
+      'Should we create a dashboard first?',
     ]) {
       const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
       expect(textarea).not.toBeNull();

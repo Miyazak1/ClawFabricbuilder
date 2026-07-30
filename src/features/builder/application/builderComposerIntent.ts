@@ -26,11 +26,16 @@ const EXPLICIT_PLAN_PATTERNS = Object.freeze([
 
 const WORK_DISCUSSION_PATTERNS = Object.freeze([
   /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
-  /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|requirements|style direction)\b/u,
+  /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|should we|could we|can we|requirements|style direction)\b/u,
+]);
+
+const CAPABILITY_QUESTION_PATTERNS = Object.freeze([
+  /^(?:你)?(?:可以|能不能|能否|可不可以|可以不可以)(?:先)?(?:帮我|给我|为我)?[^?？。!！]*(?:做|创建|生成|实现|设计|开发|搭建|修改|优化|重构|写|编写|添加|新增|删除|修复)[^?？。!！]*[?？吗么]\s*$/u,
+  /^(?:can|could|would)\s+you\s+(?:help\s+me\s+)?(?:build|create|make|implement|design|develop|add|change|modify|update|fix|write)\b.*\?\s*$/u,
 ]);
 
 const EXPLORATORY_WORK_PATTERNS = Object.freeze([
-  /^(?:(?:我|我们)?(?:想|想要|希望|需要|打算|准备|计划|考虑))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|3d|ui)/u,
+  /^(?:(?:我|我们)?(?:想|想要|要|希望|需要|打算|准备|计划|考虑))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|3d|ui)/u,
   /^(?:i|we)\s+(?:want|would like|need|hope|plan|intend)\s+to\s+(?:build|create|make|implement|design|develop|add|change|modify|update)\b/u,
   /^(?:i|we)\s+(?:am|are|'m|'re)\s+(?:thinking|considering|planning)\s+(?:about\s+)?(?:building|creating|making|implementing|designing)\b/u,
 ]);
@@ -75,6 +80,7 @@ export function routeBuilderComposerIntent(
   const normalized = normalizeComposerInstruction(instruction);
   if (normalized.length === 0) return 'answer';
   if (WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
+  if (CAPABILITY_QUESTION_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';
   if (READ_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) return 'answer';
   if (EXPLICIT_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) return 'plan';
   if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'clarify';

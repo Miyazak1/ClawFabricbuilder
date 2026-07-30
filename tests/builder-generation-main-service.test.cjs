@@ -2118,6 +2118,10 @@ test('submits one composer turn through main-owned work or explanation routing',
         || input.messages[1].content.includes('我想先聊一下这个页面怎么做')
         || input.messages[1].content.includes('我想创建一个登录页')
         || input.messages[1].content.includes('我想做一个登录页')
+        || input.messages[1].content.includes('我要做一个登录页')
+        || input.messages[1].content.includes('可以帮我做一个登录页吗')
+        || input.messages[1].content.includes('Can you build a login page')
+        || input.messages[1].content.includes('Should we create a dashboard')
         ? JSON.stringify(providerExplanation())
         : JSON.stringify(providerOutput()),
     }),
@@ -2130,8 +2134,8 @@ test('submits one composer turn through main-owned work or explanation routing',
     instruction: 'Make a timer.',
     existingProjectId: PROJECT_ID,
   }));
-  const chineseDraft = await service.submit(request({
-    instruction: '可以帮我做一个登录页吗？',
+  const chineseDirectDraft = await service.submit(request({
+    instruction: '帮我做一个登录页',
     existingProjectId: PROJECT_ID,
   }));
   const chineseClearEditDraft = await service.submit(request({
@@ -2148,6 +2152,22 @@ test('submits one composer turn through main-owned work or explanation routing',
   }));
   const exploratoryBriefAnswer = await service.submit(request({
     instruction: '我想做一个登录页',
+    existingProjectId: PROJECT_ID,
+  }));
+  const declarativeBriefAnswer = await service.submit(request({
+    instruction: '我要做一个登录页',
+    existingProjectId: PROJECT_ID,
+  }));
+  const chineseCapabilityQuestionAnswer = await service.submit(request({
+    instruction: '可以帮我做一个登录页吗？',
+    existingProjectId: PROJECT_ID,
+  }));
+  const englishCapabilityQuestionAnswer = await service.submit(request({
+    instruction: 'Can you build a login page?',
+    existingProjectId: PROJECT_ID,
+  }));
+  const englishDiscussionQuestionAnswer = await service.submit(request({
+    instruction: 'Should we create a dashboard first?',
     existingProjectId: PROJECT_ID,
   }));
   const answer = await service.submit(request({
@@ -2168,8 +2188,8 @@ test('submits one composer turn through main-owned work or explanation routing',
 
   assert.equal(draft.version, 'builder-generation-result.v2');
   assert.equal(draft.admissions.draft, 'candidate_not_saved');
-  assert.equal(chineseDraft.version, 'builder-generation-result.v2');
-  assert.equal(chineseDraft.admissions.draft, 'candidate_not_saved');
+  assert.equal(chineseDirectDraft.version, 'builder-generation-result.v2');
+  assert.equal(chineseDirectDraft.admissions.draft, 'candidate_not_saved');
   assert.equal(chineseClearEditDraft.version, 'builder-generation-result.v2');
   assert.equal(chineseClearEditDraft.admissions.draft, 'candidate_not_saved');
   assert.equal(exploratoryDiscussionAnswer.result_kind, 'explanation');
@@ -2178,6 +2198,14 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(exploratoryDesignQuestionAnswer.admissions.draft, 'not_created');
   assert.equal(exploratoryBriefAnswer.result_kind, 'explanation');
   assert.equal(exploratoryBriefAnswer.admissions.draft, 'not_created');
+  assert.equal(declarativeBriefAnswer.result_kind, 'explanation');
+  assert.equal(declarativeBriefAnswer.admissions.draft, 'not_created');
+  assert.equal(chineseCapabilityQuestionAnswer.result_kind, 'explanation');
+  assert.equal(chineseCapabilityQuestionAnswer.admissions.draft, 'not_created');
+  assert.equal(englishCapabilityQuestionAnswer.result_kind, 'explanation');
+  assert.equal(englishCapabilityQuestionAnswer.admissions.draft, 'not_created');
+  assert.equal(englishDiscussionQuestionAnswer.result_kind, 'explanation');
+  assert.equal(englishDiscussionQuestionAnswer.admissions.draft, 'not_created');
   assert.equal(answer.result_kind, 'explanation');
   assert.equal(answer.admissions.draft, 'not_created');
   assert.equal(chineseAnswer.result_kind, 'explanation');
@@ -2189,19 +2217,23 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(contextualWithoutBriefAnswer.admissions.draft, 'not_created');
   assert.equal(contextualWithoutBriefAnswer.project_id, PROJECT_ID);
   assert.equal(lifecycle.calls.begin.length, 3);
-  assert.equal(lifecycle.calls.question.length, 7);
+  assert.equal(lifecycle.calls.question.length, 11);
   assert.equal(lifecycle.calls.candidate.length, 3);
-  assert.equal(lifecycle.calls.explanation.length, 7);
+  assert.equal(lifecycle.calls.explanation.length, 11);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 3);
-  assert.deepEqual(startedEvents.map((event) => event.event_version), Array(10).fill('builder-generation-started.v1'));
+  assert.deepEqual(startedEvents.map((event) => event.event_version), Array(14).fill('builder-generation-started.v1'));
   assert.deepEqual(startedEvents.map((event) => event.request_id), [
     draft.request_id,
-    chineseDraft.request_id,
+    chineseDirectDraft.request_id,
     chineseClearEditDraft.request_id,
     exploratoryDiscussionAnswer.request_id,
     exploratoryDesignQuestionAnswer.request_id,
     exploratoryBriefAnswer.request_id,
+    declarativeBriefAnswer.request_id,
+    chineseCapabilityQuestionAnswer.request_id,
+    englishCapabilityQuestionAnswer.request_id,
+    englishDiscussionQuestionAnswer.request_id,
     answer.request_id,
     chineseAnswer.request_id,
     chineseHowToAnswer.request_id,
@@ -2209,11 +2241,15 @@ test('submits one composer turn through main-owned work or explanation routing',
   ]);
   assert.deepEqual(startedEvents.map((event) => event.project_id), [
     draft.project_id,
-    chineseDraft.project_id,
+    chineseDirectDraft.project_id,
     chineseClearEditDraft.project_id,
     exploratoryDiscussionAnswer.project_id,
     exploratoryDesignQuestionAnswer.project_id,
     exploratoryBriefAnswer.project_id,
+    declarativeBriefAnswer.project_id,
+    chineseCapabilityQuestionAnswer.project_id,
+    englishCapabilityQuestionAnswer.project_id,
+    englishDiscussionQuestionAnswer.project_id,
     answer.project_id,
     chineseAnswer.project_id,
     chineseHowToAnswer.project_id,
@@ -2222,11 +2258,15 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.doesNotMatch(
     JSON.stringify([
       draft,
-      chineseDraft,
+      chineseDirectDraft,
       chineseClearEditDraft,
       exploratoryDiscussionAnswer,
       exploratoryDesignQuestionAnswer,
       exploratoryBriefAnswer,
+      declarativeBriefAnswer,
+      chineseCapabilityQuestionAnswer,
+      englishCapabilityQuestionAnswer,
+      englishDiscussionQuestionAnswer,
       answer,
       chineseAnswer,
       chineseHowToAnswer,

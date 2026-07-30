@@ -509,7 +509,11 @@ Evidence requirements:
   the renderer-safe Task Stream projection and permits build only when that
   projection contains an approved plan or a recent confirmed user goal plus
   assistant proposal. Missing, malformed, or explanatory-only context falls
-  closed to ordinary answer. This creates no renderer-owned draft, provider
+  closed to ordinary answer. Capability or discussion questions such as
+  "Can you build a login page?", "Should we create a dashboard first?", or
+  "可以帮我做一个登录页吗？" also remain chat turns even when a source folder is
+  already bound; a bound workspace is only a build prerequisite, not an intent
+  amplifier. This creates no renderer-owned draft, provider
   call, Git evidence, Save fact, Project Revision, IPC/preload surface, or
   compatibility path;
 - the current durable run-progress checkpoint records fixed main-owned Run

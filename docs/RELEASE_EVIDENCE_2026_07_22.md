@@ -1198,6 +1198,41 @@ permissions, or general-purpose tool execution readiness.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-30 Composer Intent Guard Package Check
+
+This addendum records the desktop composer intent guard checkpoint after the
+chat/build router was tightened for source-folder-bound projects. It extends
+local routing, main-service, and package evidence only; it does not extend
+installer evidence, real-provider DeepSeek canary coverage, arbitrary
+generated-code execution, external-network permissions, or general-purpose tool
+execution readiness.
+
+- A bound source folder remains only a build prerequisite. It does not make
+  ordinary discussion or capability questions more likely to generate code.
+- Capability or discussion turns such as "Can you build a login page?",
+  "Should we create a dashboard first?", and
+  "可以帮我做一个登录页吗？" now route through answer/explanation instead of
+  creating a draft. Declarative requirements such as "我要做一个登录页" also stay
+  in conversation context. Direct execution turns such as "帮我做一个登录页",
+  "创建登录页", and "把按钮颜色改红" still enter build when the workspace gate is
+  satisfied.
+- The renderer router and the main-owned `submit` fallback were updated
+  together so a renderer mistake cannot promote those question-shaped turns into
+  Git candidate, draft, Review, Save, or Project Revision facts.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\application\builderComposerIntent.test.ts src\app\BuilderApp.test.tsx`
+  and `node --test tests\builder-generation-main-service.test.cjs`; the suites
+  reported 133 passing Vitest tests and 36 passing Node tests.
+- Repository validation passed through `npm.cmd run typecheck`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 529 passing
+  Vitest tests, and the boundary suite reported 628 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
