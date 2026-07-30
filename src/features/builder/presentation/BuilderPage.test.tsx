@@ -2555,6 +2555,47 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('opens sanitized work logs in the artifact sidebar without turning chat into a log pane', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const chatMain = container.querySelector('[data-builder-chat-main="true"]');
+    const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
+    const logsTab = container.querySelector<HTMLButtonElement>('[data-builder-artifact-tab="logs"]');
+    expect(chatMain).not.toBeNull();
+    expect(sidebar).not.toBeNull();
+    expect(logsTab).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-logs="true"]')).toBeNull();
+
+    click(container, '[data-builder-artifact-tab="logs"]');
+
+    const updatedSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
+    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
+    expect(updatedSidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('logs');
+    expect(logs).not.toBeNull();
+    expect(logs?.closest('[data-builder-artifact-sidebar="true"]')).toBe(updatedSidebar);
+    expect(logs?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(logs?.textContent).toContain('Work logs');
+    expect(logs?.textContent).toContain('Project context ready');
+    expect(logs?.textContent).toContain('I checked the project context needed for this request.');
+    expect(logs?.textContent).toContain('Draft proposed');
+    expect(logs?.textContent).not.toContain('Read project context');
+    expect(logs?.textContent).not.toContain('Make a timer.');
+    expect(logs?.textContent).not.toMatch(
+      /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+    expect(container.querySelector('[data-builder-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
+      .toBe(chatMain);
+  });
+
   it('shows completed project file reads as ordinary assistant work status', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity(undefined, {

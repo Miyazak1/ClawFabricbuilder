@@ -16,6 +16,7 @@ import {
   FileCode2,
   GitCompareArrows,
   History,
+  ListChecks,
   LockKeyhole,
   Play,
   RefreshCw,
@@ -141,7 +142,7 @@ const ARTIFACT_DEFAULT_WIDTH_PX = 480;
 const ARTIFACT_MIN_WIDTH_PX = 360;
 const ARTIFACT_MAX_WIDTH_PX = 760;
 const ARTIFACT_MIN_CHAT_WIDTH_PX = 520;
-type BuilderArtifactTab = 'changes' | 'preview' | 'source' | 'versions';
+type BuilderArtifactTab = 'changes' | 'logs' | 'preview' | 'source' | 'versions';
 
 function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
   if (!Number.isFinite(value)) return ARTIFACT_DEFAULT_WIDTH_PX;
@@ -261,6 +262,26 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
     entries.push({ entry_kind: 'item', item, hidden: false });
   }
   return entries.filter((entry) => !entry.hidden);
+}
+
+function isArtifactLogEntry(entry: ActivityEntry): boolean {
+  if (entry.entry_kind === 'work_status') return true;
+  const { item } = entry;
+  if (
+    item.item_kind === 'run_control_requested'
+    || item.item_kind === 'tool_call_requested'
+    || item.item_kind === 'tool_call_result_recorded'
+    || item.item_kind === 'candidate_reviewed'
+    || item.item_kind === 'plan_reviewed'
+  ) return true;
+  if (item.item_kind === 'run_completed') {
+    return item.terminal_status !== 'succeeded' || item.result_kind !== 'explanation';
+  }
+  return false;
+}
+
+function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
+  return activityEntries(snapshot).filter(isArtifactLogEntry);
 }
 
 function isNearChatBottom(element: HTMLElement): boolean {
@@ -1084,6 +1105,7 @@ function artifactTabLabel(tab: BuilderArtifactTab): string {
   if (tab === 'preview') return 'Preview';
   if (tab === 'changes') return 'Changes';
   if (tab === 'source') return 'Source';
+  if (tab === 'logs') return 'Logs';
   return 'Versions';
 }
 
@@ -1091,7 +1113,59 @@ function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
   if (tab === 'preview') return <Eye aria-hidden="true" className="size-3.5" />;
   if (tab === 'changes') return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
   if (tab === 'source') return <FileCode2 aria-hidden="true" className="size-3.5" />;
+  if (tab === 'logs') return <ListChecks aria-hidden="true" className="size-3.5" />;
   return <History aria-hidden="true" className="size-3.5" />;
+}
+
+function BuilderArtifactLogsPanel({
+  hasUnsavedDraft,
+  liveOutput,
+  snapshot,
+}: Readonly<{
+  hasUnsavedDraft: boolean;
+  liveOutput: BuilderLiveOutputSnapshot | null;
+  snapshot: BuilderConversationControllerSnapshot | null;
+}>) {
+  const entries = artifactLogEntries(snapshot);
+  return (
+    <section
+      aria-label="Work logs"
+      className="cf-builder-artifact-logs"
+      data-builder-artifact-logs="true"
+    >
+      <div className="cf-builder-artifact-logs-intro">
+        <h4>Work logs</h4>
+        <p>Readable steps from the current conversation.</p>
+      </div>
+      {entries.length === 0 && liveOutput === null ? (
+        <div className="cf-builder-empty cf-builder-artifact-logs-empty flex min-h-24 items-center justify-center border border-dashed px-3 text-center text-sm">
+          Work details will appear here when the assistant reads, plans, or prepares changes.
+        </div>
+      ) : (
+        <ol className="cf-builder-activity-list cf-builder-artifact-logs-list">
+          {entries.map((entry) => (
+            entry.entry_kind === 'work_status' ? (
+              <ActivityWorkStatusItem entry={entry} key={entry.key} />
+            ) : (
+              <ActivityItem
+                canReviewPlan={false}
+                hasUnsavedDraft={hasUnsavedDraft}
+                item={entry.item}
+                key={entry.item.sequence}
+                planReviewBusy={false}
+                planReviewFailed={false}
+                planReviewRecorded={false}
+                pendingPlanReview={null}
+              />
+            )
+          ))}
+          {liveOutput !== null ? (
+            <ActivityLiveOutputItem liveOutput={liveOutput} />
+          ) : null}
+        </ol>
+      )}
+    </section>
+  );
 }
 
 function BuilderArtifactSummary({
@@ -1169,7 +1243,9 @@ function BuilderArtifactSidebar({
   changesOpen,
   files,
   hasSavedProject,
+  hasUnsavedDraft,
   inspectedRevisionReceiptDigest,
+  liveOutput,
   onClose,
   onInspectRevision,
   onOpenFile,
@@ -1182,6 +1258,7 @@ function BuilderArtifactSidebar({
   preview,
   previewPanelRef,
   sidebarRef,
+  snapshot,
   sourceDisclosureOpen,
   sourceDisclosureRef,
   sourceFile,
@@ -1193,8 +1270,10 @@ function BuilderArtifactSidebar({
   changesOpen: boolean;
   files: readonly BuilderProjectSourceFile[];
   hasSavedProject: boolean;
+  hasUnsavedDraft: boolean;
   history: BuilderProjectHistorySnapshot | null;
   inspectedRevisionReceiptDigest: string | null;
+  liveOutput: BuilderLiveOutputSnapshot | null;
   onClose: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
@@ -1207,6 +1286,7 @@ function BuilderArtifactSidebar({
   preview: BuilderProjectControllerSnapshot['preview'];
   previewPanelRef?: Ref<HTMLElement>;
   sidebarRef?: Ref<HTMLElement>;
+  snapshot: BuilderConversationControllerSnapshot | null;
   sourceDisclosureOpen: boolean;
   sourceDisclosureRef: Ref<HTMLDetailsElement>;
   sourceFile: BuilderProjectSourceFile | null;
@@ -1295,6 +1375,13 @@ function BuilderArtifactSidebar({
             onRefresh={onRefreshHistory}
             onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
             snapshot={history}
+          />
+        ) : null}
+        {activeTab === 'logs' ? (
+          <BuilderArtifactLogsPanel
+            hasUnsavedDraft={hasUnsavedDraft}
+            liveOutput={liveOutput}
+            snapshot={snapshot}
           />
         ) : null}
       </div>
@@ -1390,6 +1477,7 @@ export function BuilderPage({
   const history = visibleHistorySnapshot(historySnapshot);
   const visibleLiveOutput = liveOutput;
   const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
+  const showLogsPanel = artifactLogEntries(activity).length > 0 || visibleLiveOutput !== null;
   const planReviewTarget = pendingPlanReviewTarget(activity);
   const planReviewBusy = planReviewTarget !== null
     && planReviewInFlight !== null
@@ -1496,6 +1584,7 @@ export function BuilderPage({
     currentFiles.length,
     showResultFlow ? 'result' : 'no-result',
     showVersionHistoryPanel ? 'versions' : 'no-versions',
+    showLogsPanel ? 'logs' : 'no-logs',
   ].join('|');
   const artifactPanelIdentity = [
     draft?.draft_id ?? 'no-draft',
@@ -1505,6 +1594,7 @@ export function BuilderPage({
     files.length,
     showResultFlow ? 'result' : 'no-result',
     showVersionHistoryPanel ? 'versions' : 'no-versions',
+    showLogsPanel ? 'logs' : 'no-logs',
   ].join('|');
   const artifactTabs = useMemo(() => {
     const tabs: BuilderArtifactTab[] = [];
@@ -1512,8 +1602,9 @@ export function BuilderPage({
     if (hasUnsavedDraft) tabs.push('changes');
     if (sourceFile !== null) tabs.push('source');
     if (showVersionHistoryPanel) tabs.push('versions');
+    if (showLogsPanel) tabs.push('logs');
     return tabs;
-  }, [hasUnsavedDraft, showResultFlow, showVersionHistoryPanel, sourceFile]);
+  }, [hasUnsavedDraft, showLogsPanel, showResultFlow, showVersionHistoryPanel, sourceFile]);
   const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && sourceFile !== null
     ? 'source'
     : viewingHistory && showResultFlow
@@ -1528,7 +1619,9 @@ export function BuilderPage({
             ? 'source'
             : hasUnsavedDraft
               ? 'changes'
-              : null;
+              : showLogsPanel
+                ? 'logs'
+                : null;
   const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
     active: BuilderArtifactTab | null;
     identity: string;
@@ -2060,8 +2153,10 @@ export function BuilderPage({
       changesOpen={activeArtifactTab === 'changes' || changesPanelOpen}
       files={files}
       hasSavedProject={saved !== null}
+      hasUnsavedDraft={hasUnsavedDraft}
       history={history}
       inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
+      liveOutput={visibleLiveOutput}
       onClose={closeArtifactSidebar}
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
@@ -2074,6 +2169,7 @@ export function BuilderPage({
       preview={preview}
       previewPanelRef={resultFlowRef}
       sidebarRef={artifactSidebarRef}
+      snapshot={activity}
       sourceDisclosureOpen={sourceDisclosureOpen}
       sourceDisclosureRef={sourceDisclosureRef}
       sourceFile={sourceFile}

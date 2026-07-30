@@ -1167,6 +1167,37 @@ general-purpose tool execution readiness.
   This screenshot is local visual evidence only and is not a real-provider or
   DeepSeek canary.
 
+## 2026-07-30 Artifact Logs Tab Check
+
+This addendum records the desktop artifact Logs tab checkpoint after the
+right-side artifact panel gained a read-only work-log view. It extends local
+desktop UI evidence only; it does not extend installer evidence, real-provider
+DeepSeek canary coverage, arbitrary generated-code execution, external-network
+permissions, or general-purpose tool execution readiness.
+
+- The artifact panel now includes a Logs tab when the current conversation has
+  safe work details or live output. Logs reuse the existing renderer-safe Task
+  Stream/activity projection and do not introduce a new IPC, preload namespace,
+  log store, raw provider stream, tool dispatcher, or source reader.
+- The Logs tab filters out ordinary user messages and pure chat answers, then
+  shows only readable work status, tool request/result summaries, candidate or
+  plan outcomes, review decisions, failures, and live display-safe output.
+- Logs render inside the right artifact panel with independent scrolling. The
+  conversation flow remains the place for chat, lightweight status, Review
+  actions, and compact result summaries.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderDesktopLayoutStyles.test.ts`;
+  the command reported 75 passing Vitest tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and `npm.cmd run
+  test:boundaries`. The full unit suite reported 502 passing Vitest tests, and
+  the boundary suite reported 626 passing Node tests.
+- `npm.cmd run build` and `npm.cmd run pack` passed. Package verification
+  reported `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

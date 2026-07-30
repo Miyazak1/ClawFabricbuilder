@@ -429,9 +429,9 @@ Evidence requirements:
   with Enter or the send button, and active AI work replaces that same action
   with Stop instead of adding a second command in the chat flow. Assistant
   activity, draft review summary, and compact result/artifact summaries remain
-  in the chat flow. Full Preview, Changes, Source, and Versions render in a
-  separate right artifact panel that can be opened, closed, switched by tab, and
-  resized by the user while preserving a minimum usable chat width. Plan-first
+  in the chat flow. Full Preview, Changes, Source, Versions, and Logs render in
+  a separate right artifact panel that can be opened, closed, switched by tab,
+  and resized by the user while preserving a minimum usable chat width. Plan-first
   work is exposed as a secondary composer tool for saved projects, not as a
   second send button. For an unsaved draft, the Review/Save action strip appears
   before the compact result summary and becomes the generation-complete landing

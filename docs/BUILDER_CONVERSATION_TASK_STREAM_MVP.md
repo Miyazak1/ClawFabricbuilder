@@ -256,7 +256,7 @@ silently reviving a rejected plan.
   not the folder path or any write authority. The project remains unsaved until
   the user explicitly accepts a verified candidate as a Version.
 - Chat flow may show only compact result summaries, thumbnails, and action rows.
-  Full Preview, Changes, Source, Versions, and later Logs belong in a separate
+  Full Preview, Changes, Source, Versions, and Logs belong in a separate
   artifact surface such as a right drawer/panel. That surface can be opened on
   demand, switched by tab, resized on desktop, and closed without losing the
   conversation position.
