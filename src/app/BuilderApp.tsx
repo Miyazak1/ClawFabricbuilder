@@ -48,6 +48,7 @@ import {
 import {
   decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
+  type BuilderComposerRouteDecision,
 } from '../features/builder/application/builderComposerIntent';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
@@ -708,6 +709,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [hiddenComposerWorkingBriefKey, setHiddenComposerWorkingBriefKey] = useState<string | null>(null);
+  const [composerRouteDecision, setComposerRouteDecision] = useState<BuilderComposerRouteDecision | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -1022,6 +1024,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submittedIdea,
         composerIntentContext(conversationSnapshotRef.current, result, hiddenComposerWorkingBriefKey),
       );
+      setComposerRouteDecision(decision);
       if (
         decision.route !== 'build'
         || decision.dispatch !== 'build'
@@ -1174,6 +1177,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       submittedIdea,
       composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current, hiddenComposerWorkingBriefKey),
     );
+    setComposerRouteDecision(decision);
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
     const pendingPlan = pendingPlanReviewRequest(
@@ -1562,6 +1566,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               activeFile={activeFile}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               composerContextStatus={composerContextStatus}
+              composerRouteDecision={composerRouteDecision}
               composerWorkingBrief={visibleComposerWorkingBrief}
               instruction={idea}
               liveOutput={liveOutput}

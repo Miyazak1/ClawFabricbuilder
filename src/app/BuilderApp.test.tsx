@@ -925,6 +925,25 @@ function click(container: HTMLElement, label: string): void {
   act(() => button?.click());
 }
 
+function setComposerInstruction(container: HTMLElement, instruction: string): void {
+  const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+  expect(textarea).not.toBeNull();
+  act(() => {
+    if (textarea === null) return;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      ?.call(textarea, instruction);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+async function waitForComposerSubmitReady(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
+      .toBe(false);
+  });
+}
+
 function artifactPreviewSrcdoc(container: HTMLElement): string | null {
   return container
     .querySelector('[data-builder-artifact-sidebar="true"] [data-builder-result-flow="true"] iframe')
@@ -1653,6 +1672,51 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
       answer.mockClear();
     }
+  });
+
+  it('projects the latest route decision for chat, brief update, and admitted build turns', async () => {
+    const { answer, container, submit } = await setup({
+      answerActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+    });
+    let composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('answer');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('reply');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('read_only');
+
+    answer.mockClear();
+    setComposerInstruction(container, '我想做一个登录页');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+    });
+    composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('exploratory_work');
+
+    setComposerInstruction(container, '把按钮颜色改红');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '把按钮颜色改红' });
+    });
+    composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('allowed');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {

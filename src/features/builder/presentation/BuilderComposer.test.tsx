@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderWorkingProject } from '../application/builderProjectController';
+import { decideBuilderComposerIntent } from '../application/builderComposerIntent';
 import type {
   BuilderProjectCatalogItem,
   BuilderProjectWorkspaceCatalogItem,
@@ -233,6 +234,26 @@ describe('BuilderComposer', () => {
 
     expect(draft.querySelector('[data-builder-composer-status="true"]')?.textContent)
       .toBe('Continue this draft');
+  });
+
+  it('projects the latest route decision without showing internal routing copy', () => {
+    const container = render(
+      <BuilderComposer
+        {...props({
+          composerRouteDecision: decideBuilderComposerIntent('创建登录页'),
+          instruction: '创建登录页',
+        })}
+      />,
+    );
+
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_workspace');
+    expect(composer?.getAttribute('data-builder-route-confidence')).toBe('high');
+    expect(composer?.getAttribute('data-builder-route-downgrade')).toBe('workspace_required');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('ask');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
+    expect(container.textContent).not.toMatch(/workspace_required|write_project|clear_build|ask_workspace/iu);
   });
 
   it('shows and clears a compact current brief without adding another send path', () => {

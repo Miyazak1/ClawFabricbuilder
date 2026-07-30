@@ -45,6 +45,7 @@ import {
   type BuilderPlanReviewDecision,
   type BuilderPlanReviewRequest,
 } from '../application/builderPorts';
+import type { BuilderComposerRouteDecision } from '../application/builderComposerIntent';
 import {
   isTrustedBuilderProjectHistorySnapshot,
   type BuilderProjectHistorySnapshot,
@@ -102,6 +103,7 @@ export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
 
 export type BuilderPageProps = {
   instruction: string;
+  composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
   composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
@@ -1435,6 +1437,7 @@ function BuilderArtifactSidebar({
 
 export function BuilderPage({
   instruction,
+  composerRouteDecision = null,
   composerContextStatus = null,
   composerWorkingBrief = null,
   onApprovePlanSourceRead,
@@ -2245,6 +2248,7 @@ export function BuilderPage({
       catalogProjects={catalogProjects}
       catalogWorkspaceProjects={catalogWorkspaceProjects}
       composerContextStatus={composerContextStatus}
+      composerRouteDecision={composerRouteDecision}
       composerWorkingBrief={composerWorkingBrief}
       hasUnsavedDraft={hasUnsavedDraft}
       instruction={instruction}

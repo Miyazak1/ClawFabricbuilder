@@ -10,6 +10,9 @@ import {
 } from 'lucide-react';
 
 import type {
+  BuilderComposerRouteDecision,
+} from '../application/builderComposerIntent';
+import type {
   BuilderProjectControllerStatus,
   BuilderWorkingProject,
 } from '../application/builderProjectController';
@@ -43,6 +46,7 @@ export type BuilderComposerProps = Readonly<{
   catalogBusy: boolean;
   catalogProjects: readonly BuilderProjectCatalogItem[];
   catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
+  composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
   composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   hasUnsavedDraft: boolean;
@@ -90,6 +94,7 @@ export function BuilderComposer({
   catalogBusy,
   catalogProjects,
   catalogWorkspaceProjects,
+  composerRouteDecision = null,
   composerContextStatus = null,
   composerWorkingBrief = null,
   hasUnsavedDraft,
@@ -270,6 +275,12 @@ export function BuilderComposer({
       className="cf-builder-composer-card"
       data-builder-composer="true"
       data-builder-composer-state={hasUnsavedDraft ? 'draft-ready' : 'ready'}
+      data-builder-route-confidence={composerRouteDecision?.confidence}
+      data-builder-route-dispatch={composerRouteDecision?.dispatch}
+      data-builder-route-downgrade={composerRouteDecision?.downgradeReason ?? undefined}
+      data-builder-route-permission={composerRouteDecision?.permissionResult}
+      data-builder-route-signals={composerRouteDecision?.matchedSignals.join(',')}
+      data-builder-route={composerRouteDecision?.route}
     >
       <div className="cf-builder-composer-shell">
         <textarea
