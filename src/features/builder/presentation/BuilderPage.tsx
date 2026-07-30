@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type Ref,
 } from 'react';
@@ -142,6 +143,8 @@ const ARTIFACT_DEFAULT_WIDTH_PX = 480;
 const ARTIFACT_MIN_WIDTH_PX = 360;
 const ARTIFACT_MAX_WIDTH_PX = 760;
 const ARTIFACT_MIN_CHAT_WIDTH_PX = 360;
+const ARTIFACT_KEYBOARD_STEP_PX = 24;
+const ARTIFACT_KEYBOARD_LARGE_STEP_PX = 80;
 type BuilderArtifactTab = 'changes' | 'logs' | 'preview' | 'source' | 'versions';
 
 function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
@@ -152,6 +155,7 @@ function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): num
 
 function artifactMaxWidthForShell(shellWidth: number): number {
   if (!Number.isFinite(shellWidth)) return ARTIFACT_MAX_WIDTH_PX;
+  if (shellWidth <= 0) return ARTIFACT_MAX_WIDTH_PX;
   return Math.max(ARTIFACT_MIN_WIDTH_PX, shellWidth - ARTIFACT_MIN_CHAT_WIDTH_PX);
 }
 
@@ -1250,6 +1254,7 @@ function BuilderArtifactSidebar({
   onInspectRevision,
   onOpenFile,
   onRefreshHistory,
+  onResizeKeyDown,
   onRestoreRevisionAsDraft,
   onResizeStart,
   onSelectFile,
@@ -1263,6 +1268,8 @@ function BuilderArtifactSidebar({
   sourceDisclosureRef,
   sourceFile,
   tabs,
+  width,
+  widthMaximum,
   history,
 }: Readonly<{
   activeTab: BuilderArtifactTab;
@@ -1278,6 +1285,7 @@ function BuilderArtifactSidebar({
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
   onRefreshHistory?: () => Promise<unknown> | void;
+  onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onSelectFile?: (file: BuilderFileName) => void;
@@ -1291,6 +1299,8 @@ function BuilderArtifactSidebar({
   sourceDisclosureRef: Ref<HTMLDetailsElement>;
   sourceFile: BuilderProjectSourceFile | null;
   tabs: readonly BuilderArtifactTab[];
+  width: number;
+  widthMaximum: number;
 }>) {
   return (
     <aside
@@ -1301,10 +1311,17 @@ function BuilderArtifactSidebar({
       ref={sidebarRef}
     >
       <button
-        aria-label="Resize artifact"
+        aria-label="Resize artifact panel"
+        aria-orientation="vertical"
+        aria-valuemax={widthMaximum}
+        aria-valuemin={ARTIFACT_MIN_WIDTH_PX}
+        aria-valuenow={width}
         className="cf-builder-artifact-resize-handle"
         data-builder-artifact-resize-handle="true"
+        onKeyDown={onResizeKeyDown}
         onPointerDown={onResizeStart}
+        role="separator"
+        title="Resize artifact panel"
         type="button"
       />
       <header className="cf-builder-artifact-header">
@@ -1537,6 +1554,7 @@ export function BuilderPage({
   const chatTailRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowChatRef = useRef(true);
   const [artifactWidth, setArtifactWidth] = useState(ARTIFACT_DEFAULT_WIDTH_PX);
+  const [artifactWidthMaximum, setArtifactWidthMaximum] = useState(ARTIFACT_MAX_WIDTH_PX);
   const changesPanelIdentity = [
     draft?.draft_id ?? 'no-draft',
     inspected?.target.revision_receipt_digest ?? 'no-inspected',
@@ -1651,6 +1669,7 @@ export function BuilderPage({
 
     function clampForCurrentShell(): void {
       const maximum = artifactMaxWidthForShell(shellElement.getBoundingClientRect().width);
+      setArtifactWidthMaximum(maximum);
       setArtifactWidth((currentWidth) => clampArtifactWidth(currentWidth, maximum));
     }
 
@@ -1798,9 +1817,11 @@ export function BuilderPage({
 
     function onPointerMove(moveEvent: globalThis.PointerEvent): void {
       const shellWidth = chatShellRef.current?.getBoundingClientRect().width ?? Number.NaN;
+      const maximum = artifactMaxWidthForShell(shellWidth);
+      setArtifactWidthMaximum(maximum);
       setArtifactWidth(clampArtifactWidth(
         startWidth + startX - moveEvent.clientX,
-        artifactMaxWidthForShell(shellWidth),
+        maximum,
       ));
     }
 
@@ -1813,6 +1834,28 @@ export function BuilderPage({
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', stopResize, { once: true });
     window.addEventListener('pointercancel', stopResize, { once: true });
+  }
+
+  function resizeArtifactWithKeyboard(event: ReactKeyboardEvent<HTMLButtonElement>): void {
+    const step = event.shiftKey ? ARTIFACT_KEYBOARD_LARGE_STEP_PX : ARTIFACT_KEYBOARD_STEP_PX;
+    const maximum = artifactMaxWidthForShell(
+      chatShellRef.current?.getBoundingClientRect().width ?? Number.NaN,
+    );
+    setArtifactWidthMaximum(maximum);
+    let nextWidth: number | null = null;
+    if (event.key === 'ArrowLeft') {
+      nextWidth = artifactWidth + step;
+    } else if (event.key === 'ArrowRight') {
+      nextWidth = artifactWidth - step;
+    } else if (event.key === 'Home') {
+      nextWidth = ARTIFACT_MIN_WIDTH_PX;
+    } else if (event.key === 'End') {
+      nextWidth = maximum;
+    }
+    if (nextWidth === null) return;
+    event.preventDefault();
+    shouldFollowChatRef.current = false;
+    setArtifactWidth(clampArtifactWidth(nextWidth, maximum));
   }
 
   function selectFile(path: string): boolean {
@@ -2161,6 +2204,7 @@ export function BuilderPage({
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
       onRefreshHistory={onRefreshHistory}
+      onResizeKeyDown={resizeArtifactWithKeyboard}
       onResizeStart={startArtifactResize}
       onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
       onSelectFile={onSelectFile}
@@ -2174,6 +2218,8 @@ export function BuilderPage({
       sourceDisclosureRef={sourceDisclosureRef}
       sourceFile={sourceFile}
       tabs={artifactTabs}
+      width={artifactWidth}
+      widthMaximum={artifactWidthMaximum}
     />
   ) : null;
 

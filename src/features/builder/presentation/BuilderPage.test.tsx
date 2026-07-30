@@ -2010,6 +2010,11 @@ describe('BuilderPage v2', () => {
     expect(artifactSidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('preview');
     const artifactResizeHandle = artifactSidebar?.querySelector('[data-builder-artifact-resize-handle="true"]');
     expect(artifactResizeHandle).not.toBeNull();
+    expect(artifactResizeHandle?.getAttribute('role')).toBe('separator');
+    expect(artifactResizeHandle?.getAttribute('aria-label')).toBe('Resize artifact panel');
+    expect(artifactResizeHandle?.getAttribute('aria-orientation')).toBe('vertical');
+    expect(artifactResizeHandle?.getAttribute('aria-valuemin')).toBe('360');
+    expect(artifactResizeHandle?.getAttribute('aria-valuenow')).toBe('480');
     expect(conversation).not.toBeNull();
     expect(draftLanding).not.toBeNull();
     expect(review).not.toBeNull();
@@ -2083,6 +2088,21 @@ describe('BuilderPage v2', () => {
         bubbles: true,
       }));
     });
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('560px');
+    const resizedHandle = container.querySelector('[data-builder-artifact-resize-handle="true"]');
+    expect(resizedHandle?.getAttribute('aria-valuenow')).toBe('560');
+    expect(resizedHandle?.getAttribute('aria-valuemax')).toBe('560');
+    const shrinkEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'ArrowRight' });
+    expect(shrinkEvent.defaultPrevented).toBe(true);
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('536px');
+    const minEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'Home' });
+    expect(minEvent.defaultPrevented).toBe(true);
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('360px');
+    const maxEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'End' });
+    expect(maxEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
       .toBe('560px');
     click(container, '[data-builder-review-open-changes="true"]');
