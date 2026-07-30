@@ -1433,7 +1433,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
       <header className="cf-builder-app-chrome" aria-label="ClawFabric Builder window" data-builder-app-chrome="true">
         <div className="cf-builder-app-chrome-title min-w-0">
-          <span className="cf-builder-brand-mark inline-flex size-7 items-center justify-center" aria-hidden="true">
+          <span
+            className="cf-builder-brand-mark cf-builder-brand-mark--icon inline-flex size-7 items-center justify-center"
+            aria-hidden="true"
+          >
             <img alt="" className="cf-builder-brand-icon" src={BUILDER_APP_ICON_SRC} />
           </span>
           <div className="min-w-0">
@@ -1487,7 +1490,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       <div className="cf-builder-shell">
         <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
           <div className="cf-builder-rail-brand" aria-hidden="true">
-            <span className="cf-builder-brand-mark inline-flex size-8 items-center justify-center">
+            <span className="cf-builder-brand-mark cf-builder-brand-mark--icon inline-flex size-8 items-center justify-center">
               <img alt="" className="cf-builder-brand-icon" src={BUILDER_APP_ICON_SRC} />
             </span>
           </div>

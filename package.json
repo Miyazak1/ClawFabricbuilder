@@ -54,6 +54,7 @@
     "productName": "ClawFabric Builder",
     "electronDist": "node_modules/electron/dist",
     "directories": {
+      "buildResources": "build",
       "output": "release"
     },
     "files": [
@@ -67,7 +68,7 @@
       "node_modules/dugite/git/LICENSE.txt"
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "icon.ico",
       "target": [
         "nsis"
       ]
