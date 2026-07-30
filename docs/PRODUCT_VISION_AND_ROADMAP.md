@@ -202,6 +202,12 @@ Required gates:
 An Agent is not a hidden prompt preset. It is a governed actor with identity,
 scope, permissions, work history, and reviewable results.
 
+Persistent Agent context must be task-centered rather than transcript-centered:
+the Agent owns stable identity and curated memory, while durable work context,
+decisions, permissions, run evidence, artifacts, and child delegations are
+attached to Tasks. The executable context model is defined in
+[Persistent Agent Task Context Architecture](PERSISTENT_AGENT_TASK_CONTEXT_ARCHITECTURE.md).
+
 ### Stage 4 - Spaces and Human Collaboration
 
 User experience:
