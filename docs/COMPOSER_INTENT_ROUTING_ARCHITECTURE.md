@@ -77,6 +77,7 @@ Route context includes:
 
 - selected project and source-folder state;
 - current conversation and active turn state;
+- composer add-menu selections and active mode chips;
 - active task capsule when present;
 - visible working brief and confidence;
 - approved plan or rejected plan state;
@@ -158,6 +159,18 @@ Examples:
 
 `plan` may create a proposed plan and a review checkpoint. Approval of the plan
 can promote contextual execution phrases such as `执行` into `build`.
+
+Plan can be selected by UI as well as by natural language:
+
+- `composerMode: "plan"` from the `+` menu or `Plan first` command forces the
+  next eligible submit through the `plan` route;
+- the active mode must be visible as a removable composer chip;
+- after submit, the mode is consumed unless the user pins it explicitly in a
+  later product slice;
+- while plan mode is active, source writes, Save, command execution, publish,
+  and delegation stay unavailable;
+- if source context is needed for the plan, dispatch requests source-read
+  approval rather than silently reading files.
 
 ### build
 
@@ -252,6 +265,21 @@ Minimum action/resource gates:
 
 Permission denial does not change the route intent. It changes the dispatch
 result to an approval request, safe explanation, or blocked state.
+
+Implementation order:
+
+1. **Current Builder boundary**: implement `read_project` and `write_project`
+   for the selected workspace. `answer`, `clarify`, `update_brief`, and `plan`
+   are read-only unless a separate source-read approval is requested. `build`
+   is the first route that can request current-project write permission.
+2. **Approval modes**: add a visible mode selector after the route decision
+   evidence exists. Early modes should be limited to read-only chat, ask before
+   write, and allow current project. Mode selection cannot replace durable
+   permission facts.
+3. **Tool permissions**: add command, network, external-directory, and secret
+   permissions only when those tools exist behind main-owned execution gates.
+4. **Agent permissions**: add subtask/delegation and multi-project scopes only
+   after persistent Agent identity and Task-centered context are implemented.
 
 ## Task And Brief Requirements
 

@@ -178,6 +178,12 @@ tool-enabled work session. Tool access is an upgrade to the continuing Builder
 conversation, not a prerequisite for asking questions or iterating on a code
 candidate.
 
+The first user-facing permission slice should arrive before general Terminal,
+network, publishing, or persistent Agent autonomy. It should cover the selected
+project boundary: chat and planning are read-only, build requires explicit
+execution intent plus current-project write permission, and command/network/
+external-directory access remains denied until later gates.
+
 ### Stage 3 - Persistent AI Agents
 
 User experience:

@@ -192,12 +192,62 @@ test matrix.
 The composer contains:
 
 - workspace chip: current project/source folder state;
-- attachment/source controls;
+- add menu: attachments, source context, plan mode, goal/brief, permissions,
+  and later plugin/tool entries;
 - explicit plan command;
 - permission indicator;
 - send button;
 - contextual status such as `Discussing`, `Ready to build`, `Building draft`,
   or `Review draft`.
+
+### Composer Add Menu
+
+The `+` button should become a focused composer add menu. It is the user's
+entry point for adding context or changing how the next message is interpreted;
+it is not a second submit button and must not trigger build by itself.
+
+MVP entries:
+
+- **Files and folders**: choose or attach source context, then show it as a
+  composer chip. Reading content still follows permission rules.
+- **Goal / Brief**: save the current discussion as a working brief or inspect
+  the current brief.
+- **Plan mode**: make the next submitted message route to `plan`, even if the
+  wording is ordinary. It should appear as an active composer chip and be
+  removable before sending.
+- **Approval mode**: once the permission slice exists, expose the current
+  read/write approval mode here.
+
+Later entries:
+
+- installed plugins/skills that can contribute context or artifacts;
+- Terminal/command actions only after the command execution gate exists;
+- subtask or Agent delegation only after persistent Agent authority exists.
+
+Interaction rules:
+
+- opening the menu never submits the composer;
+- choosing an entry creates a visible chip, opens a picker, or changes a
+  composer mode;
+- every entry must have a route/permission meaning, not just visual state;
+- Esc closes the menu and returns focus to the composer;
+- the menu should be keyboard navigable and should not overlap the fixed
+  composer in a way that blocks typing.
+
+Plan mode can be invoked in two ways:
+
+1. **Explicit UI**: choose `Plan mode` from the `+` menu or click the visible
+   `Plan first` command while it exists. The composer shows a `Plan mode` chip;
+   pressing Send creates a plan proposal instead of building.
+2. **Natural language**: messages such as `先给我方案`, `进入计划模式`,
+   `先不要写代码，列步骤`, or `plan this first` route to `plan` through the
+   intent router.
+
+Plan mode is read-only with respect to source files. If making a useful plan
+requires reading selected project files, the app may ask for source-read
+approval, but it must not write files, save a version, run commands, or publish.
+Approving a plan creates an execution-ready brief; source changes still require
+explicit execution intent plus write permission.
 
 The internal route should evolve from `answer | build` to:
 
@@ -295,6 +345,42 @@ Preview requirements:
 - fullscreen preview is one click from the drawer;
 - 3D/WebGL/long-page previews must not be constrained by chat card height;
 - closing the drawer/fullscreen returns the user to the same chat context.
+
+### Permission Approval Roadmap
+
+Permission approval is an early product foundation, not a late social or Agent
+feature. The first user-facing version should be narrow: it protects the current
+project workspace and makes chat/plan/build behavior trustworthy.
+
+Recommended order:
+
+1. **Minimum project boundary now**: show the selected project/source folder,
+   read-only chat state, and whether build may write to the current project.
+   Chat and Plan stay read-only. Build requires explicit execution intent plus
+   current-project write permission.
+2. **Approval mode selector next**: expose a compact mode control similar in
+   spirit to mature agent tools, but scoped to Builder's current needs:
+   `Read-only chat`, `Ask before write`, and `Allow current project`. These
+   labels are illustrative; final copy should be product-tested.
+3. **Action/resource policy later**: introduce separate decisions for
+   `read_project`, `write_project`, `run_command`, `access_network`,
+   `external_directory`, `create_subtask`, and `publish_share`.
+4. **Command and Terminal permissions after runtime gates**: shell, process,
+   network, dependency install, dev server, and browser-open actions stay denied
+   until the Terminal Tool Foundation exists.
+5. **Persistent Agent permissions before autonomy**: long-lived Agents and
+   child tasks require durable, inspectable, revocable permissions before they
+   can run background work, delegate, or touch multiple projects.
+
+The UI should communicate two separate facts:
+
+```text
+Intent: what the user asked for.
+Permission: what the app is allowed to do now.
+```
+
+A selected project folder is never an approval mode by itself. It only defines
+the resource that a later approval may cover.
 
 ### Terminal And Command-Line Tools
 
@@ -477,6 +563,8 @@ Scope:
 - show a compact brief summary in the UI;
 - let users update or clear it;
 - feed it into build execution.
+- introduce the composer `+` menu as the place for Goal/Brief and Plan mode
+  entries, while keeping plugin/tool entries hidden until their gates exist.
 
 Exit criteria:
 
@@ -484,6 +572,8 @@ Exit criteria:
 - brief survives refresh/reopen where Conversation facts support it;
 - contextual execution builds from the brief;
 - ambiguous contextual execution asks for confirmation.
+- selecting Plan mode from the `+` menu creates a visible composer mode chip and
+  routes the next submit to `plan` without writing files.
 
 Current checkpoint:
 
