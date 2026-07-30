@@ -2050,6 +2050,7 @@ describe('BuilderPage v2', () => {
       .toBe('Minimize artifact panel');
     expect(container.querySelector('[data-builder-toggle-artifact="true"]')?.getAttribute('aria-label'))
       .toBe('Hide artifact panel');
+    expect(container.querySelector('[data-builder-close-artifact-sidebar="true"]')).toBeNull();
     expect(conversation).not.toBeNull();
     expect(draftLanding).not.toBeNull();
     expect(review).not.toBeNull();
@@ -2670,26 +2671,28 @@ describe('BuilderPage v2', () => {
   });
 
   it('opens sanitized work logs in the artifact sidebar without turning chat into a log pane', async () => {
-    const { saved } = await snapshots();
+    const { fresh } = await snapshots();
     const activity = await toolActivity();
     const container = render(
       <BuilderPage
         activeFile={null}
         conversationSnapshot={activity}
         instruction=""
-        snapshot={saved}
+        snapshot={fresh}
       />,
     );
 
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
+    const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
     const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
-    const logsTab = container.querySelector<HTMLButtonElement>('[data-builder-artifact-tab="logs"]');
+    const logsControl = container.querySelector<HTMLButtonElement>('[data-builder-workspace-control-tab="logs"]');
     expect(chatMain).not.toBeNull();
-    expect(sidebar).not.toBeNull();
-    expect(logsTab).not.toBeNull();
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
+    expect(sidebar).toBeNull();
+    expect(logsControl).not.toBeNull();
     expect(container.querySelector('[data-builder-artifact-logs="true"]')).toBeNull();
 
-    click(container, '[data-builder-artifact-tab="logs"]');
+    click(container, '[data-builder-workspace-control-tab="logs"]');
 
     const updatedSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const logs = container.querySelector('[data-builder-artifact-logs="true"]');

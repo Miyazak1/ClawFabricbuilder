@@ -1269,7 +1269,6 @@ function BuilderArtifactSidebar({
   hasUnsavedDraft,
   inspectedRevisionReceiptDigest,
   liveOutput,
-  onClose,
   onExpandPreview,
   onInspectRevision,
   onOpenFile,
@@ -1301,7 +1300,6 @@ function BuilderArtifactSidebar({
   history: BuilderProjectHistorySnapshot | null;
   inspectedRevisionReceiptDigest: string | null;
   liveOutput: BuilderLiveOutputSnapshot | null;
-  onClose: () => void;
   onExpandPreview: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
@@ -1380,15 +1378,6 @@ function BuilderArtifactSidebar({
               <Maximize2 aria-hidden="true" className="size-3.5" />
             </button>
           ) : null}
-          <button
-            aria-label="Close artifact"
-            className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-            data-builder-close-artifact-sidebar="true"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" className="size-3.5" />
-          </button>
         </div>
       </header>
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
@@ -1676,9 +1665,7 @@ export function BuilderPage({
             ? 'source'
             : hasUnsavedDraft
               ? 'changes'
-              : showLogsPanel
-                ? 'logs'
-                : null;
+              : null;
   const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
     active: BuilderArtifactTab | null;
     identity: string;
@@ -1863,11 +1850,6 @@ export function BuilderPage({
     setActiveArtifactTab(tab);
     if (tab === 'changes') setChangesPanelOpen(true);
     if (tab === 'source') setSourceDisclosureOpen(true);
-  }
-
-  function closeArtifactSidebar(): void {
-    shouldFollowChatRef.current = false;
-    setActiveArtifactTab(null);
   }
 
   function minimizeArtifactSidebar(): void {
@@ -2374,7 +2356,6 @@ export function BuilderPage({
       history={history}
       inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
       liveOutput={visibleLiveOutput}
-      onClose={closeArtifactSidebar}
       onExpandPreview={openExpandedPreview}
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
