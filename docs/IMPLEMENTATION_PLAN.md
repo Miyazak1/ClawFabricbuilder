@@ -504,6 +504,20 @@ Evidence requirements:
   not Git evidence, not a Project Revision, and not provider/source authority;
   the renderer receives only a compact task-brief projection and cannot forge or
   promote route decisions;
+- the current build-context snapshot checkpoint adds a prompt-safe derived
+  `builder-build-context-snapshot.v1` to code-generation prompts. It is
+  recomputed only from the already-bound Conversation event window and current
+  request digest, and records public routing shape such as route, dispatch,
+  fixed public allowlisted matched signal names, execution basis, workspace
+  basis, working-brief availability, latest-plan state, and unavailable
+  command/network capabilities.
+  It deliberately excludes route-decision ids, message/run ids, event digests,
+  provider details, credentials, Git receipts, source-tree digests, Save facts,
+  and Project Revision evidence. The snapshot lets prompt construction preserve
+  why a build is allowed to use a working brief, task brief, approved plan,
+  current artifact defect, or explicit instruction without becoming permission
+  admission, tool execution, Git mutation, Save, renderer authority, or a new
+  Conversation fact;
 - the current composer contextual-execution checkpoint aligns renderer routing
   with that plan-state contract. Contextual phrases such as "do it",
   "好，开始吧", "就照这个来", or "按刚才说的做" may enter build only when

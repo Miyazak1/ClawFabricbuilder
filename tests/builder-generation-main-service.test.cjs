@@ -2707,6 +2707,13 @@ test('passes prior conversation working brief into contextual submit provider pr
     approved_plan: null,
     use_when_instruction_is_contextual: true,
   });
+  assert.deepEqual(providerPrompt.build_context_snapshot.execution_basis, 'working_brief');
+  assert.deepEqual(providerPrompt.build_context_snapshot.working_brief, {
+    available: true,
+    source: 'recent_chat_proposal',
+    contextual_build_ready: true,
+  });
+  assert.equal(providerPrompt.build_context_snapshot.workspace_basis, 'selected_project_workspace');
   assert.equal(providerPrompt.conversation_brief.latest_plan, null);
   assert.match(transportInput.messages[0].content, /working_brief is requirements context/u);
   assert.match(transportInput.messages[1].content, /三维项目卡片/u);
@@ -2793,6 +2800,17 @@ test('uses a durable task capsule brief as contextual submit build context', asy
     assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
     approved_plan: null,
     use_when_instruction_is_contextual: true,
+  });
+  assert.deepEqual(providerPrompt.build_context_snapshot.execution_basis, 'task_brief');
+  assert.deepEqual(providerPrompt.build_context_snapshot.working_brief, {
+    available: true,
+    source: 'task_capsule_update',
+    contextual_build_ready: true,
+  });
+  assert.deepEqual(providerPrompt.build_context_snapshot.permissions, {
+    write_project: 'route_required',
+    command_execution: 'not_available',
+    external_network: 'not_available',
   });
   assert.match(transportInput.messages[1].content, /task_capsule_update/u);
   assert.doesNotMatch(

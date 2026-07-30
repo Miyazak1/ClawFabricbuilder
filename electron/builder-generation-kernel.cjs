@@ -46,6 +46,21 @@ const MAX_CONVERSATION_BRIEF_TEXT_CODE_POINTS = 1200;
 const MAX_CONVERSATION_BRIEF_TEXT_UTF8_BYTES = 4096;
 const CONVERSATION_BRIEF_CONTEXT_VERSION = 'builder-conversation-brief.v3';
 const CONVERSATION_BRIEF_SELECTION = 'recent_prior_messages_latest_plan_and_working_brief';
+const BUILD_CONTEXT_SNAPSHOT_VERSION = 'builder-build-context-snapshot.v1';
+const PUBLIC_ROUTE_DECISION_SIGNALS = new Set([
+  'capability_question',
+  'chat_default',
+  'clear_build',
+  'contextual_build',
+  'contextual_build_phrase',
+  'current_artifact_defect',
+  'empty_message',
+  'explicit_plan',
+  'exploratory_work',
+  'read_only',
+  'vague_change',
+  'work_discussion',
+]);
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -408,6 +423,64 @@ function conversationRunKey(turnId, runId) {
   return typeof turnId === 'string' && typeof runId === 'string' ? `${turnId}:${runId}` : null;
 }
 
+function currentPromptTurnSubmitted(events, currentTurnIds) {
+  let submitted = null;
+  for (const event of events) {
+    if (optionalOwnValue(event, 'event_type') !== 'turn_submitted') continue;
+    const payload = optionalOwnValue(event, 'payload');
+    if (!isPlainObject(payload)) continue;
+    const turnId = optionalOwnValue(payload, 'turn_id');
+    if (typeof turnId === 'string' && currentTurnIds.has(turnId)) submitted = payload;
+  }
+  return submitted;
+}
+
+function safeRouteDecisionSignal(value) {
+  return typeof value === 'string' && PUBLIC_ROUTE_DECISION_SIGNALS.has(value)
+    ? value
+    : null;
+}
+
+function safeRouteDecisionSignals(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value)) return [];
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) return [];
+  const signals = [];
+  const seen = new Set();
+  for (let index = 0; index < Math.min(value.length, 8); index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return [];
+    const signal = safeRouteDecisionSignal(descriptor.value);
+    if (signal === null || seen.has(signal)) continue;
+    seen.add(signal);
+    signals.push(signal);
+  }
+  return signals;
+}
+
+function currentPromptRouteContext(events, currentTurnIds) {
+  const submitted = currentPromptTurnSubmitted(events, currentTurnIds);
+  if (!isPlainObject(submitted)) return null;
+  const decision = optionalOwnValue(submitted, 'route_decision');
+  if (!isPlainObject(decision)) return null;
+  const route = optionalOwnValue(decision, 'route');
+  const dispatch = optionalOwnValue(decision, 'dispatch');
+  const confidence = optionalOwnValue(decision, 'confidence');
+  return freezeDeep({
+    route: typeof route === 'string' && /^(?:answer|clarify|update_brief|plan|build)$/u.test(route)
+      ? route
+      : 'unknown',
+    dispatch: typeof dispatch === 'string'
+      && /^(?:reply|brief_update|plan|build|ask_workspace|ask_permission|blocked)$/u.test(dispatch)
+      ? dispatch
+      : 'unknown',
+    confidence: typeof confidence === 'string' && /^(?:low|medium|high)$/u.test(confidence)
+      ? confidence
+      : 'unknown',
+    matched_signals: safeRouteDecisionSignals(optionalOwnValue(decision, 'matched_signals')),
+  });
+}
+
 function buildWorkingBrief(entries, latestPlan, latestTaskBrief) {
   if (latestPlan !== null && latestPlan.state === 'approved') {
     const latestUser = [...entries].reverse().find((entry) => (
@@ -525,6 +598,80 @@ function conversationBriefFromEvents(events, requestDigest) {
   });
 }
 
+function buildExecutionBasis(routeContext, conversationBrief) {
+  if (routeContext === null || routeContext.route !== 'build' || routeContext.dispatch !== 'build') {
+    return 'not_admitted';
+  }
+  if (conversationBrief.latest_plan !== null && conversationBrief.latest_plan.state === 'approved') {
+    return 'approved_plan';
+  }
+  if (
+    conversationBrief.working_brief !== null
+    && conversationBrief.working_brief.use_when_instruction_is_contextual === true
+  ) {
+    return conversationBrief.working_brief.source === 'task_capsule_update'
+      ? 'task_brief'
+      : 'working_brief';
+  }
+  if (routeContext.matched_signals.includes('current_artifact_defect')) {
+    return 'current_artifact_defect';
+  }
+  if (
+    routeContext.matched_signals.includes('contextual_build')
+    || routeContext.matched_signals.includes('contextual_build_phrase')
+  ) {
+    return 'missing_context_not_admitted';
+  }
+  return 'explicit_instruction';
+}
+
+function buildContextSnapshot({
+  events,
+  request,
+  conversationBrief,
+}) {
+  const currentTurnIds = currentPromptTurnIds(events, request.request_digest);
+  const routeContext = currentPromptRouteContext(events, currentTurnIds);
+  const workingBrief = conversationBrief.working_brief;
+  const latestPlan = conversationBrief.latest_plan;
+  return freezeDeep({
+    snapshot_version: BUILD_CONTEXT_SNAPSHOT_VERSION,
+    route: routeContext?.route ?? 'unknown',
+    dispatch: routeContext?.dispatch ?? 'unknown',
+    confidence: routeContext?.confidence ?? 'unknown',
+    matched_signals: routeContext?.matched_signals ?? [],
+    execution_basis: buildExecutionBasis(routeContext, conversationBrief),
+    workspace_basis: request.existing_project_id === null
+      ? 'new_project_request'
+      : 'selected_project_workspace',
+    working_brief: workingBrief === null
+      ? {
+        available: false,
+        source: null,
+        contextual_build_ready: false,
+      }
+      : {
+        available: true,
+        source: workingBrief.source,
+        contextual_build_ready: workingBrief.use_when_instruction_is_contextual === true,
+      },
+    latest_plan: latestPlan === null
+      ? {
+        available: false,
+        state: 'none',
+      }
+      : {
+        available: true,
+        state: latestPlan.state,
+      },
+    permissions: {
+      write_project: routeContext?.route === 'build' ? 'route_required' : 'not_required_by_route',
+      command_execution: 'not_available',
+      external_network: 'not_available',
+    },
+  });
+}
+
 function deterministicUuidFromText(value) {
   const bytes = nodeCrypto.createHash('sha256').update(value, 'utf8').digest();
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -614,6 +761,7 @@ function sanitizePromptInput(value) {
   return {
     request,
     baseSourceTree,
+    conversationEvents,
     conversationBrief: conversationBriefFromEvents(conversationEvents, request.request_digest),
   };
 }
@@ -688,7 +836,12 @@ function sanitizePlanPromptSourceContextResult(value) {
 
 function promptDescriptor(value, promptVersion, systemInstruction, outputContract) {
   try {
-    const { request, baseSourceTree, conversationBrief } = sanitizePromptInput(value);
+    const {
+      request,
+      baseSourceTree,
+      conversationEvents,
+      conversationBrief,
+    } = sanitizePromptInput(value);
     const userContext = {
       instruction: request.instruction,
       mode: request.existing_project_id === null ? 'create' : 'revise',
@@ -700,6 +853,13 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
         })),
       },
     };
+    if (outputContract.kind === BUILDER_GENERATED_OPERATIONS_KIND) {
+      userContext.build_context_snapshot = buildContextSnapshot({
+        events: conversationEvents,
+        request,
+        conversationBrief,
+      });
+    }
     const descriptor = {
       version: BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
       request_id: request.request_digest,

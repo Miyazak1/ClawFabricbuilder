@@ -562,6 +562,29 @@ test('passes a main-derived working brief into contextual build provider prompts
     approved_plan: null,
     use_when_instruction_is_contextual: true,
   });
+  assert.deepEqual(userPrompt.build_context_snapshot, {
+    snapshot_version: 'builder-build-context-snapshot.v1',
+    route: 'build',
+    dispatch: 'build',
+    confidence: 'high',
+    matched_signals: [],
+    execution_basis: 'working_brief',
+    workspace_basis: 'new_project_request',
+    working_brief: {
+      available: true,
+      source: 'recent_chat_proposal',
+      contextual_build_ready: true,
+    },
+    latest_plan: {
+      available: false,
+      state: 'none',
+    },
+    permissions: {
+      write_project: 'route_required',
+      command_execution: 'not_available',
+      external_network: 'not_available',
+    },
+  });
   assert.match(transportInput[0].messages[0].content, /working_brief is requirements context/u);
   assert.match(transportInput[0].messages[1].content, /三维项目卡片/u);
   assert.doesNotMatch(

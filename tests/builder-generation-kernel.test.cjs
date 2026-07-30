@@ -91,6 +91,30 @@ function routeDecision(payload, projectId = PROJECT_ID) {
   };
 }
 
+function promptRouteDecision({
+  route = 'build',
+  dispatch = 'build',
+  confidence = 'high',
+  matchedSignals = ['contextual_build'],
+} = {}) {
+  return {
+    decision_id: 'builder-route-decision:123e4567-e89b-42d3-a456-426614174099',
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: PROJECT_ID,
+    message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174098',
+    task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174097',
+    route,
+    confidence,
+    matched_signals: matchedSignals,
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch,
+    decided_at_ms: 99,
+  };
+}
+
 function planSourceContextResult(
   rawRequest = request({ existingProjectId: PROJECT_ID }),
   rawFiles = [
@@ -285,8 +309,11 @@ function priorConversationEvents(currentRequest) {
         turn_id: 'builder-turn:current',
         mode: 'work',
         message: {
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174098',
           text: currentRequest.instruction,
         },
+        task: { task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174097' },
+        route_decision: promptRouteDecision(),
       },
     },
     {
@@ -420,8 +447,11 @@ function planConversationEvents(currentRequest, decision = 'approved') {
         turn_id: 'builder-turn:current-plan-followup',
         mode: 'work',
         message: {
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174098',
           text: currentRequest.instruction,
         },
+        task: { task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174097' },
+        route_decision: promptRouteDecision(),
       },
     },
     {
@@ -480,8 +510,11 @@ function taskBriefConversationEvents(currentRequest) {
         turn_id: 'builder-turn:current',
         mode: 'work',
         message: {
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174098',
           text: currentRequest.instruction,
         },
+        task: { task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174097' },
+        route_decision: promptRouteDecision(),
       },
     },
     {
@@ -626,8 +659,84 @@ test('builds a deterministic operations prompt without exposing host identities'
       working_brief: null,
     },
     current_source_tree: { files: [] },
+    build_context_snapshot: {
+      snapshot_version: 'builder-build-context-snapshot.v1',
+      route: 'build',
+      dispatch: 'build',
+      confidence: 'high',
+      matched_signals: [],
+      execution_basis: 'explicit_instruction',
+      workspace_basis: 'new_project_request',
+      working_brief: {
+        available: false,
+        source: null,
+        contextual_build_ready: false,
+      },
+      latest_plan: {
+        available: false,
+        state: 'none',
+      },
+      permissions: {
+        write_project: 'route_required',
+        command_execution: 'not_available',
+        external_network: 'not_available',
+      },
+    },
   });
   assert.doesNotMatch(first.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
+});
+
+test('filters route decision matched signals to the public prompt allowlist', () => {
+  const rawRequest = request({ instruction: '按刚才方案做', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: [
+      {
+        event_type: 'turn_submitted',
+        payload: {
+          turn_id: 'builder-turn:current',
+          message: {
+            message_id: 'builder-message:current',
+            text: rawRequest.instruction,
+          },
+          mode: 'work',
+          task: { task_id: 'builder-task:current' },
+          route_decision: promptRouteDecision({
+            matchedSignals: [
+              'provider:deepseek',
+              'credential:secret',
+              'builder-route-decision:123',
+              'contextual_build_phrase',
+              'clear_build',
+              'revision_receipt',
+              'api_key',
+              'test_work_turn',
+            ],
+          }),
+        },
+      },
+      {
+        event_type: 'run_started',
+        payload: {
+          turn_id: 'builder-turn:current',
+          run_id: 'builder-run:current',
+          input_digest: rawRequest.request_digest,
+        },
+      },
+    ],
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.deepEqual(context.build_context_snapshot.matched_signals, [
+    'contextual_build_phrase',
+    'clear_build',
+  ]);
+  assert.equal(context.build_context_snapshot.execution_basis, 'missing_context_not_admitted');
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /provider|credential|builder-route-decision|revision_receipt|api[_-]?key|test_work_turn/iu,
+  );
 });
 
 test('includes a bounded prior conversation brief for context-grounded build prompts', () => {
@@ -665,6 +774,29 @@ test('includes a bounded prior conversation brief for context-grounded build pro
       use_when_instruction_is_contextual: true,
     },
   });
+  assert.deepEqual(context.build_context_snapshot, {
+    snapshot_version: 'builder-build-context-snapshot.v1',
+    route: 'build',
+    dispatch: 'build',
+    confidence: 'high',
+    matched_signals: ['contextual_build'],
+    execution_basis: 'working_brief',
+    workspace_basis: 'selected_project_workspace',
+    working_brief: {
+      available: true,
+      source: 'recent_chat_proposal',
+      contextual_build_ready: true,
+    },
+    latest_plan: {
+      available: false,
+      state: 'none',
+    },
+    permissions: {
+      write_project: 'route_required',
+      command_execution: 'not_available',
+      external_network: 'not_available',
+    },
+  });
   assert.match(descriptor.user_instruction, /星空背景/u);
   assert.match(descriptor.user_instruction, /单页静态作品集/u);
   assert.doesNotMatch(
@@ -689,6 +821,12 @@ test('prefers durable task capsule brief facts for contextual build prompts', ()
     assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
     approved_plan: null,
     use_when_instruction_is_contextual: true,
+  });
+  assert.deepEqual(context.build_context_snapshot.execution_basis, 'task_brief');
+  assert.deepEqual(context.build_context_snapshot.working_brief, {
+    available: true,
+    source: 'task_capsule_update',
+    contextual_build_ready: true,
   });
   assert.match(descriptor.user_instruction, /task_capsule_update/u);
   assert.doesNotMatch(
@@ -786,6 +924,11 @@ test('includes the latest approved plan as structured build context', () => {
       text: '先规划这个作品集首页。',
     },
   ]);
+  assert.deepEqual(context.build_context_snapshot.execution_basis, 'approved_plan');
+  assert.deepEqual(context.build_context_snapshot.latest_plan, {
+    available: true,
+    state: 'approved',
+  });
   assert.match(descriptor.system_instruction, /approved plans may guide implementation/u);
   assert.match(descriptor.system_instruction, /rejected plans must not be implemented/u);
   assert.match(descriptor.user_instruction, /starfield hero/u);
