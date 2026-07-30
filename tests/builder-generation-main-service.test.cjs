@@ -348,7 +348,7 @@ function taskStreamWithItems(projectId, items) {
   };
 }
 
-function recentChatProposalTaskStream(projectId = PROJECT_ID) {
+function transcriptOnlyProposalTaskStream(projectId = PROJECT_ID) {
   const turnId = `builder-turn:${UUIDS[1]}`;
   const runId = `builder-run:${UUIDS[2]}`;
   return taskStreamWithItems(projectId, [
@@ -376,6 +376,81 @@ function recentChatProposalTaskStream(projectId = PROJECT_ID) {
         text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
       },
       candidate: null,
+    },
+  ]);
+}
+
+function taskBriefReadyTaskStream(projectId = PROJECT_ID) {
+  const turnId = `builder-turn:${UUIDS[1]}`;
+  const runId = `builder-run:${UUIDS[2]}`;
+  const taskId = `builder-task:${UUIDS[5]}`;
+  return taskStreamWithItems(projectId, [
+    {
+      item_kind: 'user_message',
+      sequence: 1,
+      turn_id: turnId,
+      message: {
+        message_id: `builder-message:${UUIDS[3]}`,
+        text: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
+      },
+      message_kind: 'submitted',
+      mode: 'question',
+      task: null,
+    },
+    {
+      item_kind: 'run_completed',
+      sequence: 2,
+      turn_id: turnId,
+      run_id: runId,
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[4]}`,
+        text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+      },
+      candidate: null,
+    },
+    {
+      item_kind: 'task_brief_updated',
+      sequence: 3,
+      turn_id: turnId,
+      run_id: runId,
+      task: {
+        task_id: taskId,
+        title: 'Current project brief',
+      },
+      brief: {
+        status: 'ready',
+        summary: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。 可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+        contextual_build_ready: true,
+      },
+      recorded_state: 'updated',
+    },
+  ]);
+}
+
+function candidateReadyTaskStream(projectId = PROJECT_ID) {
+  const turnId = `builder-turn:${UUIDS[1]}`;
+  const runId = `builder-run:${UUIDS[2]}`;
+  return taskStreamWithItems(projectId, [
+    {
+      item_kind: 'run_completed',
+      sequence: 1,
+      turn_id: turnId,
+      run_id: runId,
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[4]}`,
+        text: 'Created the first draft.',
+      },
+      candidate: {
+        draft_id: `builder-generation-draft:${'a'.repeat(64)}`,
+        title: 'Draft',
+        summary: 'A proposed project draft.',
+        candidate_state: 'proposed',
+        source_availability: 'not_loaded',
+      },
     },
   ]);
 }
@@ -2515,7 +2590,7 @@ test('allows contextual composer submit only with main-owned build context', asy
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
   });
-  const lifecycle = conversationService({ readStreamResult: recentChatProposalTaskStream() });
+  const lifecycle = conversationService({ readStreamResult: taskBriefReadyTaskStream() });
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
     ...repositories({
@@ -2555,7 +2630,7 @@ test('allows current artifact defect feedback only with main-owned build context
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
   });
-  const lifecycle = conversationService({ readStreamResult: recentChatProposalTaskStream() });
+  const lifecycle = conversationService({ readStreamResult: candidateReadyTaskStream() });
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
     ...repositories({
@@ -2593,6 +2668,49 @@ test('allows current artifact defect feedback only with main-owned build context
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_defect']);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 1);
+});
+
+test('keeps contextual submit in answer route after transcript-only proposals', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: transcriptOnlyProposalTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Still discussing',
+        summary: 'Answered without changing files.',
+      })),
+    }),
+  });
+
+  const answer = await service.submit(request({
+    instruction: '好，开始吧',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(answer.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 0);
 });
 
 test('keeps contextual submit in answer route after read-only exploratory diagnosis', async () => {
@@ -2638,7 +2756,7 @@ test('keeps contextual submit in answer route after read-only exploratory diagno
   assert.equal(git.receipts.length, 0);
 });
 
-test('passes prior conversation working brief into contextual submit provider prompt', async (t) => {
+test('does not admit contextual submit from transcript-only conversation proposals', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-contextual-brief-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
   t.after(() => {
@@ -2683,43 +2801,31 @@ test('passes prior conversation working brief into contextual submit provider pr
       transportInput = input;
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
-        generated_text: JSON.stringify(providerOutput({
-          title: 'Portfolio homepage',
-          summary: 'Builds the discussed portfolio homepage.',
+        generated_text: JSON.stringify(providerExplanation({
+          title: 'Still discussing',
+          summary: 'Answered without changing files.',
         })),
       };
     },
   });
 
-  const draft = await service.submit(request({
+  const answer = await service.submit(request({
     instruction: '好，开始吧',
     existingProjectId: PROJECT_ID,
   }));
   const providerPrompt = JSON.parse(transportInput.messages[1].content);
 
-  assert.equal(draft.title, 'Portfolio homepage');
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
   assert.equal(providerPrompt.instruction, '好，开始吧');
-  assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
-    brief_version: 'builder-working-brief.v1',
-    source: 'recent_chat_proposal',
-    latest_user_goal: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维项目卡片。',
-    assistant_proposal: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
-    approved_plan: null,
-    use_when_instruction_is_contextual: true,
-  });
-  assert.deepEqual(providerPrompt.build_context_snapshot.execution_basis, 'working_brief');
-  assert.deepEqual(providerPrompt.build_context_snapshot.working_brief, {
-    available: true,
-    source: 'recent_chat_proposal',
-    contextual_build_ready: true,
-  });
-  assert.equal(providerPrompt.build_context_snapshot.workspace_basis, 'selected_project_workspace');
+  assert.equal(providerPrompt.conversation_brief.working_brief, null);
   assert.equal(providerPrompt.conversation_brief.latest_plan, null);
-  assert.match(transportInput.messages[0].content, /working_brief is requirements context/u);
+  assert.match(transportInput.messages[0].content, /builder_conversation_explanation/u);
+  assert.doesNotMatch(transportInput.messages[0].content, /builder_code_change_operations/u);
   assert.match(transportInput.messages[1].content, /三维项目卡片/u);
   assert.doesNotMatch(
     transportInput.messages[1].content,
-    /builder-(?:project|conversation|turn|task|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
+    /builder-working-brief|recent_chat_proposal|builder-(?:project|conversation|turn|task|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
   );
 });
 

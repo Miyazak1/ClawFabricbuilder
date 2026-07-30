@@ -530,7 +530,7 @@ test('generates an unsaved code-change candidate from verified base context', as
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
 });
 
-test('passes a main-derived working brief into contextual build provider prompts', async () => {
+test('does not infer contextual build admission from transcript-only proposals', async () => {
   const rawRequest = request({ instruction: '好，开始吧' });
   let transportInput;
   const adapter = createBuilderGenerationHostAdapter(dependencies({
@@ -554,26 +554,19 @@ test('passes a main-derived working brief into contextual build provider prompts
 
   assert.equal(result.title, 'Portfolio homepage');
   assert.equal(userPrompt.instruction, '好，开始吧');
-  assert.deepEqual(userPrompt.conversation_brief.working_brief, {
-    brief_version: 'builder-working-brief.v1',
-    source: 'recent_chat_proposal',
-    latest_user_goal: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
-    assistant_proposal: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
-    approved_plan: null,
-    use_when_instruction_is_contextual: true,
-  });
+  assert.equal(userPrompt.conversation_brief.working_brief, null);
   assert.deepEqual(userPrompt.build_context_snapshot, {
     snapshot_version: 'builder-build-context-snapshot.v1',
     route: 'build',
     dispatch: 'build',
     confidence: 'high',
     matched_signals: ['clear_build'],
-    execution_basis: 'working_brief',
+    execution_basis: 'explicit_instruction',
     workspace_basis: 'new_project_request',
     working_brief: {
-      available: true,
-      source: 'recent_chat_proposal',
-      contextual_build_ready: true,
+      available: false,
+      source: null,
+      contextual_build_ready: false,
     },
     latest_plan: {
       available: false,
@@ -589,7 +582,7 @@ test('passes a main-derived working brief into contextual build provider prompts
   assert.match(transportInput[0].messages[1].content, /三维项目卡片/u);
   assert.doesNotMatch(
     transportInput[0].messages[1].content,
-    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
+    /builder-working-brief|recent_chat_proposal|builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
   );
 });
 

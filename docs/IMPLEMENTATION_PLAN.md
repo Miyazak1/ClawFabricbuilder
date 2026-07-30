@@ -485,14 +485,15 @@ Evidence requirements:
   generation prompt construction still receives only replayed Conversation
   events and excludes the current request turn, but it now derives both a
   structured `latest_plan` object with `proposed`, `approved`, or `rejected`
-  state and a bounded `working_brief` object from recent confirmed discussion.
+  state and a bounded `working_brief` object from durable task briefs or
+  approved plans.
   Code generation prompts may use an approved latest plan and may use
   `working_brief` when the user gives a contextual approval such as "按刚才说的做",
-  but must not treat merely proposed or rejected plans as write approval. This
-  working brief is derived only from confirmed user goals plus assistant
-  proposal/plan language; ordinary explanatory questions such as preview-blank
-  diagnosis remain available as recent chat entries but are not promoted into an
-  implementation target. This adds no renderer authority, IPC/preload surface, provider/credential
+  but must not treat merely proposed or rejected plans as write approval. A
+  contextual implementation target now comes only from a durable task capsule
+  brief or an approved plan; ordinary chat transcript, assistant proposal
+  wording, or preview-blank diagnosis remain available as recent chat entries
+  but are not promoted into an implementation target. This adds no renderer authority, IPC/preload surface, provider/credential
   exposure, source mutation, Git evidence, Save authority, or Project Revision
   fact; it only makes the existing main-owned prompt context more faithful to
   the conversation;
@@ -539,17 +540,18 @@ Evidence requirements:
   be revived by a short execution phrase. The visible renderer guard is backed
   by a main-owned submit guard: for contextual execution phrases, main re-reads
   the renderer-safe Task Stream projection and permits build only when that
-  projection contains an approved plan or a recent confirmed user goal plus
-  assistant proposal. Missing, malformed, or explanatory-only context falls
+  projection contains an approved plan, a durable task-brief update, or a
+  current proposed candidate/result context. Missing, malformed,
+  transcript-only, or explanatory-only context falls
   closed to ordinary answer. Capability or discussion questions such as
   "Can you build a login page?", "Should we create a dashboard first?", or
   "可以帮我做一个登录页吗？" also remain chat turns even when a source folder is
   already bound; a bound workspace is only a build prerequisite, not an intent
-  amplifier. The main-owned prompt brief now accepts natural exploration goals
-  such as "我想先聊一下这个作品集首页怎么做，目标是..." when they are followed by
-  an assistant proposal and a later contextual execution phrase; this makes the
-  approved execution use the prior discussion without treating the earlier chat
-  itself as file-change approval. Read-only exploratory diagnosis such as
+  amplifier. The main-owned prompt brief keeps natural exploration goals
+  such as "我想先聊一下这个作品集首页怎么做，目标是..." as conversation entries,
+  but a later contextual execution phrase can use them only after an
+  `update_brief` turn records the durable task capsule or a plan is approved.
+  Read-only exploratory diagnosis such as
   "我想知道这个网站为什么预览空白。" remains explanation context even if the
   assistant answer begins with "可以先查看..."; a later "开始吧" after that
   diagnosis still falls closed to answer. This creates no renderer-owned draft, provider

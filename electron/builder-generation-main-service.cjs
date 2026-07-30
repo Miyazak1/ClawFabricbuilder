@@ -181,10 +181,6 @@ const NO_PROJECT_STATUS_QUESTION_PATTERNS = Object.freeze([
   /(?:这个项目|当前项目|项目|预览|preview).{0,24}(?:是什么|做什么|干什么|为什么|为何|怎么回事|空白|blank|状态|有没有)/iu,
   /^(?:what are you doing|what can you do)[?!.]*$/iu,
 ]);
-const PRIOR_BUILD_CONFIRMED_USER_PATTERN =
-  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现|想要|希望|需要).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|^(?:(?:我|我们)?(?:想|想要|要|希望|需要|打算|准备|计划|考虑))(?!\s*(?:先)?(?:知道|了解|问|问一下|看看|看一下|搞清楚|确认一下|解释|说明|分析|对比))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|修改|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|作品集|3d|ui)|(?:confirmed|decided|goal|requirements?|want|would like|need|hope|plan|intend).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
-const PRIOR_BUILD_ASSISTANT_PROPOSAL_PATTERN =
-  /(?:(?:方案是|计划是|建议|可以先|我会|我将|接下来会|可以按).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:plan is|proposal is|approach is|recommend|suggest|i will|i would|next i will|we can).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 const BUILDER_TASK_STREAM_READ_RESULT_VERSION = 'builder-task-stream-read-result.v1';
 
 function normalizedIntentText(instruction) {
@@ -453,9 +449,8 @@ function taskStreamRunKey(item) {
 function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
   try {
     const items = taskStreamItemsForSubmitContext(value, expectedProjectId);
-    let latestUserGoal = null;
-    let latestAssistantProposal = null;
     let latestPlan = null;
+    let hasCandidateContext = false;
     const planTextsByRun = new Map();
     for (const item of items) {
       const itemKind = optionalValueAt(item, 'item_kind');
@@ -464,31 +459,20 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
         if (optionalValueAt(brief, 'contextual_build_ready') === true) return true;
         continue;
       }
-      if (itemKind === 'user_message') {
-        const text = messageTextFromTaskStreamItem(item, 'message');
-        if (text !== null && PRIOR_BUILD_CONFIRMED_USER_PATTERN.test(text)) {
-          latestUserGoal = text;
-        }
-        continue;
-      }
       if (itemKind === 'run_completed') {
         const resultKind = optionalValueAt(item, 'result_kind');
         const text = messageTextFromTaskStreamItem(item, 'assistant_message');
         const runKey = taskStreamRunKey(item);
+        if (resultKind === 'candidate' && optionalValueAt(item, 'candidate') !== null) {
+          hasCandidateContext = true;
+          continue;
+        }
         if (resultKind === 'plan') {
           if (runKey !== null && text !== null) {
             planTextsByRun.set(runKey, text);
             latestPlan = { state: 'proposed', text };
           }
           continue;
-        }
-        if (
-          resultKind === 'explanation'
-          && latestUserGoal !== null
-          && text !== null
-          && PRIOR_BUILD_ASSISTANT_PROPOSAL_PATTERN.test(text)
-        ) {
-          latestAssistantProposal = text;
         }
         continue;
       }
@@ -505,7 +489,7 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
       }
     }
     if (latestPlan !== null) return latestPlan.state === 'approved';
-    return latestAssistantProposal !== null;
+    return hasCandidateContext;
   } catch {
     return false;
   }

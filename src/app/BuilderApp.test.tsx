@@ -67,6 +67,11 @@ function createContextualBuildTaskStreamWire() {
     ...wire,
     conversation: {
       ...wire.conversation,
+      head_sequence: 5,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 5,
+      },
       items: [
         {
           item_kind: 'user_message',
@@ -104,8 +109,24 @@ function createContextualBuildTaskStreamWire() {
           candidate: null,
         },
         {
-          item_kind: 'turn_completed',
+          item_kind: 'task_brief_updated',
           sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task: {
+            task_id: PENDING_TASK_ID,
+            title: 'Current project brief',
+          },
+          brief: {
+            status: 'ready',
+            summary: '我想先聊一下这个作品集首页怎么做，目标是星空背景和项目列表。 方案是先做单页静态作品集，包含 hero、项目卡片和联系入口。',
+            contextual_build_ready: true,
+          },
+          recorded_state: 'updated',
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 5,
           turn_id: TURN_ID,
           run_id: RUN_ID,
           outcome: 'answered',

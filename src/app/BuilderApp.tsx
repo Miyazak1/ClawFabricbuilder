@@ -134,12 +134,6 @@ type BuilderWindowControlsBridge = Readonly<{
 const WINDOW_CONTROL_KEYS = new Set(['close', 'minimize', 'readState', 'toggleMaximize']);
 const WINDOW_CONTROL_RESULT_KEYS = new Set(['result_version', 'ok']);
 const WINDOW_STATE_KEYS = new Set(['state_version', 'maximized']);
-const PRIOR_BUILD_CONTEXT_TEXT_PATTERN =
-  /(?:方案|计划|实现|创建|生成|做一个|做个|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:plan|build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
-const PRIOR_BUILD_COMMITMENT_TEXT_PATTERN =
-  /(?:(?:确认|决定|确定|需求|目标|要做|要实现|准备做|准备实现|想要|希望|需要).*(?:做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|^(?:(?:我|我们)?(?:想|想要|要|希望|需要|打算|准备|计划|考虑))(?!\s*(?:先)?(?:知道|了解|问|问一下|看看|看一下|搞清楚|确认一下|解释|说明|分析|对比))[^?？]*(?:做|创建|生成|实现|设计|开发|搭建|修改|页面|网页|网站|应用|功能|布局|组件|登录页|仪表盘|看板|作品集|3d|ui)|(?:confirmed|decided|goal|requirements?|want|would like|need|hope|plan|intend).*\b(?:build|implement|create|make|modify|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
-const PRIOR_BUILD_PROPOSAL_TEXT_PATTERN =
-  /(?:(?:方案是|计划是|我会|我将|接下来会|可以按|建议先).*(?:做一个|做个|创建|生成|实现|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘)|(?:plan is|proposal is|i will|i would|next i will|we can).*\b(?:build|implement|create|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 const COMPOSER_BRIEF_MAX_TEXT_LENGTH = 260;
 const COMPOSER_BRIEF_INTERNAL_TEXT_PATTERN =
   /builder-(?:project|conversation|turn|task|run|message|conversation-event|generation-draft):|sha256:|request_digest|provider|credential|api[_-]?key|source_tree|commit_oid|tree_oid|receipt/iu;
@@ -519,10 +513,6 @@ function hasPriorBuildContext(
       hasContext = item.plan_state === 'approved';
       continue;
     }
-    if (item.item_kind === 'user_message') {
-      if (PRIOR_BUILD_COMMITMENT_TEXT_PATTERN.test(item.message.text)) hasContext = true;
-      continue;
-    }
     if (item.item_kind !== 'run_completed' || item.terminal_status !== 'succeeded') continue;
     if (item.result_kind === 'plan') {
       hasContext = false;
@@ -531,18 +521,6 @@ function hasPriorBuildContext(
     if (item.result_kind === 'candidate') {
       hasContext = true;
       continue;
-    }
-    if (
-      item.assistant_message !== null
-      && (
-        PRIOR_BUILD_PROPOSAL_TEXT_PATTERN.test(item.assistant_message.text)
-        || (
-          hasContext
-          && PRIOR_BUILD_CONTEXT_TEXT_PATTERN.test(item.assistant_message.text)
-        )
-      )
-    ) {
-      hasContext = true;
     }
   }
   return hasContext;
@@ -575,8 +553,6 @@ function composerWorkingBrief(
   ) return null;
 
   const planTextsByRun = new Map<string, Readonly<{ sequence: number; text: string }>>();
-  let latestUserGoal: Readonly<{ sequence: number; text: string }> | null = null;
-  let latestAssistantProposal: Readonly<{ sequence: number; text: string }> | null = null;
   let latestPlan: Readonly<{ sequence: number; state: 'approved' | 'proposed' | 'rejected'; text: string }> | null = null;
   let latestCandidate: Readonly<{ sequence: number; text: string }> | null = null;
   let latestTaskBrief: Readonly<{ sequence: number; text: string }> | null = null;
@@ -585,13 +561,6 @@ function composerWorkingBrief(
     if (item.item_kind === 'task_brief_updated') {
       if (item.brief.contextual_build_ready) {
         latestTaskBrief = Object.freeze({ sequence: item.sequence, text: item.brief.summary });
-      }
-      continue;
-    }
-    if (item.item_kind === 'user_message') {
-      const text = compactComposerBriefText(item.message.text);
-      if (text !== null && PRIOR_BUILD_COMMITMENT_TEXT_PATTERN.test(text)) {
-        latestUserGoal = Object.freeze({ sequence: item.sequence, text });
       }
       continue;
     }
@@ -609,15 +578,6 @@ function composerWorkingBrief(
         const runKey = taskStreamRunKey(item);
         planTextsByRun.set(runKey, Object.freeze({ sequence: item.sequence, text }));
         latestPlan = Object.freeze({ sequence: item.sequence, state: 'proposed', text });
-        continue;
-      }
-      if (
-        item.result_kind === 'explanation'
-        && latestUserGoal !== null
-        && text !== null
-        && PRIOR_BUILD_PROPOSAL_TEXT_PATTERN.test(text)
-      ) {
-        latestAssistantProposal = Object.freeze({ sequence: item.sequence, text });
       }
       continue;
     }
@@ -661,15 +621,6 @@ function composerWorkingBrief(
       summary: latestTaskBrief.text,
     }));
     candidateSequences.set(key, latestTaskBrief.sequence);
-  }
-  if (latestUserGoal !== null && latestAssistantProposal !== null) {
-    const key = `${visibleProjectId}:current-brief:${latestUserGoal.sequence}:${latestAssistantProposal.sequence}`;
-    candidates.push(Object.freeze({
-      key,
-      label: 'Current brief',
-      summary: `${latestUserGoal.text} ${latestAssistantProposal.text}`,
-    }));
-    candidateSequences.set(key, latestAssistantProposal.sequence);
   }
   if (candidates.length === 0) return null;
   return candidates.reduce((latest, candidate) => (

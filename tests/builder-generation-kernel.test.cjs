@@ -739,7 +739,7 @@ test('filters route decision matched signals to the public prompt allowlist', ()
   );
 });
 
-test('includes a bounded prior conversation brief for context-grounded build prompts', () => {
+test('keeps transcript-only proposals out of contextual build admission', () => {
   const rawRequest = request({ instruction: '按刚才方案实现', existingProjectId: PROJECT_ID });
   const descriptor = createBuilderGenerationPromptDescriptor({
     request: rawRequest,
@@ -765,14 +765,7 @@ test('includes a bounded prior conversation brief for context-grounded build pro
       },
     ],
     latest_plan: null,
-    working_brief: {
-      brief_version: 'builder-working-brief.v1',
-      source: 'recent_chat_proposal',
-      latest_user_goal: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
-      assistant_proposal: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
-      approved_plan: null,
-      use_when_instruction_is_contextual: true,
-    },
+    working_brief: null,
   });
   assert.deepEqual(context.build_context_snapshot, {
     snapshot_version: 'builder-build-context-snapshot.v1',
@@ -780,12 +773,12 @@ test('includes a bounded prior conversation brief for context-grounded build pro
     dispatch: 'build',
     confidence: 'high',
     matched_signals: ['contextual_build'],
-    execution_basis: 'working_brief',
+    execution_basis: 'missing_context_not_admitted',
     workspace_basis: 'selected_project_workspace',
     working_brief: {
-      available: true,
-      source: 'recent_chat_proposal',
-      contextual_build_ready: true,
+      available: false,
+      source: null,
+      contextual_build_ready: false,
     },
     latest_plan: {
       available: false,
@@ -801,7 +794,7 @@ test('includes a bounded prior conversation brief for context-grounded build pro
   assert.match(descriptor.user_instruction, /单页静态作品集/u);
   assert.doesNotMatch(
     descriptor.user_instruction,
-    /builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer|按刚才方案实现.*按刚才方案实现/iu,
+    /builder-working-brief|recent_chat_proposal|builder-(?:project|turn|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer|按刚才方案实现.*按刚才方案实现/iu,
   );
 });
 
@@ -1080,14 +1073,7 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
       },
     ],
     latest_plan: null,
-    working_brief: {
-      brief_version: 'builder-working-brief.v1',
-      source: 'recent_chat_proposal',
-      latest_user_goal: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
-      assistant_proposal: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
-      approved_plan: null,
-      use_when_instruction_is_contextual: true,
-    },
+    working_brief: null,
   });
   assert.match(descriptor.user_instruction, /星空背景/u);
   assert.match(descriptor.user_instruction, /export const Gallery/u);
