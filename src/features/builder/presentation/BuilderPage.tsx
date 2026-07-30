@@ -20,6 +20,9 @@ import {
   ListChecks,
   LockKeyhole,
   Maximize2,
+  Minimize2,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   RefreshCw,
   StopCircle,
@@ -1842,6 +1845,27 @@ export function BuilderPage({
     setActiveArtifactTab(null);
   }
 
+  function minimizeArtifactSidebar(): void {
+    shouldFollowChatRef.current = false;
+    const fallbackTab = activeArtifactTab ?? defaultArtifactTab ?? artifactTabs[0] ?? null;
+    setArtifactWidth(ARTIFACT_MIN_WIDTH_PX);
+    if (fallbackTab !== null) {
+      setActiveArtifactTab(fallbackTab);
+    }
+  }
+
+  function toggleArtifactSidebar(): void {
+    shouldFollowChatRef.current = false;
+    if (showArtifactSidebar) {
+      setActiveArtifactTab(null);
+      return;
+    }
+    const fallbackTab = activeArtifactTab ?? defaultArtifactTab ?? artifactTabs[0] ?? null;
+    if (fallbackTab !== null) {
+      setActiveArtifactTab(fallbackTab);
+    }
+  }
+
   function startArtifactResize(event: ReactPointerEvent<HTMLButtonElement>): void {
     event.preventDefault();
     const sidebar = artifactSidebarRef.current;
@@ -2235,6 +2259,58 @@ export function BuilderPage({
       showPreview={showResultFlow}
     />
   ) : null;
+  const workspaceControls = artifactTabs.length > 0 ? (
+    <div
+      aria-label="Workspace artifact controls"
+      className="cf-builder-workspace-controls"
+      data-builder-workspace-controls="true"
+      data-builder-workspace-drawer-visible={showArtifactSidebar ? 'true' : 'false'}
+      role="group"
+    >
+      <div className="cf-builder-workspace-control-tabs" role="group" aria-label="Artifact views">
+        {artifactTabs.map((tab) => (
+          <button
+            aria-label={`Open ${artifactTabLabel(tab)}`}
+            aria-pressed={activeArtifactTab === tab}
+            className="cf-builder-workspace-control-button cf-builder-workspace-tab-control"
+            data-active={activeArtifactTab === tab ? 'true' : undefined}
+            data-builder-workspace-control-tab={tab}
+            key={tab}
+            onClick={() => openArtifactTab(tab)}
+            title={`Open ${artifactTabLabel(tab)}`}
+            type="button"
+          >
+            <ArtifactTabIcon tab={tab} />
+          </button>
+        ))}
+      </div>
+      <button
+        aria-label="Minimize artifact panel"
+        className="cf-builder-workspace-control-button"
+        data-builder-minimize-artifact="true"
+        onClick={minimizeArtifactSidebar}
+        title="Minimize artifact panel"
+        type="button"
+      >
+        <Minimize2 aria-hidden="true" className="size-3.5" />
+      </button>
+      <button
+        aria-label={showArtifactSidebar ? 'Hide artifact panel' : 'Show artifact panel'}
+        aria-pressed={showArtifactSidebar}
+        className="cf-builder-workspace-control-button"
+        data-builder-toggle-artifact="true"
+        onClick={toggleArtifactSidebar}
+        title={showArtifactSidebar ? 'Hide artifact panel' : 'Show artifact panel'}
+        type="button"
+      >
+        {showArtifactSidebar ? (
+          <PanelRightClose aria-hidden="true" className="size-3.5" />
+        ) : (
+          <PanelRightOpen aria-hidden="true" className="size-3.5" />
+        )}
+      </button>
+    </div>
+  ) : null;
   const artifactSidebar = showArtifactSidebar && activeArtifactTab !== null ? (
     <BuilderArtifactSidebar
       activeTab={activeArtifactTab}
@@ -2350,6 +2426,7 @@ export function BuilderPage({
               Back to current
             </button>
           ) : null}
+          {workspaceControls}
         </div>
       </header>
 

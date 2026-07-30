@@ -2000,6 +2000,7 @@ describe('BuilderPage v2', () => {
     const composer = container.querySelector('[data-builder-composer="true"]');
     const artifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const artifactSummary = container.querySelector('[data-builder-artifact-summary="true"]');
+    const workspaceControls = container.querySelector('[data-builder-workspace-controls="true"]');
     const preview = container.querySelector('[data-builder-preview-flow="true"]');
     const code = container.querySelector('[data-builder-code-flow="true"]');
     const source = container.querySelector('[data-builder-source-flow="true"]');
@@ -2015,6 +2016,18 @@ describe('BuilderPage v2', () => {
     expect(artifactResizeHandle?.getAttribute('aria-orientation')).toBe('vertical');
     expect(artifactResizeHandle?.getAttribute('aria-valuemin')).toBe('360');
     expect(artifactResizeHandle?.getAttribute('aria-valuenow')).toBe('480');
+    expect(workspaceControls).not.toBeNull();
+    expect(workspaceControls?.getAttribute('data-builder-workspace-drawer-visible')).toBe('true');
+    expect(workspaceControls?.textContent).not.toContain('Terminal');
+    expect(workspaceControls?.textContent).not.toContain('Open location');
+    expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-pressed'))
+      .toBe('true');
+    expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="source"]')).toBeNull();
+    expect(container.querySelector('[data-builder-minimize-artifact="true"]')?.getAttribute('aria-label'))
+      .toBe('Minimize artifact panel');
+    expect(container.querySelector('[data-builder-toggle-artifact="true"]')?.getAttribute('aria-label'))
+      .toBe('Hide artifact panel');
     expect(conversation).not.toBeNull();
     expect(draftLanding).not.toBeNull();
     expect(review).not.toBeNull();
@@ -2105,6 +2118,28 @@ describe('BuilderPage v2', () => {
     expect(maxEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
       .toBe('560px');
+    click(container, '[data-builder-minimize-artifact="true"]');
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('360px');
+    click(container, '[data-builder-toggle-artifact="true"]');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
+    expect(container.querySelector('[data-builder-workspace-controls="true"]')?.getAttribute('data-builder-workspace-drawer-visible'))
+      .toBe('false');
+    expect(container.querySelector('[data-builder-toggle-artifact="true"]')?.getAttribute('aria-label'))
+      .toBe('Show artifact panel');
+    expect(container.querySelector('[data-builder-composer="true"]')?.closest('[data-builder-chat-main="true"]'))
+      .toBe(chatMain);
+    click(container, '[data-builder-workspace-control-tab="changes"]');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('changes');
+    expect(container.querySelector('[data-builder-workspace-controls="true"]')?.getAttribute('data-builder-workspace-drawer-visible'))
+      .toBe('true');
+    expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')?.getAttribute('aria-pressed'))
+      .toBe('true');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('preview');
     click(container, '[data-builder-expand-preview="true"]');
     const expandedPreview = container.querySelector('[data-builder-expanded-preview="true"]');
     const expandedResult = expandedPreview?.querySelector('[data-builder-result-placement="expanded"]');

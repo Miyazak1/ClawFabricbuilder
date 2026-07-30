@@ -1080,11 +1080,61 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .cf-builder-toolbar-actions:empty {
   display: none;
+}
+
+.cf-builder-workspace-controls {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cf-surface-muted) 84%, var(--cf-surface));
+  padding: 3px;
+}
+
+.cf-builder-workspace-control-tabs {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.cf-builder-workspace-control-button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cf-text-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.cf-builder-workspace-control-button:hover,
+.cf-builder-workspace-control-button:focus-visible {
+  border-color: var(--cf-border);
+  background: var(--cf-surface);
+  color: var(--cf-text);
+  outline: none;
+}
+
+.cf-builder-workspace-control-button[data-active="true"],
+.cf-builder-workspace-controls[data-builder-workspace-drawer-visible="true"] [data-builder-toggle-artifact="true"] {
+  border-color: color-mix(in srgb, var(--cf-primary) 34%, var(--cf-border));
+  background: color-mix(in srgb, var(--cf-primary) 9%, var(--cf-surface));
+  color: var(--cf-primary-text);
 }
 
 .cf-builder-review-checkpoint {
