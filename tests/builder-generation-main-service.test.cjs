@@ -77,6 +77,54 @@ function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
 }
 
+function routeDecisionForTurn({
+  input,
+  projectId,
+  messageId,
+  taskId,
+  mode,
+  decidedAtMs = 1,
+}) {
+  const fallback = mode === 'work'
+    ? {
+      route: 'build',
+      confidence: 'high',
+      matched_signals: ['test_work_turn'],
+      downgraded_from: null,
+      downgrade_reason: null,
+      required_permissions: ['write_project'],
+      permission_result: 'allowed',
+      dispatch: 'build',
+    }
+    : {
+      route: 'answer',
+      confidence: 'high',
+      matched_signals: ['test_question_turn'],
+      downgraded_from: null,
+      downgrade_reason: null,
+      required_permissions: [],
+      permission_result: 'not_required',
+      dispatch: 'reply',
+    };
+  const hint = input.route_decision_hint ?? fallback;
+  return {
+    decision_id: `builder-route-decision:${messageId.slice('builder-message:'.length)}`,
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: projectId,
+    message_id: messageId,
+    task_id: taskId,
+    route: hint.route,
+    confidence: hint.confidence,
+    matched_signals: [...hint.matched_signals],
+    downgraded_from: hint.downgraded_from,
+    downgrade_reason: hint.downgrade_reason,
+    required_permissions: [...hint.required_permissions],
+    permission_result: hint.permission_result,
+    dispatch: hint.dispatch,
+    decided_at_ms: decidedAtMs,
+  };
+}
+
 function request({ instruction = 'Make a focus timer.', existingProjectId = null } = {}) {
   const unsigned = {
     version: 'builder-generation-request.v2',
@@ -450,6 +498,7 @@ function conversationService(options = {}) {
       const turnId = `builder-turn:${suffix}`;
       const taskId = `builder-task:${suffix}`;
       const runId = `builder-run:${suffix}`;
+      const messageId = `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`;
       const first = createBuilderConversationEvent({
         record_version: CONVERSATION_EVENT_VERSION,
         record_kind: CONVERSATION_EVENT_KIND,
@@ -461,7 +510,7 @@ function conversationService(options = {}) {
         previous_event: null,
         payload: {
           message: {
-            message_id: `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`,
+            message_id: messageId,
             text: input.instruction,
           },
           turn_id: turnId,
@@ -473,6 +522,13 @@ function conversationService(options = {}) {
               : 'Update Builder project',
           },
           base_revision: input.base_revision,
+          route_decision: routeDecisionForTurn({
+            input,
+            projectId: input.project_id,
+            messageId,
+            taskId,
+            mode: 'work',
+          }),
         },
         authority: { ...CONVERSATION_AUTHORITY },
       });
@@ -527,6 +583,7 @@ function conversationService(options = {}) {
       const conversationId = `builder-conversation:${projectUuid}`;
       const turnId = `builder-turn:${suffix}`;
       const runId = `builder-run:${suffix}`;
+      const messageId = `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`;
       const first = createBuilderConversationEvent({
         record_version: CONVERSATION_EVENT_VERSION,
         record_kind: CONVERSATION_EVENT_KIND,
@@ -538,13 +595,20 @@ function conversationService(options = {}) {
         previous_event: null,
         payload: {
           message: {
-            message_id: `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`,
+            message_id: messageId,
             text: input.question,
           },
           turn_id: turnId,
           mode: 'question',
           task: null,
           base_revision: input.base_revision,
+          route_decision: routeDecisionForTurn({
+            input,
+            projectId: input.project_id,
+            messageId,
+            taskId: null,
+            mode: 'question',
+          }),
         },
         authority: { ...CONVERSATION_AUTHORITY },
       });
@@ -831,6 +895,8 @@ function conversationService(options = {}) {
         throw error;
       }
       const suffix = UUIDS[(generation + 4) % UUIDS.length];
+      const messageId = `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`;
+      const taskId = `builder-task:${suffix}`;
       const first = createBuilderConversationEvent({
         record_version: CONVERSATION_EVENT_VERSION,
         record_kind: CONVERSATION_EVENT_KIND,
@@ -842,16 +908,23 @@ function conversationService(options = {}) {
         previous_event: null,
         payload: {
           message: {
-            message_id: `builder-message:${UUIDS[(generation + 6) % UUIDS.length]}`,
+            message_id: messageId,
             text: input.instruction,
           },
           turn_id: `builder-turn:${suffix}`,
           mode: 'work',
           task: {
-            task_id: `builder-task:${suffix}`,
+            task_id: taskId,
             title: 'Revise unsaved draft',
           },
           base_revision: draft.base_revision,
+          route_decision: routeDecisionForTurn({
+            input: { route_decision_hint: null },
+            projectId: input.admission.project_id,
+            messageId,
+            taskId,
+            mode: 'work',
+          }),
         },
         authority: { ...CONVERSATION_AUTHORITY },
       });
@@ -2333,6 +2406,39 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(lifecycle.calls.question.length, 12);
   assert.equal(lifecycle.calls.candidate.length, 3);
   assert.equal(lifecycle.calls.explanation.length, 12);
+  assert.deepEqual(
+    lifecycle.calls.begin.map((input) => input.route_decision_hint.route),
+    ['build', 'build', 'build'],
+  );
+  assert.deepEqual(
+    lifecycle.calls.begin.map((input) => input.route_decision_hint.required_permissions),
+    [['write_project'], ['write_project'], ['write_project']],
+  );
+  assert.deepEqual(
+    lifecycle.calls.question.map((input) => input.route_decision_hint.route),
+    [
+      'clarify',
+      'clarify',
+      'update_brief',
+      'update_brief',
+      'clarify',
+      'clarify',
+      'clarify',
+      'answer',
+      'answer',
+      'answer',
+      'clarify',
+      'clarify',
+    ],
+  );
+  assert.deepEqual(
+    lifecycle.calls.question.map((input) => input.route_decision_hint.dispatch),
+    Array(12).fill('reply'),
+  );
+  assert.deepEqual(
+    lifecycle.calls.question.slice(-2).map((input) => input.route_decision_hint.downgrade_reason),
+    ['missing_prior_build_context', 'missing_prior_build_context'],
+  );
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 3);
   assert.deepEqual(startedEvents.map((event) => event.event_version), Array(15).fill('builder-generation-started.v1'));
@@ -2426,6 +2532,8 @@ test('allows contextual composer submit only with main-owned build context', asy
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.candidate.length, 1);
   assert.equal(lifecycle.calls.explanation.length, 0);
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 1);
 });
@@ -2468,6 +2576,8 @@ test('allows current artifact defect feedback only with main-owned build context
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.candidate.length, 1);
   assert.equal(lifecycle.calls.explanation.length, 0);
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_defect']);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 1);
 });
@@ -2509,6 +2619,8 @@ test('keeps contextual submit in answer route after read-only exploratory diagno
   assert.equal(lifecycle.calls.question.length, 1);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 0);
 });

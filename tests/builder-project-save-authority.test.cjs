@@ -82,6 +82,26 @@ function gitRequestId(index) {
   return `builder-git-request:${uuid(index)}`;
 }
 
+function routeDecision(payload) {
+  const route = payload.mode === 'work' ? 'build' : 'answer';
+  return {
+    decision_id: `builder-route-decision:${payload.message.message_id.slice('builder-message:'.length)}`,
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: PROJECT_ID,
+    message_id: payload.message.message_id,
+    task_id: payload.task === null ? null : payload.task.task_id,
+    route,
+    confidence: 'high',
+    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch: route === 'build' ? 'build' : 'reply',
+    decided_at_ms: 1,
+  };
+}
+
 function temporaryRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-builder-save-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -90,9 +110,17 @@ function temporaryRoot(t) {
 
 function append(events, eventType, payload, commandIndex) {
   const previous = events.at(-1) ?? null;
-  const normalizedPayload = eventType === 'run_completed'
+  const basePayload = eventType === 'run_completed'
     ? { ...payload, plan_admission: payload.plan_admission ?? null }
     : payload;
+  const normalizedPayload = eventType === 'turn_submitted'
+    ? {
+      ...basePayload,
+      route_decision: Object.hasOwn(basePayload, 'route_decision')
+        ? basePayload.route_decision
+        : routeDecision(basePayload),
+    }
+    : basePayload;
   return [...events, createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,

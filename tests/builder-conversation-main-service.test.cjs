@@ -421,6 +421,17 @@ test('records start and terminal events before allowing a later turn to continue
       'turn_submitted',
       'run_started',
     ]);
+    assert.equal(first.events[0].payload.route_decision.route, 'build');
+    assert.equal(first.events[0].payload.route_decision.dispatch, 'build');
+    assert.deepEqual(first.events[0].payload.route_decision.required_permissions, ['write_project']);
+    assert.equal(
+      first.events[0].payload.route_decision.message_id,
+      first.events[0].payload.message.message_id,
+    );
+    assert.equal(
+      first.events[0].payload.route_decision.task_id,
+      first.events[0].payload.task.task_id,
+    );
 
     const terminal = item.service.complete_candidate({
       context: first,
@@ -673,6 +684,13 @@ test('records a question explanation without creating task, candidate, or revisi
     ]);
     assert.equal(context.events[0].payload.mode, 'question');
     assert.equal(context.events[0].payload.task, null);
+    assert.equal(context.events[0].payload.route_decision.route, 'answer');
+    assert.equal(context.events[0].payload.route_decision.dispatch, 'reply');
+    assert.equal(context.events[0].payload.route_decision.task_id, null);
+    assert.equal(
+      context.events[0].payload.route_decision.message_id,
+      context.events[0].payload.message.message_id,
+    );
     assert.equal(context.events[1].payload.task_id, null);
 
     const terminal = item.service.complete_explanation({
@@ -731,6 +749,58 @@ test('records a question explanation without creating task, candidate, or revisi
     if (restartedDatabase !== null) restartedDatabase.close();
     try { item.database.close(); } catch { /* already closed during restart check */ }
     removeRoot(item.root);
+  }
+});
+
+test('records route decision hints as main-bound turn evidence', () => {
+  const item = fixture();
+  try {
+    const question = item.service.begin_question({
+      project_id: PROJECT_ID,
+      question: '我想先聊一下这个页面怎么做',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'clarify',
+        confidence: 'high',
+        matched_signals: ['work_discussion'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'reply',
+      },
+    });
+    assert.equal(question.events[0].payload.mode, 'question');
+    assert.equal(question.events[0].payload.route_decision.route, 'clarify');
+    assert.deepEqual(question.events[0].payload.route_decision.matched_signals, ['work_discussion']);
+    item.service.complete_explanation({
+      context: question,
+      assistant_text: 'We can discuss the layout before making files.',
+    });
+
+    const plan = item.service.begin_work({
+      project_id: PROJECT_ID,
+      instruction: '先给我方案',
+      request_digest: REQUEST_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'plan',
+        confidence: 'high',
+        matched_signals: ['explicit_plan'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: ['project_read'],
+        permission_result: 'allowed',
+        dispatch: 'plan',
+      },
+    });
+    assert.equal(plan.events.at(-2).payload.route_decision.route, 'plan');
+    assert.equal(plan.events.at(-2).payload.route_decision.dispatch, 'plan');
+    assert.deepEqual(plan.events.at(-2).payload.route_decision.required_permissions, ['project_read']);
+    assert.equal(plan.events.at(-1).payload.task_id, plan.ids.task_id);
+  } finally {
+    item.close();
   }
 });
 

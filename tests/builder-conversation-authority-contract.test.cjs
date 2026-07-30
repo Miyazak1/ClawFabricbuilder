@@ -32,10 +32,38 @@ function previous(event) {
   };
 }
 
+function routeDecision(payload) {
+  const route = payload.mode === 'work' ? 'build' : 'answer';
+  return {
+    decision_id: `builder-route-decision:${payload.message.message_id.slice('builder-message:'.length)}`,
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: PROJECT_ID,
+    message_id: payload.message.message_id,
+    task_id: payload.task === null ? null : payload.task.task_id,
+    route,
+    confidence: 'high',
+    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch: route === 'build' ? 'build' : 'reply',
+    decided_at_ms: 1,
+  };
+}
+
 function event(sequence, type, payload, previousEvent = null) {
-  const normalizedPayload = type === 'run_completed'
+  const basePayload = type === 'run_completed'
     ? { ...payload, plan_admission: payload.plan_admission ?? null }
     : payload;
+  const normalizedPayload = type === 'turn_submitted'
+    ? {
+      ...basePayload,
+      route_decision: Object.hasOwn(basePayload, 'route_decision')
+        ? basePayload.route_decision
+        : routeDecision(basePayload),
+    }
+    : basePayload;
   return createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',

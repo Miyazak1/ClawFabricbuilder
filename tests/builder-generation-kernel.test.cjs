@@ -71,6 +71,26 @@ function builderId(kind, index) {
   return `builder-${kind}:123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
 }
 
+function routeDecision(payload, projectId = PROJECT_ID) {
+  const route = payload.mode === 'work' ? 'build' : 'answer';
+  return {
+    decision_id: `builder-route-decision:${payload.message.message_id.slice('builder-message:'.length)}`,
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: projectId,
+    message_id: payload.message.message_id,
+    task_id: payload.task === null ? null : payload.task.task_id,
+    route,
+    confidence: 'high',
+    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch: route === 'build' ? 'build' : 'reply',
+    decided_at_ms: 1,
+  };
+}
+
 function planSourceContextResult(
   rawRequest = request({ existingProjectId: PROJECT_ID }),
   rawFiles = [
@@ -172,6 +192,13 @@ function conversationEvents({
   baseRevision = null,
 } = {}) {
   const conversationId = `builder-conversation:${projectId.slice('builder-project:'.length)}`;
+  const turnPayload = {
+    message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: instruction },
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    mode: 'work',
+    task: { task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174004', title: 'Create Builder project' },
+    base_revision: baseRevision,
+  };
   const first = createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
@@ -181,13 +208,7 @@ function conversationEvents({
     command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174001',
     event_type: 'turn_submitted',
     previous_event: null,
-    payload: {
-      message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: instruction },
-      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
-      mode: 'work',
-      task: { task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174004', title: 'Create Builder project' },
-      base_revision: baseRevision,
-    },
+    payload: { ...turnPayload, route_decision: routeDecision(turnPayload, projectId) },
     authority: {
       context_authority: 'project_local_conversation',
       permission_admission: 'not_granted',

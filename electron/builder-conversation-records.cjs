@@ -35,6 +35,7 @@ const ID_PATTERNS = Object.freeze({
   event: /^builder-conversation-event:[0-9a-f]{64}$/u,
   command: /^builder-command:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   message: /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  route_decision: /^builder-route-decision:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   turn: /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   task: /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   run: /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -66,6 +67,37 @@ const TASK_KEYS = Object.freeze(['task_id', 'title']);
 const ASSISTANT_MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const REVISION_REFERENCE_KEYS = Object.freeze(['revision_receipt_digest', 'revision_number']);
+const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
+const ROUTE_DECISION_KEYS = Object.freeze([
+  'decision_id', 'decision_version', 'project_id', 'message_id', 'task_id',
+  'route', 'confidence', 'matched_signals', 'downgraded_from',
+  'downgrade_reason', 'required_permissions', 'permission_result', 'dispatch',
+  'decided_at_ms',
+]);
+const ROUTE_DECISION_ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
+const ROUTE_DECISION_CONFIDENCES = Object.freeze(['low', 'medium', 'high']);
+const ROUTE_DECISION_DOWNGRADE_REASONS = Object.freeze([
+  'ambiguous_build_intent',
+  'missing_prior_build_context',
+  'workspace_required',
+]);
+const ROUTE_DECISION_PERMISSIONS = Object.freeze(['project_read', 'write_project']);
+const ROUTE_DECISION_PERMISSION_RESULTS = Object.freeze([
+  'not_required',
+  'allowed',
+  'ask',
+  'denied',
+]);
+const ROUTE_DECISION_DISPATCHES = Object.freeze([
+  'reply',
+  'brief_update',
+  'plan',
+  'build',
+  'ask_workspace',
+  'ask_permission',
+  'blocked',
+]);
+const ROUTE_DECISION_SIGNAL_PATTERN = /^[a-z][a-z0-9_:-]{0,63}$/u;
 const CANDIDATE_RESULT_KEYS = Object.freeze([
   'draft_id', 'title', 'summary', 'git_candidate_receipt',
 ]);
@@ -86,7 +118,9 @@ const PLAN_REVIEW_KEYS = Object.freeze([
   'reviewer_id', 'reviewed_at_ms', 'decision',
 ]);
 const PAYLOAD_KEYS = Object.freeze({
-  turn_submitted: Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision']),
+  turn_submitted: Object.freeze([
+    'message', 'turn_id', 'mode', 'task', 'base_revision', 'route_decision',
+  ]),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
   candidate_rejected: Object.freeze([
     'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'decision',
@@ -221,6 +255,7 @@ function safeConversationId(value) { return safePattern(value, ID_PATTERNS.conve
 function safeEventId(value) { return safePattern(value, ID_PATTERNS.event, 128); }
 function safeCommandId(value) { return safePattern(value, ID_PATTERNS.command, 96); }
 function safeMessageId(value) { return safePattern(value, ID_PATTERNS.message, 88); }
+function safeRouteDecisionId(value) { return safePattern(value, ID_PATTERNS.route_decision, 96); }
 function safeTurnId(value) { return safePattern(value, ID_PATTERNS.turn, 88); }
 function safeTaskId(value) { return safePattern(value, ID_PATTERNS.task, 88); }
 function safeRunId(value) { return safePattern(value, ID_PATTERNS.run, 88); }
@@ -294,6 +329,96 @@ function sanitizeTask(value) {
   return {
     task_id: safeTaskId(valueAt(value, 'task_id')),
     title: safeText(valueAt(value, 'title'), 200, 1_024, false),
+  };
+}
+
+function safeEnum(value, options) {
+  if (typeof value !== 'string' || !options.includes(value)) fail();
+  return value;
+}
+
+function sanitizeRouteDecisionSignals(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 1 || value.length > 8) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
+  const seen = new Set();
+  const signals = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const signal = safePattern(descriptor.value, ROUTE_DECISION_SIGNAL_PATTERN, 64);
+    if (seen.has(signal)) fail();
+    seen.add(signal);
+    signals.push(signal);
+  }
+  return signals;
+}
+
+function sanitizeRouteDecisionPermissions(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > 2) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
+  const seen = new Set();
+  const permissions = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const permission = safeEnum(descriptor.value, ROUTE_DECISION_PERMISSIONS);
+    if (seen.has(permission)) fail();
+    seen.add(permission);
+    permissions.push(permission);
+  }
+  return permissions;
+}
+
+function sanitizeNullableRoute(value) {
+  return value === null ? null : safeEnum(value, ROUTE_DECISION_ROUTES);
+}
+
+function sanitizeNullableDowngradeReason(value) {
+  return value === null ? null : safeEnum(value, ROUTE_DECISION_DOWNGRADE_REASONS);
+}
+
+function sanitizeRouteDecision(value, projectId, messageId, taskId, mode) {
+  assertExactObject(value, ROUTE_DECISION_KEYS);
+  const project = safeProjectId(valueAt(value, 'project_id'));
+  const message = safeMessageId(valueAt(value, 'message_id'));
+  const task = nullable(valueAt(value, 'task_id'), safeTaskId);
+  const route = safeEnum(valueAt(value, 'route'), ROUTE_DECISION_ROUTES);
+  const requiredPermissions = sanitizeRouteDecisionPermissions(valueAt(value, 'required_permissions'));
+  const permissionResult = safeEnum(valueAt(value, 'permission_result'), ROUTE_DECISION_PERMISSION_RESULTS);
+  const dispatch = safeEnum(valueAt(value, 'dispatch'), ROUTE_DECISION_DISPATCHES);
+  const downgradedFrom = sanitizeNullableRoute(valueAt(value, 'downgraded_from'));
+  const downgradeReason = sanitizeNullableDowngradeReason(valueAt(value, 'downgrade_reason'));
+  if (project !== projectId || message !== messageId || task !== taskId) fail();
+  if ((downgradedFrom === null) !== (downgradeReason === null)) fail();
+  if (downgradedFrom !== null && downgradedFrom === route) fail();
+  if ((requiredPermissions.length === 0) !== (permissionResult === 'not_required')) fail();
+  if (requiredPermissions.includes('write_project') !== (route === 'build')) fail();
+  if (requiredPermissions.includes('project_read') && route !== 'plan') fail();
+  if (mode === 'question' && (task !== null || ['build', 'plan'].includes(route))) fail();
+  if (mode === 'work' && (task === null || !['build', 'plan'].includes(route))) fail();
+  if (route === 'build' && !['build', 'ask_workspace', 'ask_permission', 'blocked'].includes(dispatch)) fail();
+  if (route === 'plan' && !['plan', 'ask_permission', 'blocked'].includes(dispatch)) fail();
+  if (route === 'update_brief' && !['reply', 'brief_update'].includes(dispatch)) fail();
+  if ((route === 'answer' || route === 'clarify') && dispatch !== 'reply') fail();
+  return {
+    decision_id: safeRouteDecisionId(valueAt(value, 'decision_id')),
+    decision_version: valueAt(value, 'decision_version') === ROUTE_DECISION_VERSION
+      ? ROUTE_DECISION_VERSION
+      : fail(),
+    project_id: project,
+    message_id: message,
+    task_id: task,
+    route,
+    confidence: safeEnum(valueAt(value, 'confidence'), ROUTE_DECISION_CONFIDENCES),
+    matched_signals: sanitizeRouteDecisionSignals(valueAt(value, 'matched_signals')),
+    downgraded_from: downgradedFrom,
+    downgrade_reason: downgradeReason,
+    required_permissions: requiredPermissions,
+    permission_result: permissionResult,
+    dispatch,
+    decided_at_ms: safeTimestamp(valueAt(value, 'decided_at_ms')),
   };
 }
 
@@ -475,14 +600,22 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
     case 'turn_submitted': {
       const mode = valueAt(value, 'mode');
       if (mode !== 'question' && mode !== 'work') fail();
+      const message = sanitizeMessage(valueAt(value, 'message'));
       const task = sanitizeTask(valueAt(value, 'task'));
       if ((mode === 'work') !== (task !== null)) fail();
       return {
-        message: sanitizeMessage(valueAt(value, 'message')),
+        message,
         turn_id: safeTurnId(valueAt(value, 'turn_id')),
         mode,
         task,
         base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+        route_decision: sanitizeRouteDecision(
+          valueAt(value, 'route_decision'),
+          projectId,
+          message.message_id,
+          task?.task_id ?? null,
+          mode,
+        ),
       };
     }
     case 'turn_steered':

@@ -95,7 +95,34 @@ function sourceTree(files = []) {
   return createBuilderProjectSourceTree({ files });
 }
 
+function routeDecision(payload, projectId = PROJECT_ID) {
+  const route = payload.mode === 'work' ? 'build' : 'answer';
+  return {
+    decision_id: `builder-route-decision:${payload.message.message_id.slice('builder-message:'.length)}`,
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: projectId,
+    message_id: payload.message.message_id,
+    task_id: payload.task === null ? null : payload.task.task_id,
+    route,
+    confidence: 'high',
+    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch: route === 'build' ? 'build' : 'reply',
+    decided_at_ms: 1,
+  };
+}
+
 function events({ requestDigest = request().request_digest, baseRevision = null } = {}) {
+  const turnPayload = {
+    message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: 'Make a focus timer.' },
+    turn_id: TURN_ID,
+    mode: 'work',
+    task: { task_id: TASK_ID, title: 'Create Builder project' },
+    base_revision: baseRevision,
+  };
   const first = createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
@@ -105,13 +132,7 @@ function events({ requestDigest = request().request_digest, baseRevision = null 
     command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174001',
     event_type: 'turn_submitted',
     previous_event: null,
-    payload: {
-      message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: 'Make a focus timer.' },
-      turn_id: TURN_ID,
-      mode: 'work',
-      task: { task_id: TASK_ID, title: 'Create Builder project' },
-      base_revision: baseRevision,
-    },
+    payload: { ...turnPayload, route_decision: routeDecision(turnPayload) },
     authority: {
       context_authority: 'project_local_conversation',
       permission_admission: 'not_granted',
@@ -156,6 +177,16 @@ function priorProposalEvents(currentRequest) {
   };
   const priorTurnId = 'builder-turn:123e4567-e89b-42d3-a456-426614174101';
   const priorRunId = 'builder-run:123e4567-e89b-42d3-a456-426614174102';
+  const priorPayload = {
+    message: {
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174104',
+      text: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+    },
+    turn_id: priorTurnId,
+    mode: 'question',
+    task: null,
+    base_revision: null,
+  };
   const priorSubmitted = createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
@@ -165,16 +196,7 @@ function priorProposalEvents(currentRequest) {
     command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174103',
     event_type: 'turn_submitted',
     previous_event: null,
-    payload: {
-      message: {
-        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174104',
-        text: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
-      },
-      turn_id: priorTurnId,
-      mode: 'question',
-      task: null,
-      base_revision: null,
-    },
+    payload: { ...priorPayload, route_decision: routeDecision(priorPayload) },
     authority,
   });
   const priorStarted = createBuilderConversationEvent({
@@ -248,6 +270,16 @@ function priorProposalEvents(currentRequest) {
     },
     authority,
   });
+  const currentPayload = {
+    message: {
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174110',
+      text: currentRequest.instruction,
+    },
+    turn_id: TURN_ID,
+    mode: 'work',
+    task: { task_id: TASK_ID, title: 'Create Builder project' },
+    base_revision: null,
+  };
   const currentSubmitted = createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
@@ -261,16 +293,7 @@ function priorProposalEvents(currentRequest) {
       event_id: priorTurnCompleted.event_id,
       event_digest: priorTurnCompleted.event_digest,
     },
-    payload: {
-      message: {
-        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174110',
-        text: currentRequest.instruction,
-      },
-      turn_id: TURN_ID,
-      mode: 'work',
-      task: { task_id: TASK_ID, title: 'Create Builder project' },
-      base_revision: null,
-    },
+    payload: { ...currentPayload, route_decision: routeDecision(currentPayload) },
     authority,
   });
   const currentStarted = createBuilderConversationEvent({

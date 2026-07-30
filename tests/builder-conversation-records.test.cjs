@@ -57,10 +57,43 @@ const BASE_REVISION = Object.freeze({
 function uuid(index) { return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`; }
 function typedId(kind, index) { return `builder-${kind}:${uuid(index)}`; }
 
-function create(type, payload, previous = null, index = 1) {
-  const normalizedPayload = type === 'run_completed'
+function routeDecision(payload, index = 1, overrides = {}) {
+  const taskId = payload.task === null ? null : payload.task.task_id;
+  const route = payload.mode === 'work' ? 'build' : 'answer';
+  return {
+    decision_id: typedId('route-decision', index),
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: PROJECT_ID,
+    message_id: payload.message.message_id,
+    task_id: taskId,
+    route,
+    confidence: 'high',
+    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch: route === 'build' ? 'build' : 'reply',
+    decided_at_ms: index,
+    ...overrides,
+  };
+}
+
+function payloadWithRouteDecision(type, payload, index) {
+  const normalized = type === 'run_completed'
     ? { ...payload, plan_admission: payload.plan_admission ?? null }
     : payload;
+  if (type !== 'turn_submitted') return normalized;
+  return {
+    ...normalized,
+    route_decision: Object.hasOwn(normalized, 'route_decision')
+      ? normalized.route_decision
+      : routeDecision(normalized, index),
+  };
+}
+
+function create(type, payload, previous = null, index = 1) {
+  const normalizedPayload = payloadWithRouteDecision(type, payload, index);
   return createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -264,6 +297,22 @@ test('creates deterministic project-bound command and event evidence with canoni
   assert.match(event.event_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.match(event.event_id, /^builder-conversation-event:[0-9a-f]{64}$/u);
   assert.equal(event.conversation_id, CONVERSATION_ID);
+  assert.deepEqual(event.payload.route_decision, {
+    decision_id: typedId('route-decision', 1),
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: PROJECT_ID,
+    message_id: typedId('message', 1),
+    task_id: typedId('task', 1),
+    route: 'build',
+    confidence: 'high',
+    matched_signals: ['test_work_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: ['write_project'],
+    permission_result: 'allowed',
+    dispatch: 'build',
+    decided_at_ms: 1,
+  });
   assert.equal(Object.isFrozen(event), true);
   assert.equal(Object.isFrozen(event.payload.base_revision), true);
   assert.equal(sanitizeBuilderConversationEvent(structuredClone(event)).event_digest, event.event_digest);
@@ -621,6 +670,8 @@ test('rejects non-derived conversation/event/command evidence and payload drift'
     message: { message_id: typedId('message', 1), text: 'Build a timer.' },
     turn_id: typedId('turn', 1), mode: 'question', task: null, base_revision: null,
   });
+  const payloadWithoutRouteDecision = { ...event.payload };
+  delete payloadWithoutRouteDecision.route_decision;
   const cases = [
     { ...event, conversation_id: `builder-conversation:${uuid(99)}` },
     { ...event, record_version: 'builder-conversation-event.v1' },
@@ -631,6 +682,11 @@ test('rejects non-derived conversation/event/command evidence and payload drift'
     { ...event, payload: { ...event.payload, base_revision: { revision: 3, revision_digest: DIGEST_A } } },
     { ...event, payload: { ...event.payload, base_revision: { ...BASE_REVISION, revision: 3 } } },
     { ...event, payload: { ...event.payload, base_revision: { ...BASE_REVISION, commit_oid: DIGEST_A } } },
+    { ...event, payload: payloadWithoutRouteDecision },
+    { ...event, payload: { ...event.payload, route_decision: { ...event.payload.route_decision, project_id: `builder-project:${uuid(99)}` } } },
+    { ...event, payload: { ...event.payload, route_decision: { ...event.payload.route_decision, message_id: typedId('message', 2) } } },
+    { ...event, payload: { ...event.payload, route_decision: { ...event.payload.route_decision, task_id: typedId('task', 1) } } },
+    { ...event, payload: { ...event.payload, route_decision: { ...event.payload.route_decision, route: 'build' } } },
     { ...event, payload: { ...event.payload, source: '<html></html>' } },
     { ...event, authority: { ...event.authority, permission_admission: 'granted' } },
   ];

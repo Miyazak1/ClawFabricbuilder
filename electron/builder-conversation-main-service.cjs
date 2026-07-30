@@ -59,6 +59,35 @@ const APPROVED_PLAN_READ_RESULT_VERSION = 'builder-conversation-approved-plan-re
 const REQUIRED_OPTION_KEYS = Object.freeze(['metadataAuthority', 'createUuid', 'nowMs']);
 const OPTION_KEYS = Object.freeze([...REQUIRED_OPTION_KEYS, 'onTaskStreamChanged']);
 const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
+const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
+const ROUTE_DECISION_HINT_KEYS = Object.freeze([
+  'route', 'confidence', 'matched_signals', 'downgraded_from',
+  'downgrade_reason', 'required_permissions', 'permission_result', 'dispatch',
+]);
+const ROUTE_DECISION_ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
+const ROUTE_DECISION_CONFIDENCES = Object.freeze(['low', 'medium', 'high']);
+const ROUTE_DECISION_DOWNGRADE_REASONS = Object.freeze([
+  'ambiguous_build_intent',
+  'missing_prior_build_context',
+  'workspace_required',
+]);
+const ROUTE_DECISION_PERMISSIONS = Object.freeze(['project_read', 'write_project']);
+const ROUTE_DECISION_PERMISSION_RESULTS = Object.freeze([
+  'not_required',
+  'allowed',
+  'ask',
+  'denied',
+]);
+const ROUTE_DECISION_DISPATCHES = Object.freeze([
+  'reply',
+  'brief_update',
+  'plan',
+  'build',
+  'ask_workspace',
+  'ask_permission',
+  'blocked',
+]);
+const ROUTE_DECISION_SIGNAL_PATTERN = /^[a-z][a-z0-9_:-]{0,63}$/u;
 const RUN_PROGRESS_STAGES = Object.freeze([
   'context_ready',
   'provider_request_started',
@@ -254,6 +283,65 @@ function newId(createUuid, prefix) {
   return `${prefix}:${safeUuid(Reflect.apply(createUuid, undefined, []))}`;
 }
 
+function routeDecisionIdForMessage(messageId) {
+  const prefix = 'builder-message:';
+  if (typeof messageId !== 'string' || !messageId.startsWith(prefix)) fail();
+  return `builder-route-decision:${safeUuid(messageId.slice(prefix.length))}`;
+}
+
+function defaultRouteDecisionHint(mode) {
+  if (mode === 'work') {
+    return freezeDeep({
+      route: 'build',
+      confidence: 'high',
+      matched_signals: ['main_work_turn'],
+      downgraded_from: null,
+      downgrade_reason: null,
+      required_permissions: ['write_project'],
+      permission_result: 'allowed',
+      dispatch: 'build',
+    });
+  }
+  return freezeDeep({
+    route: 'answer',
+    confidence: 'high',
+    matched_signals: ['main_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: [],
+    permission_result: 'not_required',
+    dispatch: 'reply',
+  });
+}
+
+function routeDecisionEvidence({ decisionId, projectId, messageId, taskId, mode, decidedAtMs, hint }) {
+  const normalizedHint = hint === null ? defaultRouteDecisionHint(mode) : hint;
+  if (mode === 'question' && ['build', 'plan'].includes(normalizedHint.route)) fail();
+  if (mode === 'work' && !['build', 'plan'].includes(normalizedHint.route)) fail();
+  if (normalizedHint.required_permissions.includes('write_project') !== (normalizedHint.route === 'build')) fail();
+  if (normalizedHint.required_permissions.includes('project_read') && normalizedHint.route !== 'plan') fail();
+  if (normalizedHint.route === 'build' && !['build', 'ask_workspace', 'ask_permission', 'blocked'].includes(normalizedHint.dispatch)) fail();
+  if (normalizedHint.route === 'plan' && !['plan', 'ask_permission', 'blocked'].includes(normalizedHint.dispatch)) fail();
+  if (normalizedHint.route === 'update_brief' && !['reply', 'brief_update'].includes(normalizedHint.dispatch)) fail();
+  if ((normalizedHint.route === 'answer' || normalizedHint.route === 'clarify') && normalizedHint.dispatch !== 'reply') fail();
+  return freezeDeep({
+    decision_id: decisionId,
+    decision_version: ROUTE_DECISION_VERSION,
+    project_id: projectId,
+    message_id: messageId,
+    task_id: taskId,
+    route: normalizedHint.route,
+    confidence: normalizedHint.confidence,
+    matched_signals: [...normalizedHint.matched_signals],
+    downgraded_from: normalizedHint.downgraded_from,
+    downgrade_reason: normalizedHint.downgrade_reason,
+    required_permissions: [...normalizedHint.required_permissions],
+    permission_result: normalizedHint.permission_result,
+    dispatch: normalizedHint.dispatch,
+    decided_at_ms: decidedAtMs,
+  });
+}
+
 function eventHead(record) {
   return freezeDeep({
     sequence: record.sequence,
@@ -418,23 +506,104 @@ function sanitizeRevisionReference(value) {
   });
 }
 
+function safeEnum(value, allowed) {
+  if (typeof value !== 'string' || !allowed.includes(value)) fail();
+  return value;
+}
+
+function sanitizeRouteDecisionSignalList(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 1 || value.length > 8) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
+  const seen = new Set();
+  const signals = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const signal = safePattern(descriptor.value, ROUTE_DECISION_SIGNAL_PATTERN);
+    if (seen.has(signal)) fail();
+    seen.add(signal);
+    signals.push(signal);
+  }
+  return freezeDeep(signals);
+}
+
+function sanitizeRouteDecisionPermissionList(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > 2) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
+  const seen = new Set();
+  const permissions = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const permission = safeEnum(descriptor.value, ROUTE_DECISION_PERMISSIONS);
+    if (seen.has(permission)) fail();
+    seen.add(permission);
+    permissions.push(permission);
+  }
+  return freezeDeep(permissions);
+}
+
+function sanitizeRouteDecisionHint(value) {
+  if (value === null) return null;
+  exactObject(value, ROUTE_DECISION_HINT_KEYS);
+  const route = safeEnum(valueAt(value, 'route'), ROUTE_DECISION_ROUTES);
+  const requiredPermissions = sanitizeRouteDecisionPermissionList(valueAt(value, 'required_permissions'));
+  const permissionResult = safeEnum(valueAt(value, 'permission_result'), ROUTE_DECISION_PERMISSION_RESULTS);
+  const dispatch = safeEnum(valueAt(value, 'dispatch'), ROUTE_DECISION_DISPATCHES);
+  const downgradedFrom = valueAt(value, 'downgraded_from') === null
+    ? null
+    : safeEnum(valueAt(value, 'downgraded_from'), ROUTE_DECISION_ROUTES);
+  const downgradeReason = valueAt(value, 'downgrade_reason') === null
+    ? null
+    : safeEnum(valueAt(value, 'downgrade_reason'), ROUTE_DECISION_DOWNGRADE_REASONS);
+  if ((downgradedFrom === null) !== (downgradeReason === null)) fail();
+  if (downgradedFrom !== null && downgradedFrom === route) fail();
+  if ((requiredPermissions.length === 0) !== (permissionResult === 'not_required')) fail();
+  return freezeDeep({
+    route,
+    confidence: safeEnum(valueAt(value, 'confidence'), ROUTE_DECISION_CONFIDENCES),
+    matched_signals: sanitizeRouteDecisionSignalList(valueAt(value, 'matched_signals')),
+    downgraded_from: downgradedFrom,
+    downgrade_reason: downgradeReason,
+    required_permissions: requiredPermissions,
+    permission_result: permissionResult,
+    dispatch,
+  });
+}
+
 function sanitizeBeginRequest(value) {
-  exactObject(value, ['project_id', 'instruction', 'request_digest', 'base_revision']);
+  const keys = Reflect.ownKeys(value);
+  const hasRouteDecisionHint = keys.includes('route_decision_hint');
+  exactObject(value, hasRouteDecisionHint
+    ? ['project_id', 'instruction', 'request_digest', 'base_revision', 'route_decision_hint']
+    : ['project_id', 'instruction', 'request_digest', 'base_revision']);
   return freezeDeep({
     project_id: safeProjectId(valueAt(value, 'project_id')),
     instruction: safeText(valueAt(value, 'instruction'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+    route_decision_hint: hasRouteDecisionHint
+      ? sanitizeRouteDecisionHint(valueAt(value, 'route_decision_hint'))
+      : null,
   });
 }
 
 function sanitizeQuestionRequest(value) {
-  exactObject(value, ['project_id', 'question', 'request_digest', 'base_revision']);
+  const keys = Reflect.ownKeys(value);
+  const hasRouteDecisionHint = keys.includes('route_decision_hint');
+  exactObject(value, hasRouteDecisionHint
+    ? ['project_id', 'question', 'request_digest', 'base_revision', 'route_decision_hint']
+    : ['project_id', 'question', 'request_digest', 'base_revision']);
   return freezeDeep({
     project_id: safeProjectId(valueAt(value, 'project_id')),
     question: safeText(valueAt(value, 'question'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+    route_decision_hint: hasRouteDecisionHint
+      ? sanitizeRouteDecisionHint(valueAt(value, 'route_decision_hint'))
+      : null,
   });
 }
 
@@ -847,6 +1016,15 @@ function createBuilderConversationMainService(rawOptions) {
           }
           : null,
         base_revision: request.base_revision,
+        route_decision: routeDecisionEvidence({
+          decisionId: routeDecisionIdForMessage(ids.message_id),
+          projectId: request.project_id,
+          messageId: ids.message_id,
+          taskId: mode === 'work' ? ids.task_id : null,
+          mode,
+          decidedAtMs: recordedAtMs,
+          hint: request.route_decision_hint,
+        }),
       },
     });
     const second = eventAt({
@@ -968,6 +1146,15 @@ function createBuilderConversationMainService(rawOptions) {
             title: 'Apply approved plan',
           },
           base_revision: request.base_revision,
+          route_decision: routeDecisionEvidence({
+            decisionId: routeDecisionIdForMessage(ids.message_id),
+            projectId: request.project_id,
+            messageId: ids.message_id,
+            taskId: ids.task_id,
+            mode: 'work',
+            decidedAtMs: recordedAtMs,
+            hint: null,
+          }),
         },
       });
       const second = eventAt({
@@ -1083,6 +1270,15 @@ function createBuilderConversationMainService(rawOptions) {
             title: 'Revise unsaved draft',
           },
           base_revision: draft.base_revision,
+          route_decision: routeDecisionEvidence({
+            decisionId: routeDecisionIdForMessage(ids.message_id),
+            projectId: admission.project_id,
+            messageId: ids.message_id,
+            taskId: ids.task_id,
+            mode: 'work',
+            decidedAtMs: recordedAtMs,
+            hint: null,
+          }),
         },
       });
       const second = eventAt({

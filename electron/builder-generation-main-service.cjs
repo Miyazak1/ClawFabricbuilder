@@ -232,6 +232,128 @@ function shouldSubmitAsExplanation(
   return true;
 }
 
+function routeDecisionHint({
+  route,
+  confidence,
+  matchedSignals,
+  downgradedFrom = null,
+  downgradeReason = null,
+  requiredPermissions = [],
+  permissionResult = 'not_required',
+  dispatch = 'reply',
+}) {
+  return freezeDeep({
+    route,
+    confidence,
+    matched_signals: [...matchedSignals],
+    downgraded_from: downgradedFrom,
+    downgrade_reason: downgradeReason,
+    required_permissions: [...requiredPermissions],
+    permission_result: permissionResult,
+    dispatch,
+  });
+}
+
+function answerRouteDecisionHint(matchedSignals = ['read_only']) {
+  return routeDecisionHint({
+    route: 'answer',
+    confidence: 'high',
+    matchedSignals,
+  });
+}
+
+function planRouteDecisionHint() {
+  return routeDecisionHint({
+    route: 'plan',
+    confidence: 'high',
+    matchedSignals: ['explicit_plan'],
+    requiredPermissions: ['project_read'],
+    permissionResult: 'allowed',
+    dispatch: 'plan',
+  });
+}
+
+function buildRouteDecisionHint(matchedSignals = ['explicit_build']) {
+  return routeDecisionHint({
+    route: 'build',
+    confidence: 'high',
+    matchedSignals,
+    requiredPermissions: ['write_project'],
+    permissionResult: 'allowed',
+    dispatch: 'build',
+  });
+}
+
+function classifySubmitRouteDecision(instruction, hasContextualBuildContext = false) {
+  const text = normalizedIntentText(instruction);
+  if (text.length === 0) return answerRouteDecisionHint(['empty_message']);
+  const hasQuestionMark = /[?\uFF1F]\s*$/u.test(text);
+  const hasExplanationIntent =
+    ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
+    || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
+  if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['casual_chat']);
+  if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'clarify',
+      confidence: 'high',
+      matchedSignals: ['work_discussion'],
+    });
+  }
+  if (matchesAny(CAPABILITY_QUESTION_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'clarify',
+      confidence: 'high',
+      matchedSignals: ['capability_question'],
+    });
+  }
+  if (hasQuestionMark && hasExplanationIntent) return answerRouteDecisionHint(['question_explanation']);
+  if (hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
+  if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'clarify',
+      confidence: 'medium',
+      matchedSignals: ['vague_change'],
+      downgradedFrom: 'build',
+      downgradeReason: 'ambiguous_build_intent',
+    });
+  }
+  if (matchesAny(EXPLORATORY_WORK_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'update_brief',
+      confidence: 'medium',
+      matchedSignals: ['exploratory_work'],
+      dispatch: 'reply',
+    });
+  }
+  if (matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)) {
+    return hasContextualBuildContext
+      ? buildRouteDecisionHint(['current_artifact_defect'])
+      : routeDecisionHint({
+        route: 'clarify',
+        confidence: 'medium',
+        matchedSignals: ['current_artifact_defect'],
+        downgradedFrom: 'build',
+        downgradeReason: 'missing_prior_build_context',
+      });
+  }
+  if (matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)) {
+    return hasContextualBuildContext
+      ? buildRouteDecisionHint(['contextual_build'])
+      : routeDecisionHint({
+        route: 'clarify',
+        confidence: 'medium',
+        matchedSignals: ['contextual_build'],
+        downgradedFrom: 'build',
+        downgradeReason: 'missing_prior_build_context',
+      });
+  }
+  if (
+    ENGLISH_WORK_INTENT_PATTERN.test(text)
+    || CHINESE_WORK_INTENT_PATTERN.test(text)
+  ) return buildRouteDecisionHint(['explicit_build']);
+  return answerRouteDecisionHint(['default_chat']);
+}
+
 function localCasualChatReply(instruction) {
   const text = normalizedIntentText(instruction);
   if (text.length === 0 || !CASUAL_CHAT_INTENT_PATTERN.test(text)) return null;
@@ -1189,6 +1311,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const activeContexts = new Map();
   const retryableContexts = new Map();
   const pendingRetryContexts = new Map();
+  const pendingGenerateRouteDecisionHints = new Map();
   const generationContexts = new WeakMap();
   const draftContinuationContexts = new WeakMap();
   const pendingDraftContinuationContexts = new Map();
@@ -1196,6 +1319,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const providerOutputStates = new WeakMap();
   const liveOutputContextsByRunId = new Map();
   const pendingDraftAnswerContexts = new Map();
+  const pendingAnswerRouteDecisionHints = new Map();
   const pendingApprovedPlanEditContexts = new Map();
   const pendingPlanRequests = new Map();
   const planContexts = new WeakMap();
@@ -1548,6 +1672,8 @@ function createBuilderGenerationMainService(rawOptions) {
         return generationContextFromConversation(request, base, retriedContext);
       }
       const existingProjectId = request.existing_project_id;
+      const routeDecisionHint = pendingGenerateRouteDecisionHints.get(key)
+        ?? buildRouteDecisionHint(['direct_generate']);
       const projectId = existingProjectId === null
         ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
         : existingProjectId;
@@ -1572,6 +1698,7 @@ function createBuilderGenerationMainService(rawOptions) {
           instruction: request.instruction,
           request_digest: request.request_digest,
           base_revision: base.base_revision,
+          route_decision_hint: routeDecisionHint,
         }],
       );
       activeContexts.set(
@@ -1635,6 +1762,8 @@ function createBuilderGenerationMainService(rawOptions) {
   async function buildExplanationContext(request) {
     try {
       const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
+      const routeDecisionHint = pendingAnswerRouteDecisionHints.get(key)
+        ?? answerRouteDecisionHint(['direct_answer']);
       const draftAnswerContext = pendingDraftAnswerContexts.get(key);
       if (draftAnswerContext !== undefined) {
         pendingDraftAnswerContexts.delete(key);
@@ -1650,6 +1779,7 @@ function createBuilderGenerationMainService(rawOptions) {
             question: request.instruction,
             request_digest: request.request_digest,
             base_revision: draftAnswerContext.base_revision,
+            route_decision_hint: routeDecisionHint,
           }],
         );
         activeContexts.set(key, conversationContext);
@@ -1692,6 +1822,7 @@ function createBuilderGenerationMainService(rawOptions) {
           question: request.instruction,
           request_digest: request.request_digest,
           base_revision: base.base_revision,
+          route_decision_hint: routeDecisionHint,
         }],
       );
       activeContexts.set(
@@ -1736,6 +1867,7 @@ function createBuilderGenerationMainService(rawOptions) {
           instruction: request.instruction,
           request_digest: request.request_digest,
           base_revision: base.base_revision,
+          route_decision_hint: planRouteDecisionHint(),
         }],
       );
       activeContexts.set(key, conversationContext);
@@ -2176,13 +2308,14 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function startGenerate(request, retryableContext) {
+  function startGenerate(request, retryableContext, routeDecisionHint = null) {
     const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
     const routeConflict = rejectIfOtherRouteInFlight(GENERATE_OPERATION_PREFIX, request.request_digest);
     if (routeConflict) return routeConflict;
     if (retryableContext !== null) pendingRetryContexts.set(key, retryableContext);
+    if (routeDecisionHint !== null) pendingGenerateRouteDecisionHints.set(key, routeDecisionHint);
     const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
       const conversationContext = latestConversationContext(context, generationContexts.get(context));
@@ -2256,6 +2389,7 @@ function createBuilderGenerationMainService(rawOptions) {
       throw error;
     }).finally(() => {
       pendingRetryContexts.delete(key);
+      pendingGenerateRouteDecisionHints.delete(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -2483,12 +2617,18 @@ function createBuilderGenerationMainService(rawOptions) {
       request.instruction,
       hasContextualBuildContext,
     );
+    const routeDecision = classifySubmitRouteDecision(
+      request.instruction,
+      hasContextualBuildContext,
+    );
     if (!shouldAnswer && request.existing_project_id === null) {
       return Promise.reject(new BuilderGenerationMainServiceError(
         'builder_generation_project_workspace_required',
       ));
     }
-    return shouldAnswer ? answer(request) : startGenerate(request, null);
+    return shouldAnswer
+      ? startAnswer(request, routeDecision)
+      : startGenerate(request, null, routeDecision);
   }
 
   async function retryGenerate(rawRequest) {
@@ -2505,12 +2645,16 @@ function createBuilderGenerationMainService(rawOptions) {
     return startGenerate(request, retryableContext);
   }
 
-  function startAnswer(request) {
+  function startAnswer(request, routeDecisionHint = null) {
     const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
     const routeConflict = rejectIfOtherRouteInFlight(ANSWER_OPERATION_PREFIX, request.request_digest);
     if (routeConflict) return routeConflict;
+    pendingAnswerRouteDecisionHints.set(
+      key,
+      routeDecisionHint ?? answerRouteDecisionHint(['direct_answer']),
+    );
     const localReply = localReadOnlyReply(request);
     const operation = Promise.resolve(localReply === null
       ? host.explain(request)
@@ -2532,6 +2676,7 @@ function createBuilderGenerationMainService(rawOptions) {
       throw error;
     }).finally(() => {
       pendingDraftAnswerContexts.delete(key);
+      pendingAnswerRouteDecisionHints.delete(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });

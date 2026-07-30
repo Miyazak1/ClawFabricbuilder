@@ -46,12 +46,40 @@ function id(kind, index) {
   return `builder-${kind}:${uuid(index)}`;
 }
 
+function routeDecision(payload) {
+  const route = payload.mode === 'work' ? 'build' : 'answer';
+  return {
+    decision_id: `builder-route-decision:${payload.message.message_id.slice('builder-message:'.length)}`,
+    decision_version: 'builder-composer-route-decision.v1',
+    project_id: PROJECT_ID,
+    message_id: payload.message.message_id,
+    task_id: payload.task === null ? null : payload.task.task_id,
+    route,
+    confidence: 'high',
+    matched_signals: [payload.mode === 'work' ? 'test_work_turn' : 'test_question_turn'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: route === 'build' ? ['write_project'] : [],
+    permission_result: route === 'build' ? 'allowed' : 'not_required',
+    dispatch: route === 'build' ? 'build' : 'reply',
+    decided_at_ms: 1,
+  };
+}
+
 const TURN_ID = id('turn', 1);
 const TASK_ID = id('task', 1);
 const RUN_ID = id('run', 1);
 
 function append(events, eventType, payload, commandIndex = events.length + 1) {
   const previous = events.at(-1) ?? null;
+  const normalizedPayload = eventType === 'turn_submitted'
+    ? {
+      ...payload,
+      route_decision: Object.hasOwn(payload, 'route_decision')
+        ? payload.route_decision
+        : routeDecision(payload),
+    }
+    : payload;
   return [...events, createBuilderConversationEvent({
     record_version: CONVERSATION_EVENT_VERSION,
     record_kind: CONVERSATION_EVENT_KIND,
@@ -65,7 +93,7 @@ function append(events, eventType, payload, commandIndex = events.length + 1) {
       event_id: previous.event_id,
       event_digest: previous.event_digest,
     },
-    payload,
+    payload: normalizedPayload,
     authority: { ...CONVERSATION_AUTHORITY },
   })];
 }
