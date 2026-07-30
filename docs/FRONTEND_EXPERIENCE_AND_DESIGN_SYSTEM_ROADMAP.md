@@ -296,6 +296,24 @@ ClawFabric does not currently support arbitrary command-line execution as a
 user-facing tool. The architecture already treats command execution as a later
 permissioned capability, not as a renderer feature that can be added casually.
 
+Mature agent products use Terminal as an execution and verification surface,
+not merely as a place where the user can type commands:
+
+- Codex CLI ties command execution to approval modes such as suggest,
+  auto-edit, and full-auto.
+- Claude Code treats Bash and PowerShell as permissioned tools with allow,
+  ask, deny, sandbox, and project-directory scoping.
+- Cursor Agent exposes terminal commands through its run-mode policy, so
+  commands either run, ask first, or run in a restricted sandbox.
+- Cline requires explicit approval for terminal commands and file changes
+  unless the user enables narrower auto-approval behavior.
+
+The shared lesson is:
+
+```text
+Terminal = execution tool + permission system + visible log + verification evidence
+```
+
 Terminal support should be a later gated product capability with these rules:
 
 - no shell runs from the renderer;
@@ -313,6 +331,29 @@ Terminal support should be a later gated product capability with these rules:
 Terminal UI should appear as an artifact drawer tab only when the execution
 authority exists. Before that, the top-right workspace menu may show Terminal as
 disabled or omit it entirely.
+
+Terminal should be phased in:
+
+1. **Reserved UI**: the artifact drawer and workspace menu reserve a Terminal
+   destination, but it is hidden or disabled.
+2. **Command proposal records**: the chat or Logs tab can show suggested
+   commands and approval UI from fixture or non-executing records.
+3. **Controlled commands**: main may execute a small allowlist such as build,
+   lint, typecheck, and test commands, all tied to workspace and approval.
+4. **Runtime Terminal**: dev-server start/stop, dependency installation, port
+   management, open-in-browser, and publish checks become available only after
+   runtime preview, sandbox, timeout, kill, and output-boundary contracts exist.
+
+The first real command set should be validation-oriented, not open-ended:
+
+- build project;
+- run lint;
+- run typecheck;
+- run tests;
+- start/stop approved preview server.
+
+Dependency installation, arbitrary shell, network access, and publish commands
+should remain later, higher-permission capabilities.
 
 ## Visual Design System
 
