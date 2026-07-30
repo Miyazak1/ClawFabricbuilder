@@ -67,6 +67,7 @@
       "node_modules/dugite/git/LICENSE.txt"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]

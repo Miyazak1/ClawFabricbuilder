@@ -12,6 +12,7 @@ const mainSource = fs.readFileSync(mainPath, 'utf8');
 async function executeMain({
   env = {},
   failRegisterIndex = -1,
+  iconExists = false,
   isPackaged = true,
   realpathMap = {},
   returnOnThrow = false,
@@ -124,6 +125,9 @@ async function executeMain({
           mkdirSync(target) {
             calls.mkdir += 1;
             if (target.endsWith(`${path.sep}session-data`)) sessionCreated = true;
+          },
+          existsSync(target) {
+            return iconExists && target === path.join(path.dirname(mainPath), '..', 'build', 'icon.ico');
           },
           realpathSync: {
             native(target) {
@@ -249,11 +253,25 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.equal(browserWindowOptions.length, 1);
   assert.equal(browserWindowOptions[0].autoHideMenuBar, true);
   assert.equal(browserWindowOptions[0].frame, false);
+  assert.equal(browserWindowOptions[0].icon, undefined);
   assert.equal(browserWindowOptions[0].titleBarStyle, undefined);
   assert.equal(browserWindowOptions[0].titleBarOverlay, undefined);
   assert.equal(browserWindowOptions[0].webPreferences.contextIsolation, true);
   assert.equal(browserWindowOptions[0].webPreferences.nodeIntegration, false);
   assert.equal(browserWindowOptions[0].webPreferences.sandbox, true);
+});
+
+test('window startup uses the Builder icon when the local icon exists', async () => {
+  const { browserWindowOptions } = await executeMain({
+    iconExists: true,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.equal(browserWindowOptions.length, 1);
+  assert.equal(
+    browserWindowOptions[0].icon,
+    path.join(path.dirname(mainPath), '..', 'build', 'icon.ico'),
+  );
 });
 
 test('project folder dialog uses native Electron selection outside packaged canary automation', async () => {

@@ -130,6 +130,15 @@ function configurePackagedCanaryPaths() {
   return projectRootPath;
 }
 
+function resolveWindowIconPath() {
+  const iconPath = path.join(__dirname, '..', 'build', 'icon.ico');
+  try {
+    return fs.existsSync(iconPath) ? iconPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function createMainWindow() {
   Menu.setApplicationMenu(null);
   const window = new BrowserWindow({
@@ -140,6 +149,7 @@ function createMainWindow() {
     backgroundColor: '#f4f5f7',
     autoHideMenuBar: true,
     frame: false,
+    icon: resolveWindowIconPath(),
     show: false,
     webPreferences: {
       contextIsolation: true,
