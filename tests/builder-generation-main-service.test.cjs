@@ -2328,7 +2328,7 @@ test('passes prior conversation working brief into contextual submit provider pr
     nowMs: () => now++,
   });
   const priorRequest = request({
-    instruction: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+    instruction: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维项目卡片。',
     existingProjectId: PROJECT_ID,
   });
   const prior = conversation.begin_question({
@@ -2378,7 +2378,7 @@ test('passes prior conversation working brief into contextual submit provider pr
   assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
     brief_version: 'builder-working-brief.v1',
     source: 'recent_chat_proposal',
-    latest_user_goal: '我们确认要做一个带星空背景、鼠标视差和三维项目卡片的作品集首页。',
+    latest_user_goal: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维项目卡片。',
     assistant_proposal: '方案是做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
     approved_plan: null,
     use_when_instruction_is_contextual: true,

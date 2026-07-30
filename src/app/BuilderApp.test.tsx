@@ -74,7 +74,7 @@ function createContextualBuildTaskStreamWire() {
           turn_id: TURN_ID,
           message: {
             message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
-            text: '我们刚才确认要做一个带星空背景和项目列表的作品集首页。',
+            text: '我想先聊一下这个作品集首页怎么做，目标是星空背景和项目列表。',
           },
           message_kind: 'submitted',
           mode: 'question',

@@ -234,7 +234,7 @@ function priorConversationEvents(currentRequest) {
         turn_id: 'builder-turn:prior-discussion',
         mode: 'question',
         message: {
-          text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+          text: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
         },
       },
     },
@@ -524,7 +524,7 @@ test('includes a bounded prior conversation brief for context-grounded build pro
       {
         role: 'user',
         kind: 'question',
-        text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+        text: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
       },
       {
         role: 'assistant',
@@ -536,7 +536,7 @@ test('includes a bounded prior conversation brief for context-grounded build pro
     working_brief: {
       brief_version: 'builder-working-brief.v1',
       source: 'recent_chat_proposal',
-      latest_user_goal: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      latest_user_goal: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
       assistant_proposal: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
       approved_plan: null,
       use_when_instruction_is_contextual: true,
@@ -726,7 +726,7 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
       {
         role: 'user',
         kind: 'question',
-        text: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+        text: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
       },
       {
         role: 'assistant',
@@ -738,7 +738,7 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
     working_brief: {
       brief_version: 'builder-working-brief.v1',
       source: 'recent_chat_proposal',
-      latest_user_goal: '我们刚才确认要做一个带星空背景、鼠标视差和三维卡片的作品集首页。',
+      latest_user_goal: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
       assistant_proposal: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
       approved_plan: null,
       use_when_instruction_is_contextual: true,

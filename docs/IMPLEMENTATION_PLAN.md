@@ -513,7 +513,11 @@ Evidence requirements:
   "Can you build a login page?", "Should we create a dashboard first?", or
   "可以帮我做一个登录页吗？" also remain chat turns even when a source folder is
   already bound; a bound workspace is only a build prerequisite, not an intent
-  amplifier. This creates no renderer-owned draft, provider
+  amplifier. The main-owned prompt brief now accepts natural exploration goals
+  such as "我想先聊一下这个作品集首页怎么做，目标是..." when they are followed by
+  an assistant proposal and a later contextual execution phrase; this makes the
+  approved execution use the prior discussion without treating the earlier chat
+  itself as file-change approval. This creates no renderer-owned draft, provider
   call, Git evidence, Save fact, Project Revision, IPC/preload surface, or
   compatibility path;
 - the current durable run-progress checkpoint records fixed main-owned Run

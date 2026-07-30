@@ -1233,6 +1233,41 @@ execution readiness.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-30 Natural Discussion Working Brief Check
+
+This addendum records the conversation-grounded working brief checkpoint after
+the main-owned prompt context and submit guard were extended from explicit
+"confirmed" phrasing to natural exploratory goal discussion. It extends local
+generation routing, prompt-context, and package evidence only; it does not
+extend installer, real-provider DeepSeek canary, arbitrary generated-code
+execution, external-network permission, or general-purpose tool execution
+evidence.
+
+- Prior user discussion such as
+  "我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维项目卡片。"
+  can now become the bounded `working_brief.latest_user_goal` only when paired
+  with an assistant proposal and a later contextual execution phrase such as
+  "好，开始吧". The earlier chat remains non-mutating discussion until that
+  explicit execution phrase.
+- The renderer-visible contextual build route, the main-owned submit guard, and
+  the generation prompt brief now exercise the same natural-discussion path.
+  Main still rejects explanatory-only questions such as preview-blank diagnosis
+  as implementation targets.
+- Focused validation passed through
+  `node --test tests\builder-generation-kernel.test.cjs tests\builder-generation-main-service.test.cjs`
+  and
+  `npm.cmd exec vitest run src\app\BuilderApp.test.tsx src\features\builder\application\builderComposerIntent.test.ts`;
+  the suites reported 59 passing Node tests and 133 passing Vitest tests.
+- Repository validation passed through `npm.cmd run typecheck`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 529 passing
+  Vitest tests, and the boundary suite reported 628 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 753 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
