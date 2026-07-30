@@ -6,7 +6,7 @@ import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourc
 
 export type BuilderResultPanelProps = Readonly<{
   panelRef?: Ref<HTMLElement>;
-  placement?: 'artifact' | 'flow';
+  placement?: 'artifact' | 'expanded' | 'flow';
   projection: BuilderSourceTreePreviewProjection | null;
 }>;
 
@@ -17,7 +17,9 @@ export function BuilderResultPanel({
 }: BuilderResultPanelProps) {
   const className = placement === 'artifact'
     ? 'cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-artifact-preview-card'
-    : 'cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface';
+    : placement === 'expanded'
+      ? 'cf-builder-preview-panel cf-builder-result-card cf-builder-expanded-preview-card'
+      : 'cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface';
   return (
     <section
       aria-label="Project result"

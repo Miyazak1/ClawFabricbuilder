@@ -19,6 +19,7 @@ import {
   History,
   ListChecks,
   LockKeyhole,
+  Maximize2,
   Play,
   RefreshCw,
   StopCircle,
@@ -1251,6 +1252,7 @@ function BuilderArtifactSidebar({
   inspectedRevisionReceiptDigest,
   liveOutput,
   onClose,
+  onExpandPreview,
   onInspectRevision,
   onOpenFile,
   onRefreshHistory,
@@ -1282,6 +1284,7 @@ function BuilderArtifactSidebar({
   inspectedRevisionReceiptDigest: string | null;
   liveOutput: BuilderLiveOutputSnapshot | null;
   onClose: () => void;
+  onExpandPreview: () => void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
   onRefreshHistory?: () => Promise<unknown> | void;
@@ -1347,6 +1350,18 @@ function BuilderArtifactSidebar({
               </button>
             ))}
           </div>
+          {activeTab === 'preview' ? (
+            <button
+              aria-label="Expand preview"
+              className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
+              data-builder-expand-preview="true"
+              onClick={onExpandPreview}
+              title="Expand preview"
+              type="button"
+            >
+              <Maximize2 aria-hidden="true" className="size-3.5" />
+            </button>
+          ) : null}
           <button
             aria-label="Close artifact"
             className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
@@ -1555,6 +1570,7 @@ export function BuilderPage({
   const shouldFollowChatRef = useRef(true);
   const [artifactWidth, setArtifactWidth] = useState(ARTIFACT_DEFAULT_WIDTH_PX);
   const [artifactWidthMaximum, setArtifactWidthMaximum] = useState(ARTIFACT_MAX_WIDTH_PX);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const changesPanelIdentity = [
     draft?.draft_id ?? 'no-draft',
     inspected?.target.revision_receipt_digest ?? 'no-inspected',
@@ -1655,6 +1671,7 @@ export function BuilderPage({
     : null;
   const showArtifactSidebar = activeArtifactTab !== null;
   const showChangesPanel = activeArtifactTab === 'changes' && hasUnsavedDraft;
+  const previewExpandedVisible = previewExpanded && showResultFlow;
   const artifactShellStyle = showArtifactSidebar
     ? ({
       '--cf-builder-artifact-width': `${artifactWidth}px`,
@@ -1679,6 +1696,22 @@ export function BuilderPage({
       window.removeEventListener('resize', clampForCurrentShell);
     };
   }, [showArtifactSidebar]);
+
+  useEffect(() => {
+    if (!previewExpandedVisible) return undefined;
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setPreviewExpanded(false);
+      window.requestAnimationFrame(() => {
+        document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
+      });
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [previewExpandedVisible]);
 
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
@@ -1892,6 +1925,19 @@ export function BuilderPage({
 
   function openPreviewPanel(): void {
     openArtifactTab('preview');
+    window.requestAnimationFrame(() => {
+      document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
+    });
+  }
+
+  function openExpandedPreview(): void {
+    shouldFollowChatRef.current = false;
+    openArtifactTab('preview');
+    setPreviewExpanded(true);
+  }
+
+  function closeExpandedPreview(): void {
+    setPreviewExpanded(false);
     window.requestAnimationFrame(() => {
       document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
     });
@@ -2201,6 +2247,7 @@ export function BuilderPage({
       inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
       liveOutput={visibleLiveOutput}
       onClose={closeArtifactSidebar}
+      onExpandPreview={openExpandedPreview}
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
       onRefreshHistory={onRefreshHistory}
@@ -2221,6 +2268,36 @@ export function BuilderPage({
       width={artifactWidth}
       widthMaximum={artifactWidthMaximum}
     />
+  ) : null;
+  const expandedPreviewOverlay = previewExpandedVisible ? (
+    <section
+      aria-label="Expanded project preview"
+      aria-modal="true"
+      className="cf-builder-preview-expanded-backdrop"
+      data-builder-expanded-preview="true"
+      role="dialog"
+    >
+      <div className="cf-builder-preview-expanded-shell">
+        <header className="cf-builder-preview-expanded-header">
+          <div className="min-w-0">
+            <p className="cf-builder-artifact-kicker">Preview</p>
+            <h2 className="cf-builder-preview-expanded-title">Expanded preview</h2>
+          </div>
+          <button
+            aria-label="Close expanded preview"
+            className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-9 items-center justify-center"
+            data-builder-close-expanded-preview="true"
+            onClick={closeExpandedPreview}
+            type="button"
+          >
+            <X aria-hidden="true" className="size-4" />
+          </button>
+        </header>
+        <div className="cf-builder-preview-expanded-body">
+          <BuilderResultPanel placement="expanded" projection={preview} />
+        </div>
+      </div>
+    </section>
   ) : null;
 
   return (
@@ -2334,6 +2411,7 @@ export function BuilderPage({
           {artifactSidebar}
         </section>
       </div>
+      {expandedPreviewOverlay}
     </div>
   );
 }

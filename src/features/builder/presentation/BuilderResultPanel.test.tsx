@@ -39,4 +39,16 @@ describe('BuilderResultPanel', () => {
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('Preview unavailable');
   });
+
+  it('renders expanded preview placement without the chat-flow surface', () => {
+    const container = render(<BuilderResultPanel placement="expanded" projection={null} />);
+
+    const panel = container.querySelector('[data-builder-result-placement="expanded"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain('cf-builder-expanded-preview-card');
+    expect(panel?.className).not.toContain('cf-builder-chat-flow-surface');
+    expect(panel?.className).not.toContain('cf-builder-flow-card');
+    expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
+      .toContain('Preview unavailable');
+  });
 });

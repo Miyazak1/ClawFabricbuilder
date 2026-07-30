@@ -339,6 +339,26 @@ describe('Builder desktop layout styles', () => {
     expect(source).not.toContain('.cf-builder-draft-landing .cf-builder-static-preview .cf-builder-preview-frame');
   });
 
+  it('gives expanded preview a fixed desktop workspace outside chat and artifact columns', () => {
+    const source = styles();
+    const backdrop = styleBlock(source, '.cf-builder-preview-expanded-backdrop');
+    const shell = styleBlock(source, '.cf-builder-preview-expanded-shell');
+    const body = styleBlock(source, '.cf-builder-preview-expanded-body');
+    const card = styleBlock(source, '.cf-builder-expanded-preview-card');
+    const cardBody = styleBlock(source, '.cf-builder-expanded-preview-card .cf-builder-flow-card-body');
+    const frame = styleBlock(source, '.cf-builder-expanded-preview-card .cf-builder-preview-frame');
+
+    expect(backdrop).toContain('position: fixed;');
+    expect(backdrop).toContain('z-index: 40;');
+    expect(backdrop).toContain('inset: 44px 0 0;');
+    expect(shell).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(shell).toContain('overflow: hidden;');
+    expect(body).toContain('overflow: hidden;');
+    expect(card).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(cardBody).toContain('overflow: auto;');
+    expect(frame).toContain('min-height: calc(100vh - 190px);');
+  });
+
   it('uses lightweight preview explanation instead of another nested card', () => {
     const source = styles();
     const runtimeNotice = styleBlock(source, '.cf-builder-preview-runtime-notice');

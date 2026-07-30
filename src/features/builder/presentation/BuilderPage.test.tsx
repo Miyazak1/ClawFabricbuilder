@@ -2105,6 +2105,17 @@ describe('BuilderPage v2', () => {
     expect(maxEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
       .toBe('560px');
+    click(container, '[data-builder-expand-preview="true"]');
+    const expandedPreview = container.querySelector('[data-builder-expanded-preview="true"]');
+    const expandedResult = expandedPreview?.querySelector('[data-builder-result-placement="expanded"]');
+    expect(expandedPreview).not.toBeNull();
+    expect(expandedPreview?.getAttribute('role')).toBe('dialog');
+    expect(expandedPreview?.getAttribute('aria-modal')).toBe('true');
+    expect(expandedResult).not.toBeNull();
+    expect(expandedResult?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(expandedResult?.closest('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    click(container, '[data-builder-close-expanded-preview="true"]');
+    expect(container.querySelector('[data-builder-expanded-preview="true"]')).toBeNull();
     click(container, '[data-builder-review-open-changes="true"]');
     const updatedArtifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const changesFlow = container.querySelector('[data-builder-changes-flow="true"]');
