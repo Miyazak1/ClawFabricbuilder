@@ -15,6 +15,7 @@ const {
   SUBMIT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
+  ANSWER_DRAFT_CHANNEL,
   CANCEL_CHANNEL,
   STEER_CHANNEL,
   AVAILABILITY_CHANNEL,
@@ -71,6 +72,10 @@ function adapter(overrides = {}) {
       calls.push(['answer', request]);
       return { result: 'answered' };
     },
+    answerDraft: async (request) => {
+      calls.push(['answerDraft', request]);
+      return { result: 'draft-answered' };
+    },
     restoreDraft: async (request) => {
       calls.push(['restoreDraft', request]);
       return { result: 'restored' };
@@ -120,6 +125,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'submit',
     'retry',
     'answer',
+    'answerDraft',
     'restoreDraft',
     'restoreRevisionAsDraft',
     'rejectDraft',
@@ -139,6 +145,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       SUBMIT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
+      ANSWER_DRAFT_CHANNEL,
       RESTORE_DRAFT_CHANNEL,
       RESTORE_REVISION_AS_DRAFT_CHANNEL,
       REJECT_DRAFT_CHANNEL,
@@ -223,6 +230,17 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     },
   );
   assert.deepEqual(
+    await value.channels.answerDraft.invoke({ sender: windowRef.webContents }, {
+      draft_id: `builder-generation-draft:${'f'.repeat(64)}`,
+      instruction: 'Why is the preview blank?',
+    }),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'draft-answered' },
+    },
+  );
+  assert.deepEqual(
     await value.channels.restoreDraft.invoke({ sender: windowRef.webContents }, {
       draft_id: `builder-generation-draft:${'b'.repeat(64)}`,
     }),
@@ -278,6 +296,10 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['submit', request],
     ['retry', request],
     ['answer', request],
+    ['answerDraft', {
+      draft_id: `builder-generation-draft:${'f'.repeat(64)}`,
+      instruction: 'Why is the preview blank?',
+    }],
     ['restoreDraft', { draft_id: `builder-generation-draft:${'b'.repeat(64)}` }],
     ['restoreRevisionAsDraft', {
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
@@ -348,6 +370,15 @@ test('rejects inactive renderers and argument-count drift before invoking host a
   );
   await assert.rejects(
     value.channels.answer.invoke({ sender: windowRef.webContents }),
+    (error) => error.code === 'builder_generation_request_invalid',
+  );
+  await assert.rejects(
+    value.channels.answerDraft.invoke({ sender: {} }, { marker }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && !error.message.includes(marker),
+  );
+  await assert.rejects(
+    value.channels.answerDraft.invoke({ sender: windowRef.webContents }),
     (error) => error.code === 'builder_generation_request_invalid',
   );
   await assert.rejects(
@@ -426,6 +457,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       submit: () => { throw modified; },
       retry: () => { throw modified; },
       answer: () => { throw modified; },
+      answerDraft: () => { throw modified; },
       restoreDraft: () => { throw modified; },
       restoreRevisionAsDraft: () => { throw modified; },
       rejectDraft: () => { throw modified; },
@@ -534,6 +566,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       error.code = 'builder_generation_timeout';
       throw error;
     },
+    answerDraft: () => {
+      const error = new Error('answer-draft-private-marker');
+      error.code = 'builder_generation_timeout';
+      throw error;
+    },
     restoreDraft: () => {
       const error = new Error('restore-private-marker');
       error.code = 'builder_generation_parent_unavailable';
@@ -604,6 +641,14 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     },
   );
   assert.deepEqual(
+    await hostile.channels.answerDraft.invoke({ sender: windowRef.webContents }, {}),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code: 'builder_generation_timeout', retryable: true },
+    },
+  );
+  assert.deepEqual(
     await hostile.channels.proposePlan.invoke({ sender: windowRef.webContents }, {}),
     {
       version: GENERATE_RESULT_VERSION,
@@ -656,6 +701,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
+    answerDraft: async () => ({}),
     restoreDraft: async () => ({}),
     restoreRevisionAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
@@ -702,6 +748,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
+    answerDraft: async () => ({}),
     restoreDraft: async () => ({}),
     restoreRevisionAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
@@ -744,6 +791,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
       submit: async () => ({}),
       retry: async () => ({}),
       answer: async () => ({}),
+      answerDraft: async () => ({}),
       restoreDraft: async () => ({}),
       restoreRevisionAsDraft: async () => ({}),
       rejectDraft: async () => ({}),
@@ -783,6 +831,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       submit: async () => result,
       retry: async () => result,
       answer: async () => result,
+      answerDraft: async () => result,
       restoreDraft: async () => result,
       restoreRevisionAsDraft: async () => result,
       rejectDraft: async () => result,
@@ -837,6 +886,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       submit: async () => result,
       retry: async () => result,
       answer: async () => result,
+      answerDraft: async () => result,
       restoreDraft: async () => result,
       restoreRevisionAsDraft: async () => result,
       rejectDraft: async () => result,
@@ -868,6 +918,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
+    answerDraft: async () => ({}),
     restoreDraft: async () => ({}),
     restoreRevisionAsDraft: async () => ({}),
     rejectDraft: async () => ({}),

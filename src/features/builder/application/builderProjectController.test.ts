@@ -72,6 +72,7 @@ function setup(options: {
   approvePlanSourceRead?: BuilderCodeGeneratorPort['approvePlanSourceRead'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
+  answerDraft?: BuilderCodeGeneratorPort['answerDraft'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   restoreRevisionAsDraft?: BuilderCodeGeneratorPort['restoreRevisionAsDraft'];
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
@@ -132,6 +133,10 @@ function setup(options: {
   )));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
+  const answerDraft = vi.fn(options.answerDraft ?? (async (request) => {
+    const hostRequest = await createBuilderGenerationRequest(request.instruction, PROJECT_ID);
+    return createGenerationAnswer(hostRequest);
+  }));
   const restoreDraft = vi.fn(options.restoreDraft ?? (async () => createRestoredGenerationDraft()));
   const restoreRevisionAsDraft = vi.fn(options.restoreRevisionAsDraft ?? (async () => (
     createGenerationDraft(await createBuilderGenerationRequest('Restore a saved version.', PROJECT_ID))
@@ -195,6 +200,7 @@ function setup(options: {
       approvePlanSourceRead,
       retry,
       answer,
+      answerDraft,
       restoreDraft,
       restoreRevisionAsDraft,
       rejectDraft,
@@ -208,6 +214,7 @@ function setup(options: {
   });
   return {
     answer,
+    answerDraft,
     cancel,
     continueDraft,
     controller,
@@ -616,16 +623,20 @@ describe('Builder project controller v2', () => {
   });
 
   it('answers while keeping the current unsaved draft review available', async () => {
-    const { answer, continueDraft, controller, saveDraft } = setup();
+    const { answer, answerDraft, continueDraft, controller, saveDraft } = setup();
     await controller.open(PROJECT_ID);
     await controller.submit('Make a timer.');
 
     const result = await controller.answer('Why is the preview blank?');
 
-    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    expect(answerDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: DRAFT_ID,
       instruction: 'Why is the preview blank?',
-      existing_project_id: PROJECT_ID,
-    }));
+    });
+    expect(answerDraft.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(answerDraft.mock.calls[0][0]).not.toHaveProperty('existing_project_id');
+    expect(answerDraft.mock.calls[0][0]).not.toHaveProperty('request_digest');
+    expect(answer).not.toHaveBeenCalled();
     expect(continueDraft).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('draft_ready');

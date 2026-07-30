@@ -158,6 +158,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('submit(request: BuilderGenerationRequest)');
     expect(ports).toContain('continueDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
     expect(ports).toContain('answer(request: BuilderGenerationRequest)');
+    expect(ports).toContain('answerDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
     expect(ports).toMatch(/preparePlanSourceReadApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toContain('retry(request: BuilderGenerationRequest)');
@@ -196,6 +197,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(generationPort).toContain('project_id: projectId');
     expect(generationPort).toContain('retry: methods.retry');
     expect(generationPort).toContain('answer: methods.answer');
+    expect(generationPort).toContain('answerDraft: methods.answerDraft');
     expect(generationPort).toContain('restoreRevisionAsDraft:');
     expect(generationPort).toContain('revision_receipt_digest: revisionReceiptDigest');
     expect(generationPort).toContain('rejectDraft: methods.rejectDraft');

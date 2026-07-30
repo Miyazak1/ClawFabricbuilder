@@ -293,6 +293,19 @@ async function setup(options: Readonly<{
       result: await createGenerationAnswer(hostRequest),
     };
   });
+  const answerDraft = vi.fn(async (request: unknown) => {
+    expect(request).toEqual({
+      draft_id: latestDraft.draft_id,
+      instruction: (request as { instruction: string }).instruction,
+    });
+    const instruction = (request as { instruction: string }).instruction;
+    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: await createGenerationAnswer(hostRequest),
+    };
+  });
   let submitAttempts = 0;
   const submit = vi.fn(async (request: unknown) => {
     submitAttempts += 1;
@@ -686,6 +699,7 @@ async function setup(options: Readonly<{
       approvePlanSourceRead,
       retry,
       answer,
+      answerDraft,
       restoreDraft,
       restoreRevisionAsDraft,
       rejectDraft,
@@ -749,6 +763,7 @@ async function setup(options: Readonly<{
   return {
     container,
     answer,
+    answerDraft,
     cancel,
     continueDraft,
     createLocalProject,

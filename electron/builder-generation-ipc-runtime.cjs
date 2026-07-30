@@ -7,6 +7,7 @@ const { types: utilTypes } = require('node:util');
 
 const {
   ANSWER_CHANNEL,
+  ANSWER_DRAFT_CHANNEL,
   AVAILABILITY_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
@@ -243,6 +244,20 @@ function publicInstruction(rawRequest) {
 }
 
 function draftContinuationRequest(rawRequest) {
+  try {
+    const descriptors = exactDataDescriptors(rawRequest, ['draft_id', 'instruction']);
+    const draftId = descriptors.draft_id.value;
+    if (typeof draftId !== 'string' || !DRAFT_ID_PATTERN.test(draftId)) throw new Error();
+    return Object.freeze({
+      draft_id: draftId,
+      instruction: descriptors.instruction.value,
+    });
+  } catch {
+    throw new BuilderGenerationKernelError('builder_generation_request_invalid');
+  }
+}
+
+function draftAnswerRequest(rawRequest) {
   try {
     const descriptors = exactDataDescriptors(rawRequest, ['draft_id', 'instruction']);
     const draftId = descriptors.draft_id.value;
@@ -1173,6 +1188,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.answer);
     }
 
+    async function trackedAnswerDraft(rawRequest) {
+      const answerRequest = draftAnswerRequest(rawRequest);
+      if (selectionPending) fail();
+      if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
+      return service.answer_draft({
+        draft_id: answerRequest.draft_id,
+        instruction: answerRequest.instruction,
+        project_id: selectedProjectId,
+      });
+    }
+
     function trackedRestoreRevisionAsDraft(rawRequest) {
       const request = restoreRevisionAsDraftRequest(rawRequest);
       if (selectionPending || selectedProjectId !== request.project_id) failGenerationProjectWorkspaceRequired();
@@ -1189,6 +1215,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       submit: trackedSubmit,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
+      answerDraft: trackedAnswerDraft,
       restoreDraft: service.restore_draft,
       restoreRevisionAsDraft: trackedRestoreRevisionAsDraft,
       rejectDraft: service.reject_draft,
@@ -1377,6 +1404,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
+    Object.freeze({ channel: ANSWER_DRAFT_CHANNEL, invoke: adapter.channels.answerDraft.invoke }),
     Object.freeze({ channel: RESTORE_DRAFT_CHANNEL, invoke: adapter.channels.restoreDraft.invoke }),
     Object.freeze({
       channel: RESTORE_REVISION_AS_DRAFT_CHANNEL,
@@ -1502,5 +1530,6 @@ module.exports = Object.freeze({
   METADATA_DIRECTORY,
   METADATA_DATABASE,
   BuilderGenerationIpcRuntimeError,
+  ANSWER_DRAFT_CHANNEL,
   createBuilderGenerationIpcRuntime,
 });

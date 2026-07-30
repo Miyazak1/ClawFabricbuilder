@@ -10,6 +10,7 @@ const vm = require('node:vm');
 
 const {
   ANSWER_CHANNEL,
+  ANSWER_DRAFT_CHANNEL,
   AVAILABILITY_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
@@ -152,6 +153,7 @@ function runtimeWithService(service, probes = {}) {
       if (specifier === './builder-generation-ipc-adapter.cjs') {
         return {
           ANSWER_CHANNEL,
+          ANSWER_DRAFT_CHANNEL,
           CONTINUE_DRAFT_CHANNEL,
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
@@ -181,6 +183,7 @@ function runtimeWithService(service, probes = {}) {
               submit: { invoke: (_event, body) => options.submit(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
+              answerDraft: { invoke: (_event, body) => options.answerDraft(body) },
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
               restoreRevisionAsDraft: { invoke: (_event, body) => options.restoreRevisionAsDraft(body) },
               rejectDraft: { invoke: (_event, body) => options.rejectDraft(body) },
@@ -629,6 +632,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     SUBMIT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
+    ANSWER_DRAFT_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
     RESTORE_REVISION_AS_DRAFT_CHANNEL,
     REJECT_DRAFT_CHANNEL,
@@ -937,6 +941,19 @@ test('keeps active-renderer and request validation inside the controlled adapter
   );
   await assert.rejects(
     ipcMain.handlers.get(ANSWER_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
+    (error) => error.code === 'builder_generation_request_invalid'
+      && !`${error.message}:${error.stack}`.includes('marker'),
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(ANSWER_DRAFT_CHANNEL)({ sender: {} }, {
+      draft_id: `builder-generation-draft:${'a'.repeat(64)}`,
+      instruction: 'Explain this draft.',
+    }),
+    (error) => error.code === 'builder_generation_forbidden'
+      && error.stack === `${error.name}: ${error.message}`,
+  );
+  await assert.rejects(
+    ipcMain.handlers.get(ANSWER_DRAFT_CHANNEL)({ sender: mainWindow.webContents }, { private: 'marker' }),
     (error) => error.code === 'builder_generation_request_invalid'
       && !`${error.message}:${error.stack}`.includes('marker'),
   );
@@ -1464,6 +1481,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     REJECT_DRAFT_CHANNEL,
     RESTORE_REVISION_AS_DRAFT_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
+    ANSWER_DRAFT_CHANNEL,
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     SUBMIT_CHANNEL,
@@ -1495,6 +1513,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.equal(removalFailure.handlers.has(SUBMIT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RETRY_GENERATE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(ANSWER_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_REVISION_AS_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(REJECT_DRAFT_CHANNEL), false);
@@ -1957,6 +1976,7 @@ test('keeps selected project identity in main and accepts only instruction over 
   const submitted = [];
   const retried = [];
   const answered = [];
+  const draftAnswers = [];
   const proposedPlans = [];
   const probes = {
     loadCurrent(body) {
@@ -2018,6 +2038,14 @@ test('keeps selected project identity in main and accepts only instruction over 
         version: 'builder-generation-result.v2',
         result_kind: 'explanation',
         request_id: body.request_digest,
+      });
+    },
+    answer_draft(body) {
+      draftAnswers.push(body);
+      return Promise.resolve({
+        version: 'builder-generation-result.v2',
+        result_kind: 'explanation',
+        request_id: hostRequestDigest(body.instruction, body.project_id),
       });
     },
     cancel() { return { cancelled: false }; },
@@ -2104,6 +2132,19 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(answered[0].existing_project_id, PROJECT_ID);
   assert.equal(answered[0].instruction, 'What does this project do?');
   assert.equal(answered[0].request_digest, hostRequestDigest('What does this project do?', PROJECT_ID));
+  await ipcMain.handlers.get(ANSWER_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      draft_id: "builder-generation-draft:${'3'.repeat(64)}",
+      instruction: "Why is this draft preview blank?"
+    })`, runtimeModule.context),
+  );
+  assert.equal(draftAnswers.length, 1);
+  assert.equal(draftAnswers[0].draft_id, `builder-generation-draft:${'3'.repeat(64)}`);
+  assert.equal(draftAnswers[0].instruction, 'Why is this draft preview blank?');
+  assert.equal(draftAnswers[0].project_id, PROJECT_ID);
+  assert.equal(Object.hasOwn(draftAnswers[0], 'request_digest'), false);
+  assert.equal(Object.hasOwn(draftAnswers[0], 'source_tree'), false);
   await ipcMain.handlers.get(GENERATE_APPROVED_PLAN_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext(`({
@@ -2152,6 +2193,16 @@ test('keeps selected project identity in main and accepts only instruction over 
     { code: 'builder_generation_project_workspace_required' },
   );
   assert.equal(generated.length, 1);
+  await assert.rejects(
+    async () => ipcMain.handlers.get(ANSWER_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({
+        draft_id: "builder-generation-draft:${'4'.repeat(64)}",
+        instruction: "Explain this unsaved draft."
+      })`, runtimeModule.context),
+    ),
+    { code: 'builder_generation_project_workspace_required' },
+  );
   await ipcMain.handlers.get(ANSWER_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Explain the fresh project." })', runtimeModule.context),

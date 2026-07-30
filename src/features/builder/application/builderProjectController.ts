@@ -826,7 +826,12 @@ export function createBuilderProjectController(
           requestId,
         });
         const answered = await sanitizeBuilderGenerationAnswer(
-          await dependencies.generator.answer(request),
+          retainedDraft === null
+            ? await dependencies.generator.answer(request)
+            : await dependencies.generator.answerDraft({
+              draft_id: retainedDraft.draft_id,
+              instruction: request.instruction,
+            }),
           request,
         );
         clearActiveGeneration(request.request_digest, operationEpoch);

@@ -136,6 +136,11 @@ async function snapshots() {
       async answer(request) {
         return createGenerationAnswer(request);
       },
+      async answerDraft(request) {
+        return createGenerationAnswer(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+        );
+      },
       async restoreDraft() {
         return draft;
       },
@@ -234,6 +239,11 @@ async function workingProjectSnapshot() {
       },
       async answer(request) {
         return createGenerationAnswer(request);
+      },
+      async answerDraft(request) {
+        return createGenerationAnswer(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+        );
       },
       async restoreDraft() {
         return draft;
@@ -735,6 +745,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async answer() {
         return createGenerationAnswer(request);
       },
+      async answerDraft() {
+        return createGenerationAnswer(request);
+      },
       async restoreDraft() {
         return draft;
       },
@@ -834,6 +847,11 @@ async function inspectedHistorySnapshot() {
       },
       async answer(request) {
         return createGenerationAnswer(request);
+      },
+      async answerDraft(request) {
+        return createGenerationAnswer(
+          await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+        );
       },
       async restoreDraft() {
         return createGenerationDraft(
@@ -1483,6 +1501,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
@@ -1538,6 +1557,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
@@ -1592,6 +1612,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
+        answerDraft: async () => new Promise(() => undefined),
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
@@ -1655,6 +1676,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
@@ -1707,6 +1729,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
@@ -1778,6 +1801,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => new Promise((resolve) => {
           resolveRestore = resolve;
         }),
@@ -3362,6 +3386,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async () => null,
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,
@@ -3409,6 +3434,7 @@ describe('BuilderPage v2', () => {
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
+        answerDraft: async () => null,
         restoreDraft: async () => null,
         restoreRevisionAsDraft: async () => null,
         rejectDraft: async () => null,

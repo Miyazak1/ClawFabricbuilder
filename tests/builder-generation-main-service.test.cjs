@@ -1063,6 +1063,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
     draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
     draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
+    draft_answer_generation: 'main_only_pending_candidate_source_explanation_no_mutation',
     history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
     run_steering: 'request_id_only_main_conversation_fact',
     credential_exposed_to_renderer: false,
@@ -1753,6 +1754,79 @@ test('records a provider explanation without creating Git candidate, draft, or s
   assert.doesNotMatch(
     JSON.stringify(result),
     /candidate|git_request|operations|source_tree|credential|provider\.example|builder-model/u,
+  );
+});
+
+test('answers pending draft questions from verified candidate source without source mutation', async () => {
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const candidateSourceByRequestId = new Map();
+  const persistCandidateCommit = git.persist_candidate_commit.bind(git);
+  git.persist_candidate_commit = async (input) => {
+    const receipt = await persistCandidateCommit(input);
+    candidateSourceByRequestId.set(receipt.request_id, input.candidate.resulting_source_tree);
+    return receipt;
+  };
+  git.read_verified_candidate = async (receipt) => ({
+    result_version: 'builder-git-verified-candidate-read-result.v1',
+    candidate_receipt: receipt,
+    verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
+    source_tree: candidateSourceByRequestId.get(receipt.request_id),
+    code_authority: 'git_commit_tree',
+    read_admission: 'verified',
+  });
+  const transportInputs = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(
+          transportInputs.length === 1
+            ? providerOutput()
+            : providerExplanation({
+              explanation: 'The draft currently contains a Focus heading and static files.',
+            }),
+        ),
+      };
+    },
+  });
+
+  const draft = await service.generate(request({ instruction: 'Make a focus timer.' }));
+  const result = await service.answer_draft({
+    draft_id: draft.draft_id,
+    instruction: 'Why is the preview blank?',
+    project_id: draft.project_id,
+  });
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(result.project_id, draft.project_id);
+  assert.equal(result.existing_project_id, draft.project_id);
+  assert.equal(result.admissions.conversation, 'sqlite_recorded');
+  assert.equal(result.admissions.draft, 'not_created');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.match(result.explanation, /Focus heading/u);
+  assert.equal(lifecycle.calls.readCandidate.length, 1);
+  assert.deepEqual(lifecycle.calls.readCandidate[0], { draft_id: draft.draft_id });
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.question[0].project_id, draft.project_id);
+  assert.equal(lifecycle.calls.question[0].question, 'Why is the preview blank?');
+  assert.equal(lifecycle.calls.question[0].base_revision, null);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(transportInputs.length, 2);
+  assert.match(transportInputs[1].messages[1].content, /<main><h1>Focus<\/h1><\/main>/u);
+  assert.equal(Object.hasOwn(result, 'draft_id'), false);
+  assert.equal(Object.hasOwn(result, 'source_tree'), false);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /candidate|git_candidate_receipt|candidate_digest|source_tree|credential|provider\.example|builder-model|<main>/iu,
   );
 });
 

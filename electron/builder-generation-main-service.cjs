@@ -1119,6 +1119,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const explanationContexts = new WeakMap();
   const providerOutputStates = new WeakMap();
   const liveOutputContextsByRunId = new Map();
+  const pendingDraftAnswerContexts = new Map();
   const pendingApprovedPlanEditContexts = new Map();
   const pendingPlanRequests = new Map();
   const planContexts = new WeakMap();
@@ -1341,26 +1342,62 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
-  async function prepareDraftContinuationBasePair(draftId) {
-    const draft = await loadPendingDraftById(draftId);
-    const conversationDraft = sanitizeConversationDraft(
-      Reflect.apply(
-        readConversationCandidateDraft,
-        options.conversationService,
-        [{ draft_id: draftId }],
-      ),
-      draftId,
-    );
-    assertConversationDraftMatchesPending(conversationDraft, draft);
+  function sanitizeDraftAnswerGenerationRequest(rawRequest) {
+    exactObject(rawRequest, ['draft_id', 'instruction', 'project_id']);
+    return freezeDeep({
+      draft_id: safeDraftId(valueAt(rawRequest, 'draft_id')),
+      instruction: valueAt(rawRequest, 'instruction'),
+      project_id: safeProjectId(valueAt(rawRequest, 'project_id')),
+    });
+  }
+
+  async function loadVerifiedPendingDraftForQuestion(draftId) {
+    const existingDraft = pendingDrafts.get(draftId);
+    let conversationDraft;
+    try {
+      conversationDraft = sanitizeConversationDraft(
+        Reflect.apply(
+          readConversationCandidateDraft,
+          options.conversationService,
+          [{ draft_id: draftId }],
+        ),
+        draftId,
+      );
+      if (existingDraft !== undefined) assertConversationDraftMatchesPending(conversationDraft, existingDraft);
+    } catch (error) {
+      if (existingDraft !== undefined) pendingDrafts.delete(draftId);
+      throw error;
+    }
     const verifiedRead = await Reflect.apply(
       readVerifiedCandidate,
       options.gitAuthority,
       [conversationDraft.git_candidate_receipt],
     );
-    sanitizeVerifiedCandidateRead(verifiedRead, conversationDraft.git_candidate_receipt);
+    const verifiedCandidate = sanitizeVerifiedCandidateRead(verifiedRead, conversationDraft.git_candidate_receipt);
+    const draft = existingDraft ?? freezeDeep({
+      title: conversationDraft.title,
+      summary: conversationDraft.summary,
+      draft_id: draftId,
+      git_request_id: conversationDraft.git_candidate_receipt.request_id,
+      conversation_head: conversationDraft.conversation_head,
+      candidate_proof: conversationDraft.candidate_proof,
+      source_tree: verifiedCandidate.source_tree,
+      restart_restore: 'git_sqlite_verified',
+    });
+    if (existingDraft === undefined) pendingDrafts.set(draftId, draft);
+    return freezeDeep({
+      draft,
+      conversation_draft: conversationDraft,
+      verified_candidate: verifiedCandidate,
+      verified_candidate_read: verifiedRead,
+    });
+  }
+
+  async function prepareDraftContinuationBasePair(draftId) {
+    const verified = await loadVerifiedPendingDraftForQuestion(draftId);
     const admission = sanitizeBuilderDraftContinuationAdmission(
       createBuilderDraftContinuationAdmission({
-        pending_draft: pendingDraftResult(draft),
+        pending_draft: pendingDraftResult(verified.draft),
         continuation_id: newId(options.createUuid, 'builder-draft-continuation'),
         admitted_at_ms: safeTimestamp(Date.now()),
       }),
@@ -1368,12 +1405,12 @@ function createBuilderGenerationMainService(rawOptions) {
     const base = sanitizeBuilderDraftContinuationBase(
       createBuilderDraftContinuationBase({
         admission,
-        verified_candidate: verifiedRead,
+        verified_candidate: verified.verified_candidate_read,
       }),
     );
     return freezeDeep({
-      draft,
-      conversation_draft: conversationDraft,
+      draft: verified.draft,
+      conversation_draft: verified.conversation_draft,
       admission,
       base,
     });
@@ -1521,6 +1558,39 @@ function createBuilderGenerationMainService(rawOptions) {
 
   async function buildExplanationContext(request) {
     try {
+      const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
+      const draftAnswerContext = pendingDraftAnswerContexts.get(key);
+      if (draftAnswerContext !== undefined) {
+        pendingDraftAnswerContexts.delete(key);
+        if (
+          request.existing_project_id !== draftAnswerContext.project_id
+          || request.instruction !== draftAnswerContext.instruction
+        ) fail();
+        const conversationContext = Reflect.apply(
+          beginConversationQuestion,
+          options.conversationService,
+          [{
+            project_id: draftAnswerContext.project_id,
+            question: request.instruction,
+            request_digest: request.request_digest,
+            base_revision: draftAnswerContext.base_revision,
+          }],
+        );
+        activeContexts.set(key, conversationContext);
+        notifyGenerationStarted(request, draftAnswerContext.project_id);
+        const explanationContext = freezeDeep({
+          project_id: draftAnswerContext.project_id,
+          base_revision_evidence: draftAnswerContext.base_revision_evidence,
+          base_source_tree: draftAnswerContext.source_tree,
+          conversation_events: conversationContext.events,
+          turn_id: conversationContext.ids.turn_id,
+          task_id: conversationContext.ids.task_id,
+          run_id: conversationContext.ids.run_id,
+        });
+        explanationContexts.set(explanationContext, conversationContext);
+        liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
+        return explanationContext;
+      }
       const existingProjectId = request.existing_project_id;
       const projectId = existingProjectId === null
         ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
@@ -2345,11 +2415,7 @@ function createBuilderGenerationMainService(rawOptions) {
     return startGenerate(request, retryableContext);
   }
 
-  async function answer(rawRequest) {
-    let request;
-    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
-      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
-    }
+  function startAnswer(request) {
     const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
@@ -2372,11 +2438,54 @@ function createBuilderGenerationMainService(rawOptions) {
       recordFailure(key, error);
       throw error;
     }).finally(() => {
+      pendingDraftAnswerContexts.delete(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
     inFlight.set(key, operation);
     return operation;
+  }
+
+  async function answer(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    return startAnswer(request);
+  }
+
+  async function answerDraft(rawRequest) {
+    let request = null;
+    try {
+      const draftRequest = sanitizeDraftAnswerGenerationRequest(rawRequest);
+      const verified = await loadVerifiedPendingDraftForQuestion(draftRequest.draft_id);
+      if (verified.conversation_draft.candidate_proof.project_id !== draftRequest.project_id) fail();
+      request = createBuilderGenerationRequest({
+        instruction: draftRequest.instruction,
+        existing_project_id: draftRequest.project_id,
+      });
+      const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
+      if (inFlight.has(key) || pendingDraftAnswerContexts.has(key)) fail();
+      const routeConflict = rejectIfOtherRouteInFlight(ANSWER_OPERATION_PREFIX, request.request_digest);
+      if (routeConflict) return routeConflict;
+      pendingDraftAnswerContexts.set(key, freezeDeep({
+        draft_id: draftRequest.draft_id,
+        instruction: request.instruction,
+        project_id: draftRequest.project_id,
+        base_revision: verified.conversation_draft.candidate_proof.base_revision,
+        base_revision_evidence: await baseRevisionEvidenceForRestoredDraft(
+          verified.conversation_draft.candidate_proof,
+        ),
+        source_tree: verified.verified_candidate.source_tree,
+      }));
+      return await startAnswer(request);
+    } catch (error) {
+      if (request !== null) {
+        pendingDraftAnswerContexts.delete(operationKey(ANSWER_OPERATION_PREFIX, request.request_digest));
+      }
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail();
+    }
   }
 
   function cancel(rawRequest) {
@@ -2669,6 +2778,7 @@ function createBuilderGenerationMainService(rawOptions) {
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     submit,
     answer,
+    answer_draft: answerDraft,
     propose_plan: proposePlan,
     generate,
     generate_draft_continuation: generateDraftContinuation,
@@ -2696,6 +2806,7 @@ function createBuilderGenerationMainService(rawOptions) {
       draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
       draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
       draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
+      draft_answer_generation: 'main_only_pending_candidate_source_explanation_no_mutation',
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,

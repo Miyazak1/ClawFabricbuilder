@@ -170,6 +170,9 @@ async function renderHook(
     ),
     retry,
     answer,
+    answerDraft: async (request: Readonly<{ instruction: string }>) => createGenerationAnswer(
+      await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
+    ),
     restoreDraft,
     restoreRevisionAsDraft: async () => createGenerationDraft(
       await createBuilderGenerationRequest('Restore a saved version.', PROJECT_ID),
