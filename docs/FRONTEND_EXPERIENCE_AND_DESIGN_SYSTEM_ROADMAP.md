@@ -183,6 +183,12 @@ right workspace becomes an inspectable tool surface.
 The composer remains a single natural-language input. Users should not have to
 manually choose Chat or Build for every message.
 
+The executable routing contract is defined in
+[Composer Intent Routing Architecture](COMPOSER_INTENT_ROUTING_ARCHITECTURE.md).
+This frontend roadmap summarizes the user-facing behavior, while that document
+owns the route pipeline, admission rules, permission checks, evidence shape, and
+test matrix.
+
 The composer contains:
 
 - workspace chip: current project/source folder state;
@@ -447,7 +453,9 @@ Exit criteria:
 
 Scope:
 
-- harden `builderComposerIntent`;
+- implement the fail-safe first slice from
+  [Composer Intent Routing Architecture](COMPOSER_INTENT_ROUTING_ARCHITECTURE.md);
+- harden `builderComposerIntent` as a temporary fail-safe surface;
 - add `clarify` and `update_brief` route semantics where feasible;
 - prevent selected workspace from biasing ordinary chat into build;
 - add tests for chat after workspace selection;

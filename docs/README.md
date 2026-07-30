@@ -7,16 +7,17 @@ ClawFabric Builder application.
 
 1. [Product Vision and Roadmap](PRODUCT_VISION_AND_ROADMAP.md)
 2. [Frontend Experience and Design System Roadmap](FRONTEND_EXPERIENCE_AND_DESIGN_SYSTEM_ROADMAP.md)
-3. [Persistent Agent Task Context Architecture](PERSISTENT_AGENT_TASK_CONTEXT_ARCHITECTURE.md)
-4. [Trusted Work and Collaboration Architecture](TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md)
-5. [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
-6. [Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md)
-7. [Implementation Plan](IMPLEMENTATION_PLAN.md)
-8. [Legacy Future Plan Coverage Matrix](LEGACY_FUTURE_PLAN_COVERAGE_MATRIX.md)
-9. [Builder Architecture](ARCHITECTURE.md)
-10. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
-11. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
-12. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
+3. [Composer Intent Routing Architecture](COMPOSER_INTENT_ROUTING_ARCHITECTURE.md)
+4. [Persistent Agent Task Context Architecture](PERSISTENT_AGENT_TASK_CONTEXT_ARCHITECTURE.md)
+5. [Trusted Work and Collaboration Architecture](TRUSTED_WORK_AND_COLLABORATION_ARCHITECTURE.md)
+6. [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md)
+7. [Coding Agent Source Reference Audit](CODING_AGENT_SOURCE_REFERENCE_AUDIT_2026_07_22.md)
+8. [Implementation Plan](IMPLEMENTATION_PLAN.md)
+9. [Legacy Future Plan Coverage Matrix](LEGACY_FUTURE_PLAN_COVERAGE_MATRIX.md)
+10. [Builder Architecture](ARCHITECTURE.md)
+11. [Legacy Migration Map](LEGACY_MIGRATION_MAP.md)
+12. [Release Evidence - 2026-07-22](RELEASE_EVIDENCE_2026_07_22.md)
+13. [Extraction and documentation provenance](../provenance/extraction-manifest.json)
 
 ## Authority
 
