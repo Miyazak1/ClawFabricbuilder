@@ -555,6 +555,32 @@ Exit criteria:
 - `按刚才方案做` builds only with confirmed brief or approved plan;
 - no draft/review/save UI appears for chat-only turns.
 
+### Slice 1b - Continuous Agent Progress And Completion Summary
+
+Scope:
+
+- make the chat flow continuously show real assistant work progress from
+  `run_started`, `run_progress_recorded`, `tool_call_requested`,
+  `tool_call_result_recorded`, and `run_completed`;
+- keep progress rows compact and readable in the chat flow;
+- keep detailed logs available in the artifact drawer on demand;
+- add a terminal completion summary for answer, plan, candidate, failure,
+  cancellation, and interruption outcomes;
+- avoid invented steps: every displayed work step must map to a sanitized Task
+  Stream or live-output fact.
+
+Exit criteria:
+
+- active work shows a readable sequence of steps without opening the right
+  drawer automatically;
+- completed work ends with a compact summary of what happened, what changed, and
+  what the user can review next;
+- chat-only answers get a natural assistant response and no fake tool steps;
+- draft/candidate completion summarizes preview and changes without claiming
+  Save or verification that did not happen;
+- tool-level file reads, command runs, tests, and repair loops appear only when
+  their real permissioned facts exist.
+
 ### Slice 2 - Working Brief MVP
 
 Scope:

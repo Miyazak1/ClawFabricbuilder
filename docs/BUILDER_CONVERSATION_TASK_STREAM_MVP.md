@@ -279,6 +279,34 @@ receipts, raw tool output, Save authority, or Project Revision facts. Main's
 project-id-only activity hint only tells the desktop conversation controller to
 refresh the current read-only projection; it keeps the existing chat visible
 while reading and never lets the renderer create, accept, or reinterpret work.
+
+The chat flow should feel like the assistant is continuously working with the
+user, but it must be driven by facts rather than invented narration. The current
+MVP should show:
+
+- `run_started` as a compact "assistant is working" row;
+- `run_progress_recorded` stages as readable step updates such as reading
+  context, writing the response, checking the response, and preparing the
+  result;
+- `tool_call_requested` and `tool_call_result_recorded` as sanitized project
+  steps only after the tool facts have been admitted;
+- `run_completed` as the terminal answer, plan, candidate, failure, cancelled,
+  or interrupted result;
+- a completion summary derived from the terminal result, candidate summary,
+  plan summary, verification status, and review state when available.
+
+The first summary can be compact. It should answer:
+
+```text
+What happened?
+What changed, if anything?
+What should the user review or do next?
+```
+
+Detailed tool-level narration, command output, file-by-file work, test runs,
+repair loops, child Agent updates, and cross-task summaries require later
+Permission, Tool Call, Context Snapshot, and Agent Delegation gates. The UI must
+not display those steps unless their underlying facts exist.
 - Candidate, saved, failed, and superseded states are visually distinct.
 - The user can always identify the current saved Version.
 - Engineering terms such as IPC, schema, receipt, adapter, and admission remain

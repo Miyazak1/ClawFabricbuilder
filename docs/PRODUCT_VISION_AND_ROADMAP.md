@@ -161,6 +161,13 @@ User experience:
 - failed work can be resumed without losing the last verified version;
 - Activity/Inbox shows decisions that need human attention.
 
+Before broad tool access, the personal workbench should already show
+fact-backed assistant progress and completion summaries in the chat flow. The
+first version is limited to Run progress, live assistant output, safe tool-step
+projections, and terminal result summaries. File-by-file edits, command runs,
+test/repair loops, child Agent updates, and cross-task summaries require the
+later Permission and Tool gates.
+
 Required facts:
 
 - Goal and Task identify requested work;
