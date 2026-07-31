@@ -272,6 +272,10 @@ Routing rules:
 - contextual execution phrase -> `build` only when a confirmed brief or
   approved plan exists;
 - ambiguous changes -> `clarify` before build.
+- while the assistant is answering a read-only question, an explicit
+  build/change message must not be swallowed as `Add context`; keep it visible
+  and tell the user it has not changed files yet, or queue it behind a future
+  stop-and-build-next affordance.
 
 ## Conversation-Grounded Execution
 

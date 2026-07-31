@@ -196,6 +196,7 @@ async function setup(options: Readonly<{
   answerActivity?: boolean;
   briefUpdateActivity?: boolean;
   contextualBuildActivity?: boolean;
+  deferredAnswer?: boolean;
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failGenerate?: boolean;
@@ -243,6 +244,7 @@ async function setup(options: Readonly<{
   let selectedProjectId: string | null = null;
   let latestDraft = await createGenerationDraft();
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
+  let resolveAnswer: (() => Promise<void>) | null = null;
   let resolveGenerate: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
   let approvedPlanGenerateAttempts = 0;
@@ -314,6 +316,17 @@ async function setup(options: Readonly<{
   const answer = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    if (options.deferredAnswer === true) {
+      return new Promise<unknown>((resolve) => {
+        resolveAnswer = async () => {
+          resolve({
+            version: 'builder-generation-ipc-result.v1',
+            ok: true,
+            result: await createGenerationAnswer(hostRequest),
+          });
+        };
+      });
+    }
     return {
       version: 'builder-generation-ipc-result.v1',
       ok: true,
@@ -840,6 +853,10 @@ async function setup(options: Readonly<{
     openLocation,
     generate,
     generateApprovedPlan,
+    resolveAnswer: async () => {
+      if (resolveAnswer === null) throw new Error('answer was not deferred');
+      await resolveAnswer();
+    },
     resolvePlanReview: async () => {
       if (resolvePlanReview === null) throw new Error('plan review was not deferred');
       await resolvePlanReview();
@@ -2799,6 +2816,66 @@ describe('BuilderApp v2', () => {
     await act(async () => {
       await resolveGenerate();
       await Promise.resolve();
+    });
+  });
+
+  it('does not silently steer a build command while an answer is active', async () => {
+    const {
+      answer,
+      container,
+      emitGenerationStarted,
+      resolveAnswer,
+      steer,
+      submit,
+    } = await setup({ deferredAnswer: true, initiallySaved: true });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    const question = 'What should I improve before changing files?';
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, question);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+    });
+    const expected = await createBuilderGenerationRequest(question, PROJECT_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
+        .toBe('Add context');
+    });
+
+    const change = 'Change the main heading to My Notes.';
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, change);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-active-answer-build-blocked="true"]')?.textContent)
+        .toContain('has not changed files');
+    });
+    expect(steer).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe(change);
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
+
+    await act(async () => {
+      await resolveAnswer();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-active-answer-build-blocked="true"]')).toBeNull();
     });
   });
 

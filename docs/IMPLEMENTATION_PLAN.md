@@ -638,6 +638,15 @@ Evidence requirements:
   text inside the provider/tool loop. The current desktop composer calls it only
   after live work has been bound to a Project Conversation and presents the
   action as adding context, not as changing the already-issued provider request;
+- the current active-answer admission checkpoint keeps explicit build/change
+  commands out of the steering path while a read-only answer is running. The
+  renderer still permits ordinary steering context during active work, but when
+  the active status is `answering` and the intent router classifies the new
+  message as `build`, the composer keeps the text editable, records local route
+  evidence, shows a "not changed files yet" notice, and does not call `steer`,
+  `submit`, Save, Review, Git, SQLite, provider, command, or permission
+  authority. A later queue or stop-and-build-next workflow must be a separate
+  gate;
 - the current provider-output streaming checkpoint lets the main-only
   OpenAI-compatible transport request bounded `text/event-stream` responses only
   when the Generation host supplies an internal observer. The transport assembles

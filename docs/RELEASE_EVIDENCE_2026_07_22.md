@@ -1565,6 +1565,40 @@ terminal tools, arbitrary command execution, or the packaged app payload.
   network-denying CSP, app id `com.clawfabric.builder`, product name
   `ClawFabric Builder`, and 757 ASAR entries.
 
+## 2026-07-31 Composer Active Answer Admission And Focus Check
+
+This addendum records the desktop composer checkpoint after active-answer
+commands and post-send focus were tightened. It extends renderer composer UI,
+renderer route admission, desktop UI tests, and roadmap text only; it does not
+change main provider configuration, Git/SQLite authority, current-project
+permission facts, terminal tools, arbitrary command execution, or real-provider
+DeepSeek canary coverage.
+
+- While a read-only answer is active, a clear build/change message such as
+  "Change the main heading to My Notes." is no longer silently recorded as
+  steering context. The composer records local route evidence, keeps the message
+  editable, shows a fixed "not changed files yet" notice, and does not call
+  `steer`, `submit`, Save, Review, Git, SQLite, provider, command, or permission
+  authority.
+- Existing active work steering remains available for live build/submission
+  context. This checkpoint only blocks build-intent messages during active
+  `answering` until a future queue or stop-and-build-next gate exists.
+- After Enter submit or clicking the single Send/Add context button, focus is
+  restored to the composer textarea when editing remains allowed, so follow-up
+  typing can continue without manually clicking the composer again.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\app\BuilderApp.test.tsx src\features\builder\presentation\BuilderComposer.test.tsx --runInBand`;
+  the suites reported 76 passing Vitest tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 605 passing
+  Vitest tests, and the boundary suite reported 663 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

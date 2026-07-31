@@ -768,6 +768,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [approvalMode, setApprovalMode] = useState<BuilderComposerApprovalMode>('ask_before_write');
   const [composerRouteDecision, setComposerRouteDecision] =
     useState<BuilderComposerRouteDecisionEvidence | null>(null);
+  const [activeAnswerBuildBlocked, setActiveAnswerBuildBlocked] = useState(false);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -1279,6 +1280,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (live === null || !projectSnapshotRef.current.busy) return;
     const commandEpoch = workspaceEpochRef.current;
     const submittedIdea = idea;
+    setActiveAnswerBuildBlocked(false);
     setIdea('');
     const steered = await project.steer(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
@@ -1429,10 +1431,48 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const submitInstruction = useCallback(async () => {
     if (projectSnapshotRef.current.busy) {
+      const currentSnapshot = projectSnapshotRef.current;
+      const submittedIdea = idea;
+      if (currentSnapshot.status === 'answering' && submittedIdea.trim().length > 0) {
+        const decision = decideBuilderComposerIntent(
+          submittedIdea,
+          composerIntentContext(
+            conversationSnapshotRef.current,
+            currentSnapshot,
+            hiddenComposerWorkingBriefKey,
+            composerModeRef.current,
+            currentProjectWriteApprovalStatusRef.current,
+            effectiveApprovalMode(
+              approvalModeRef.current,
+              currentSnapshot,
+              currentProjectWriteApprovalStatusRef.current,
+            ),
+          ),
+        );
+        if (decision.route === 'build') {
+          const routeWorkingBrief = composerWorkingBrief(
+            conversationSnapshotRef.current,
+            currentSnapshot,
+          );
+          const routeTaskId = routeWorkingBrief !== null
+            && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
+            ? routeWorkingBrief.taskId
+            : null;
+          setComposerRouteDecision(createComposerRouteEvidence(
+            decision,
+            currentSnapshot,
+            null,
+            routeTaskId,
+          ));
+          setActiveAnswerBuildBlocked(true);
+          return;
+        }
+      }
       await steerInstruction();
       return;
     }
     if (submitInFlightRef.current || idea.trim().length === 0) return;
+    setActiveAnswerBuildBlocked(false);
     const submittedIdea = idea;
     let decision = decideBuilderComposerIntent(
       submittedIdea,
@@ -1629,6 +1669,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     steerInstruction,
     submitPlanInstruction,
   ]);
+
+  const changeComposerInstruction = useCallback((value: string) => {
+    setActiveAnswerBuildBlocked(false);
+    setIdea(value);
+  }, []);
 
   const selectPlanMode = useCallback(() => {
     composerModeRef.current = 'plan';
@@ -2044,6 +2089,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             </div>
           ) : (
             <BuilderPage
+              activeAnswerBuildBlocked={activeAnswerBuildBlocked
+                && project.snapshot.busy
+                && project.snapshot.status === 'answering'}
               activeFile={activeFile}
               approvalMode={visibleApprovalMode}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
@@ -2071,8 +2119,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onSelectBriefMode={selectBriefMode}
               onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
-              onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
-              onInstructionChange={setIdea}
+              onSteerInstruction={liveOutput === null ? undefined : submitInstruction}
+              onInstructionChange={changeComposerInstruction}
               onInspectRevision={inspectRevision}
               onOpenProject={openProjectFromComposer}
               onOpenProjectLocation={openProjectLocation}

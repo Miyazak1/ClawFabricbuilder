@@ -110,6 +110,7 @@ export type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
 }>;
 
 export type BuilderPageProps = {
+  activeAnswerBuildBlocked?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
@@ -1613,6 +1614,7 @@ function BuilderArtifactSidebar({
 }
 
 export function BuilderPage({
+  activeAnswerBuildBlocked = false,
   approvalMode = 'ask_before_write',
   instruction,
   composerRouteDecision = null,
@@ -2463,6 +2465,7 @@ export function BuilderPage({
 
   const composer = (
     <BuilderComposer
+      activeAnswerBuildBlocked={activeAnswerBuildBlocked}
       approvalMode={approvalMode}
       busy={busy}
       canAddContext={canAddContext}

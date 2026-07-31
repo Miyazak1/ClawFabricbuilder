@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import {
   ArrowUp,
   ChevronDown,
@@ -45,6 +45,7 @@ export type BuilderComposerWorkingBrief = Readonly<{
 export type BuilderComposerMode = 'plan';
 
 export type BuilderComposerProps = Readonly<{
+  activeAnswerBuildBlocked?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
   busy: boolean;
   canAddContext: boolean;
@@ -111,6 +112,7 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
 }
 
 export function BuilderComposer({
+  activeAnswerBuildBlocked = false,
   approvalMode = 'ask_before_write',
   busy,
   canAddContext,
@@ -149,6 +151,8 @@ export function BuilderComposer({
   workspaceNewProjectRequest = 0,
   workspacePickerRequest = 0,
 }: BuilderComposerProps) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const restoreComposerFocusAfterSubmitRef = useRef(false);
   const [workspacePickerState, setWorkspacePickerState] = useState<Readonly<{
     buildPrompt: boolean;
     createRequest: number;
@@ -208,6 +212,29 @@ export function BuilderComposer({
     if (busy) return 'Working on your request...';
     return 'Ask a question, or describe what to build or change...';
   })();
+
+  useEffect(() => {
+    if (!restoreComposerFocusAfterSubmitRef.current) return;
+    if (busy && !canAddContext) return;
+    if (!canEditInstruction) return;
+    restoreComposerFocusAfterSubmitRef.current = false;
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [busy, canAddContext, canEditInstruction, instruction]);
+
+  function requestComposerFocusAfterSubmit(): void {
+    restoreComposerFocusAfterSubmitRef.current = true;
+    window.setTimeout(() => {
+      if (!restoreComposerFocusAfterSubmitRef.current) return;
+      if (busy && !canAddContext) return;
+      if (!canEditInstruction) return;
+      restoreComposerFocusAfterSubmitRef.current = false;
+      textareaRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  function keepComposerFocusDuringPointerSubmit(event: MouseEvent<HTMLButtonElement>): void {
+    if (canSubmitComposer) event.preventDefault();
+  }
 
   function closeWorkspacePicker(
     options: Readonly<{
@@ -338,6 +365,7 @@ export function BuilderComposer({
     event.preventDefault();
     if (canSubmit) onSubmitInstruction?.();
     else onSteerInstruction?.();
+    requestComposerFocusAfterSubmit();
   }
 
   return (
@@ -369,9 +397,18 @@ export function BuilderComposer({
           onKeyDown={submitPrimaryComposerCommand}
           placeholder={composerPlaceholder}
           readOnly={!canEditInstruction}
+          ref={textareaRef}
           aria-keyshortcuts={canSubmitComposer ? 'Enter' : undefined}
           value={instruction}
         />
+        {activeAnswerBuildBlocked ? (
+          <p
+            className="cf-builder-composer-busy-build-notice"
+            data-builder-active-answer-build-blocked="true"
+          >
+            I&apos;m still answering. This message has not changed files; send it again when I finish.
+          </p>
+        ) : null}
         <footer className="cf-builder-composer-footer">
           <div className="cf-builder-composer-tools">
             <div className="cf-builder-composer-add-menu-wrap">
@@ -529,7 +566,12 @@ export function BuilderComposer({
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
                 data-builder-submit-turn="true"
                 disabled={!canSubmitComposer}
-                onClick={canSubmit ? onSubmitInstruction : onSteerInstruction}
+                onClick={() => {
+                  if (canSubmit) onSubmitInstruction?.();
+                  else onSteerInstruction?.();
+                  requestComposerFocusAfterSubmit();
+                }}
+                onMouseDown={keepComposerFocusDuringPointerSubmit}
                 title={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 type="button"
               >

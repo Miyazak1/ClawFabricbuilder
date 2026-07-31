@@ -151,6 +151,33 @@ describe('BuilderComposer', () => {
     expect(onInstructionChange).toHaveBeenCalledWith('What does this project do?');
   });
 
+  it('keeps the composer focused after clicking send so follow-up typing can continue', async () => {
+    const onSubmitInstruction = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          onSubmitInstruction,
+        })}
+      />,
+    );
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    const send = container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]');
+    expect(textarea).not.toBeNull();
+    expect(send).not.toBeNull();
+
+    act(() => textarea?.focus());
+    expect(document.activeElement).toBe(textarea);
+    act(() => send?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })));
+    act(() => send?.click());
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(onSubmitInstruction).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(textarea);
+  });
+
   it('keeps project picking inside the composer without creating hidden build work', () => {
     const onCreateProject = vi.fn();
     const onOpenProject = vi.fn();

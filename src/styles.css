@@ -390,6 +390,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text-faint);
 }
 
+.cf-builder-composer-busy-build-notice {
+  margin: 0 14px 2px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .cf-builder-composer-footer {
   display: flex;
   min-width: 0;

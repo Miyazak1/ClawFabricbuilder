@@ -258,6 +258,10 @@ During an active run:
 
 - `stop`, `cancel`, `暂停` -> cancel/interrupt;
 - `继续`, `再试一次`, `按这个改` -> steer or queued input only when supported;
+- while a read-only answer is active, a clear build/change instruction must not
+  be silently recorded as steering context. The UI must either queue it, offer
+  stop-and-build-next, or explicitly keep it in the composer with a "not changed
+  files yet" notice;
 - ordinary questions can be queued or answered after the run according to UI
   policy;
 - no route may mutate an already-issued provider/tool request.
