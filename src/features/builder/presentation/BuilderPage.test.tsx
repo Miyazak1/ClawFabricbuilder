@@ -429,6 +429,92 @@ async function progressActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function failedRunActivity() {
+  const progressStages = [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+  ] as const;
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1234,
+      head_sequence: 7,
+      recorded_active_turn_id: null,
+      window: {
+        first_sequence: 1,
+        last_sequence: 7,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
+            text: 'Build a static blog page.',
+          },
+          message_kind: 'submitted',
+          mode: 'work',
+          task: {
+            task_id: TASK_ID,
+            title: 'Build static blog',
+          },
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        ...progressStages.map((stage, index) => ({
+          item_kind: 'run_progress_recorded' as const,
+          sequence: index + 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          stage,
+          recorded_state: 'recorded' as const,
+        })),
+        {
+          item_kind: 'run_completed',
+          sequence: 6,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'failed',
+          result_kind: 'failure',
+          failure_phase: 'provider_response_received',
+          assistant_message: {
+            message_id: 'builder-message:223e4567-e89b-42d3-a456-426614174000',
+            text: 'The draft could not be prepared for review.',
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 7,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'failed',
+        },
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function refreshingActivityWithVisibleEntries() {
   let resolveRefresh!: (value: unknown) => void;
   let reads = 0;
@@ -2707,6 +2793,39 @@ describe('BuilderPage v2', () => {
     expect(resultPreparing).toBeNull();
     expect(container.textContent).not.toMatch(
       /provider_request_started|provider_response_received|result_preparing|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
+  it('explains failed work with a completion summary instead of internal phases', async () => {
+    const { saved } = await snapshots();
+    const activity = await failedRunActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const failed = container.querySelector('[data-builder-activity-card="Could not finish"]');
+    const workStatus = container.querySelector('[data-builder-work-status="true"]');
+    expect(failed).not.toBeNull();
+    expect(failed?.getAttribute('data-builder-activity-role')).toBe('assistant');
+    expect(
+      failed?.querySelector('[data-builder-message-surface]')
+        ?.getAttribute('data-builder-message-surface'),
+    ).toBe('plain');
+    expect(workStatus).toBeNull();
+    const summary = failed?.querySelector('[data-builder-completion-summary="true"]');
+    expect(summary?.getAttribute('data-builder-completion-result')).toBe('failed');
+    expect(summary?.textContent).toContain('The AI response arrived but could not be prepared for review.');
+    expect(summary?.textContent).toContain('No version was saved by this result.');
+    expect(summary?.textContent).toContain('Try again with a smaller request or continue with a clearer follow-up.');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /provider_response_received|provider_request_started|context_ready|result_preparing|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
