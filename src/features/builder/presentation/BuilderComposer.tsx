@@ -256,6 +256,45 @@ export function BuilderComposer({
     }));
   }
 
+  useEffect(() => {
+    if (!addMenuOpen && !workspacePickerOpen) return undefined;
+    function closeFloatingPanels(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        addMenuOpen
+        && target.closest('[data-builder-composer-add-menu="true"], [data-builder-composer-add-menu-button="true"]')
+          === null
+      ) {
+        setAddMenuOpen(false);
+      }
+      if (
+        workspacePickerOpen
+        && target.closest('[data-builder-workspace-picker="true"], [data-builder-workspace-chip="true"]') === null
+      ) {
+        onDismissWorkspacePicker?.();
+        if (workspacePickerBuildPrompt) setWorkspacePickerDismissedBuildPrompt(true);
+        setWorkspacePickerState((picker) => ({
+          ...picker,
+          buildPrompt: false,
+          createRequest: workspaceNewProjectRequest,
+          creating: false,
+          open: false,
+          request: workspacePickerRequest,
+        }));
+      }
+    }
+    document.addEventListener('pointerdown', closeFloatingPanels);
+    return () => document.removeEventListener('pointerdown', closeFloatingPanels);
+  }, [
+    addMenuOpen,
+    onDismissWorkspacePicker,
+    workspaceNewProjectRequest,
+    workspacePickerBuildPrompt,
+    workspacePickerOpen,
+    workspacePickerRequest,
+  ]);
+
   function toggleWorkspacePicker(): void {
     if (busy && !canAddContext) return;
     if (workspacePickerOpen) {

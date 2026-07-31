@@ -348,6 +348,32 @@ describe('BuilderComposer', () => {
     expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
   });
 
+  it('closes composer popovers when clicking outside them', () => {
+    const container = render(
+      <BuilderComposer
+        {...props({
+          catalogProjects: Object.freeze([savedProject()]),
+          catalogWorkspaceProjects: Object.freeze([boundWorkspace()]),
+          onOpenProject: vi.fn(),
+        })}
+      />,
+    );
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).not.toBeNull();
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+
+    click(container, '[data-builder-workspace-chip="true"]');
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).not.toBeNull();
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+  });
+
   it('keeps allow-current-project disabled until a project is selected', () => {
     const onSelectApprovalMode = vi.fn();
     const container = render(
