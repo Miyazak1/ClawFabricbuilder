@@ -990,6 +990,8 @@ test('allows explanation prompts to answer general questions directly', () => {
 
   assert.match(descriptor.system_instruction, /Answer one bounded user question without changing project files/u);
   assert.match(descriptor.system_instruction, /For general questions that are not about the local project, answer the question directly/u);
+  assert.match(descriptor.system_instruction, /If the user asks for a plan, scheme, proposal, outline, or steps/u);
+  assert.match(descriptor.system_instruction, /write that content inside explanation as normal text/u);
   assert.match(descriptor.system_instruction, /Use summary only as a short internal recap/u);
   assert.doesNotMatch(descriptor.system_instruction, /Answer one bounded question about the current local software project/u);
   assert.deepEqual(JSON.parse(descriptor.user_instruction), {
@@ -1004,6 +1006,24 @@ test('allows explanation prompts to answer general questions directly', () => {
     },
     current_source_tree: { files: [] },
   });
+});
+
+test('keeps read-only plan-like questions inside the explanation answer contract', () => {
+  const rawRequest = request({ instruction: '帮我写一个方案', existingProjectId: null });
+  const descriptor = createBuilderExplanationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+  });
+
+  assert.deepEqual(descriptor.output_contract, {
+    kind: BUILDER_GENERATED_EXPLANATION_KIND,
+    exact_keys: ['kind', 'title', 'summary', 'explanation'],
+    format: 'json_object_only',
+  });
+  assert.match(descriptor.system_instruction, /write that content inside explanation as normal text/u);
+  assert.match(descriptor.system_instruction, /do not switch kind to builder_project_plan_proposal/u);
+  assert.match(descriptor.user_instruction, /帮我写一个方案/u);
 });
 
 test('keeps greeting answers conversational instead of project-state diagnostics', () => {

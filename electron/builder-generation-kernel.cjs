@@ -159,6 +159,7 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'The explanation field is the actual assistant reply shown to the user. Put the full direct answer there.',
   'Do not make explanation a meta-summary such as "I explained...", "I briefly shared...", or "This is a question about...".',
   'For general questions that are not about the local project, answer the question directly instead of only saying it is unrelated to the project.',
+  'If the user asks for a plan, scheme, proposal, outline, or steps in this answer route, write that content inside explanation as normal text; do not switch kind to builder_project_plan_proposal.',
   'Use summary only as a short internal recap of the answer, not as the user-facing answer.',
   'Match the user language.',
   'If the user is greeting you or making small talk, answer naturally and briefly, then invite them to ask a question or choose a project when they are ready.',

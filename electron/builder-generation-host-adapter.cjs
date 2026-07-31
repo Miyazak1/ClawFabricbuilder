@@ -78,6 +78,16 @@ const PLAN_REPAIR_USER_INSTRUCTION = [
   'Keep each step purpose and expected_change at 360 characters or fewer.',
   'Do not use markdown fences or add any other fields.',
 ].join(' ');
+const EXPLANATION_REPAIR_USER_INSTRUCTION = [
+  'The previous answer response could not be verified.',
+  'Return one JSON object only.',
+  'Use exactly kind, title, summary, and explanation.',
+  'Set kind to builder_conversation_explanation.',
+  'Put the full user-facing answer in explanation.',
+  'If the user asked for a plan, scheme, proposal, outline, or steps, write that plan as normal text in explanation.',
+  'Do not set kind to builder_project_plan_proposal or builder_code_change_operations.',
+  'Do not use markdown fences or add any other fields.',
+].join(' ');
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_base_unavailable: 'The current project source is unavailable.',
@@ -560,42 +570,59 @@ function createBuilderGenerationHostAdapter(options = {}) {
       EXPLANATION_CONTEXT_KEYS,
       controller.signal,
     );
-    let transportResult;
-    try {
-      transportResult = await Reflect.apply(transport, undefined, [{
-        base_url: config.base_url,
-        model: config.model,
-        credential,
-        messages: [
-          { role: 'system', content: descriptor.system_instruction },
-          { role: 'user', content: descriptor.user_instruction },
-        ],
-        timeout_ms: config.timeout_ms,
-        ...(config.temperature === null ? {} : { temperature: config.temperature }),
-        ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
-      }, {
-        signal: controller.signal,
-        ...(onOutputDelta === null
-          ? {}
-          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
-      }]);
-    } catch (error) {
-      mapTransportError(error, controller.signal);
+    async function requestExplanationTransport(repair = false) {
+      let transportResult;
+      try {
+        transportResult = await Reflect.apply(transport, undefined, [{
+          base_url: config.base_url,
+          model: config.model,
+          credential,
+          messages: [
+            { role: 'system', content: descriptor.system_instruction },
+            { role: 'user', content: descriptor.user_instruction },
+            ...(repair ? [{ role: 'user', content: EXPLANATION_REPAIR_USER_INSTRUCTION }] : []),
+          ],
+          timeout_ms: config.timeout_ms,
+          ...(config.temperature === null ? {} : { temperature: config.temperature }),
+          ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
+        }, {
+          signal: controller.signal,
+          ...(onOutputDelta === null
+            ? {}
+            : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+        }]);
+      } catch (error) {
+        mapTransportError(error, controller.signal);
+      }
+      if (controller.signal.aborted) fail('builder_generation_cancelled');
+      return sanitizeTransportResult(transportResult);
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const generatedText = await requestExplanationTransport(false);
     context = await progressContext(
       context,
       'provider_response_received',
       EXPLANATION_CONTEXT_KEYS,
       controller.signal,
     );
-    const generatedText = sanitizeTransportResult(transportResult);
     context = await progressContext(context, 'result_preparing', EXPLANATION_CONTEXT_KEYS, controller.signal);
-    try {
-      const answer = projectBuilderExplanationResult({
+    function buildExplanationResult(text) {
+      return projectBuilderExplanationResult({
         request,
-        generated_text: generatedText,
+        generated_text: text,
       });
+    }
+    try {
+      const answer = buildExplanationResult(generatedText);
+      return Object.freeze({ ...answer, context });
+    } catch (error) {
+      if (kernelErrorCode(error) !== 'builder_generation_structured_response_invalid') {
+        mapKernelError(error);
+      }
+    }
+    const repairedText = await requestExplanationTransport(true);
+    try {
+      const answer = buildExplanationResult(repairedText);
       return Object.freeze({ ...answer, context });
     } catch (error) {
       mapKernelError(error);

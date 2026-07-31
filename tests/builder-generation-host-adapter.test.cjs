@@ -679,6 +679,51 @@ test('generates a bounded explanation without candidate or Git context', async (
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model|candidate_digest|git_request|operations/iu);
 });
 
+test('repairs a plan-shaped response in the read-only explanation route', async () => {
+  const rawRequest = request({ instruction: '帮我写一个方案', existingProjectId: null });
+  const transportInputs = [];
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildExplanationContext: (raw) => explanationContextFor(raw),
+    transport: async (...args) => {
+      transportInputs.push(args);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: transportInputs.length === 1
+          ? JSON.stringify(providerPlan())
+          : JSON.stringify(providerExplanation({
+            title: '方案',
+            summary: '以聊天方式给出方案。',
+            explanation: '可以先按目标、内容结构、视觉方向和实现步骤来整理方案。',
+          })),
+      };
+    },
+  }));
+
+  const result = await adapter.explain(rawRequest);
+
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(result.title, '方案');
+  assert.match(result.explanation, /目标|内容结构|视觉方向|实现步骤/u);
+  assert.equal(transportInputs.length, 2);
+  assert.equal(transportInputs[0][0].messages.length, 2);
+  assert.equal(transportInputs[1][0].messages.length, 3);
+  assert.match(transportInputs[1][0].messages[2].content, /previous answer response could not be verified/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /Set kind to builder_conversation_explanation/u);
+  assert.match(transportInputs[1][0].messages[2].content, /write that plan as normal text in explanation/iu);
+  assert.doesNotMatch(
+    JSON.stringify({
+      version: result.version,
+      result_kind: result.result_kind,
+      request_id: result.request_id,
+      title: result.title,
+      summary: result.summary,
+      explanation: result.explanation,
+      admissions: result.admissions,
+    }),
+    /builder_project_plan_proposal|builder_code_change_operations|"steps"|"operations"|credential_value|credential_secret|"secret_ref"|api[_-]?key|provider\.example/iu,
+  );
+});
+
 test('generates a bounded plan proposal from source context without creating Git evidence', async () => {
   const rawRequest = request({ instruction: 'Plan a smaller settings panel.', existingProjectId: PROJECT_ID });
   const sourceContext = planSourceContextResult(rawRequest, [
