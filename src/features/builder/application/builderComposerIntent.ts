@@ -24,6 +24,7 @@ export type BuilderComposerIntentDowngradeReason =
   | null;
 
 export type BuilderComposerIntentContext = Readonly<{
+  composerMode?: 'plan' | null;
   hasPriorBuildContext?: boolean;
   hasWorkspace?: boolean;
   hasWritePermission?: boolean;
@@ -202,6 +203,12 @@ export function decideBuilderComposerIntent(
     return createDecision('answer', context, {
       confidence: 'high',
       matchedSignals: ['empty_message'],
+    });
+  }
+  if (context.composerMode === 'plan') {
+    return createDecision('plan', context, {
+      confidence: 'high',
+      matchedSignals: ['composer_mode_plan'],
     });
   }
   if (WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) {

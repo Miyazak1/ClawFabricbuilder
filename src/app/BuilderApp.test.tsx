@@ -2577,6 +2577,51 @@ describe('BuilderApp v2', () => {
     expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
   });
 
+  it('routes the add-menu Plan mode through plan evidence even for build-like wording', async () => {
+    const {
+      container,
+      generate,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      saveDraft,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      planAfterPropose: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+      .toContain('Plan mode');
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+        instruction: 'Make a timer.',
+      });
+    });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('composer_mode_plan');
+    expect(composer?.getAttribute('data-builder-route-downgrade')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
   it('asks for visible project-read approval before a saved-project plan needs source context', async () => {
     const {
       approvePlanSourceRead,

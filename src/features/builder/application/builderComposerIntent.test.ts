@@ -134,6 +134,22 @@ describe('routeBuilderComposerIntent', () => {
     expect(routeBuilderComposerIntent('先规划一下这个项目')).toBe('plan');
   });
 
+  it('lets active Plan mode force the next non-empty message into the plan route', () => {
+    expect(decideBuilderComposerIntent('创建登录页', {
+      composerMode: 'plan',
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'plan',
+      confidence: 'high',
+      matchedSignals: ['composer_mode_plan'],
+      downgradeReason: null,
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'plan',
+    });
+  });
+
   it('detects only contextual execution phrases for pending-plan approval shortcuts', () => {
     expect(isBuilderComposerContextualBuildIntent('按这个做')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('就按刚才方案实现')).toBe(true);

@@ -172,6 +172,13 @@ Plan can be selected by UI as well as by natural language:
 - if source context is needed for the plan, dispatch requests source-read
   approval rather than silently reading files.
 
+Current Plan mode checkpoint: active composer Plan mode is part of route
+context. The next non-empty submit records `route=plan`,
+`dispatch=plan`, `matchedSignals=["composer_mode_plan"]`, and no
+`write_project` permission requirement, even when the wording looks like a
+direct build request. This keeps the visible mode chip, route evidence, and
+main work dispatch aligned.
+
 ### build
 
 Use only when the user clearly requests side-effecting creation or modification.

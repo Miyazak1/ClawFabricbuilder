@@ -660,9 +660,11 @@ function composerIntentContext(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
   hiddenComposerWorkingBriefKey: string | null = null,
+  composerMode: BuilderComposerMode | null = null,
 ) {
   const currentWorkingBrief = composerWorkingBrief(conversationSnapshot, projectSnapshot);
   return Object.freeze({
+    composerMode,
     hasPriorBuildContext: projectSnapshot.draft !== null
       || (
         hasPriorBuildContext(conversationSnapshot, projectSnapshot)
@@ -856,6 +858,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     conversation.snapshot,
     project.snapshot,
     hiddenComposerWorkingBriefKey,
+    composerMode,
   );
   const composerContextStatus = currentComposerIntentContext.hasPriorBuildContext
     ? 'ready_to_build'
@@ -1259,7 +1262,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const submittedIdea = idea;
     const decision = decideBuilderComposerIntent(
       submittedIdea,
-      composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current, hiddenComposerWorkingBriefKey),
+      composerIntentContext(
+        conversationSnapshotRef.current,
+        projectSnapshotRef.current,
+        hiddenComposerWorkingBriefKey,
+        composerModeRef.current,
+      ),
     );
     const routeWorkingBrief = composerWorkingBrief(
       conversationSnapshotRef.current,
