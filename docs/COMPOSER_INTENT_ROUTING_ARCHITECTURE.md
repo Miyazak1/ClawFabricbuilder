@@ -337,6 +337,14 @@ and `createdAt`. Workspace-gated continuation reuses the same `messageId` and
 records a new decision id after the workspace is bound. This is not yet durable
 SQLite task evidence; durable Task Capsule binding is the next slice.
 
+Current Task Capsule checkpoint: when `update_brief` is submitted with a selected
+workspace, the renderer uses the existing main conversation work path rather
+than the pure answer path. Main records the explanation and emits
+`task_brief_updated` / `builder-task-capsule.v1`; no draft, Save, command, or
+source write is created. Without a selected workspace, the same message remains
+chat-only and does not create a hidden project or task. Later build route
+evidence can bind to the visible task id derived from the sanitized task stream.
+
 ## Test Matrix
 
 The router should have product-level tests, not only unit regex tests.

@@ -555,32 +555,51 @@ function composerWorkingBrief(
     || conversationSnapshot.project_id !== visibleProjectId
   ) return null;
 
-  const planTextsByRun = new Map<string, Readonly<{ sequence: number; text: string }>>();
-  let latestPlan: Readonly<{ sequence: number; state: 'approved' | 'proposed' | 'rejected'; text: string }> | null = null;
-  let latestCandidate: Readonly<{ sequence: number; text: string }> | null = null;
-  let latestTaskBrief: Readonly<{ sequence: number; text: string }> | null = null;
+  const planTextsByRun = new Map<string, Readonly<{
+    sequence: number;
+    taskId: string | null;
+    text: string;
+  }>>();
+  const taskIdsByRun = new Map<string, string>();
+  let latestPlan: Readonly<{
+    sequence: number;
+    state: 'approved' | 'proposed' | 'rejected';
+    taskId: string | null;
+    text: string;
+  }> | null = null;
+  let latestCandidate: Readonly<{ sequence: number; taskId: string | null; text: string }> | null = null;
+  let latestTaskBrief: Readonly<{ sequence: number; taskId: string; text: string }> | null = null;
 
   for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'run_started') {
+      if (item.task_id !== null) taskIdsByRun.set(taskStreamRunKey(item), item.task_id);
+      continue;
+    }
     if (item.item_kind === 'task_brief_updated') {
       if (item.brief.contextual_build_ready) {
-        latestTaskBrief = Object.freeze({ sequence: item.sequence, text: item.brief.summary });
+        latestTaskBrief = Object.freeze({
+          sequence: item.sequence,
+          taskId: item.task.task_id,
+          text: item.brief.summary,
+        });
       }
       continue;
     }
     if (item.item_kind === 'run_completed') {
+      const taskId = taskIdsByRun.get(taskStreamRunKey(item)) ?? null;
       const text = item.assistant_message === null ? null : compactComposerBriefText(item.assistant_message.text);
       if (item.result_kind === 'candidate' && item.candidate !== null) {
         const candidateText = compactComposerBriefText(item.candidate.summary)
           ?? compactComposerBriefText(item.candidate.title);
         if (candidateText !== null) {
-          latestCandidate = Object.freeze({ sequence: item.sequence, text: candidateText });
+          latestCandidate = Object.freeze({ sequence: item.sequence, taskId, text: candidateText });
         }
         continue;
       }
       if (item.result_kind === 'plan' && text !== null) {
         const runKey = taskStreamRunKey(item);
-        planTextsByRun.set(runKey, Object.freeze({ sequence: item.sequence, text }));
-        latestPlan = Object.freeze({ sequence: item.sequence, state: 'proposed', text });
+        planTextsByRun.set(runKey, Object.freeze({ sequence: item.sequence, taskId, text }));
+        latestPlan = Object.freeze({ sequence: item.sequence, state: 'proposed', taskId, text });
       }
       continue;
     }
@@ -590,6 +609,7 @@ function composerWorkingBrief(
         latestPlan = Object.freeze({
           sequence: item.sequence,
           state: item.plan_state,
+          taskId: plan.taskId,
           text: plan.text,
         });
       }
@@ -604,6 +624,7 @@ function composerWorkingBrief(
       key,
       label: 'Approved plan',
       summary: latestPlan.text,
+      taskId: latestPlan.taskId,
     }));
     candidateSequences.set(key, latestPlan.sequence);
   }
@@ -613,6 +634,7 @@ function composerWorkingBrief(
       key,
       label: 'Current result',
       summary: latestCandidate.text,
+      taskId: latestCandidate.taskId,
     }));
     candidateSequences.set(key, latestCandidate.sequence);
   }
@@ -622,6 +644,7 @@ function composerWorkingBrief(
       key,
       label: 'Current brief',
       summary: latestTaskBrief.text,
+      taskId: latestTaskBrief.taskId,
     }));
     candidateSequences.set(key, latestTaskBrief.sequence);
   }
@@ -714,6 +737,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     decision: BuilderComposerRouteDecision,
     projectSnapshot: BuilderVisibleProjectSnapshot,
     existingMessageId: string | null = null,
+    taskId: string | null = null,
   ) => {
     const sequence = composerRouteDecisionSequenceRef.current + 1;
     composerRouteDecisionSequenceRef.current = sequence;
@@ -722,7 +746,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       decisionId: `builder-composer-route-decision:local:${sequence}`,
       messageId,
       projectId: visibleConversationProjectId(projectSnapshot),
-      taskId: null,
+      taskId,
       createdAt: new Date().toISOString(),
     });
   }, []);
@@ -1237,7 +1261,21 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       submittedIdea,
       composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current, hiddenComposerWorkingBriefKey),
     );
-    const routeEvidence = createComposerRouteEvidence(decision, projectSnapshotRef.current);
+    const routeWorkingBrief = composerWorkingBrief(
+      conversationSnapshotRef.current,
+      projectSnapshotRef.current,
+    );
+    const routeTaskId = routeWorkingBrief !== null
+      && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
+      && decision.route === 'build'
+      ? routeWorkingBrief.taskId
+      : null;
+    const routeEvidence = createComposerRouteEvidence(
+      decision,
+      projectSnapshotRef.current,
+      null,
+      routeTaskId,
+    );
     setComposerRouteDecision(routeEvidence);
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
@@ -1278,7 +1316,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       setIdea('');
       setLiveOutput(null);
-      const result = decision.dispatch === 'build'
+      const shouldSubmitToConversationWorkPath = decision.dispatch === 'build'
+        || (decision.dispatch === 'brief_update' && hasBuildWorkspace(projectSnapshotRef.current));
+      const result = shouldSubmitToConversationWorkPath
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
       if (workspaceEpochRef.current !== commandEpoch) return;

@@ -192,6 +192,7 @@ function createReadOnlyPageQuestionTaskStreamWire() {
 
 async function setup(options: Readonly<{
   answerActivity?: boolean;
+  briefUpdateActivity?: boolean;
   contextualBuildActivity?: boolean;
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
@@ -332,6 +333,13 @@ async function setup(options: Readonly<{
     submitAttempts += 1;
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    if (options.briefUpdateActivity === true && /(?:我想|我要|我们要|希望|需要|would like|want)/iu.test(instruction)) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: await createGenerationAnswer(hostRequest),
+      };
+    }
     if (/[?\uFF1F]\s*$/u.test(instruction)) {
       return {
         version: 'builder-generation-ipc-result.v1',
@@ -594,6 +602,8 @@ async function setup(options: Readonly<{
           ? createPlanTaskStreamWire()
           : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
             ? createRejectedTaskStreamWire()
+            : options.briefUpdateActivity === true && submit.mock.calls.length > 0
+              ? createContextualBuildTaskStreamWire()
             : options.answerActivity === true
               ? createAnswerTaskStreamWire()
               : options.readOnlyPageQuestionActivity === true
@@ -1671,8 +1681,6 @@ describe('BuilderApp v2', () => {
       '我想先聊一下这个页面怎么做',
       '我们先确定风格',
       '我想创建一个登录页，你觉得怎么设计',
-      '我想做一个登录页',
-      '我要做一个登录页',
       '可以帮我做一个登录页吗？',
       'Can you build a login page?',
       'Should we create a dashboard first?',
@@ -1711,9 +1719,41 @@ describe('BuilderApp v2', () => {
     }
   });
 
+  it('records exploratory product intent through the work path as a task brief without creating a draft', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      briefUpdateActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    setComposerInstruction(container, '我想做一个登录页');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    await waitFor(() => {
+      const brief = container.querySelector('[data-builder-composer-brief="true"]');
+      expect(brief?.textContent).toContain('Current brief');
+      expect(brief?.textContent).toContain('星空背景');
+    });
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+  });
+
   it('projects the latest route decision for chat, brief update, and admitted build turns', async () => {
     const { answer, container, submit } = await setup({
-      answerActivity: true,
+      briefUpdateActivity: true,
       initiallySaved: true,
     });
     await openSavedProject(container);
@@ -1743,8 +1783,9 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
     });
+    expect(answer).not.toHaveBeenCalled();
     composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
@@ -1755,6 +1796,12 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-message-id')).
       toBe('builder-composer-message:local:2');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
+        .toContain('Current brief');
+    });
+    submit.mockClear();
 
     setComposerInstruction(container, '把按钮颜色改红');
     await waitForComposerSubmitReady(container);
@@ -1772,6 +1819,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-message-id')).
       toBe('builder-composer-message:local:3');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {
@@ -3016,6 +3064,31 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
+  it('keeps exploratory brief updates as chat when no project workspace is selected', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+    });
+    setComposerInstruction(container, '我想做一个登录页');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+    });
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
   });
 
   it('keeps Chinese how-to questions in chat without opening the project picker', async () => {

@@ -35,6 +35,7 @@ export type BuilderComposerWorkingBrief = Readonly<{
   key: string;
   label: string;
   summary: string;
+  taskId: string | null;
 }>;
 
 export type BuilderComposerMode = 'plan';

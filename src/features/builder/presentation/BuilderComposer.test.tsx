@@ -349,6 +349,7 @@ describe('BuilderComposer', () => {
             key: 'builder-project:current-brief:1:3',
             label: 'Current brief',
             summary: 'Build a static portfolio homepage with a starfield hero and project cards.',
+            taskId: 'builder-task:123e4567-e89b-42d3-a456-426614174001',
           },
           instruction: '',
           onClearComposerWorkingBrief,
