@@ -2599,6 +2599,7 @@ test('records a retryable failed run without completing the turn before delibera
       run_id: first.ids.run_id,
       terminal_status: 'failed',
       result_kind: 'failure',
+      failure_phase: 'not_recorded',
       assistant_message: {
         message_id: first.ids.assistant_message_id,
         text: 'The draft could not be made.',
@@ -2696,6 +2697,7 @@ test('explains generic failures after the AI request starts without exposing pro
       run_id: first.ids.run_id,
       terminal_status: 'failed',
       result_kind: 'failure',
+      failure_phase: 'provider_request_started',
       assistant_message: {
         message_id: first.ids.assistant_message_id,
         text: 'The AI request ended before it returned a usable draft.',
@@ -2774,6 +2776,7 @@ test('records fixed public failure summaries for provider connection failures', 
       run_id: first.ids.run_id,
       terminal_status: 'failed',
       result_kind: 'failure',
+      failure_phase: 'not_recorded',
       assistant_message: {
         message_id: first.ids.assistant_message_id,
         text: 'The AI service could not be reached.',

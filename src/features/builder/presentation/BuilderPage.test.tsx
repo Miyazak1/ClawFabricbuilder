@@ -573,6 +573,7 @@ async function toolActivity(
           run_id: RUN_ID,
           terminal_status: 'succeeded',
           result_kind: 'candidate',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: 'builder-message:423e4567-e89b-42d3-a456-426614174000',
             text: 'I prepared a draft after reading the project context.',

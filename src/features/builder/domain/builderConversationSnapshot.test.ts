@@ -67,6 +67,7 @@ type MutableConversationItem = {
   };
   terminal_status?: string;
   result_kind?: string;
+  failure_phase?: string;
   assistant_message?: MutableMessage | null;
   candidate?: MutableCandidate | null;
   draft_id?: string;
@@ -171,6 +172,7 @@ function candidateWire(): MutableWire {
           run_id: runId,
           terminal_status: 'succeeded',
           result_kind: 'candidate',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: id('message', 5),
             text: 'I prepared a focused timer draft.',
@@ -259,6 +261,7 @@ function taskBriefWire(): MutableWire {
           run_id: runId,
           terminal_status: 'succeeded',
           result_kind: 'explanation',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: id('message', 14),
             text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
@@ -352,6 +355,7 @@ function planWire(): MutableWire {
     ...wire.conversation.items[2]!,
     terminal_status: 'succeeded',
     result_kind: 'plan',
+    failure_phase: 'not_applicable',
     assistant_message: {
       message_id: id('message', 5),
       text: 'Review the proposed plan before files change.',
@@ -458,6 +462,7 @@ function successfulToolCandidateWire(): MutableWire {
       run_id: id('run', 3),
       terminal_status: 'succeeded',
       result_kind: 'candidate',
+      failure_phase: 'not_applicable',
       assistant_message: {
         message_id: id('message', 6),
         text: 'I prepared the draft after checking the file.',
@@ -681,6 +686,46 @@ describe('Builder conversation snapshot', () => {
     });
     expect(JSON.stringify(snapshot)).not.toMatch(
       /credential|source_tree|git_|receipt|digest|prompt|token|secret/iu,
+    );
+  });
+
+  it('accepts fixed failed-run phases only when they match visible progress', () => {
+    const wire = progressWire();
+    wire.conversation.items[4] = {
+      ...wire.conversation.items[4]!,
+      terminal_status: 'failed',
+      result_kind: 'failure',
+      failure_phase: 'provider_request_started',
+      assistant_message: {
+        message_id: id('message', 5),
+        text: 'The AI request ended before it returned a usable draft.',
+      },
+      candidate: null,
+    };
+    wire.conversation.items[5] = {
+      ...wire.conversation.items[5]!,
+      outcome: 'failed',
+    };
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[4]).toMatchObject({
+      item_kind: 'run_completed',
+      terminal_status: 'failed',
+      result_kind: 'failure',
+      failure_phase: 'provider_request_started',
+    });
+
+    const forgedPhase = structuredClone(wire);
+    forgedPhase.conversation.items[4]!.failure_phase = 'context_ready';
+    const forgedSuccess = progressWire();
+    forgedSuccess.conversation.items[4]!.failure_phase = 'provider_request_started';
+
+    expectUnavailable(forgedPhase);
+    expectUnavailable(forgedSuccess);
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /provider_secret|credential|source_tree|git_|receipt|digest|prompt|token/iu,
     );
   });
 
@@ -1220,6 +1265,7 @@ describe('Builder conversation snapshot', () => {
         run_id: prefixRunId,
         terminal_status: 'failed',
         result_kind: 'failure',
+        failure_phase: 'not_recorded',
         assistant_message: {
           message_id: id('message', 706),
           text: 'The file read could not finish.',
@@ -1243,6 +1289,7 @@ describe('Builder conversation snapshot', () => {
         run_id: retryRunId,
         terminal_status: 'failed',
         result_kind: 'failure',
+        failure_phase: 'not_recorded',
         assistant_message: {
           message_id: id('message', 707),
           text: 'The retry also failed.',
@@ -1365,6 +1412,7 @@ describe('Builder conversation snapshot', () => {
         run_id: prefixRunId,
         terminal_status: 'failed',
         result_kind: 'failure',
+        failure_phase: 'not_recorded',
         assistant_message: {
           message_id: id('message', 734),
           text: 'The project step was unavailable.',
@@ -1583,6 +1631,7 @@ describe('Builder conversation snapshot', () => {
       {
         terminal_status: 'succeeded',
         result_kind: 'explanation',
+        failure_phase: 'not_applicable',
         assistant_message: {
           message_id: id('message', 5),
           text: 'The current project contains a timer.',
@@ -1594,6 +1643,7 @@ describe('Builder conversation snapshot', () => {
       {
         terminal_status: 'failed',
         result_kind: 'failure',
+        failure_phase: 'not_recorded',
         assistant_message: {
           message_id: id('message', 5),
           text: 'The draft could not be made.',
@@ -1617,6 +1667,7 @@ describe('Builder conversation snapshot', () => {
         ...wire.conversation.items[2],
         terminal_status: terminal.terminal_status,
         result_kind: terminal.result_kind,
+        failure_phase: terminal.failure_phase,
         assistant_message: terminal.assistant_message,
         candidate: null,
       };

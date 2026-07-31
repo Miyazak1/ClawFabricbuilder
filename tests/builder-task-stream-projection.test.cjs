@@ -751,6 +751,73 @@ test('projects fixed run progress as renderer-safe status items', () => {
   );
 });
 
+test('projects failed runs with only a fixed public failure phase', () => {
+  const events = [];
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 86), text: 'Build a static blog page.' },
+    turn_id: id('turn', 86),
+    mode: 'work',
+    task: { task_id: id('task', 87), title: 'Create static blog' },
+    base_revision: null,
+  }, 88);
+  append(events, 'run_started', {
+    turn_id: id('turn', 86),
+    run_id: id('run', 89),
+    task_id: id('task', 87),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 89);
+  append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 86),
+    run_id: id('run', 89),
+    stage: 'context_ready',
+  }, 90);
+  append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 86),
+    run_id: id('run', 89),
+    stage: 'provider_request_started',
+  }, 91);
+  append(events, 'run_completed', {
+    turn_id: id('turn', 86),
+    run_id: id('run', 89),
+    terminal_status: 'failed',
+    result_kind: 'failure',
+    result_digest: DIGEST,
+    assistant_message: {
+      message_id: id('message', 92),
+      text: 'The AI request ended before it returned a usable draft.',
+    },
+    candidate_result: null,
+  }, 92);
+  append(events, 'turn_completed', {
+    turn_id: id('turn', 86),
+    run_id: id('run', 89),
+    outcome: 'failed',
+  }, 93);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.deepEqual(stream.conversation.items[4], {
+    item_kind: 'run_completed',
+    sequence: 5,
+    turn_id: id('turn', 86),
+    run_id: id('run', 89),
+    terminal_status: 'failed',
+    result_kind: 'failure',
+    failure_phase: 'provider_request_started',
+    assistant_message: {
+      message_id: id('message', 92),
+      text: 'The AI request ended before it returned a usable draft.',
+    },
+    candidate: null,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /provider_secret|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid|input_digest|result_digest|failure_code|prompt|token/iu,
+  );
+});
+
 test('projects rejected candidates without exposing review identity or Git evidence', () => {
   const stream = projectBuilderTaskStream(input(rejectedCandidateEvents()));
   assert.deepEqual(stream.conversation.items.at(-1), {

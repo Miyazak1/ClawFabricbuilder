@@ -76,6 +76,7 @@ function readyWire(projectId = PROJECT_ID, uuid = UUID): unknown {
           run_id: runId,
           terminal_status: 'succeeded',
           result_kind: 'explanation',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: `builder-message:${assistantMessageUuid}`,
             text: 'I prepared the project.',

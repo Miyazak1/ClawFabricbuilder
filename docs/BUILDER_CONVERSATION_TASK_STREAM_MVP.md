@@ -291,7 +291,12 @@ MVP should show:
 - `tool_call_requested` and `tool_call_result_recorded` as sanitized project
   steps only after the tool facts have been admitted;
 - `run_completed` as the terminal answer, plan, candidate, failure, cancelled,
-  or interrupted result;
+  or interrupted result. Failed completions carry only a fixed public
+  `failure_phase` such as `not_recorded`, `context_ready`,
+  `provider_request_started`, `provider_response_received`, or
+  `result_preparing`; this supports useful recovery text without exposing
+  provider errors, prompts, credentials, source evidence, Git receipts, or
+  internal exception material;
 - a completion summary derived from the terminal result, candidate summary,
   plan summary, verification status, and review state when available.
 

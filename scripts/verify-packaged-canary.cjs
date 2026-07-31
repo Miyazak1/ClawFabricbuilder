@@ -438,6 +438,7 @@ const TASK_STREAM_RUN_COMPLETED_KEYS = Object.freeze([
   'run_id',
   'terminal_status',
   'result_kind',
+  'failure_phase',
   'assistant_message',
   'candidate',
 ]);
@@ -2913,10 +2914,20 @@ function sanitizeTaskStreamToolCallResultRecorded(source, sequence) {
 function sanitizeTaskStreamRunCompleted(source, sequence) {
   const terminalStatus = source.terminal_status;
   const resultKind = source.result_kind;
+  const failurePhase = source.failure_phase;
   if (
     !['succeeded', 'failed', 'interrupted', 'cancelled'].includes(terminalStatus)
     || !['explanation', 'plan', 'candidate', 'failure'].includes(resultKind)
     || ((terminalStatus === 'succeeded') !== (resultKind !== 'failure'))
+    || ![
+      'not_applicable',
+      'not_recorded',
+      'context_ready',
+      'provider_request_started',
+      'provider_response_received',
+      'result_preparing',
+    ].includes(failurePhase)
+    || ((terminalStatus === 'failed') !== (failurePhase !== 'not_applicable'))
   ) fail('canary_evidence_failed');
   const assistantMessage = source.assistant_message === null
     ? null
@@ -2933,6 +2944,7 @@ function sanitizeTaskStreamRunCompleted(source, sequence) {
     run_id: safeBuilderId(source.run_id, 'run_id'),
     terminal_status: terminalStatus,
     result_kind: resultKind,
+    failure_phase: failurePhase,
     assistant_message: assistantMessage,
     candidate,
   });
@@ -3135,6 +3147,10 @@ function taskStreamItemCounts(items) {
         || started.turn_id !== item.turn_id
         || started.sequence >= item.sequence
         || runCompletedByRunId.has(item.run_id)
+      ) fail('canary_evidence_failed');
+      if (
+        item.terminal_status === 'failed'
+        && item.failure_phase !== (progressStageByRunId.get(item.run_id) ?? 'not_recorded')
       ) fail('canary_evidence_failed');
       runCompletedByRunId.set(item.run_id, item);
       if (activeRunByTurnId.get(item.turn_id)?.run_id === item.run_id) {

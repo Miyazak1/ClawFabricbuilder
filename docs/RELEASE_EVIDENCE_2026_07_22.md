@@ -1402,6 +1402,44 @@ readiness.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Task Stream Failure Phase Package Check
+
+This addendum records the renderer-safe Task Stream failure-phase checkpoint
+after provider-started failures became visible in the chat flow. It extends the
+public task-stream projection, renderer sanitizer, completion-summary UI, and
+packaged-canary evidence only; it does not extend installer evidence,
+real-provider DeepSeek canary coverage, arbitrary generated-code execution,
+external-network permissions, or general-purpose command/tool execution
+readiness.
+
+- `run_completed` items now include a fixed public `failure_phase`.
+  Non-failed terminal outcomes must use `not_applicable`. Failed outcomes use
+  either `not_recorded` or the latest fixed progress stage such as
+  `context_ready`, `provider_request_started`, `provider_response_received`, or
+  `result_preparing`.
+- The Electron projection computes `failure_phase` from the full canonical
+  event replay before applying the 128-item public window. The renderer
+  sanitizer rejects missing, forged, mismatched, or phase-leaking shapes and
+  validates the phase against visible progress whenever the suffix has enough
+  evidence.
+- Builder chat completion summaries now distinguish provider-started failures
+  from earlier failures without exposing provider endpoints, credentials,
+  prompts, source trees, Git receipts, failure codes, or internal exceptions.
+- Focused validation passed through
+  `node --test tests\builder-task-stream-projection.test.cjs` and
+  `npm.cmd exec vitest run src\features\builder\domain\builderConversationSnapshot.test.ts src\features\builder\presentation\BuilderPage.test.tsx`;
+  the suites reported 16 passing Node tests and 91 passing Vitest tests.
+- Adjacent validation passed through
+  `npm.cmd exec tsc -b --pretty false` and
+  `node --test tests\builder-conversation-main-service.test.cjs tests\builder-generation-main-service.test.cjs`;
+  the suites reported a clean typecheck and 76 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd run test:unit`, and `npm.cmd run test:boundaries`. The full unit
+  suite reported 575 passing Vitest tests, and the boundary suite reported 661
+  passing Node tests.
+- `npm.cmd run pack` passed. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

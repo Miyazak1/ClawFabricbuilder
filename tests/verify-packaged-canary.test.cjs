@@ -961,6 +961,7 @@ function taskStreamConversation(
         run_id: evidence.receipt.run_id,
         terminal_status: 'succeeded',
         result_kind: 'candidate',
+        failure_phase: 'not_applicable',
         assistant_message: {
           message_id: assistantMessageIds[revision - 1],
           text: 'I prepared a draft for review.',
@@ -1027,6 +1028,7 @@ function taskStreamConversation(
         run_id: runId,
         terminal_status: 'succeeded',
         result_kind: 'explanation',
+        failure_phase: 'not_applicable',
         assistant_message: {
           message_id: questionAssistantMessageIds[index - 1],
           text: 'It is a focus timer. Review the timer duration before changing it.',
@@ -1121,6 +1123,7 @@ function taskStreamConversation(
         run_id: runId,
         terminal_status: 'succeeded',
         result_kind: 'plan',
+        failure_phase: 'not_applicable',
         assistant_message: {
           message_id: planAssistantMessageIds[index - 1],
           text: 'I will add a small completed-state section and keep the current timer intact.',

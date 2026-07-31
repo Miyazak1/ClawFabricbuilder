@@ -100,6 +100,11 @@ export type BuilderConversationRunProgressStage =
   | 'provider_response_received'
   | 'result_preparing';
 
+export type BuilderConversationFailurePhase =
+  | 'not_applicable'
+  | 'not_recorded'
+  | BuilderConversationRunProgressStage;
+
 export type BuilderConversationItem =
   | Readonly<{
     item_kind: 'user_message';
@@ -199,6 +204,7 @@ export type BuilderConversationItem =
     run_id: string;
     terminal_status: 'succeeded' | 'failed' | 'interrupted' | 'cancelled';
     result_kind: 'explanation' | 'plan' | 'candidate' | 'failure';
+    failure_phase: BuilderConversationFailurePhase;
     assistant_message: BuilderConversationMessage | null;
     candidate: BuilderConversationCandidate | null;
   }>
@@ -470,6 +476,7 @@ const RUN_COMPLETED_KEYS = Object.freeze([
   'run_id',
   'terminal_status',
   'result_kind',
+  'failure_phase',
   'assistant_message',
   'candidate',
 ]);
@@ -1050,6 +1057,7 @@ function sanitizeRunCompleted(
 ): Extract<BuilderConversationItem, { item_kind: 'run_completed' }> {
   const terminalStatus = source.terminal_status;
   const resultKind = source.result_kind;
+  const failurePhase = source.failure_phase;
   if (
     !['succeeded', 'failed', 'interrupted', 'cancelled'].includes(
       terminalStatus as string,
@@ -1058,6 +1066,16 @@ function sanitizeRunCompleted(
       resultKind as string,
     )
     || (terminalStatus === 'succeeded') !== (resultKind !== 'failure')
+    || ![
+      'not_applicable',
+      'not_recorded',
+      'context_ready',
+      'provider_request_started',
+      'provider_response_received',
+      'result_preparing',
+    ].includes(failurePhase as string)
+    || (terminalStatus === 'failed')
+      !== (failurePhase !== 'not_applicable')
   ) throw unavailable();
   const assistantMessage = source.assistant_message === null
     ? null
@@ -1080,6 +1098,7 @@ function sanitizeRunCompleted(
       | 'interrupted'
       | 'cancelled',
     result_kind: resultKind as 'explanation' | 'plan' | 'candidate' | 'failure',
+    failure_phase: failurePhase as BuilderConversationFailurePhase,
     assistant_message: assistantMessage,
     candidate,
   };
@@ -1261,6 +1280,23 @@ function resultMatchesMode(
     && mode === 'question'
     && run.result_kind !== 'explanation'
   );
+}
+
+function failurePhaseMatchesRun(
+  run: Readonly<{
+    attempt_number: number | null;
+    progress_stages: readonly BuilderConversationRunProgressStage[];
+  }>,
+  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>,
+  mayUsePrefixState: boolean,
+): boolean {
+  if (item.terminal_status !== 'failed') return item.failure_phase === 'not_applicable';
+  const latestStage = run.progress_stages.at(-1) ?? null;
+  if (latestStage !== null) return item.failure_phase === latestStage;
+  if (mayUsePrefixState && run.attempt_number === null) {
+    return item.failure_phase !== 'not_applicable';
+  }
+  return item.failure_phase === 'not_recorded';
 }
 
 function validateCompleteWindow(
@@ -1477,6 +1513,7 @@ function validateCompleteWindow(
       if (
         currentRun.status !== 'running'
         || !resultMatchesMode(activeTurn.mode, item)
+        || !failurePhaseMatchesRun(currentRun, item, false)
       ) throw unavailable();
       if (
         (currentRun.control === 'cancel' && item.terminal_status !== 'cancelled')
@@ -2016,6 +2053,7 @@ function validateTruncatedWindow(
         currentRun.run_id !== item.run_id
         || currentRun.status !== 'running'
         || !resultMatchesMode(activeTurn.mode, item)
+        || !failurePhaseMatchesRun(currentRun, item, mayUsePrefixState)
         || (currentRun.control === 'cancel' && item.terminal_status !== 'cancelled')
         || (
           currentRun.control === 'interrupt'

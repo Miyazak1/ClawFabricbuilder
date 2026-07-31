@@ -374,6 +374,7 @@ function transcriptOnlyProposalTaskStream(projectId = PROJECT_ID) {
       run_id: runId,
       terminal_status: 'succeeded',
       result_kind: 'explanation',
+      failure_phase: 'not_applicable',
       assistant_message: {
         message_id: `builder-message:${UUIDS[4]}`,
         text: '方案是先做单页静态作品集，包含 hero、项目列表和联系入口，不加入后端。',
@@ -407,6 +408,7 @@ function taskBriefReadyTaskStream(projectId = PROJECT_ID) {
       run_id: runId,
       terminal_status: 'succeeded',
       result_kind: 'explanation',
+      failure_phase: 'not_applicable',
       assistant_message: {
         message_id: `builder-message:${UUIDS[4]}`,
         text: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
@@ -443,6 +445,7 @@ function candidateReadyTaskStream(projectId = PROJECT_ID) {
       run_id: runId,
       terminal_status: 'succeeded',
       result_kind: 'candidate',
+      failure_phase: 'not_applicable',
       assistant_message: {
         message_id: `builder-message:${UUIDS[4]}`,
         text: 'Created the first draft.',
@@ -481,6 +484,7 @@ function readOnlyExplorationQuestionTaskStream(projectId = PROJECT_ID) {
       run_id: runId,
       terminal_status: 'succeeded',
       result_kind: 'explanation',
+      failure_phase: 'not_applicable',
       assistant_message: {
         message_id: `builder-message:${UUIDS[4]}`,
         text: '可以先查看这个网站的脚本和静态预览限制，确认空白是不是因为 JavaScript 没有运行。',

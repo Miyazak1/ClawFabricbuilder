@@ -151,7 +151,21 @@ function publicToolLabel(action) {
   }
 }
 
-function itemFromEvent(event) {
+function latestProgressStagesByRun(events) {
+  const stages = new Map();
+  for (const event of events) {
+    if (event.event_type !== 'run_progress_recorded') continue;
+    stages.set(event.payload.run_id, event.payload.stage);
+  }
+  return stages;
+}
+
+function failurePhase(payload, progressStagesByRun) {
+  if (payload.terminal_status !== 'failed') return 'not_applicable';
+  return progressStagesByRun.get(payload.run_id) ?? 'not_recorded';
+}
+
+function itemFromEvent(event, progressStagesByRun) {
   const payload = event.payload;
   switch (event.event_type) {
     case 'turn_submitted':
@@ -305,6 +319,7 @@ function itemFromEvent(event) {
         run_id: payload.run_id,
         terminal_status: payload.terminal_status,
         result_kind: payload.result_kind,
+        failure_phase: failurePhase(payload, progressStagesByRun),
         assistant_message: payload.assistant_message === null
           ? null
           : messageProjection(payload.assistant_message),
@@ -405,8 +420,9 @@ function projectBuilderTaskStream(rawInput) {
     ) fail();
     const visibleItems = [];
     const firstVisibleIndex = Math.max(0, events.length - MAX_PUBLIC_ITEMS);
+    const progressStagesByRun = latestProgressStagesByRun(events);
     for (let index = firstVisibleIndex; index < events.length; index += 1) {
-      visibleItems.push(itemFromEvent(events[index]));
+      visibleItems.push(itemFromEvent(events[index], progressStagesByRun));
     }
     return boundResult({
       stream_version: BUILDER_TASK_STREAM_VERSION,

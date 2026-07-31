@@ -488,6 +488,7 @@ export function createTaskStreamWire() {
           run_id: RUN_ID,
           terminal_status: 'succeeded',
           result_kind: 'candidate',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: ASSISTANT_MESSAGE_ID,
             text: 'I prepared a draft for review.',
@@ -623,6 +624,7 @@ export function createPlanTaskStreamWire() {
           ...wire.conversation.items[2],
           terminal_status: 'succeeded',
           result_kind: 'plan',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: ASSISTANT_MESSAGE_ID,
             text: 'Review the proposed plan before files change.',
@@ -700,6 +702,7 @@ export function createAnswerTaskStreamWire() {
           run_id: RUN_ID,
           terminal_status: 'succeeded',
           result_kind: 'explanation',
+          failure_phase: 'not_applicable',
           assistant_message: {
             message_id: ASSISTANT_MESSAGE_ID,
             text: 'This answer does not change files.',

@@ -717,16 +717,46 @@ type ActivityCompletionSummary = Readonly<{
   next: string;
 }>;
 
+function failedCompletionSummary(
+  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>,
+): ActivityCompletionSummary {
+  if (item.failure_phase === 'provider_request_started') {
+    return {
+      happened: 'The AI request started but did not return a usable result.',
+      changed: 'No version was saved by this result.',
+      next: 'Try again, or check the AI settings if this keeps happening.',
+    };
+  }
+  if (
+    item.failure_phase === 'provider_response_received'
+    || item.failure_phase === 'result_preparing'
+  ) {
+    return {
+      happened: 'The AI response arrived but could not be prepared for review.',
+      changed: 'No version was saved by this result.',
+      next: 'Try again with a smaller request or continue with a clearer follow-up.',
+    };
+  }
+  if (item.failure_phase === 'context_ready') {
+    return {
+      happened: 'Builder prepared the project context, but the request did not finish.',
+      changed: 'No version was saved by this result.',
+      next: 'Try again or adjust the request before continuing.',
+    };
+  }
+  return {
+    happened: 'The request could not finish.',
+    changed: 'No version was saved by this result.',
+    next: 'Try again or adjust the request before continuing.',
+  };
+}
+
 function completionSummary(
   item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>,
   hasUnsavedDraft: boolean,
 ): ActivityCompletionSummary {
   if (item.terminal_status === 'failed') {
-    return {
-      happened: 'The request could not finish.',
-      changed: 'No version was saved by this result.',
-      next: 'Try again or adjust the request before continuing.',
-    };
+    return failedCompletionSummary(item);
   }
   if (item.terminal_status === 'interrupted') {
     return {
