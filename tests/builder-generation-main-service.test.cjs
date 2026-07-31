@@ -2635,6 +2635,54 @@ test('submits one composer turn through main-owned work or explanation routing',
   );
 });
 
+test('keeps natural-language plan requests out of the submit build fallback', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Plan request',
+        summary: 'We should plan before changing files.',
+        explanation: 'I can help plan first. No files were changed.',
+      })),
+    }),
+  });
+
+  const answer = await service.submit(request({
+    instruction: '帮我先做下方案',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(git.receipts.length, 0);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['explicit_plan']);
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.required_permissions, []);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.permission_result, 'not_required');
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.dispatch, 'reply');
+  assert.doesNotMatch(
+    JSON.stringify(answer),
+    /credential|provider\.example|builder-model|git_request_id|operations/iu,
+  );
+});
+
 test('allows contextual composer submit only with main-owned build context', async () => {
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],

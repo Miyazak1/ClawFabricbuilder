@@ -146,6 +146,10 @@ const CHINESE_EXPLANATION_INTENT_PATTERN =
   /(?:是什么|为什么|怎么|如何|怎样|解释|说明|介绍|总结|对比|分析|原因|含义|意思|做什么|干什么|能做什么|会做什么)/u;
 const CASUAL_CHAT_INTENT_PATTERN =
   /^(?:hi|hello|hey|你好|您好|在吗|你在吗|在不在)[.!?。！？]*$/iu;
+const EXPLICIT_PLAN_INTENT_PATTERNS = Object.freeze([
+  /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))/u,
+  /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
+]);
 const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
   /^(?:能不能|可以不可以|可不可以)(?:更|再)?好看(?:一点|点)?[?？。.!！]*$/u,
@@ -209,6 +213,7 @@ function shouldSubmitAsExplanation(
   const hasExplanationIntent =
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
+  if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return true;
   if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) return true;
   if (matchesAny(CAPABILITY_QUESTION_INTENT_PATTERNS, text)) return true;
   if (hasQuestionMark && hasExplanationIntent) return true;
@@ -258,6 +263,14 @@ function answerRouteDecisionHint(matchedSignals = ['read_only']) {
   });
 }
 
+function explicitPlanSubmitFallbackDecisionHint() {
+  return routeDecisionHint({
+    route: 'clarify',
+    confidence: 'high',
+    matchedSignals: ['explicit_plan'],
+  });
+}
+
 function planRouteDecisionHint() {
   return routeDecisionHint({
     route: 'plan',
@@ -288,6 +301,7 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
   if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['read_only']);
+  if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return explicitPlanSubmitFallbackDecisionHint();
   if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) {
     return routeDecisionHint({
       route: 'clarify',

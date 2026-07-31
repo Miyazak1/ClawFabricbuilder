@@ -86,8 +86,8 @@ const CURRENT_ARTIFACT_DEFECT_PATTERNS = Object.freeze([
 ]);
 
 const EXPLICIT_PLAN_PATTERNS = Object.freeze([
-  /^(?:先)?(?:规划|计划|制定方案|出个方案|做个方案|做一个方案|先规划一下|先计划一下|先做方案|先出方案)/u,
-  /^(?:plan first|make a plan|propose a plan|draft a plan|let'?s plan|let us plan)\b/u,
+  /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))/u,
+  /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
 ]);
 
 const WORK_DISCUSSION_PATTERNS = Object.freeze([

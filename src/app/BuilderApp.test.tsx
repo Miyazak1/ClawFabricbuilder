@@ -2788,6 +2788,45 @@ describe('BuilderApp v2', () => {
     expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
   });
 
+  it('routes natural-language plan requests to plan proposal without submitting a draft', async () => {
+    const {
+      container,
+      generate,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      saveDraft,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      planAfterPropose: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '帮我先做下方案');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+        instruction: '帮我先做下方案',
+      });
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('explicit_plan');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
   it('routes the add-menu Plan mode through plan evidence even for build-like wording', async () => {
     const {
       container,

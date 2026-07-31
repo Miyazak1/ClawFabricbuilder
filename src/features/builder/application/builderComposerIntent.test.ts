@@ -75,7 +75,12 @@ describe('routeBuilderComposerIntent', () => {
   it.each([
     '先规划一下这个项目',
     '先做个方案',
+    '帮我先做下方案',
+    '请先不要写代码，列步骤',
+    '先给我一个方案',
     '制定方案',
+    'Plan this first.',
+    'Give me a plan for this page.',
     'Plan first',
     'Make a plan for this page',
   ])('routes %s to plan intent without using the automatic build path', (instruction) => {
@@ -132,6 +137,22 @@ describe('routeBuilderComposerIntent', () => {
 
   it('keeps explicit plan selection outside the automatic chat/build route', () => {
     expect(routeBuilderComposerIntent('先规划一下这个项目')).toBe('plan');
+  });
+
+  it('routes natural-language plan requests to plan without write admission', () => {
+    expect(decideBuilderComposerIntent('帮我先做下方案', {
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'plan',
+      confidence: 'high',
+      matchedSignals: ['explicit_plan'],
+      downgradedFrom: null,
+      downgradeReason: null,
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'plan',
+    });
   });
 
   it('lets active Plan mode force the next non-empty message into the plan route', () => {
