@@ -651,6 +651,60 @@ function activityBody(item: BuilderConversationItem): string {
   return `${outcomeLabel(item.outcome)}.`;
 }
 
+type ActivityCompletionSummary = Readonly<{
+  happened: string;
+  changed: string;
+  next: string;
+}>;
+
+function completionSummary(
+  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>,
+  hasUnsavedDraft: boolean,
+): ActivityCompletionSummary {
+  if (item.terminal_status === 'failed') {
+    return {
+      happened: 'The request could not finish.',
+      changed: 'No version was saved by this result.',
+      next: 'Try again or adjust the request before continuing.',
+    };
+  }
+  if (item.terminal_status === 'interrupted') {
+    return {
+      happened: 'The work was interrupted.',
+      changed: 'No version was saved by this result.',
+      next: 'Send a follow-up with the change in direction.',
+    };
+  }
+  if (item.terminal_status === 'cancelled') {
+    return {
+      happened: 'The work was stopped.',
+      changed: 'No version was saved by this result.',
+      next: 'Start again when you are ready.',
+    };
+  }
+  if (item.result_kind === 'candidate' && item.candidate !== null) {
+    return {
+      happened: 'A draft is ready for review.',
+      changed: item.candidate.summary,
+      next: hasUnsavedDraft
+        ? 'Review Preview and Changes, then save a version if it looks right.'
+        : 'Review the available result before deciding what to do next.',
+    };
+  }
+  if (item.result_kind === 'plan') {
+    return {
+      happened: 'A plan is ready for review.',
+      changed: 'The project files have not changed.',
+      next: 'Approve the plan to continue, or reject it to keep discussing.',
+    };
+  }
+  return {
+    happened: 'The assistant answered.',
+    changed: 'No files were changed.',
+    next: 'Ask a follow-up or describe the next change.',
+  };
+}
+
 function activityDisplayRole(item: BuilderConversationItem): 'assistant' | 'status' | 'user' {
   if (item.item_kind === 'user_message') return 'user';
   if (item.item_kind === 'run_completed' && item.assistant_message !== null) return 'assistant';
@@ -913,6 +967,9 @@ function ActivityItem({
       >
         <div className="cf-builder-activity-title">{activityTitle(item)}</div>
         <p className="cf-builder-activity-body">{activityBody(item)}</p>
+        {item.item_kind === 'run_completed' ? (
+          <ActivityCompletionSummaryView hasUnsavedDraft={hasUnsavedDraft} item={item} />
+        ) : null}
         {item.item_kind === 'run_completed' && item.candidate !== null ? (
           <>
             <p className="cf-builder-activity-note">
@@ -1025,6 +1082,37 @@ function ActivityWorkStatusItem({
         <p className="cf-builder-activity-body">{workStatusBody(entry.status)}</p>
       </div>
     </li>
+  );
+}
+
+function ActivityCompletionSummaryView({
+  hasUnsavedDraft,
+  item,
+}: Readonly<{
+  hasUnsavedDraft: boolean;
+  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>;
+}>) {
+  const summary = completionSummary(item, hasUnsavedDraft);
+  const result = item.terminal_status === 'succeeded' ? item.result_kind : item.terminal_status;
+  return (
+    <dl
+      className="cf-builder-completion-summary"
+      data-builder-completion-result={result}
+      data-builder-completion-summary="true"
+    >
+      <div>
+        <dt>What happened</dt>
+        <dd>{summary.happened}</dd>
+      </div>
+      <div>
+        <dt>Changed</dt>
+        <dd>{summary.changed}</dd>
+      </div>
+      <div>
+        <dt>Next</dt>
+        <dd>{summary.next}</dd>
+      </div>
+    </dl>
   );
 }
 

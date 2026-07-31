@@ -1886,6 +1886,12 @@ describe('BuilderPage v2', () => {
       .toContain('Version 1');
     expect(container.textContent).toContain('Continue this draft');
     expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
+    const completion = container.querySelector('[data-builder-completion-summary="true"]');
+    expect(completion?.getAttribute('data-builder-completion-result')).toBe('candidate');
+    expect(completion?.textContent).toContain('A draft is ready for review.');
+    expect(completion?.textContent).toContain('A small project.');
+    expect(completion?.textContent).toContain('Review Preview and Changes, then save a version if it looks right.');
+    expect(completion?.textContent).not.toMatch(/saved|version saved|verified|test passed/iu);
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Static preview is ready');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
@@ -2471,6 +2477,14 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(assistant?.textContent).toContain('This answer does not change files.');
+    const summary = assistant?.querySelector('[data-builder-completion-summary="true"]');
+    expect(summary?.getAttribute('data-builder-completion-result')).toBe('explanation');
+    expect(summary?.textContent).toContain('What happened');
+    expect(summary?.textContent).toContain('The assistant answered.');
+    expect(summary?.textContent).toContain('Changed');
+    expect(summary?.textContent).toContain('No files were changed.');
+    expect(summary?.textContent).toContain('Next');
+    expect(summary?.textContent).toContain('Ask a follow-up or describe the next change.');
     expect(started).toBeNull();
     expect(working).toBeNull();
     expect(answered).toBeNull();
@@ -3211,6 +3225,11 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(planCard?.textContent).toContain('Review the proposed plan before files change.');
+    const summary = planCard?.querySelector('[data-builder-completion-summary="true"]');
+    expect(summary?.getAttribute('data-builder-completion-result')).toBe('plan');
+    expect(summary?.textContent).toContain('A plan is ready for review.');
+    expect(summary?.textContent).toContain('The project files have not changed.');
+    expect(summary?.textContent).toContain('Approve the plan to continue, or reject it to keep discussing.');
     expect(planCard?.textContent).toContain('Approve this plan to let the assistant continue.');
     expect(planReady).toBeNull();
     expect(planActions).not.toBeNull();
