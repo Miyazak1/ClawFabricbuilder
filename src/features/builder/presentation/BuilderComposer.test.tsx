@@ -4,7 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderWorkingProject } from '../application/builderProjectController';
-import { decideBuilderComposerIntent } from '../application/builderComposerIntent';
+import {
+  createBuilderComposerRouteDecisionEvidence,
+  decideBuilderComposerIntent,
+} from '../application/builderComposerIntent';
 import type {
   BuilderProjectCatalogItem,
   BuilderProjectWorkspaceCatalogItem,
@@ -301,10 +304,17 @@ describe('BuilderComposer', () => {
   });
 
   it('projects the latest route decision without showing internal routing copy', () => {
+    const decision = decideBuilderComposerIntent('创建登录页');
     const container = render(
       <BuilderComposer
         {...props({
-          composerRouteDecision: decideBuilderComposerIntent('创建登录页'),
+          composerRouteDecision: createBuilderComposerRouteDecisionEvidence(decision, {
+            decisionId: 'builder-composer-route-decision:local:1',
+            messageId: 'builder-composer-message:local:1',
+            projectId: PROJECT_ID,
+            taskId: null,
+            createdAt: '2026-07-31T02:30:00.000Z',
+          }),
           instruction: '创建登录页',
         })}
       />,
@@ -317,7 +327,16 @@ describe('BuilderComposer', () => {
     expect(composer?.getAttribute('data-builder-route-downgrade')).toBe('workspace_required');
     expect(composer?.getAttribute('data-builder-route-permission')).toBe('ask');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
-    expect(container.textContent).not.toMatch(/workspace_required|write_project|clear_build|ask_workspace/iu);
+    expect(composer?.getAttribute('data-builder-route-decision-id')).
+      toBe('builder-composer-route-decision:local:1');
+    expect(composer?.getAttribute('data-builder-route-message-id')).
+      toBe('builder-composer-message:local:1');
+    expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+    expect(composer?.getAttribute('data-builder-route-created-at')).toBe('2026-07-31T02:30:00.000Z');
+    expect(container.textContent).not.toMatch(
+      /workspace_required|write_project|clear_build|ask_workspace|route-decision|composer-message/iu,
+    );
   });
 
   it('shows and clears a compact current brief without adding another send path', () => {

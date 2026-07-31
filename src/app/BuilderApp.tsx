@@ -46,9 +46,11 @@ import {
   createBuilderDesktopPlanReviewPort,
 } from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
 import {
+  createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
   type BuilderComposerRouteDecision,
+  type BuilderComposerRouteDecisionEvidence,
 } from '../features/builder/application/builderComposerIntent';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
@@ -395,6 +397,7 @@ type BuilderVisibleConversationSnapshot = ReturnType<typeof useBuilderConversati
 type PendingBuildAfterWorkspace = Readonly<{
   epoch: number;
   instruction: string;
+  messageId: string;
 }>;
 
 function latestRestorableDraft(
@@ -681,7 +684,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [hiddenComposerWorkingBriefKey, setHiddenComposerWorkingBriefKey] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<BuilderComposerMode | null>(null);
-  const [composerRouteDecision, setComposerRouteDecision] = useState<BuilderComposerRouteDecision | null>(null);
+  const [composerRouteDecision, setComposerRouteDecision] =
+    useState<BuilderComposerRouteDecisionEvidence | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -699,12 +703,29 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
   const composerModeRef = useRef<BuilderComposerMode | null>(null);
+  const composerRouteDecisionSequenceRef = useRef(0);
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
   const planSourceReadApprovalRef = useRef<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
+  const createComposerRouteEvidence = useCallback((
+    decision: BuilderComposerRouteDecision,
+    projectSnapshot: BuilderVisibleProjectSnapshot,
+    existingMessageId: string | null = null,
+  ) => {
+    const sequence = composerRouteDecisionSequenceRef.current + 1;
+    composerRouteDecisionSequenceRef.current = sequence;
+    const messageId = existingMessageId ?? `builder-composer-message:local:${sequence}`;
+    return createBuilderComposerRouteDecisionEvidence(decision, {
+      decisionId: `builder-composer-route-decision:local:${sequence}`,
+      messageId,
+      projectId: visibleConversationProjectId(projectSnapshot),
+      taskId: null,
+      createdAt: new Date().toISOString(),
+    });
+  }, []);
   const workspacePorts = useMemo(() => {
     void workspaceEpoch;
     const generator: BuilderCodeGeneratorPort = Object.freeze({
@@ -1001,7 +1022,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submittedIdea,
         composerIntentContext(conversationSnapshotRef.current, result, hiddenComposerWorkingBriefKey),
       );
-      setComposerRouteDecision(decision);
+      setComposerRouteDecision(createComposerRouteEvidence(decision, result, pendingBuild.messageId));
       if (
         decision.route !== 'build'
         || decision.dispatch !== 'build'
@@ -1026,7 +1047,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [catalog, hiddenComposerWorkingBriefKey, idea, project, readActivityAfterTerminal]);
+  }, [catalog, createComposerRouteEvidence, hiddenComposerWorkingBriefKey, idea, project, readActivityAfterTerminal]);
 
   useEffect(() => {
     const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
@@ -1216,7 +1237,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       submittedIdea,
       composerIntentContext(conversationSnapshotRef.current, projectSnapshotRef.current, hiddenComposerWorkingBriefKey),
     );
-    setComposerRouteDecision(decision);
+    const routeEvidence = createComposerRouteEvidence(decision, projectSnapshotRef.current);
+    setComposerRouteDecision(routeEvidence);
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
     const pendingPlan = pendingPlanReviewRequest(
@@ -1238,6 +1260,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,
+        messageId: routeEvidence.messageId,
       });
       setWorkspacePickerRequest((request) => request + 1);
       return;
@@ -1271,6 +1294,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     hiddenComposerWorkingBriefKey,
     idea,
     project,
+    createComposerRouteEvidence,
     readActivityAfterTerminal,
     reviewPlan,
     steerInstruction,

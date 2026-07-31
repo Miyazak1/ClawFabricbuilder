@@ -330,6 +330,13 @@ type RouteDecision = {
 This evidence supports debugging, tests, and future context snapshots. It also
 prevents the UI from inferring route truth from cards or spinners.
 
+Current Builder checkpoint: the desktop renderer/application layer creates a
+local route decision evidence object for every submitted composer message. It
+includes local `decisionId`, `messageId`, selected `projectId`, `taskId: null`,
+and `createdAt`. Workspace-gated continuation reuses the same `messageId` and
+records a new decision id after the workspace is bound. This is not yet durable
+SQLite task evidence; durable Task Capsule binding is the next slice.
+
 ## Test Matrix
 
 The router should have product-level tests, not only unit regex tests.

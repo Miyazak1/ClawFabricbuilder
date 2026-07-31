@@ -41,6 +41,22 @@ export type BuilderComposerRouteDecision = Readonly<{
   dispatch: BuilderComposerIntentDispatch;
 }>;
 
+export type BuilderComposerRouteDecisionEvidence = Readonly<BuilderComposerRouteDecision & {
+  decisionId: string;
+  messageId: string;
+  projectId: string | null;
+  taskId: string | null;
+  createdAt: string;
+}>;
+
+export type BuilderComposerRouteDecisionEvidenceInput = Readonly<{
+  decisionId: string;
+  messageId: string;
+  projectId: string | null;
+  taskId: string | null;
+  createdAt: string;
+}>;
+
 const READ_ONLY_PATTERNS = Object.freeze([
   /^(?:hi|hello|hey|你好|您好|在吗|你在吗|在不在)[.!?。！？]*$/u,
   /^(?:你现在在做什么|现在在做什么|你在做什么)[?？。!！]*$/u,
@@ -121,6 +137,20 @@ export function routeBuilderComposerIntent(
   context: BuilderComposerIntentContext = {},
 ): BuilderComposerIntentRoute {
   return decideBuilderComposerIntent(instruction, context).route;
+}
+
+export function createBuilderComposerRouteDecisionEvidence(
+  decision: BuilderComposerRouteDecision,
+  evidence: BuilderComposerRouteDecisionEvidenceInput,
+): BuilderComposerRouteDecisionEvidence {
+  return Object.freeze({
+    ...decision,
+    decisionId: evidence.decisionId,
+    messageId: evidence.messageId,
+    projectId: evidence.projectId,
+    taskId: evidence.taskId,
+    createdAt: evidence.createdAt,
+  });
 }
 
 function createDecision(

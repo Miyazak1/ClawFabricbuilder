@@ -12,6 +12,7 @@ import {
 
 import type {
   BuilderComposerRouteDecision,
+  BuilderComposerRouteDecisionEvidence,
 } from '../application/builderComposerIntent';
 import type {
   BuilderProjectControllerStatus,
@@ -49,7 +50,7 @@ export type BuilderComposerProps = Readonly<{
   catalogBusy: boolean;
   catalogProjects: readonly BuilderProjectCatalogItem[];
   catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
-  composerRouteDecision?: BuilderComposerRouteDecision | null;
+  composerRouteDecision?: BuilderComposerRouteDecision | BuilderComposerRouteDecisionEvidence | null;
   composerContextStatus?: BuilderComposerContextStatus;
   composerMode?: BuilderComposerMode | null;
   composerWorkingBrief?: BuilderComposerWorkingBrief | null;
@@ -73,6 +74,12 @@ export type BuilderComposerProps = Readonly<{
   workspaceNewProjectRequest?: number;
   workspacePickerRequest?: number;
 }>;
+
+function routeDecisionEvidence(
+  decision: BuilderComposerRouteDecision | BuilderComposerRouteDecisionEvidence | null,
+): BuilderComposerRouteDecisionEvidence | null {
+  return decision !== null && 'decisionId' in decision ? decision : null;
+}
 
 function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'opening') return 'Opening...';
@@ -175,6 +182,7 @@ export function BuilderComposer({
     if (composerContextStatus === 'ready_to_build') return 'Ready to build';
     return null;
   })();
+  const composerRouteEvidence = routeDecisionEvidence(composerRouteDecision);
   const composerPlaceholder = (() => {
     if (hasUnsavedDraft) return 'Ask about this draft, or describe the next change...';
     if (canAddContext) return 'Add context for the current work...';
@@ -308,10 +316,15 @@ export function BuilderComposer({
       data-builder-composer="true"
       data-builder-composer-state={hasUnsavedDraft ? 'draft-ready' : 'ready'}
       data-builder-route-confidence={composerRouteDecision?.confidence}
+      data-builder-route-created-at={composerRouteEvidence?.createdAt}
+      data-builder-route-decision-id={composerRouteEvidence?.decisionId}
       data-builder-route-dispatch={composerRouteDecision?.dispatch}
       data-builder-route-downgrade={composerRouteDecision?.downgradeReason ?? undefined}
+      data-builder-route-message-id={composerRouteEvidence?.messageId}
       data-builder-route-permission={composerRouteDecision?.permissionResult}
+      data-builder-route-project-id={composerRouteEvidence?.projectId ?? undefined}
       data-builder-route-signals={composerRouteDecision?.matchedSignals.join(',')}
+      data-builder-route-task-id={composerRouteEvidence?.taskId ?? undefined}
       data-builder-route={composerRouteDecision?.route}
     >
       <div className="cf-builder-composer-shell">

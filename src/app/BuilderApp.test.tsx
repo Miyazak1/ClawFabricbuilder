@@ -1166,6 +1166,14 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    let composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_workspace');
+    expect(composer?.getAttribute('data-builder-route-decision-id')).
+      toBe('builder-composer-route-decision:local:1');
+    expect(composer?.getAttribute('data-builder-route-message-id')).
+      toBe('builder-composer-message:local:1');
+    expect(composer?.getAttribute('data-builder-route-project-id')).toBeNull();
 
     click(container, '[data-builder-workspace-new-project="true"]');
     await waitFor(() => {
@@ -1188,6 +1196,14 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
     });
+    composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-decision-id')).
+      toBe('builder-composer-route-decision:local:2');
+    expect(composer?.getAttribute('data-builder-route-message-id')).
+      toBe('builder-composer-message:local:1');
+    expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
@@ -1713,6 +1729,14 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('reply');
     expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('read_only');
+    expect(composer?.getAttribute('data-builder-route-decision-id')).
+      toBe('builder-composer-route-decision:local:1');
+    expect(composer?.getAttribute('data-builder-route-message-id')).
+      toBe('builder-composer-message:local:1');
+    expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+    expect(composer?.getAttribute('data-builder-route-created-at')).
+      toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
 
     answer.mockClear();
     setComposerInstruction(container, '我想做一个登录页');
@@ -1726,6 +1750,11 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
     expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('exploratory_work');
+    expect(composer?.getAttribute('data-builder-route-decision-id')).
+      toBe('builder-composer-route-decision:local:2');
+    expect(composer?.getAttribute('data-builder-route-message-id')).
+      toBe('builder-composer-message:local:2');
+    expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
 
     setComposerInstruction(container, '把按钮颜色改红');
     await waitForComposerSubmitReady(container);
@@ -1738,6 +1767,11 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
     expect(composer?.getAttribute('data-builder-route-permission')).toBe('allowed');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
+    expect(composer?.getAttribute('data-builder-route-decision-id')).
+      toBe('builder-composer-route-decision:local:3');
+    expect(composer?.getAttribute('data-builder-route-message-id')).
+      toBe('builder-composer-message:local:3');
+    expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {

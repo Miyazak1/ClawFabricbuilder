@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
   routeBuilderComposerIntent,
@@ -160,6 +161,29 @@ describe('routeBuilderComposerIntent', () => {
       permissionResult: 'not_required',
       dispatch: 'reply',
     });
+  });
+
+  it('creates inspectable route decision evidence without changing route classification', () => {
+    const decision = decideBuilderComposerIntent('创建登录页', { hasWorkspace: true });
+    const evidence = createBuilderComposerRouteDecisionEvidence(decision, {
+      decisionId: 'builder-composer-route-decision:local:1',
+      messageId: 'builder-composer-message:local:1',
+      projectId: 'builder-project:123e4567-e89b-42d3-a456-426614174001',
+      taskId: null,
+      createdAt: '2026-07-31T02:30:00.000Z',
+    });
+
+    expect(evidence).toEqual({
+      ...decision,
+      decisionId: 'builder-composer-route-decision:local:1',
+      messageId: 'builder-composer-message:local:1',
+      projectId: 'builder-project:123e4567-e89b-42d3-a456-426614174001',
+      taskId: null,
+      createdAt: '2026-07-31T02:30:00.000Z',
+    });
+    expect(Object.isFrozen(evidence)).toBe(true);
+    expect(evidence.matchedSignals).toEqual(['clear_build']);
+    expect(evidence.dispatch).toBe('build');
   });
 
   it('records contextual execution downgrades before a brief or plan exists', () => {
