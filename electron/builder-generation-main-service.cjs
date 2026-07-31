@@ -1272,6 +1272,10 @@ function createBuilderGenerationMainService(rawOptions) {
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
   const completeConversationPlan = ownMethod(options.conversationService, 'complete_plan');
   const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
+  const recordConversationRunContextSnapshot = ownMethod(
+    options.conversationService,
+    'record_run_context_snapshot',
+  );
   const recordConversationRunProgress = ownMethod(options.conversationService, 'record_run_progress');
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
   const beginApprovedPlanWork = ownMethod(options.conversationService, 'begin_approved_plan_work');
@@ -1511,6 +1515,14 @@ function createBuilderGenerationMainService(rawOptions) {
     return generationContext;
   }
 
+  function recordConversationContextSnapshot(conversationContext) {
+    return Reflect.apply(
+      recordConversationRunContextSnapshot,
+      options.conversationService,
+      [{ context: conversationContext }],
+    );
+  }
+
   function generationRequestFromApprovedPlan(editContext) {
     const unsigned = freezeDeep({
       version: 'builder-generation-request.v2',
@@ -1615,7 +1627,7 @@ function createBuilderGenerationMainService(rawOptions) {
           request.existing_project_id !== approvedPlanEditContext.project_id
           || request.instruction !== approvedPlanEditContext.approved_plan_public_text
         ) fail();
-        const conversationContext = Reflect.apply(
+        let conversationContext = Reflect.apply(
           beginApprovedPlanWork,
           options.conversationService,
           [{
@@ -1628,6 +1640,7 @@ function createBuilderGenerationMainService(rawOptions) {
             base_revision: approvedPlanEditContext.base_revision,
           }],
         );
+        conversationContext = recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         retryableContexts.delete(key);
         notifyGenerationStarted(request, approvedPlanEditContext.project_id);
@@ -1646,11 +1659,12 @@ function createBuilderGenerationMainService(rawOptions) {
         pendingRetryContexts.delete(key);
         const failureCode = retryableContext.run_terminal_failure_code;
         if (retryableContext.mode !== 'work' || typeof failureCode !== 'string') fail();
-        const retriedContext = Reflect.apply(
+        let retriedContext = Reflect.apply(
           retryConversationFailure,
           options.conversationService,
           [{ context: retryableContext, failure_code: failureCode }],
         );
+        retriedContext = recordConversationContextSnapshot(retriedContext);
         const base = await baseForGeneration(
           request,
           retriedContext.project.project_id,
@@ -1679,7 +1693,7 @@ function createBuilderGenerationMainService(rawOptions) {
           options.projectReadAuthority,
           options.projectIdentityAuthority,
         );
-      const conversationContext = Reflect.apply(
+      let conversationContext = Reflect.apply(
         beginConversationWork,
         options.conversationService,
         [{
@@ -1690,6 +1704,7 @@ function createBuilderGenerationMainService(rawOptions) {
           route_decision_hint: routeDecisionHint,
         }],
       );
+      conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -1712,7 +1727,7 @@ function createBuilderGenerationMainService(rawOptions) {
         request.existing_project_id !== continuation.admission.project_id
         || request.instruction !== continuation.instruction
       ) fail();
-      const conversationContext = Reflect.apply(
+      let conversationContext = Reflect.apply(
         beginDraftContinuationWork,
         options.conversationService,
         [{
@@ -1721,6 +1736,7 @@ function createBuilderGenerationMainService(rawOptions) {
           request_digest: request.request_digest,
         }],
       );
+      conversationContext = recordConversationContextSnapshot(conversationContext);
       const candidateBase = await baseForGeneration(
         request,
         conversationContext.project.project_id,
@@ -1760,7 +1776,7 @@ function createBuilderGenerationMainService(rawOptions) {
           request.existing_project_id !== draftAnswerContext.project_id
           || request.instruction !== draftAnswerContext.instruction
         ) fail();
-        const conversationContext = Reflect.apply(
+        let conversationContext = Reflect.apply(
           beginConversationQuestion,
           options.conversationService,
           [{
@@ -1771,6 +1787,7 @@ function createBuilderGenerationMainService(rawOptions) {
             route_decision_hint: routeDecisionHint,
           }],
         );
+        conversationContext = recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         notifyGenerationStarted(request, draftAnswerContext.project_id);
         const explanationContext = freezeDeep({
@@ -1803,7 +1820,7 @@ function createBuilderGenerationMainService(rawOptions) {
           options.projectReadAuthority,
           options.projectIdentityAuthority,
         );
-      const conversationContext = Reflect.apply(
+      let conversationContext = Reflect.apply(
         beginConversationQuestion,
         options.conversationService,
         [{
@@ -1814,6 +1831,7 @@ function createBuilderGenerationMainService(rawOptions) {
           route_decision_hint: routeDecisionHint,
         }],
       );
+      conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(ANSWER_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -1848,7 +1866,7 @@ function createBuilderGenerationMainService(rawOptions) {
         await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: projectId }]),
         projectId,
       );
-      const conversationContext = Reflect.apply(
+      let conversationContext = Reflect.apply(
         beginConversationWork,
         options.conversationService,
         [{
@@ -1859,6 +1877,7 @@ function createBuilderGenerationMainService(rawOptions) {
           route_decision_hint: planRouteDecisionHint(),
         }],
       );
+      conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(key, conversationContext);
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);
@@ -2194,6 +2213,8 @@ function createBuilderGenerationMainService(rawOptions) {
             base_revision: current.base_revision,
           }],
         );
+        activeContexts.set(key, conversationContext);
+        conversationContext = recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         conversationContext = Reflect.apply(
           recordConversationRunProgress,
@@ -3027,6 +3048,7 @@ function createBuilderGenerationMainService(rawOptions) {
       project_read_authority_verified_source: true,
       pending_draft_restart_restore: 'git_sqlite_verified',
       conversation_event_admission: 'sqlite_recorded',
+      run_context_snapshot: 'main_only_recorded_before_provider_or_tool_progress',
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',

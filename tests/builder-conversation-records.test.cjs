@@ -43,6 +43,9 @@ const {
 const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
+const {
+  createBuilderRunContextSnapshot,
+} = require('../electron/builder-run-context-snapshot.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
@@ -461,6 +464,57 @@ test('supports fixed run progress payloads without provider or source authority'
     turn_id: typedId('turn', 1),
     run_id: typedId('run', 1),
     stage: 'token_delta',
+  }, started, 4), assertRecordError());
+});
+
+test('supports digest-bound run context snapshots without source or provider authority', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a quiet timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create focus timer' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const snapshot = createBuilderRunContextSnapshot({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    message_id: typedId('message', 1),
+    route_decision: submitted.payload.route_decision,
+    latest_task_capsule: null,
+    base_revision: BASE_REVISION,
+    created_at_ms: 3,
+  });
+  const recorded = create('run_context_snapshot_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    snapshot,
+  }, started, 3);
+
+  assert.deepEqual(Object.keys(recorded.payload).sort(), ['run_id', 'snapshot', 'turn_id']);
+  assert.equal(recorded.payload.snapshot.snapshot_id, snapshot.snapshot_id);
+  assert.equal(recorded.payload.snapshot.context_digest, snapshot.context_digest);
+  assert.doesNotMatch(
+    JSON.stringify(recorded),
+    /provider|credential|secret|source_tree|git_candidate_receipt|prompt|token|Authorization|Bearer/iu,
+  );
+  assert.throws(() => create('run_context_snapshot_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    snapshot: {
+      ...snapshot,
+      context_digest: `sha256:${'f'.repeat(64)}`,
+    },
   }, started, 4), assertRecordError());
 });
 

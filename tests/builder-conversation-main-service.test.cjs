@@ -516,6 +516,62 @@ test('records fixed run progress while advancing the trusted context head', () =
   }
 });
 
+test('records a digest-bound run context snapshot before progress or tools', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    const snapshotted = item.service.record_run_context_snapshot({ context: first });
+    const snapshotEvent = snapshotted.events.at(-1);
+
+    assert.equal(snapshotted.start_head.sequence, 3);
+    assert.equal(snapshotEvent.event_type, 'run_context_snapshot_recorded');
+    assert.equal(snapshotEvent.payload.turn_id, first.ids.turn_id);
+    assert.equal(snapshotEvent.payload.run_id, first.ids.run_id);
+    assert.match(snapshotEvent.payload.snapshot.snapshot_id, /^builder-run-context-snapshot:/u);
+    assert.equal(snapshotEvent.payload.snapshot.route_decision.route, 'build');
+    assert.equal(snapshotEvent.payload.snapshot.capabilities.command_execution, 'not_included');
+    assert.equal(snapshotEvent.payload.snapshot.capabilities.network_access, 'not_included');
+
+    const replay = replayBuilderConversation(snapshotted.events);
+    assert.equal(replay.turns[0].runs[0].context_snapshot.snapshot_id, snapshotEvent.payload.snapshot.snapshot_id);
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(stream.conversation.items[2], {
+      item_kind: 'run_context_snapshot_recorded',
+      sequence: 3,
+      turn_id: first.ids.turn_id,
+      run_id: first.ids.run_id,
+      task_id: first.ids.task_id,
+      context: {
+        recorded_state: 'recorded',
+        route: 'build',
+        dispatch: 'build',
+        brief: 'not_available',
+        base: 'new_project_or_unsaved',
+        permission_result: 'allowed',
+        command_execution: 'not_included',
+        network_access: 'not_included',
+      },
+    });
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /snapshot_id|context_digest|route_decision|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+    );
+
+    assert.throws(() => item.service.record_run_context_snapshot({ context: first }), {
+      code: 'builder_conversation_main_service_unavailable',
+    });
+    const progressed = item.service.record_run_progress({
+      context: snapshotted,
+      stage: 'context_ready',
+    });
+    assert.throws(() => item.service.record_run_context_snapshot({ context: progressed }), {
+      code: 'builder_conversation_main_service_unavailable',
+    });
+  } finally {
+    item.close();
+  }
+});
+
 test('records bounded steering on the active run without provider or source authority', () => {
   const item = fixture();
   try {

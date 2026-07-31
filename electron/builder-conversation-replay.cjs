@@ -181,11 +181,45 @@ function applyRunStarted(state, payload) {
     plan_review: null,
     candidate_result: null,
     candidate_review: null,
+    context_snapshot: null,
     tool_calls: [],
     progress_stages: [],
     interrupt_request_id: null,
     cancel_request_id: null,
   });
+}
+
+function applyRunContextSnapshotRecorded(state, payload) {
+  const turn = requireActiveTurn(state, payload.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  const snapshot = payload.snapshot;
+  if (
+    run === null
+    || run.run_id !== payload.run_id
+    || run.status !== 'running'
+    || run.context_snapshot !== null
+    || run.progress_stages.length > 0
+    || run.tool_calls.length > 0
+    || run.interrupt_request_id !== null
+    || run.cancel_request_id !== null
+    || snapshot.turn_id !== turn.turn_id
+    || snapshot.run_id !== run.run_id
+    || snapshot.task_id !== (turn.task === null ? null : turn.task.task_id)
+    || snapshot.included_message_ids.length !== 1
+    || snapshot.included_message_ids[0] !== turn.messages[0].message_id
+    || snapshot.route_decision.decision_id !== turn.route_decision.decision_id
+    || snapshot.route_decision.route !== turn.route_decision.route
+    || snapshot.route_decision.dispatch !== turn.route_decision.dispatch
+  ) fail();
+  if (snapshot.brief_reference.status === 'task_capsule_update') {
+    if (
+      state.latestTaskCapsule === null
+      || snapshot.brief_reference.task_id !== state.latestTaskCapsule.task_id
+      || snapshot.brief_reference.last_route_decision_id
+        !== state.latestTaskCapsule.last_route_decision_id
+    ) fail();
+  }
+  run.context_snapshot = { ...snapshot };
 }
 
 function applyRunProgressRecorded(state, payload) {
@@ -459,6 +493,10 @@ function applyTaskBriefUpdated(state, payload) {
     || run.result_kind !== 'explanation'
   ) fail();
   state.taskIds.add(payload.task_capsule.task_id);
+  state.latestTaskCapsule = {
+    ...payload.task_capsule,
+    current_brief: { ...payload.task_capsule.current_brief },
+  };
 }
 
 function applyTurnCompleted(state, payload) {
@@ -487,6 +525,7 @@ const TRANSITIONS = Object.freeze({
   candidate_accepted: applyCandidateReviewed,
   plan_reviewed: applyPlanReviewed,
   run_started: applyRunStarted,
+  run_context_snapshot_recorded: applyRunContextSnapshotRecorded,
   run_progress_recorded: applyRunProgressRecorded,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
@@ -506,6 +545,23 @@ function publicTurn(turn) {
     base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
     runs: turn.runs.map((run) => ({
       ...run,
+      context_snapshot: run.context_snapshot === null ? null : {
+        ...run.context_snapshot,
+        included_message_ids: [...run.context_snapshot.included_message_ids],
+        route_decision: {
+          ...run.context_snapshot.route_decision,
+          matched_signals: [...run.context_snapshot.route_decision.matched_signals],
+        },
+        brief_reference: { ...run.context_snapshot.brief_reference },
+        base_revision: run.context_snapshot.base_revision === null
+          ? null
+          : { ...run.context_snapshot.base_revision },
+        permissions: {
+          ...run.context_snapshot.permissions,
+          required_permissions: [...run.context_snapshot.permissions.required_permissions],
+        },
+        capabilities: { ...run.context_snapshot.capabilities },
+      },
       progress_stages: [...run.progress_stages],
       tool_calls: run.tool_calls.map((toolCall) => ({
         ...toolCall,
@@ -562,6 +618,7 @@ function replayBuilderConversation(rawEvents) {
     turns: new Map(),
     turnOrder: [],
     activeTurnId: null,
+    latestTaskCapsule: null,
     priorHead: null,
   };
 

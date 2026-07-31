@@ -55,6 +55,9 @@ const {
 const {
   isPublicBuilderRouteDecisionSignal,
 } = require('./builder-route-decision-signals.cjs');
+const {
+  createBuilderRunContextSnapshot,
+} = require('./builder-run-context-snapshot.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -870,6 +873,38 @@ function createBuilderConversationMainService(rawOptions) {
     return run;
   }
 
+  function latestTaskCapsuleFromEvents(events) {
+    let capsule = null;
+    for (const event of events) {
+      if (event.event_type === 'task_brief_updated') {
+        capsule = event.payload.task_capsule;
+      }
+    }
+    return capsule;
+  }
+
+  function openRunFromContext(context) {
+    let snapshot;
+    try {
+      snapshot = replayBuilderConversation(context.events);
+    } catch {
+      fail();
+    }
+    const turn = snapshot.turns.find((item) => item.turn_id === context.ids.turn_id) ?? null;
+    const run = turn?.runs.at(-1) ?? null;
+    if (
+      turn === null
+      || run === null
+      || snapshot.active_turn_id !== context.ids.turn_id
+      || turn.mode !== context.mode
+      || (context.mode === 'work' && turn.task?.task_id !== context.ids.task_id)
+      || (context.mode === 'question' && (turn.task !== null || context.ids.task_id !== null))
+      || run.run_id !== context.ids.run_id
+      || run.status !== 'running'
+    ) fail();
+    return freezeDeep({ snapshot, turn, run });
+  }
+
   function admitToolCallState(context, record, admittedAtMs) {
     const run = activeRunFromContext(context);
     try {
@@ -1620,6 +1655,64 @@ function createBuilderConversationMainService(rawOptions) {
     });
     TRUSTED_CONTEXTS.add(progressedContext);
     return progressedContext;
+  }
+
+  function recordRunContextSnapshot(rawRequest) {
+    exactObject(rawRequest, ['context']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (
+      context.run_terminal_failure_code !== null
+      || context.cancel_requested
+    ) fail();
+    const { run } = openRunFromContext(context);
+    if (
+      run.context_snapshot !== null
+      || run.progress_stages.length > 0
+      || run.tool_calls.length > 0
+      || run.interrupt_request_id !== null
+      || run.cancel_request_id !== null
+    ) fail();
+    const submitted = turnSubmittedEventFromContext(context);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const snapshot = createBuilderRunContextSnapshot({
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      task_id: context.ids.task_id,
+      message_id: submitted.payload.message.message_id,
+      route_decision: submitted.payload.route_decision,
+      latest_task_capsule: latestTaskCapsuleFromEvents(context.events),
+      base_revision: submitted.payload.base_revision,
+      created_at_ms: recordedAtMs,
+    });
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'run_context_snapshot_recorded',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        snapshot,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
+      recordedAtMs,
+    });
+    const snapshottedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(snapshottedContext);
+    return snapshottedContext;
   }
 
   function completeCandidate(rawRequest) {
@@ -2668,6 +2761,7 @@ function createBuilderConversationMainService(rawOptions) {
     begin_question: beginQuestion,
     begin_work: beginWork,
     record_retryable_failure: recordRetryableFailure,
+    record_run_context_snapshot: recordRunContextSnapshot,
     record_run_progress: recordRunProgress,
     retry_after_failure: retryAfterFailure,
     begin_approved_plan_work: beginApprovedPlanWork,
@@ -2698,6 +2792,7 @@ function createBuilderConversationMainService(rawOptions) {
       restart_running_recovery: 'interrupted_without_provider_redispatch',
       candidate_draft_restore: 'sqlite_index_replay_verified',
       question_explanation: 'sqlite_event_chain_without_git_revision',
+      run_context_snapshot_recording: 'main_only_digest_bound_event',
       run_progress_recording: 'main_only_fixed_stage_event',
       run_steering_recording: 'main_only_active_run_message_no_provider_mutation',
       tool_call_recording: 'main_only_pre_dispatch_event',

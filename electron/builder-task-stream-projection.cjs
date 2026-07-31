@@ -207,6 +207,28 @@ function itemFromEvent(event) {
         retry_of_run_id: payload.retry_of_run_id,
         recorded_state: 'started',
       };
+    case 'run_context_snapshot_recorded': {
+      const snapshot = payload.snapshot;
+      return {
+        item_kind: 'run_context_snapshot_recorded',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        task_id: snapshot.task_id,
+        context: {
+          recorded_state: 'recorded',
+          route: snapshot.route_decision.route,
+          dispatch: snapshot.route_decision.dispatch,
+          brief: snapshot.brief_reference.status === 'task_capsule_update'
+            ? 'available'
+            : 'not_available',
+          base: snapshot.base_revision === null ? 'new_project_or_unsaved' : 'project_revision',
+          permission_result: snapshot.permissions.permission_result,
+          command_execution: 'not_included',
+          network_access: 'not_included',
+        },
+      };
+    }
     case 'run_progress_recorded':
       return {
         item_kind: 'run_progress_recorded',

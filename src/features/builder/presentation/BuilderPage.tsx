@@ -264,6 +264,9 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       }
       continue;
     }
+    if (item.item_kind === 'run_context_snapshot_recorded') {
+      continue;
+    }
     if (item.item_kind === 'tool_call_requested') {
       const entry: ActivityItemEntry = {
         entry_kind: 'item',
@@ -480,6 +483,7 @@ function workStatusBody(status: ActivityWorkStatus): string {
 function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
+  if (item.item_kind === 'run_context_snapshot_recorded') return <ListChecks className="size-3.5" />;
   if (item.item_kind === 'run_progress_recorded') return <RefreshCw className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
   if (item.item_kind === 'task_brief_updated') return <ListChecks className="size-3.5" />;
@@ -511,6 +515,7 @@ function activityTitle(item: BuilderConversationItem): string {
     return item.message_kind === 'steering' ? 'You added context' : 'You';
   }
   if (item.item_kind === 'run_started') return 'Assistant is working';
+  if (item.item_kind === 'run_context_snapshot_recorded') return 'Context recorded';
   if (item.item_kind === 'run_progress_recorded') return progressLabel(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
@@ -635,6 +640,11 @@ function toolResultBody(
 function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') return item.message.text;
   if (item.item_kind === 'run_started') return 'Preparing this request.';
+  if (item.item_kind === 'run_context_snapshot_recorded') {
+    return item.context.brief === 'available'
+      ? 'The current brief was attached to this run.'
+      : 'The request context was recorded for this run.';
+  }
   if (item.item_kind === 'run_progress_recorded') return progressBody(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt'

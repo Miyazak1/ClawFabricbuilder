@@ -121,6 +121,23 @@ export type BuilderConversationItem =
     recorded_state: 'started';
   }>
   | Readonly<{
+    item_kind: 'run_context_snapshot_recorded';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    task_id: string | null;
+    context: Readonly<{
+      recorded_state: 'recorded';
+      route: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
+      dispatch: 'reply' | 'brief_update' | 'plan' | 'build' | 'ask_workspace' | 'ask_permission' | 'blocked';
+      brief: 'available' | 'not_available';
+      base: 'new_project_or_unsaved' | 'project_revision';
+      permission_result: 'not_required' | 'allowed' | 'ask' | 'denied';
+      command_execution: 'not_included';
+      network_access: 'not_included';
+    }>;
+  }>
+  | Readonly<{
     item_kind: 'run_progress_recorded';
     sequence: number;
     turn_id: string;
@@ -316,6 +333,24 @@ const RUN_STARTED_KEYS = Object.freeze([
   'attempt_number',
   'retry_of_run_id',
   'recorded_state',
+]);
+const RUN_CONTEXT_SNAPSHOT_RECORDED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task_id',
+  'context',
+]);
+const RUN_CONTEXT_SNAPSHOT_CONTEXT_KEYS = Object.freeze([
+  'recorded_state',
+  'route',
+  'dispatch',
+  'brief',
+  'base',
+  'permission_result',
+  'command_execution',
+  'network_access',
 ]);
 const RUN_CONTROL_KEYS = Object.freeze([
   'item_kind',
@@ -785,6 +820,45 @@ function sanitizeRunStarted(
   };
 }
 
+function sanitizeRunContextSnapshotRecorded(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'run_context_snapshot_recorded' }> {
+  const context = exactRecord(source.context, RUN_CONTEXT_SNAPSHOT_CONTEXT_KEYS);
+  const route = context.route;
+  const dispatch = context.dispatch;
+  const brief = context.brief;
+  const base = context.base;
+  const permissionResult = context.permission_result;
+  if (
+    !['answer', 'clarify', 'update_brief', 'plan', 'build'].includes(route as string)
+    || !['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked'].includes(dispatch as string)
+    || !['available', 'not_available'].includes(brief as string)
+    || !['new_project_or_unsaved', 'project_revision'].includes(base as string)
+    || !['not_required', 'allowed', 'ask', 'denied'].includes(permissionResult as string)
+    || context.recorded_state !== 'recorded'
+    || context.command_execution !== 'not_included'
+    || context.network_access !== 'not_included'
+  ) throw unavailable();
+  return {
+    item_kind: 'run_context_snapshot_recorded' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    task_id: nullableId(source.task_id, TASK_ID_PATTERN),
+    context: {
+      recorded_state: 'recorded',
+      route: route as 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build',
+      dispatch: dispatch as 'reply' | 'brief_update' | 'plan' | 'build' | 'ask_workspace' | 'ask_permission' | 'blocked',
+      brief: brief as 'available' | 'not_available',
+      base: base as 'new_project_or_unsaved' | 'project_revision',
+      permission_result: permissionResult as 'not_required' | 'allowed' | 'ask' | 'denied',
+      command_execution: 'not_included',
+      network_access: 'not_included',
+    },
+  };
+}
+
 function sanitizeRunControl(
   source: Record<string, unknown>,
   sequence: number,
@@ -1107,6 +1181,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, USER_MESSAGE_KEYS);
   } else if (itemKind === 'run_started') {
     source = exactRecord(value, RUN_STARTED_KEYS);
+  } else if (itemKind === 'run_context_snapshot_recorded') {
+    source = exactRecord(value, RUN_CONTEXT_SNAPSHOT_RECORDED_KEYS);
   } else if (itemKind === 'run_control_requested') {
     source = exactRecord(value, RUN_CONTROL_KEYS);
   } else if (itemKind === 'run_progress_recorded') {
@@ -1131,6 +1207,9 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   const sequence = safeSequence(source.sequence);
   if (itemKind === 'user_message') return sanitizeUserMessage(source, sequence);
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
+  if (itemKind === 'run_context_snapshot_recorded') {
+    return sanitizeRunContextSnapshotRecorded(source, sequence);
+  }
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
   if (itemKind === 'run_progress_recorded') return sanitizeRunProgress(source, sequence);
   if (itemKind === 'task_brief_updated') return sanitizeTaskBriefUpdated(source, sequence);
@@ -1159,6 +1238,7 @@ type ReplayTurn = {
     candidate_review: 'accepted' | 'rejected' | null;
     pending_tool_calls: number;
     control: 'cancel' | 'interrupt' | null;
+    context_snapshot_recorded: boolean;
     progress_stages: BuilderConversationRunProgressStage[];
   }>;
 };
@@ -1301,11 +1381,23 @@ function validateCompleteWindow(
         candidate_review: null,
         pending_tool_calls: 0,
         control: null,
+        context_snapshot_recorded: false,
         progress_stages: [],
       });
       continue;
     }
     if (currentRun === null || currentRun.run_id !== item.run_id) throw unavailable();
+    if (item.item_kind === 'run_context_snapshot_recorded') {
+      if (
+        currentRun.status !== 'running'
+        || currentRun.control !== null
+        || currentRun.context_snapshot_recorded
+        || currentRun.progress_stages.length > 0
+        || currentRun.pending_tool_calls > 0
+      ) throw unavailable();
+      currentRun.context_snapshot_recorded = true;
+      continue;
+    }
     if (item.item_kind === 'task_brief_updated') {
       if (
         activeTurn.mode !== 'question'
@@ -1431,6 +1523,7 @@ type SuffixRun = {
   candidate_review: 'accepted' | 'rejected' | null;
   pending_tool_calls: number;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
+  context_snapshot_recorded: boolean;
   progress_stages: BuilderConversationRunProgressStage[];
 };
 
@@ -1664,8 +1757,65 @@ function validateTruncatedWindow(
         candidate_review: null,
         pending_tool_calls: 0,
         control: null,
+        context_snapshot_recorded: false,
         progress_stages: [],
       };
+      continue;
+    }
+
+    if (item.item_kind === 'run_context_snapshot_recorded') {
+      if (activeTurn.mode === 'unknown') {
+        if (item.task_id === null) {
+          activeTurn.mode = 'question';
+          activeTurn.task_id = null;
+        } else {
+          if (taskIds.has(item.task_id)) throw unavailable();
+          taskIds.add(item.task_id);
+          activeTurn.mode = 'work';
+          activeTurn.task_id = item.task_id;
+        }
+      } else if (
+        activeTurn.mode === 'work'
+        && activeTurn.task_id === null
+        && item.task_id !== null
+      ) {
+        if (taskIds.has(item.task_id)) throw unavailable();
+        taskIds.add(item.task_id);
+        activeTurn.task_id = item.task_id;
+      }
+      if (
+        (activeTurn.mode === 'work' && item.task_id !== activeTurn.task_id)
+        || (activeTurn.mode === 'question' && item.task_id !== null)
+      ) throw unavailable();
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix') throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'running',
+          terminal_status: null,
+          result_kind: null,
+          candidate_draft_id: null,
+          plan_review: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+          context_snapshot_recorded: false,
+          progress_stages: [],
+        };
+      }
+      const currentRun = activeTurn.current_run;
+      if (
+        currentRun.run_id !== item.run_id
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || currentRun.context_snapshot_recorded
+        || currentRun.progress_stages.length > 0
+        || currentRun.pending_tool_calls > 0
+      ) throw unavailable();
+      currentRun.context_snapshot_recorded = true;
       continue;
     }
 
@@ -1685,6 +1835,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          context_snapshot_recorded: false,
           progress_stages: [],
         };
       }
@@ -1723,6 +1874,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          context_snapshot_recorded: false,
           progress_stages: [],
         };
       }
@@ -1765,6 +1917,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          context_snapshot_recorded: false,
           progress_stages: [],
         };
       }
@@ -1824,6 +1977,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          context_snapshot_recorded: false,
           progress_stages: [],
         };
       }
@@ -1853,6 +2007,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: mayUsePrefixState ? 'unknown' : null,
+          context_snapshot_recorded: false,
           progress_stages: [],
         };
       }
@@ -1904,6 +2059,7 @@ function validateTruncatedWindow(
           candidate_review: null,
           pending_tool_calls: 0,
           control: null,
+          context_snapshot_recorded: false,
           progress_stages: [],
         };
       }

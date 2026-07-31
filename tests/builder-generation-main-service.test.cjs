@@ -46,6 +46,9 @@ const {
 const {
   sanitizeBuilderDraftContinuationBase,
 } = require('../electron/builder-draft-continuation-base.cjs');
+const {
+  createBuilderRunContextSnapshot,
+} = require('../electron/builder-run-context-snapshot.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -502,6 +505,7 @@ function conversationService(options = {}) {
     plan: [],
     failure: [],
     completeFailure: [],
+    contextSnapshot: [],
     progress: [],
     retry: [],
     cancel: [],
@@ -534,6 +538,40 @@ function conversationService(options = {}) {
         turn_id: context.ids.turn_id,
         run_id: context.ids.run_id,
         stage,
+      },
+      authority: { ...CONVERSATION_AUTHORITY },
+    });
+  }
+  function runContextSnapshotEvent(context) {
+    const submitted = context.events.find((event) => (
+      event.event_type === 'turn_submitted'
+      && event.payload.turn_id === context.ids.turn_id
+    ));
+    const snapshot = createBuilderRunContextSnapshot({
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id,
+      run_id: context.ids.run_id,
+      task_id: context.ids.task_id,
+      message_id: submitted.payload.message.message_id,
+      route_decision: submitted.payload.route_decision,
+      latest_task_capsule: null,
+      base_revision: submitted.payload.base_revision,
+      created_at_ms: 99,
+    });
+    return createBuilderConversationEvent({
+      record_version: CONVERSATION_EVENT_VERSION,
+      record_kind: CONVERSATION_EVENT_KIND,
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      command_id: nextProgressCommandId(),
+      event_type: 'run_context_snapshot_recorded',
+      previous_event: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        snapshot,
       },
       authority: { ...CONVERSATION_AUTHORITY },
     });
@@ -782,6 +820,15 @@ function conversationService(options = {}) {
           event_id: `builder-conversation-event:${'c'.repeat(64)}`,
           event_digest: `sha256:${'d'.repeat(64)}`,
         },
+      };
+    },
+    record_run_context_snapshot(input) {
+      calls.contextSnapshot.push(input);
+      const event = runContextSnapshotEvent(input.context);
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
       };
     },
     record_run_progress(input) {
@@ -1214,6 +1261,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   assert.equal(transportInputs[0].model, 'builder-model-2');
   assert.equal(transportInputs[0].credential, 'credential-2');
   assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.contextSnapshot.length, 1);
   assert.equal(lifecycle.calls.candidate.length, 1);
   assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
     'context_ready',
@@ -1221,7 +1269,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     'provider_response_received',
     'result_preparing',
   ]);
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 6);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 7);
   assert.deepEqual(lifecycle.calls.candidate[0].context.events.slice(-4).map((event) => event.event_type), [
     'run_progress_recorded',
     'run_progress_recorded',
@@ -1237,6 +1285,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     project_read_authority_verified_source: true,
     pending_draft_restart_restore: 'git_sqlite_verified',
     conversation_event_admission: 'sqlite_recorded',
+    run_context_snapshot: 'main_only_recorded_before_provider_or_tool_progress',
     approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
     approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
     plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
@@ -1400,7 +1449,7 @@ test('restores a saved revision as a new unsaved Git candidate without provider 
     'context_ready',
   ]);
   assert.equal(lifecycle.calls.candidate.length, 1);
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 3);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 4);
   assert.equal(
     lifecycle.calls.candidate[0].candidate_result.git_candidate_receipt.request_id,
     git.receipts[0].request_id,
@@ -1924,7 +1973,7 @@ test('records a provider explanation without creating Git candidate, draft, or s
     'provider_response_received',
     'result_preparing',
   ]);
-  assert.equal(lifecycle.calls.explanation[0].context.start_head.sequence, 6);
+  assert.equal(lifecycle.calls.explanation[0].context.start_head.sequence, 7);
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(git.receipts.length, 0);
   assert.equal(transportInputs.length, 1);
@@ -2165,7 +2214,7 @@ test('records a main-only plan proposal from collected source context without so
     review: 'not_recorded',
   });
   assert.deepEqual(result.conversation_head, {
-    sequence: 10,
+    sequence: 11,
     event_id: `builder-conversation-event:${'9'.repeat(64)}`,
     event_digest: `sha256:${'8'.repeat(64)}`,
   });
@@ -2177,7 +2226,7 @@ test('records a main-only plan proposal from collected source context without so
   assert.deepEqual(collected[0].resource_ids, ['project:/src/app.tsx']);
   assert.equal(lifecycle.calls.plan.length, 1);
   assert.equal(lifecycle.calls.plan[0].context.ids.turn_id, collected[0].context.ids.turn_id);
-  assert.equal(lifecycle.calls.plan[0].context.start_head.sequence, 8);
+  assert.equal(lifecycle.calls.plan[0].context.start_head.sequence, 9);
   assert.equal(lifecycle.calls.plan[0].plan_proposal_record.context_binding.file_count, 1);
   assert.equal(lifecycle.calls.plan[0].plan_proposal_record.lifecycle.source_mutation, 'not_performed');
   assert.equal(lifecycle.calls.candidate.length, 0);
@@ -2994,7 +3043,7 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
   const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(failedStream.conversation.head_sequence, 5);
+  assert.equal(failedStream.conversation.head_sequence, 6);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
   await assert.rejects(
     service.retry_generate(request({ instruction: 'Different retry should not bind.' })),
@@ -3006,29 +3055,30 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
   assert.equal(result.project_id, PROJECT_ID);
   assert.equal(result.request_id, rawRequest.request_digest);
   const stream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(stream.conversation.head_sequence, 12);
+  assert.equal(stream.conversation.head_sequence, 14);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
-  assert.equal(stream.conversation.items[0].turn_id, stream.conversation.items[5].turn_id);
-  assert.deepEqual(stream.conversation.items[5], {
+  assert.equal(stream.conversation.items[0].turn_id, stream.conversation.items[6].turn_id);
+  assert.deepEqual(stream.conversation.items[6], {
     item_kind: 'run_started',
-    sequence: 6,
+    sequence: 7,
     turn_id: stream.conversation.items[0].turn_id,
-    run_id: stream.conversation.items[5].run_id,
+    run_id: stream.conversation.items[6].run_id,
     task_id: stream.conversation.items[0].task.task_id,
     attempt_number: 2,
     retry_of_run_id: stream.conversation.items[1].run_id,
     recorded_state: 'started',
   });
-  assert.deepEqual(stream.conversation.items.slice(6, 10).map((item) => item.item_kind), [
+  assert.equal(stream.conversation.items[7].item_kind, 'run_context_snapshot_recorded');
+  assert.deepEqual(stream.conversation.items.slice(8, 12).map((item) => item.item_kind), [
     'run_progress_recorded',
     'run_progress_recorded',
     'run_progress_recorded',
     'run_progress_recorded',
   ]);
-  assert.equal(stream.conversation.items[10].item_kind, 'run_completed');
-  assert.equal(stream.conversation.items[10].run_id, stream.conversation.items[5].run_id);
-  assert.equal(stream.conversation.items[10].result_kind, 'candidate');
-  assert.equal(stream.conversation.items[11].outcome, 'candidate_ready');
+  assert.equal(stream.conversation.items[12].item_kind, 'run_completed');
+  assert.equal(stream.conversation.items[12].run_id, stream.conversation.items[6].run_id);
+  assert.equal(stream.conversation.items[12].result_kind, 'candidate');
+  assert.equal(stream.conversation.items[13].outcome, 'candidate_ready');
   assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
 });
 
@@ -3077,33 +3127,35 @@ test('records real provider failures as retryable activity and closes them befor
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
   const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(failedStream.conversation.head_sequence, 5);
+  assert.equal(failedStream.conversation.head_sequence, 6);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
-  assert.equal(failedStream.conversation.items[4].item_kind, 'run_completed');
-  assert.equal(failedStream.conversation.items[4].terminal_status, 'failed');
-  assert.equal(failedStream.conversation.items[4].result_kind, 'failure');
-  assert.equal(failedStream.conversation.items[4].candidate, null);
+  assert.equal(failedStream.conversation.items[2].item_kind, 'run_context_snapshot_recorded');
+  assert.equal(failedStream.conversation.items[5].item_kind, 'run_completed');
+  assert.equal(failedStream.conversation.items[5].terminal_status, 'failed');
+  assert.equal(failedStream.conversation.items[5].result_kind, 'failure');
+  assert.equal(failedStream.conversation.items[5].candidate, null);
 
   const result = await service.generate(request({ instruction: 'Try a different timer layout.' }));
   assert.equal(result.project_id, PROJECT_ID);
   const stream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(stream.conversation.head_sequence, 14);
+  assert.equal(stream.conversation.head_sequence, 16);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
-  assert.deepEqual(stream.conversation.items.slice(5, 8).map((item) => item.item_kind), [
+  assert.deepEqual(stream.conversation.items.slice(6, 9).map((item) => item.item_kind), [
     'turn_completed',
     'user_message',
     'run_started',
   ]);
-  assert.equal(stream.conversation.items[5].outcome, 'failed');
-  assert.equal(stream.conversation.items[6].message.text, 'Try a different timer layout.');
-  assert.deepEqual(stream.conversation.items.slice(8, 12).map((item) => item.item_kind), [
+  assert.equal(stream.conversation.items[6].outcome, 'failed');
+  assert.equal(stream.conversation.items[7].message.text, 'Try a different timer layout.');
+  assert.equal(stream.conversation.items[9].item_kind, 'run_context_snapshot_recorded');
+  assert.deepEqual(stream.conversation.items.slice(10, 14).map((item) => item.item_kind), [
     'run_progress_recorded',
     'run_progress_recorded',
     'run_progress_recorded',
     'run_progress_recorded',
   ]);
-  assert.equal(stream.conversation.items[12].result_kind, 'candidate');
-  assert.equal(stream.conversation.items[13].outcome, 'candidate_ready');
+  assert.equal(stream.conversation.items[14].result_kind, 'candidate');
+  assert.equal(stream.conversation.items[15].outcome, 'candidate_ready');
   assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
 });
 
@@ -3250,7 +3302,7 @@ test('records steering intent on an active run without cancelling provider work'
     lifecycle.calls.candidate[0].context.events.some((event) => event.event_type === 'turn_steered'),
     true,
   );
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 7);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 8);
   assert.doesNotMatch(
     JSON.stringify(lifecycle.calls.steering[0]),
     /credential|source_tree|git_candidate_receipt|tree_oid/iu,
@@ -3536,7 +3588,7 @@ test('uses read authority for existing projects and stores a main-only pending d
   assert.match(pending.git_request_id, /^builder-git-request:/u);
   assert.equal(pending.candidate_proof.candidate_digest, result.candidate.candidate_digest);
   assert.equal(pending.candidate_proof.resulting_tree_digest, result.candidate.resulting_tree_digest);
-  assert.equal(pending.conversation_head.sequence, 8);
+  assert.equal(pending.conversation_head.sequence, 9);
   assert.equal(pending.conversation_event_admission, 'sqlite_recorded');
   assert.equal(pending.restart_restore, 'not_persisted');
 

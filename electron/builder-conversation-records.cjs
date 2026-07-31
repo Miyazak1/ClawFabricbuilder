@@ -15,6 +15,9 @@ const {
 const {
   isPublicBuilderRouteDecisionSignal,
 } = require('./builder-route-decision-signals.cjs');
+const {
+  sanitizeBuilderRunContextSnapshot,
+} = require('./builder-run-context-snapshot.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -137,6 +140,7 @@ const PAYLOAD_KEYS = Object.freeze({
   ]),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
   task_brief_updated: Object.freeze(['turn_id', 'run_id', 'message_id', 'task_capsule']),
+  run_context_snapshot_recorded: Object.freeze(['turn_id', 'run_id', 'snapshot']),
   candidate_rejected: Object.freeze([
     'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'decision',
   ]),
@@ -681,6 +685,22 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         message_id: safeMessageId(valueAt(value, 'message_id')),
         task_capsule: sanitizeTaskCapsule(valueAt(value, 'task_capsule'), projectId),
       };
+    case 'run_context_snapshot_recorded': {
+      const turnId = safeTurnId(valueAt(value, 'turn_id'));
+      const runId = safeRunId(valueAt(value, 'run_id'));
+      const snapshot = sanitizeBuilderRunContextSnapshot(valueAt(value, 'snapshot'), {
+        project_id: projectId,
+        conversation_id: conversationId,
+        turn_id: turnId,
+        run_id: runId,
+        task_id: valueAt(valueAt(value, 'snapshot'), 'task_id'),
+      });
+      return {
+        turn_id: turnId,
+        run_id: runId,
+        snapshot,
+      };
+    }
     case 'candidate_rejected':
       if (valueAt(value, 'decision') !== 'rejected') fail();
       return {
