@@ -472,11 +472,11 @@ async function toolActivity(
     conversation: {
       conversation_id: CONVERSATION_ID,
       created_at_ms: 1234,
-      head_sequence: 6,
+      head_sequence: 7,
       recorded_active_turn_id: null,
       window: {
         first_sequence: 1,
-        last_sequence: 6,
+        last_sequence: 7,
         has_earlier: false,
       },
       items: [
@@ -506,8 +506,25 @@ async function toolActivity(
           recorded_state: 'started',
         },
         {
-          item_kind: 'tool_call_requested',
+          item_kind: 'run_context_snapshot_recorded',
           sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          context: {
+            recorded_state: 'recorded',
+            route: 'build',
+            dispatch: 'build',
+            brief: 'available',
+            base: 'project_revision',
+            permission_result: 'allowed',
+            command_execution: 'not_included',
+            network_access: 'not_included',
+          },
+        },
+        {
+          item_kind: 'tool_call_requested',
+          sequence: 4,
           turn_id: TURN_ID,
           run_id: RUN_ID,
           step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
@@ -527,7 +544,7 @@ async function toolActivity(
         },
         {
           item_kind: 'tool_call_result_recorded',
-          sequence: 4,
+          sequence: 5,
           turn_id: TURN_ID,
           run_id: RUN_ID,
           step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
@@ -551,7 +568,7 @@ async function toolActivity(
         },
         {
           item_kind: 'run_completed',
-          sequence: 5,
+          sequence: 6,
           turn_id: TURN_ID,
           run_id: RUN_ID,
           terminal_status: 'succeeded',
@@ -570,7 +587,7 @@ async function toolActivity(
         },
         {
           item_kind: 'turn_completed',
-          sequence: 6,
+          sequence: 7,
           turn_id: TURN_ID,
           run_id: RUN_ID,
           outcome: 'candidate_ready',
@@ -2871,6 +2888,9 @@ describe('BuilderPage v2', () => {
     expect(logs?.closest('[data-builder-artifact-sidebar="true"]')).toBe(updatedSidebar);
     expect(logs?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(logs?.textContent).toContain('Work logs');
+    expect(chatMain?.textContent).not.toContain('Context recorded');
+    expect(logs?.textContent).toContain('Context recorded');
+    expect(logs?.textContent).toContain('The current brief was attached to this run.');
     expect(logs?.textContent).toContain('Project context ready');
     expect(logs?.textContent).toContain('I checked the project context needed for this request.');
     expect(logs?.textContent).toContain('Draft proposed');

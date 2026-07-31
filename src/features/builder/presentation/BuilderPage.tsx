@@ -319,7 +319,17 @@ function isArtifactLogEntry(entry: ActivityEntry): boolean {
 }
 
 function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
-  return activityEntries(snapshot).filter(isArtifactLogEntry);
+  const entries = activityEntries(snapshot).filter(isArtifactLogEntry);
+  const runContextEntries: ActivityItemEntry[] = activityItems(snapshot)
+    .filter((item): item is Extract<BuilderConversationItem, { item_kind: 'run_context_snapshot_recorded' }> => (
+      item.item_kind === 'run_context_snapshot_recorded'
+    ))
+    .map((item) => ({ entry_kind: 'item', item, hidden: false }));
+  return [...entries, ...runContextEntries].sort((left, right) => {
+    const leftSequence = left.entry_kind === 'work_status' ? left.sequence : left.item.sequence;
+    const rightSequence = right.entry_kind === 'work_status' ? right.sequence : right.item.sequence;
+    return leftSequence - rightSequence;
+  });
 }
 
 function isNearChatBottom(element: HTMLElement): boolean {
