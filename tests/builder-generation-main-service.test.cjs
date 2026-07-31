@@ -2713,18 +2713,67 @@ test('allows contextual composer submit only with main-owned build context', asy
     instruction: '好，开始吧',
     existingProjectId: PROJECT_ID,
   }));
+  const rewriteDraft = await service.submit(request({
+    instruction: '我需要你重新写方案',
+    existingProjectId: PROJECT_ID,
+  }));
 
   assert.equal(draft.version, 'builder-generation-result.v2');
   assert.equal(draft.admissions.draft, 'candidate_not_saved');
   assert.equal(draft.project_id, PROJECT_ID);
-  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(rewriteDraft.version, 'builder-generation-result.v2');
+  assert.equal(rewriteDraft.admissions.draft, 'candidate_not_saved');
+  assert.equal(rewriteDraft.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 2);
   assert.equal(lifecycle.calls.question.length, 0);
-  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.candidate.length, 2);
   assert.equal(lifecycle.calls.explanation.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.equal(lifecycle.calls.begin[1].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['contextual_build']);
+  assert.deepEqual(lifecycle.calls.begin[1].route_decision_hint.matched_signals, ['contextual_build']);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 2);
+});
+
+test('keeps Chinese rewrite shortcuts read-only without main-owned build context', async () => {
+  const lifecycle = conversationService();
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Need more context',
+        summary: 'We should confirm what to rewrite before changing files.',
+        explanation: 'Tell me what to rewrite or confirm the current brief before I make a draft.',
+      })),
+    }),
+  });
+
+  const answer = await service.submit(request({
+    instruction: '我需要你重新写方案',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
-  assert.equal(git.receipts.length, 1);
 });
 
 test('allows current artifact defect feedback only with main-owned build context', async () => {

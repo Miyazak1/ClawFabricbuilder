@@ -1472,6 +1472,39 @@ command execution, terminal tools, or real-provider canary coverage.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Chinese Contextual Execution Package Check
+
+This addendum records the composer intent checkpoint after saved-result Chinese
+follow-up phrases were admitted as contextual build commands. It extends the
+renderer route decision surface, the main-owned submit fallback, integration
+tests, and packaged evidence only; it does not extend arbitrary command
+execution, external workspace access, terminal tools, provider configuration, or
+real-provider DeepSeek canary coverage.
+
+- Current-result follow-ups such as "那就写", "我需要你重新写方案",
+  "按这个方案写", "直接写", and "改一下" now route to contextual build
+  execution only when prior build context exists. If current-project write
+  permission is missing, the route asks for that permission before dispatching.
+- The same phrases remain read-only without prior main-owned build context:
+  they are downgraded to clarify/answer, do not create a draft, and do not
+  create Save or Project Revision facts.
+- Renderer and Electron main classification are aligned. The renderer may
+  project the composer state, but the main-owned generation service repeats the
+  contextual-admission check before any draft work begins.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\application\builderComposerIntent.test.ts src\app\BuilderApp.test.tsx --runInBand`
+  and `node --test tests\builder-generation-main-service.test.cjs`; the suites
+  reported 186 passing Vitest tests and 43 passing Node tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 595 passing
+  Vitest tests, and the boundary suite reported 662 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

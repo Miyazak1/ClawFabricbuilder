@@ -48,10 +48,19 @@ describe('routeBuilderComposerIntent', () => {
     '就这样做',
     '按刚才方案实现',
     '按这个做',
+    '按这个方案写',
     '开始执行',
     '好，开始吧',
     '就照这个来',
     '按刚才说的做',
+    '那就写',
+    '就按这个写',
+    '重新写',
+    '我需要你重新写方案',
+    '重做方案',
+    '直接做',
+    '直接写',
+    '改一下',
     'sounds good, go ahead',
     'Go ahead',
   ])('routes %s to clarify when it is not an explicit execution command', (instruction) => {
@@ -116,10 +125,19 @@ describe('routeBuilderComposerIntent', () => {
     '就这样做',
     '按刚才方案实现',
     '按这个做',
+    '按这个方案写',
     '开始执行',
     '好，开始吧',
     '就照这个来',
     '按刚才说的做',
+    '那就写',
+    '就按这个写',
+    '重新写',
+    '我需要你重新写方案',
+    '重做方案',
+    '直接做',
+    '直接写',
+    '改一下',
     'sounds good, go ahead',
     'yes, implement it',
     'Go ahead',
@@ -174,8 +192,13 @@ describe('routeBuilderComposerIntent', () => {
   it('detects only contextual execution phrases for pending-plan approval shortcuts', () => {
     expect(isBuilderComposerContextualBuildIntent('按这个做')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('就按刚才方案实现')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('按这个方案写')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('好，开始吧')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('按刚才说的做')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('那就写')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('我需要你重新写方案')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('直接做')).toBe(true);
+    expect(isBuilderComposerContextualBuildIntent('改一下')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('sounds good, go ahead')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('Go ahead')).toBe(true);
     expect(isBuilderComposerContextualBuildIntent('这个方案是什么')).toBe(false);
@@ -299,6 +322,44 @@ describe('routeBuilderComposerIntent', () => {
       hasWorkspace: true,
     })).toMatchObject({
       route: 'build',
+      matchedSignals: ['contextual_build_phrase'],
+      downgradeReason: null,
+      permissionResult: 'allowed',
+      dispatch: 'build',
+    });
+  });
+
+  it('routes current-result Chinese writing follow-ups into contextual build execution', () => {
+    expect(decideBuilderComposerIntent('我需要你重新写方案', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['contextual_build_phrase'],
+      downgradeReason: null,
+      permissionResult: 'allowed',
+      dispatch: 'build',
+    });
+    expect(decideBuilderComposerIntent('那就写', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: false,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['contextual_build_phrase'],
+      downgradeReason: null,
+      permissionResult: 'ask',
+      dispatch: 'ask_permission',
+    });
+    expect(decideBuilderComposerIntent('按这个方案写', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
       matchedSignals: ['contextual_build_phrase'],
       downgradeReason: null,
       permissionResult: 'allowed',

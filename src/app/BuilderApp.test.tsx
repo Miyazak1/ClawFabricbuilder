@@ -2095,6 +2095,37 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
 
+  it('builds from natural Chinese rewrite shortcuts when current result context exists', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
+        .toContain('Current brief');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toBe('Ready to build');
+    });
+
+    setComposerInstruction(container, '那就写');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '那就写' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('contextual_build_phrase');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+  });
+
   it('shows a clearable current brief before contextual execution', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       contextualBuildActivity: true,
