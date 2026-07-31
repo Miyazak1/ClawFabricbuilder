@@ -525,11 +525,11 @@ export function createProgressTaskStreamWire() {
     ...wire,
     conversation: {
       ...wire.conversation,
-      head_sequence: 4,
+      head_sequence: 6,
       recorded_active_turn_id: TURN_ID,
       window: {
         ...wire.conversation.window,
-        last_sequence: 4,
+        last_sequence: 6,
       },
       items: [
         wire.conversation.items[0],
@@ -548,6 +548,22 @@ export function createProgressTaskStreamWire() {
           turn_id: TURN_ID,
           run_id: RUN_ID,
           stage: 'provider_request_started',
+          recorded_state: 'recorded',
+        },
+        {
+          item_kind: 'run_progress_recorded',
+          sequence: 5,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          stage: 'provider_response_received',
+          recorded_state: 'recorded',
+        },
+        {
+          item_kind: 'run_progress_recorded',
+          sequence: 6,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          stage: 'result_preparing',
           recorded_state: 'recorded',
         },
       ],

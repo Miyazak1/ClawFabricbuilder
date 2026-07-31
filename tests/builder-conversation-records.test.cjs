@@ -460,6 +460,22 @@ test('supports fixed run progress payloads without provider or source authority'
     JSON.stringify(progress),
     /provider|credential|secret|source_tree|git_|receipt|prompt|token|Authorization|Bearer/iu,
   );
+  for (const [index, stage] of [
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ].entries()) {
+    const laterProgress = create('run_progress_recorded', {
+      turn_id: typedId('turn', 1),
+      run_id: typedId('run', 1),
+      stage,
+    }, started, 4 + index);
+    assert.equal(laterProgress.payload.stage, stage);
+    assert.doesNotMatch(
+      JSON.stringify(laterProgress),
+      /credential|secret|source_tree|git_|receipt|prompt|token|Authorization|Bearer/iu,
+    );
+  }
   assert.throws(() => create('run_progress_recorded', {
     turn_id: typedId('turn', 1),
     run_id: typedId('run', 1),

@@ -518,33 +518,50 @@ test('replays fixed run progress only in order while the run is active', () => {
     run_id: id('run', 10),
     stage: 'provider_request_started',
   }, 13);
+  events = append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'provider_response_received',
+  }, 14);
+  events = append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'result_preparing',
+  }, 15);
 
   const replay = replayBuilderConversation(events);
   assert.deepEqual(replay.turns[0].runs[0].progress_stages, [
     'context_ready',
     'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
   ]);
   assert.equal(Object.isFrozen(replay.turns[0].runs[0].progress_stages), true);
   assert.throws(() => replayBuilderConversation(append(events.slice(0, 2), 'run_progress_recorded', {
     turn_id: id('turn', 10),
     run_id: id('run', 10),
     stage: 'provider_request_started',
-  }, 14)), assertReplayError);
+  }, 16)), assertReplayError);
   assert.throws(() => replayBuilderConversation(append([...events], 'run_progress_recorded', {
     turn_id: id('turn', 10),
     run_id: id('run', 10),
     stage: 'provider_request_started',
-  }, 15)), assertReplayError);
+  }, 17)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(events.slice(0, 4), 'run_progress_recorded', {
+    turn_id: id('turn', 10),
+    run_id: id('run', 10),
+    stage: 'result_preparing',
+  }, 18)), assertReplayError);
   const controlled = append([...events], 'run_cancel_requested', {
     turn_id: id('turn', 10),
     run_id: id('run', 10),
     request_id: id('cancel-request', 10),
-  }, 16);
+  }, 19);
   assert.throws(() => replayBuilderConversation(append(controlled, 'run_progress_recorded', {
     turn_id: id('turn', 10),
     run_id: id('run', 10),
     stage: 'provider_response_received',
-  }, 17)), assertReplayError);
+  }, 20)), assertReplayError);
 });
 
 test('replays tool call requests and fixed-code results only inside an active work run', async () => {

@@ -2688,21 +2688,25 @@ describe('BuilderPage v2', () => {
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     const contextReady = container.querySelector('[data-builder-activity-card="Context ready"]');
     const responseStarted = container.querySelector('[data-builder-activity-card="AI response started"]');
+    const responseReceived = container.querySelector('[data-builder-activity-card="AI response received"]');
+    const resultPreparing = container.querySelector('[data-builder-activity-card="Preparing result"]');
     const started = container.querySelector('[data-builder-activity-card="Started"]');
     expect(container.querySelectorAll('[data-builder-work-status="true"]')).toHaveLength(1);
     expect(workStatus?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
     expect(
       workStatus?.querySelector('[data-builder-message-surface]')
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('status');
     expect(workStatus?.textContent).toContain('Assistant is working');
-    expect(workStatus?.textContent).toContain('Writing the response.');
+    expect(workStatus?.textContent).toContain('Preparing the result for review.');
     expect(started).toBeNull();
     expect(contextReady).toBeNull();
     expect(responseStarted).toBeNull();
+    expect(responseReceived).toBeNull();
+    expect(resultPreparing).toBeNull();
     expect(container.textContent).not.toMatch(
-      /provider_request_started|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+      /provider_request_started|provider_response_received|result_preparing|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
@@ -2735,12 +2739,14 @@ describe('BuilderPage v2', () => {
     expect(liveOutput?.textContent).toContain('Planning a quiet timer UI.');
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     expect(workStatus).not.toBeNull();
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
-    expect(workStatus?.textContent).toContain('Writing the response.');
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
+    expect(workStatus?.textContent).toContain('Preparing the result for review.');
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="AI response received"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Preparing result"]')).toBeNull();
     expect(container.textContent).not.toMatch(
-      /provider_request_started|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+      /provider_request_started|provider_response_received|result_preparing|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
@@ -2766,13 +2772,15 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     expect(workStatus).not.toBeNull();
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
-    expect(workStatus?.textContent).toContain('Writing the response.');
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
+    expect(workStatus?.textContent).toContain('Preparing the result for review.');
     expect(container.textContent).not.toContain("I'm working on this...");
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="AI response received"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="Preparing result"]')).toBeNull();
     expect(container.textContent).not.toMatch(
-      /provider_request_started|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+      /provider_request_started|provider_response_received|result_preparing|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 

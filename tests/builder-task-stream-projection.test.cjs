@@ -724,6 +724,16 @@ test('projects fixed run progress as renderer-safe status items', () => {
     run_id: id('run', 83),
     stage: 'provider_request_started',
   }, 85);
+  append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 80),
+    run_id: id('run', 83),
+    stage: 'provider_response_received',
+  }, 86);
+  append(events, 'run_progress_recorded', {
+    turn_id: id('turn', 80),
+    run_id: id('run', 83),
+    stage: 'result_preparing',
+  }, 87);
 
   const stream = projectBuilderTaskStream(input(events));
 
@@ -742,6 +752,22 @@ test('projects fixed run progress as renderer-safe status items', () => {
       turn_id: id('turn', 80),
       run_id: id('run', 83),
       stage: 'provider_request_started',
+      recorded_state: 'recorded',
+    },
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 5,
+      turn_id: id('turn', 80),
+      run_id: id('run', 83),
+      stage: 'provider_response_received',
+      recorded_state: 'recorded',
+    },
+    {
+      item_kind: 'run_progress_recorded',
+      sequence: 6,
+      turn_id: id('turn', 80),
+      run_id: id('run', 83),
+      stage: 'result_preparing',
       recorded_state: 'recorded',
     },
   ]);
