@@ -364,11 +364,14 @@ This evidence supports debugging, tests, and future context snapshots. It also
 prevents the UI from inferring route truth from cards or spinners.
 
 Current Builder checkpoint: the desktop renderer/application layer creates a
-local route decision evidence object for every submitted composer message. It
-includes local `decisionId`, `messageId`, selected `projectId`, `taskId: null`,
-and `createdAt`. Workspace-gated continuation reuses the same `messageId` and
-records a new decision id after the workspace is bound. This is not yet durable
-SQLite task evidence; durable Task Capsule binding is the next slice.
+temporary visible route preview for the composer, but durable route truth is
+main-owned. Conversation main records `builder-composer-route-decision.v1` inside
+each `turn_submitted` event, derives the decision id from the main-created
+message id, binds work turns to the main-created task id, and accepts only the
+fixed public matched-signal vocabulary. Workspace-gated continuation records a
+fresh main-owned decision after the source folder is bound. The renderer preview
+is only UI state and cannot become task, permission, provider, Git, source, or
+Save authority.
 
 Current Task Capsule checkpoint: when `update_brief` is submitted with a selected
 workspace, the renderer uses the existing main conversation work path rather
@@ -488,9 +491,10 @@ Current checkpoint: Builder records a main-owned
 progress, tool facts, interruption, cancellation, or terminal outcome. The
 renderer sees only the compact Task Stream projection; snapshot ids, context
 digests, provider/credential material, source tree details, Git receipts, Save
-facts, raw prompts, and Project Revision evidence remain hidden. The next
-product step can add a user-facing "why this ran" explanation from that public
-projection without inventing context or granting permissions.
+facts, raw prompts, and Project Revision evidence remain hidden. The desktop
+Work logs now show a user-facing "Why this ran" explanation derived only from
+that public projection, including route purpose, brief availability, project
+base, write permission result, and the absence of terminal/network access.
 
 ### Slice 6 - Agent-Ready Routing
 
