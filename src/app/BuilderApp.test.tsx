@@ -34,7 +34,6 @@ import { createBuilderGenerationRequest } from '../features/builder/application/
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
-const BRIEF_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174000';
 const PENDING_TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174001';
 const PENDING_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174001';
 const PENDING_RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174001';
@@ -2118,7 +2117,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-message-id')).
       toBe('builder-composer-message:local:3');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
-    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(BRIEF_TASK_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {

@@ -61,12 +61,10 @@ export type BuilderComposerProps = Readonly<{
   composerRouteDecision?: BuilderComposerRouteDecision | BuilderComposerRouteDecisionEvidence | null;
   composerContextStatus?: BuilderComposerContextStatus;
   composerMode?: BuilderComposerMode | null;
-  composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   hasUnsavedDraft: boolean;
   instruction: string;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
-  onClearComposerWorkingBrief?: (key: string) => void;
   onClearComposerMode?: () => void;
   onDismissWorkspacePicker?: () => void;
   onFocusDraftReview?: () => void;

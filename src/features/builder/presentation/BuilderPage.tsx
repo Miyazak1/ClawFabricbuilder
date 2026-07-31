@@ -71,7 +71,6 @@ import {
   type BuilderComposerApprovalMode,
   type BuilderComposerContextStatus,
   type BuilderComposerMode,
-  type BuilderComposerWorkingBrief,
 } from './BuilderComposer';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
@@ -116,7 +115,6 @@ export type BuilderPageProps = {
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
   composerMode?: BuilderComposerMode | null;
-  composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
@@ -130,7 +128,6 @@ export type BuilderPageProps = {
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onApproveCurrentProjectWrite?: () => Promise<unknown> | void;
   onCancel?: () => void;
-  onClearComposerWorkingBrief?: (key: string) => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
@@ -1632,12 +1629,10 @@ export function BuilderPage({
   composerRouteDecision = null,
   composerContextStatus = null,
   composerMode = null,
-  composerWorkingBrief = null,
   currentProjectWriteApproval = null,
   onApproveCurrentProjectWrite,
   onApprovePlanSourceRead,
   onCancel,
-  onClearComposerWorkingBrief,
   onCreateProject,
   onDismissCurrentProjectWriteApproval,
   onDismissWorkspacePicker,
@@ -2493,12 +2488,10 @@ export function BuilderPage({
       composerContextStatus={composerContextStatus}
       composerMode={composerMode}
       composerRouteDecision={composerRouteDecision}
-      composerWorkingBrief={composerWorkingBrief}
       hasUnsavedDraft={hasUnsavedDraft}
       instruction={instruction}
       onCancel={onCancel}
       onClearComposerMode={onClearComposerMode}
-      onClearComposerWorkingBrief={onClearComposerWorkingBrief}
       onCreateProject={onCreateProject}
       onDismissWorkspacePicker={onDismissWorkspacePicker}
       onFocusDraftReview={focusDraftReview}

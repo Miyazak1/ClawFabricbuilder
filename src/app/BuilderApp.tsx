@@ -702,7 +702,6 @@ function composerWorkingBrief(
 function composerIntentContext(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
-  hiddenComposerWorkingBriefKey: string | null = null,
   composerMode: BuilderComposerMode | null = null,
   currentProjectWriteApproval:
     Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null = null,
@@ -721,7 +720,6 @@ function composerIntentContext(
       || (
         hasPriorBuildContext(conversationSnapshot, projectSnapshot)
         && currentWorkingBrief !== null
-        && currentWorkingBrief.key !== hiddenComposerWorkingBriefKey
       ),
     hasWorkspace: hasBuildWorkspace(projectSnapshot),
     hasWritePermission,
@@ -778,7 +776,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
-  const [hiddenComposerWorkingBriefKey, setHiddenComposerWorkingBriefKey] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<BuilderComposerMode | null>(null);
   const [approvalMode, setApprovalMode] = useState<BuilderComposerApprovalMode>('ask_before_write');
   const [composerRouteDecision, setComposerRouteDecision] =
@@ -945,15 +942,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.workspace,
     visibleHistoryProjectId(project.snapshot),
   );
-  const rawComposerWorkingBrief = composerWorkingBrief(conversation.snapshot, project.snapshot);
-  const visibleComposerWorkingBrief = rawComposerWorkingBrief !== null
-    && rawComposerWorkingBrief.key !== hiddenComposerWorkingBriefKey
-    ? rawComposerWorkingBrief
-    : null;
   const currentComposerIntentContext = composerIntentContext(
     conversation.snapshot,
     project.snapshot,
-    hiddenComposerWorkingBriefKey,
     composerMode,
     currentProjectWriteApprovalStatus,
     effectiveApprovalMode(approvalMode, project.snapshot, currentProjectWriteApprovalStatus),
@@ -1188,7 +1179,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         composerIntentContext(
           conversationSnapshotRef.current,
           result,
-          hiddenComposerWorkingBriefKey,
           composerModeRef.current,
           currentProjectWriteApprovalStatusRef.current,
           effectiveApprovalMode(
@@ -1241,7 +1231,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           composerIntentContext(
             conversationSnapshotRef.current,
             result,
-            hiddenComposerWorkingBriefKey,
             composerModeRef.current,
             nextPermissionStatus,
             effectiveApprovalMode(approvalModeRef.current, result, nextPermissionStatus),
@@ -1267,7 +1256,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         composerIntentContext(
           conversationSnapshotRef.current,
           result,
-          hiddenComposerWorkingBriefKey,
           composerModeRef.current,
           nextPermissionStatus,
           effectiveApprovalMode(approvalModeRef.current, result, nextPermissionStatus),
@@ -1290,7 +1278,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [
     catalog,
     createComposerRouteEvidence,
-    hiddenComposerWorkingBriefKey,
     idea,
     ports.generator,
     project,
@@ -1485,7 +1472,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       composerIntentContext(
         conversationSnapshotRef.current,
         projectSnapshotRef.current,
-        hiddenComposerWorkingBriefKey,
         composerModeRef.current,
         currentProjectWriteApprovalStatusRef.current,
         effectiveApprovalMode(
@@ -1500,7 +1486,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       projectSnapshotRef.current,
     );
     const routeTaskId = routeWorkingBrief !== null
-      && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
       && decision.route === 'build'
       ? routeWorkingBrief.taskId
       : null;
@@ -1604,7 +1589,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             composerIntentContext(
               conversationSnapshotRef.current,
               projectSnapshotRef.current,
-              hiddenComposerWorkingBriefKey,
               composerModeRef.current,
               nextPermissionStatus,
               effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
@@ -1633,7 +1617,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           composerIntentContext(
             conversationSnapshotRef.current,
             projectSnapshotRef.current,
-            hiddenComposerWorkingBriefKey,
             composerModeRef.current,
             nextPermissionStatus,
             effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
@@ -1665,7 +1648,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [
-    hiddenComposerWorkingBriefKey,
     project,
     ports.generator,
     createComposerRouteEvidence,
@@ -1689,7 +1671,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           composerIntentContext(
             conversationSnapshotRef.current,
             currentSnapshot,
-            hiddenComposerWorkingBriefKey,
             composerModeRef.current,
             currentProjectWriteApprovalStatusRef.current,
             effectiveApprovalMode(
@@ -1705,7 +1686,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             currentSnapshot,
           );
           const routeTaskId = routeWorkingBrief !== null
-            && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
             ? routeWorkingBrief.taskId
             : null;
           const routeEvidence = createComposerRouteEvidence(
@@ -1729,7 +1709,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     await submitInstructionText(idea);
   }, [
-    hiddenComposerWorkingBriefKey,
     idea,
     createComposerRouteEvidence,
     publishQueuedActiveAnswerBuild,
@@ -1853,7 +1832,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         composerIntentContext(
           conversationSnapshotRef.current,
           projectSnapshotRef.current,
-          hiddenComposerWorkingBriefKey,
           composerModeRef.current,
           allowed,
           effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, allowed),
@@ -1864,7 +1842,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         projectSnapshotRef.current,
       );
       const routeTaskId = routeWorkingBrief !== null
-        && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
         && decision.route === 'build'
         ? routeWorkingBrief.taskId
         : null;
@@ -1893,7 +1870,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [
     createComposerRouteEvidence,
-    hiddenComposerWorkingBriefKey,
     ports.generator,
     project,
     readActivityAfterTerminal,
@@ -2170,7 +2146,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               composerContextStatus={composerContextStatus}
               composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
-              composerWorkingBrief={visibleComposerWorkingBrief}
               currentProjectWriteApproval={currentProjectWriteApproval}
               instruction={idea}
               liveOutput={liveOutput}
@@ -2200,7 +2175,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
               onCancel={cancel}
-              onClearComposerWorkingBrief={setHiddenComposerWorkingBriefKey}
               onRejectDraft={rejectDraft}
               onSave={save}
               onSelectFile={setActiveFile}
