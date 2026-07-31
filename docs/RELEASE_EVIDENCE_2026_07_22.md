@@ -1539,6 +1539,32 @@ DeepSeek canary coverage.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Packaged Canary Current Project Write Approval Check
+
+This addendum records the packaged canary checkpoint after the Builder gained a
+visible `Allow current project changes?` write-approval gate. It updates the
+canary script and canary tests only; it does not change renderer UI, provider
+configuration, Git/SQLite authority, application write permission semantics,
+terminal tools, arbitrary command execution, or the packaged app payload.
+
+- The packaged canary now treats the current-project write approval as an
+  expected permission checkpoint. After source-folder binding, it clicks
+  `Allow and continue` only when the exact current-project write approval card
+  is visible, then continues waiting for live output and terminal preview
+  evidence.
+- The generation terminal stage remains fail-closed. App alerts, missing live
+  output, preview timeouts, and approval-click failures still produce fixed
+  redacted canary failures instead of being treated as success.
+- Focused validation passed through
+  `node --test tests\verify-packaged-canary.test.cjs` and
+  `node --test tests\verify-deepseek-packaged-canary.test.cjs`; the suites
+  reported 52 passing packaged-canary tests and 10 passing DeepSeek wrapper
+  tests.
+- `npm.cmd run verify:package` passed against the current unpacked release.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 757 ASAR entries.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

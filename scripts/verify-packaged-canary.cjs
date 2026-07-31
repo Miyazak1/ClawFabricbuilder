@@ -25,6 +25,7 @@ const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
 const SESSION_DATA_DIRECTORY_NAME = 'session-data';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const CANARY_PLAN_PROPOSAL_TIMEOUT_MS = 120_000;
+const CANARY_CURRENT_PROJECT_WRITE_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PLAN_SOURCE_READ_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PROJECT_READY_TIMEOUT_MS = 15_000;
 const STDIN_MAX_BYTES = 128 * 1024;
@@ -69,7 +70,9 @@ const SELECTORS = Object.freeze({
   liveOutput: '[data-builder-live-output="true"]',
   newProjectPanel: '[data-builder-new-project-panel="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
+  approveCurrentProjectWrite: '[data-builder-approve-current-project-write="true"]',
   approvePlanSourceRead: '[data-builder-approve-plan-source-read="true"]',
+  currentProjectWriteApproval: '[data-builder-current-project-write-approval="true"]',
   planApproved: '[data-builder-activity-card="Plan approved"]',
   planProposed: '[data-builder-activity-card="Plan proposed"]',
   planReviewActions: '[data-builder-plan-review-actions="true"]',
@@ -160,6 +163,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_question_failed: 'Packaged canary question did not produce a visible answer.',
   canary_question_evidence_failed: 'Packaged canary question evidence failed.',
   canary_generation_terminal_failed: 'Packaged canary generation did not reach a terminal preview state.',
+  canary_current_project_write_approval_failed: 'Packaged canary current project write approval failed.',
   canary_retry_failed: 'Packaged canary retry did not recover a failed draft.',
   canary_update_generation_terminal_failed: 'Packaged canary update generation did not reach a terminal preview state.',
   canary_draft_failed: 'Packaged canary unsaved draft evidence failed.',
@@ -223,6 +227,7 @@ const ERROR_STAGES = Object.freeze({
   canary_question_failed: 'question',
   canary_question_evidence_failed: 'question_evidence',
   canary_generation_terminal_failed: 'generation_terminal',
+  canary_current_project_write_approval_failed: 'current_project_write_approval',
   canary_retry_failed: 'retry',
   canary_update_generation_terminal_failed: 'update_generation_terminal',
   canary_draft_failed: 'draft',
@@ -1675,6 +1680,29 @@ async function approvePlanSourceReadIfRequested(page) {
   }
 }
 
+async function approveCurrentProjectWriteIfRequested(page) {
+  try {
+    await page.locator(SELECTORS.currentProjectWriteApproval).waitFor({
+      state: 'visible',
+      timeout: CANARY_CURRENT_PROJECT_WRITE_APPROVAL_TIMEOUT_MS,
+    });
+  } catch {
+    return false;
+  }
+
+  try {
+    await page.locator(SELECTORS.approveCurrentProjectWrite).click();
+    await page.locator(SELECTORS.currentProjectWriteApproval).waitFor({
+      state: 'hidden',
+      timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_current_project_write_approval_failed');
+  }
+}
+
 async function fillProviderSettingsViaUi(page, provider, gate) {
   try {
     await clickByRole(page, 'button', 'Settings');
@@ -1787,6 +1815,7 @@ async function generateProjectViaUi(page, idea) {
     fail('canary_new_project_failed');
   }
   try {
+    await approveCurrentProjectWriteIfRequested(page);
     liveOutput = await captureGenerationLiveOutputViaUi(page, 'canary_generation_terminal_failed');
     await waitForGenerationTerminal(page);
   } catch (error) {
@@ -2155,6 +2184,7 @@ async function createUpdateDraftViaUi(
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
     await clickByRole(page, 'button', 'Send');
+    await approveCurrentProjectWriteIfRequested(page);
     liveOutput = await captureGenerationLiveOutputViaUi(page, 'canary_update_generation_terminal_failed');
     await waitForGenerationTerminal(page);
   } catch {
@@ -4880,6 +4910,7 @@ module.exports = {
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
   assertTaskStreamPlanFacts,
+  approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   approvePlanViaUi,
   askProjectQuestionViaUi,

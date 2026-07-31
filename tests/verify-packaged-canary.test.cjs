@@ -25,6 +25,7 @@ const {
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
   assertTaskStreamPlanFacts,
+  approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   approvePlanViaUi,
   askProjectQuestionViaUi,
@@ -157,10 +158,28 @@ class FakeLocator {
       this.page.workspacePickerVisible = false;
       this.page.newProjectPanelVisible = false;
       if (this.page.pendingWorkspaceGateInstruction !== null) {
-        this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
-        this.page.values.set(SELECTORS.idea, '');
+        if (
+          this.page.requireCurrentProjectWriteApproval === true
+          && this.page.currentProjectWriteApproved !== true
+        ) {
+          this.page.currentProjectWriteApprovalVisible = true;
+          this.page.pendingCurrentProjectWriteInstruction = this.page.pendingWorkspaceGateInstruction;
+        } else {
+          this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
+          this.page.values.set(SELECTORS.idea, '');
+        }
         this.page.pendingWorkspaceGateInstruction = null;
       }
+    }
+    if (this.selector === SELECTORS.approveCurrentProjectWrite) {
+      if (this.page.currentProjectWriteApprovalVisible !== true) {
+        throw new Error('current project write approval unavailable');
+      }
+      this.page.currentProjectWriteApproved = true;
+      this.page.currentProjectWriteApprovalVisible = false;
+      this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
+      this.page.values.set(SELECTORS.idea, '');
+      this.page.pendingCurrentProjectWriteInstruction = null;
     }
     if (this.selector === SELECTORS.approvePlanSourceRead) {
       if (this.page.planSourceReadApprovalVisible !== true) throw new Error('plan source read approval unavailable');
@@ -392,6 +411,10 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.planSourceReadApprovalVisible, state);
       return;
     }
+    if (this.selector === SELECTORS.currentProjectWriteApproval) {
+      this.page.assertSelectorVisibility(this.selector, this.page.currentProjectWriteApprovalVisible, state);
+      return;
+    }
     if (this.selector === SELECTORS.planApproved) {
       this.page.assertSelectorVisibility(
         this.selector,
@@ -495,6 +518,13 @@ class FakeRole {
         this.page.workspacePickerVisible = true;
         this.page.pendingWorkspaceGateInstruction = instruction;
       }
+      else if (
+        this.page.requireCurrentProjectWriteApproval === true
+        && this.page.currentProjectWriteApproved !== true
+      ) {
+        this.page.currentProjectWriteApprovalVisible = true;
+        this.page.pendingCurrentProjectWriteInstruction = instruction;
+      }
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
     }
     if (this.name === 'Approve plan') this.page.recordPlanApproval();
@@ -555,6 +585,8 @@ class FakePage {
     this.changesDisclosureOpen = false;
     this.changesTextOverride = null;
     this.composerAddMenuVisible = false;
+    this.currentProjectWriteApprovalVisible = false;
+    this.currentProjectWriteApproved = false;
     this.draftSaved = false;
     this.persistSave = true;
     this.events = [];
@@ -578,6 +610,7 @@ class FakePage {
     this.approvedPlanReviews = 0;
     this.planTurns = 0;
     this.pendingWorkspaceGateInstruction = null;
+    this.pendingCurrentProjectWriteInstruction = null;
     this.planSourceReadApprovalVisible = false;
     this.planModeActive = false;
     this.previewVisible = true;
@@ -589,6 +622,7 @@ class FakePage {
     this.newProjectPanelVisible = false;
     this.retryDraftVisible = false;
     this.requirePlanSourceReadApproval = false;
+    this.requireCurrentProjectWriteApproval = false;
     this.reviewTextOverride = null;
     this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
@@ -2046,6 +2080,50 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('approves current project write gate before waiting for draft output', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  page.requireCurrentProjectWriteApproval = true;
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  assert.equal(await approveCurrentProjectWriteIfRequested(page), false);
+  const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
+
+  assert.deepEqual(draftEvidence, {
+    live_output: liveOutputEvidence(),
+    pre_save_catalog_empty: true,
+    review_diff: reviewDiffEvidence(),
+    saved_via_ui: true,
+    unsaved_draft_observed: true,
+    workspace_gate: workspaceGateEvidence(),
+  });
+  assert.equal(page.currentProjectWriteApproved, true);
+  const sourceFolderClick = page.events.findIndex((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.addSourceFolder
+  ));
+  const approvalVisible = page.events.findIndex((event, index) => (
+    index > sourceFolderClick &&
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.currentProjectWriteApproval
+    && event[2] === 'visible'
+  ));
+  const approvalClick = page.events.findIndex((event, index) => (
+    index > approvalVisible &&
+    event[0] === 'click'
+    && event[1] === SELECTORS.approveCurrentProjectWrite
+  ));
+  const liveOutputVisible = page.events.findIndex((event, index) => (
+    index > approvalClick &&
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.liveOutput
+    && event[2] === 'visible'
+  ));
+  assert.ok(sourceFolderClick >= 0 && sourceFolderClick < approvalVisible);
+  assert.ok(approvalVisible < approvalClick);
+  assert.ok(approvalClick < liveOutputVisible);
+});
+
 test('observes draft review diff before Save without leaking internal evidence', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
@@ -2667,6 +2745,16 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'generation_terminal',
+    },
+    {
+      code: 'canary_current_project_write_approval_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.requireCurrentProjectWriteApproval = true;
+        page.failClicks.add(SELECTORS.approveCurrentProjectWrite);
+        await generateProjectViaUi(page, 'Make a focus timer.');
+      },
+      stage: 'current_project_write_approval',
     },
     {
       code: 'canary_generation_terminal_failed',
