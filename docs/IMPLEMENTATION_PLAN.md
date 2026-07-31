@@ -519,6 +519,14 @@ Evidence requirements:
   current artifact defect, or explicit instruction without becoming permission
   admission, tool execution, Git mutation, Save, renderer authority, or a new
   Conversation fact;
+- the current build-context snapshot contract checkpoint extracts that prompt
+  snapshot into a main-side pure contract module with independent sanitization
+  and tests. Generation still recomputes it from the current Conversation event
+  window at prompt construction time; it is not yet a durable Run or Task
+  `TaskContextSnapshot` fact, does not expose snapshot read IPC, and cannot grant
+  read/write/command/network permissions. The next durable slice can record this
+  already-verified public shape instead of reverse-engineering it from prompt
+  text;
 - the current route-signal contract checkpoint moves `matched_signals` from a
   broad formatted string into the fixed public Builder route-signal vocabulary.
   Conversation records, main-owned route hints, and prompt snapshots all share

@@ -22,6 +22,9 @@ const {
 const {
   isPublicBuilderRouteDecisionSignal,
 } = require('./builder-route-decision-signals.cjs');
+const {
+  createBuilderBuildContextSnapshot,
+} = require('./builder-build-context-snapshot.cjs');
 
 const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v3';
 const BUILDER_PLAN_PROJECT_PROMPT_VERSION = 'builder-project-plan.v1';
@@ -49,7 +52,6 @@ const MAX_CONVERSATION_BRIEF_TEXT_CODE_POINTS = 1200;
 const MAX_CONVERSATION_BRIEF_TEXT_UTF8_BYTES = 4096;
 const CONVERSATION_BRIEF_CONTEXT_VERSION = 'builder-conversation-brief.v3';
 const CONVERSATION_BRIEF_SELECTION = 'recent_prior_messages_latest_plan_and_working_brief';
-const BUILD_CONTEXT_SNAPSHOT_VERSION = 'builder-build-context-snapshot.v1';
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -559,80 +561,6 @@ function conversationBriefFromEvents(events, requestDigest) {
   });
 }
 
-function buildExecutionBasis(routeContext, conversationBrief) {
-  if (routeContext === null || routeContext.route !== 'build' || routeContext.dispatch !== 'build') {
-    return 'not_admitted';
-  }
-  if (conversationBrief.latest_plan !== null && conversationBrief.latest_plan.state === 'approved') {
-    return 'approved_plan';
-  }
-  if (
-    conversationBrief.working_brief !== null
-    && conversationBrief.working_brief.use_when_instruction_is_contextual === true
-  ) {
-    return conversationBrief.working_brief.source === 'task_capsule_update'
-      ? 'task_brief'
-      : 'working_brief';
-  }
-  if (routeContext.matched_signals.includes('current_artifact_defect')) {
-    return 'current_artifact_defect';
-  }
-  if (
-    routeContext.matched_signals.includes('contextual_build')
-    || routeContext.matched_signals.includes('contextual_build_phrase')
-  ) {
-    return 'missing_context_not_admitted';
-  }
-  return 'explicit_instruction';
-}
-
-function buildContextSnapshot({
-  events,
-  request,
-  conversationBrief,
-}) {
-  const currentTurnIds = currentPromptTurnIds(events, request.request_digest);
-  const routeContext = currentPromptRouteContext(events, currentTurnIds);
-  const workingBrief = conversationBrief.working_brief;
-  const latestPlan = conversationBrief.latest_plan;
-  return freezeDeep({
-    snapshot_version: BUILD_CONTEXT_SNAPSHOT_VERSION,
-    route: routeContext?.route ?? 'unknown',
-    dispatch: routeContext?.dispatch ?? 'unknown',
-    confidence: routeContext?.confidence ?? 'unknown',
-    matched_signals: routeContext?.matched_signals ?? [],
-    execution_basis: buildExecutionBasis(routeContext, conversationBrief),
-    workspace_basis: request.existing_project_id === null
-      ? 'new_project_request'
-      : 'selected_project_workspace',
-    working_brief: workingBrief === null
-      ? {
-        available: false,
-        source: null,
-        contextual_build_ready: false,
-      }
-      : {
-        available: true,
-        source: workingBrief.source,
-        contextual_build_ready: workingBrief.use_when_instruction_is_contextual === true,
-      },
-    latest_plan: latestPlan === null
-      ? {
-        available: false,
-        state: 'none',
-      }
-      : {
-        available: true,
-        state: latestPlan.state,
-      },
-    permissions: {
-      write_project: routeContext?.route === 'build' ? 'route_required' : 'not_required_by_route',
-      command_execution: 'not_available',
-      external_network: 'not_available',
-    },
-  });
-}
-
 function deterministicUuidFromText(value) {
   const bytes = nodeCrypto.createHash('sha256').update(value, 'utf8').digest();
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -815,10 +743,13 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
       },
     };
     if (outputContract.kind === BUILDER_GENERATED_OPERATIONS_KIND) {
-      userContext.build_context_snapshot = buildContextSnapshot({
-        events: conversationEvents,
-        request,
-        conversationBrief,
+      const currentTurnIds = currentPromptTurnIds(conversationEvents, request.request_digest);
+      userContext.build_context_snapshot = createBuilderBuildContextSnapshot({
+        route_context: currentPromptRouteContext(conversationEvents, currentTurnIds),
+        conversation_brief: conversationBrief,
+        workspace_basis: request.existing_project_id === null
+          ? 'new_project_request'
+          : 'selected_project_workspace',
       });
     }
     const descriptor = {

@@ -1558,6 +1558,7 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     './builder-project-source-tree.cjs',
     './builder-plan-proposal-records.cjs',
     './builder-route-decision-signals.cjs',
+    './builder-build-context-snapshot.cjs',
   ]);
   for (const literal of [
     'builder-generation-request.v2',
