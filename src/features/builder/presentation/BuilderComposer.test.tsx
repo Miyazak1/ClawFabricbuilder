@@ -106,7 +106,6 @@ function props(overrides: Partial<BuilderComposerProps> = {}): BuilderComposerPr
     canCancel: false,
     canEditInstruction: true,
     canProposePlan: false,
-    canSubmit: true,
     canSubmitComposer: true,
     catalogBusy: false,
     catalogProjects: Object.freeze([]),
@@ -216,7 +215,6 @@ describe('BuilderComposer', () => {
     const container = render(
       <BuilderComposer
         {...props({
-          canSubmit: false,
           canSubmitComposer: false,
           catalogWorkspaceProjects: Object.freeze([boundWorkspace()]),
           instruction: '',

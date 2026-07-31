@@ -132,7 +132,6 @@ export type BuilderPageProps = {
   onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
   onDismissCurrentProjectWriteApproval?: () => void;
-  onSteerInstruction?: () => void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
   onSelectBriefMode?: () => void;
   onSelectPlanMode?: () => void;
@@ -1640,7 +1639,6 @@ export function BuilderPage({
   onInstructionChange,
   onOpenProject,
   onOpenProjectLocation,
-  onSteerInstruction,
   onSelectApprovalMode,
   onSelectBriefMode,
   onSelectPlanMode,
@@ -1693,7 +1691,8 @@ export function BuilderPage({
   const catalogWorkspaceProjects = catalog?.workspaceProjects ?? [];
   const catalogBusy = catalog?.status === 'loading' || catalog?.status === 'refreshing';
   const version = saved?.target.revision_number ?? null;
-  const canAddContext = typeof onSteerInstruction === 'function'
+  const canAddContext = typeof onSubmitInstruction === 'function'
+    && liveOutput !== null
     && busy
     && !hasUnsavedDraft
     && !viewingHistory
@@ -2480,7 +2479,6 @@ export function BuilderPage({
       canCancel={canCancel}
       canEditInstruction={canEditInstruction}
       canProposePlan={canProposePlan}
-      canSubmit={canSubmit}
       canSubmitComposer={canSubmitComposer}
       catalogBusy={catalogBusy}
       catalogProjects={catalogProjects}
@@ -2500,7 +2498,6 @@ export function BuilderPage({
       onSelectApprovalMode={onSelectApprovalMode}
       onSelectBriefMode={onSelectBriefMode}
       onSelectPlanMode={onSelectPlanMode}
-      onSteerInstruction={onSteerInstruction}
       onSubmitInstruction={onSubmitInstruction}
       savedProject={saved === null
         ? null

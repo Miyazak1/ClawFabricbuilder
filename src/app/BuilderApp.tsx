@@ -1633,8 +1633,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       setIdea('');
       setLiveOutput(null);
-      const shouldSubmitToConversationWorkPath = decision.dispatch === 'build'
-        || (decision.dispatch === 'brief_update' && hasBuildWorkspace(projectSnapshotRef.current));
+      const shouldSubmitToConversationWorkPath = decision.dispatch === 'build';
       const result = shouldSubmitToConversationWorkPath
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
@@ -2166,7 +2165,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onSelectBriefMode={selectBriefMode}
               onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
-              onSteerInstruction={liveOutput === null ? undefined : submitInstruction}
               onInstructionChange={changeComposerInstruction}
               onInspectRevision={inspectRevision}
               onOpenProject={openProjectFromComposer}

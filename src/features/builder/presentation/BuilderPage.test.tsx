@@ -2017,15 +2017,20 @@ describe('BuilderPage v2', () => {
     await controller.open(PROJECT_ID);
     void controller.generate('Make a timer.');
     const onCancel = vi.fn();
-    const onSteerInstruction = vi.fn();
     const onSubmitInstruction = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make it blue."
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: 'Making the draft.',
+          chunk_count: 1,
+        }}
         onCancel={onCancel}
         onInstructionChange={vi.fn()}
-        onSteerInstruction={onSteerInstruction}
         onSubmitInstruction={onSubmitInstruction}
         snapshot={controller.getSnapshot()}
       />,
@@ -2044,8 +2049,7 @@ describe('BuilderPage v2', () => {
 
     const event = keyDown(container, '#builder-idea', { key: 'Enter' });
     expect(event.defaultPrevented).toBe(true);
-    expect(onSteerInstruction).toHaveBeenCalledOnce();
-    expect(onSubmitInstruction).not.toHaveBeenCalled();
+    expect(onSubmitInstruction).toHaveBeenCalledOnce();
     expect(onCancel).not.toHaveBeenCalled();
   });
 

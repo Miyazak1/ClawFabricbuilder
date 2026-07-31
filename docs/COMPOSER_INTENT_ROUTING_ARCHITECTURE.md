@@ -415,13 +415,15 @@ fresh main-owned decision after the source folder is bound. The renderer preview
 is only UI state and cannot become task, permission, provider, Git, source, or
 Save authority.
 
-Current Task Capsule checkpoint: when `update_brief` is submitted with a selected
-workspace, the renderer uses the existing main conversation work path rather
-than the pure answer path. Main records the explanation and emits
-`task_brief_updated` / `builder-task-capsule.v1`; no draft, Save, command, or
-source write is created. Without a selected workspace, the same message remains
-chat-only and does not create a hidden project or task. Later build route
-evidence can bind to the visible task id derived from the sanitized task stream.
+Current Task Capsule checkpoint: `update_brief` stays read-only. Selecting a
+workspace does not turn exploratory product discussion into work admission, and
+must not request current-project write permission. Until the main-owned
+read-only brief recorder exists, the renderer dispatches these turns through the
+answer path while preserving route-decision evidence. The next architecture
+slice should add a main conversation service path that records
+`task_brief_updated` / `builder-task-capsule.v1` without draft, Save, command,
+or source-write authority. Later build route evidence can then bind to the
+visible task id derived from the sanitized task stream.
 
 ## Test Matrix
 

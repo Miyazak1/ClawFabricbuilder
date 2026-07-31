@@ -12,6 +12,7 @@ import {
   CONVERSATION_ID,
   PROJECT_ID,
   RUN_ID,
+  TASK_ID,
   TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
@@ -1950,6 +1951,7 @@ describe('BuilderApp v2', () => {
     for (const instruction of [
       '我想先聊一下这个页面怎么做',
       '我们先确定风格',
+      '我打算做一个周杰伦相关的网站，帮我出下方案',
       '我想创建一个登录页，你觉得怎么设计',
       '可以帮我做一个登录页吗？',
       'Can you build a login page?',
@@ -1989,7 +1991,7 @@ describe('BuilderApp v2', () => {
     }
   });
 
-  it('records exploratory product intent through the work path as a task brief without creating a draft', async () => {
+  it('keeps exploratory product intent in read-only chat after a workspace is selected', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       briefUpdateActivity: true,
       initiallySaved: true,
@@ -2001,12 +2003,13 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
@@ -2019,7 +2022,7 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('星空背景');
   });
 
-  it('uses Brief from the add menu to record an internal brief update', async () => {
+  it('keeps Brief menu updates read-only until the main brief recorder exists', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       briefUpdateActivity: true,
       initiallySaved: true,
@@ -2036,12 +2039,13 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: scaffolded });
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: scaffolded });
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     const composer = container.querySelector('[data-builder-composer="true"]');
@@ -2084,9 +2088,9 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
     });
-    expect(answer).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
     composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
@@ -2099,7 +2103,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
     expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
-    submit.mockClear();
+    answer.mockClear();
 
     setComposerInstruction(container, '把按钮颜色改红');
     await waitForComposerSubmitReady(container);
@@ -2117,7 +2121,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-message-id')).
       toBe('builder-composer-message:local:3');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
-    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(TASK_ID);
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {

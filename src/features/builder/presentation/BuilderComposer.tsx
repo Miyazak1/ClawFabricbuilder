@@ -53,7 +53,6 @@ export type BuilderComposerProps = Readonly<{
   canCancel: boolean;
   canEditInstruction: boolean;
   canProposePlan: boolean;
-  canSubmit: boolean;
   canSubmitComposer: boolean;
   catalogBusy: boolean;
   catalogProjects: readonly BuilderProjectCatalogItem[];
@@ -73,7 +72,6 @@ export type BuilderComposerProps = Readonly<{
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
   onSelectBriefMode?: () => void;
   onSelectPlanMode?: () => void;
-  onSteerInstruction?: () => void;
   onSubmitInstruction?: () => void;
   savedProject: SavedComposerProject | null;
   status: BuilderProjectControllerStatus;
@@ -118,7 +116,6 @@ export function BuilderComposer({
   canCancel,
   canEditInstruction,
   canProposePlan,
-  canSubmit,
   canSubmitComposer,
   catalogBusy,
   catalogProjects,
@@ -138,7 +135,6 @@ export function BuilderComposer({
   onSelectApprovalMode,
   onSelectBriefMode,
   onSelectPlanMode,
-  onSteerInstruction,
   onSubmitInstruction,
   savedProject,
   status,
@@ -398,8 +394,7 @@ export function BuilderComposer({
       return;
     }
     event.preventDefault();
-    if (canSubmit) onSubmitInstruction?.();
-    else onSteerInstruction?.();
+    onSubmitInstruction?.();
     requestComposerFocusAfterSubmit();
   }
 
@@ -603,8 +598,7 @@ export function BuilderComposer({
                 data-builder-submit-turn="true"
                 disabled={!canSubmitComposer}
                 onClick={() => {
-                  if (canSubmit) onSubmitInstruction?.();
-                  else onSteerInstruction?.();
+                  onSubmitInstruction?.();
                   requestComposerFocusAfterSubmit();
                 }}
                 onMouseDown={keepComposerFocusDuringPointerSubmit}
