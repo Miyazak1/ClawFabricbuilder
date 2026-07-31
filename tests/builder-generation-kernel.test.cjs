@@ -972,9 +972,38 @@ test('builds a route-specific explanation prompt without allowing source operati
     format: 'json_object_only',
   });
   assert.match(descriptor.system_instruction, /Do not include source-change operations/u);
+  assert.match(descriptor.system_instruction, /explanation field is the actual assistant reply shown to the user/u);
+  assert.match(descriptor.system_instruction, /Put the full direct answer there/u);
+  assert.match(descriptor.system_instruction, /Do not make explanation a meta-summary/u);
   assert.doesNotMatch(descriptor.system_instruction, /builder_code_change_operations|operation must be upsert/u);
   assert.match(descriptor.user_instruction, /export const saved = true/u);
   assert.doesNotMatch(descriptor.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
+});
+
+test('allows explanation prompts to answer general questions directly', () => {
+  const rawRequest = request({ instruction: '你觉得大模型还有哪些进化空间？', existingProjectId: null });
+  const descriptor = createBuilderExplanationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
+  });
+
+  assert.match(descriptor.system_instruction, /Answer one bounded user question without changing project files/u);
+  assert.match(descriptor.system_instruction, /For general questions that are not about the local project, answer the question directly/u);
+  assert.match(descriptor.system_instruction, /Use summary only as a short internal recap/u);
+  assert.doesNotMatch(descriptor.system_instruction, /Answer one bounded question about the current local software project/u);
+  assert.deepEqual(JSON.parse(descriptor.user_instruction), {
+    instruction: '你觉得大模型还有哪些进化空间？',
+    mode: 'create',
+    conversation_brief: {
+      context_version: 'builder-conversation-brief.v3',
+      selection: 'recent_prior_messages_latest_plan_and_working_brief',
+      entries: [],
+      latest_plan: null,
+      working_brief: null,
+    },
+    current_source_tree: { files: [] },
+  });
 });
 
 test('keeps greeting answers conversational instead of project-state diagnostics', () => {

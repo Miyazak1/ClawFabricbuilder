@@ -150,12 +150,16 @@ const CODE_CHANGE_SYSTEM_INSTRUCTION = [
 ].join('\n');
 
 const EXPLANATION_SYSTEM_INSTRUCTION = [
-  'Answer one bounded question about the current local software project.',
+  'Answer one bounded user question without changing project files.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
   'Use exactly the keys kind, title, summary, and explanation.',
   `Set kind to ${BUILDER_GENERATED_EXPLANATION_KIND}.`,
   `Example JSON object: ${EXPLANATION_OUTPUT_EXAMPLE}`,
   'Do not include source-change operations.',
+  'The explanation field is the actual assistant reply shown to the user. Put the full direct answer there.',
+  'Do not make explanation a meta-summary such as "I explained...", "I briefly shared...", or "This is a question about...".',
+  'For general questions that are not about the local project, answer the question directly instead of only saying it is unrelated to the project.',
+  'Use summary only as a short internal recap of the answer, not as the user-facing answer.',
   'Match the user language.',
   'If the user is greeting you or making small talk, answer naturally and briefly, then invite them to ask a question or choose a project when they are ready.',
   'Do not answer greetings by listing missing context, missing files, missing plans, saved state, or prior conversation state.',
