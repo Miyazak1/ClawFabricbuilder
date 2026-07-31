@@ -2706,7 +2706,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('folds active work status into the streaming assistant reply when live output is visible', async () => {
+  it('keeps active work status visible beside the streaming assistant reply', async () => {
     const { saved } = await snapshots();
     const activity = await progressActivity();
     const container = render(
@@ -2733,8 +2733,10 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(liveOutput?.textContent).toContain('Planning a quiet timer UI.');
-    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-activity-card="Assistant working"]')).toBeNull();
+    const workStatus = container.querySelector('[data-builder-work-status="true"]');
+    expect(workStatus).not.toBeNull();
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
+    expect(workStatus?.textContent).toContain('Writing the response.');
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
     expect(container.textContent).not.toMatch(
@@ -2770,8 +2772,10 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(liveOutput?.textContent).toContain("I'm working on this...");
-    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-activity-card="Assistant working"]')).toBeNull();
+    const workStatus = container.querySelector('[data-builder-work-status="true"]');
+    expect(workStatus).not.toBeNull();
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
+    expect(workStatus?.textContent).toContain('Writing the response.');
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
     expect(container.textContent).not.toMatch(

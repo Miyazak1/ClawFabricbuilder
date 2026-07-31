@@ -300,6 +300,11 @@ MVP should show:
 - a completion summary derived from the terminal result, candidate summary,
   plan summary, verification status, and review state when available.
 
+Current UI checkpoint: durable `run_started` / `run_progress_recorded` status
+rows remain visible in the chat flow even while ephemeral provider live output is
+streaming. Provider text is only assistant-message text; it does not replace the
+fact-backed work step.
+
 The first summary can be compact. It should answer:
 
 ```text

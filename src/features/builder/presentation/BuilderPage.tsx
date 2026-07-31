@@ -1237,9 +1237,7 @@ function ActivityPanel({
   pendingPlanReview: BuilderPlanReviewRequest | null;
 }>) {
   const entries = activityEntries(snapshot);
-  const visibleEntries = liveOutput === null
-    ? entries
-    : entries.filter((entry) => entry.entry_kind !== 'work_status');
+  const visibleEntries = entries;
   const message = activityMessage(snapshot);
   const canRefresh = snapshot !== null
     && snapshot.project_id !== null

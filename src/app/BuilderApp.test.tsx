@@ -2688,13 +2688,20 @@ describe('BuilderApp v2', () => {
       .toBe('waiting');
     expect(container.querySelector('[data-builder-conversation-notice="submitting"]')).toBeNull();
     expect(container.querySelector('[data-builder-conversation-notice="generating"]')).toBeNull();
-    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+    const startedWorkStatus = container.querySelector('[data-builder-work-status="true"]');
+    expect(startedWorkStatus).not.toBeNull();
+    expect(startedWorkStatus?.getAttribute('data-builder-work-status-stage')).toBe('started');
+    expect(startedWorkStatus?.textContent).toContain('Preparing this request.');
     readTaskStream.mockClear();
     expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
     await waitFor(() => {
       expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    const workStatus = container.querySelector('[data-builder-work-status="true"]');
+    expect(workStatus).not.toBeNull();
+    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('started');
+    expect(workStatus?.textContent).toContain('Preparing this request.');
     expect(container.textContent).not.toMatch(/request_id|provider|credential|commit_oid|tree_oid/iu);
 
     await act(async () => {

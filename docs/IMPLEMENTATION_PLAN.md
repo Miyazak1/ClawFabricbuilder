@@ -666,8 +666,11 @@ Evidence requirements:
   progress events to the plan admission contract. This live output is ephemeral
   conversation UI, not durable Task Stream fact, and carries no raw provider
   envelope, prompt, credential, source, plan record evidence, Git, Save, or
-  Project Revision authority.
-  Tool streaming and arbitrary execution remain later independent protocols;
+  Project Revision authority. The desktop chat flow now keeps the durable
+  `run_started` / `run_progress_recorded` status row visible beside this
+  ephemeral live provider output, so provider text does not hide fact-backed
+  progress. Tool streaming and arbitrary execution remain later independent
+  protocols;
 - the current renderer-safe tool activity projection turns admitted Task Stream
   tool request/result facts into ordinary conversation status language. Pending
   requests remain visible as project steps; once the matching fixed-code result

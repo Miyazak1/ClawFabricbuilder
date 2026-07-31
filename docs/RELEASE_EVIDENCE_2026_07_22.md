@@ -1631,6 +1631,35 @@ arbitrary command execution, or real-provider DeepSeek canary coverage.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Live Progress Beside Streaming Output Check
+
+This addendum records the desktop chat-flow checkpoint that keeps fact-backed
+work progress visible while provider live output is streaming. It changes only
+renderer projection/display and tests; it does not add provider, tool,
+terminal, command, Git, SQLite, permission, Save, Review, or Project Revision
+authority.
+
+- The chat flow no longer hides durable `run_started` /
+  `run_progress_recorded` status rows when ephemeral live provider output is
+  visible. Users can see both the assistant's display-safe streaming text and
+  the current recorded work step.
+- The displayed status text is still derived only from sanitized Task Stream
+  facts such as `started` and `provider_request_started`; provider deltas remain
+  assistant-message text and do not invent tool or execution steps.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx --runInBand`;
+  the suites reported 127 passing Vitest tests.
+- Full validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. Unit validation reported 39 passing Vitest
+  files and 608 passing tests. Node boundary validation reported 663 passing
+  tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `result_status: builder_package_verified`, `production_csp: network_denied`,
+  and `asar_entry_count: 757`. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
