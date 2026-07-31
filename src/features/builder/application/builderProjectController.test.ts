@@ -623,6 +623,29 @@ describe('Builder project controller v2', () => {
     expect(JSON.stringify(result)).not.toContain('request_id');
   });
 
+  it('keeps consecutive read-only chat turns on the same logical project before a folder is selected', async () => {
+    const { answer, controller } = setup();
+    const first = await controller.answer('hi');
+    const second = await controller.answer('What did I just ask?');
+
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer.mock.calls[0][0]).toMatchObject({
+      instruction: 'hi',
+      existing_project_id: null,
+    });
+    expect(answer.mock.calls[1][0]).toMatchObject({
+      instruction: 'What did I just ask?',
+      existing_project_id: PROJECT_ID,
+    });
+    expect(first.answer?.project_id).toBe(PROJECT_ID);
+    expect(second.answer?.project_id).toBe(PROJECT_ID);
+    expect(second.status).toBe('new');
+    expect(second.workingProjectId).toBeNull();
+    expect(second.workingProject).toBeNull();
+    expect(second.savedProject).toBeNull();
+    expect(second.draft).toBeNull();
+  });
+
   it('binds a selected source folder to the answered logical project instead of forking it', async () => {
     const { controller, createLocalProject } = setup({
       createLocalProject: async (request) => createLocalProjectSelection({

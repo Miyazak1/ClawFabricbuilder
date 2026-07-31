@@ -798,7 +798,12 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const retainedDraft = current.draft;
     const retainedPreview = current.preview;
-    const targetProjectId = retainedDraft?.project_id ?? retained?.target.project_id ?? current.workingProjectId;
+    const targetProjectId = retainedDraft?.project_id
+      ?? retained?.target.project_id
+      ?? current.workingProjectId
+      ?? current.answer?.project_id
+      ?? null;
+    const workspaceProjectId = retainedDraft?.project_id ?? retained?.target.project_id ?? current.workingProjectId;
     retryableGeneration = null;
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
@@ -811,8 +816,8 @@ export function createBuilderProjectController(
         null,
         null,
         false,
-        unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
-        unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
+        unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
+        unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
       ));
       let requestId: string | null = null;
       try {
@@ -839,7 +844,7 @@ export function createBuilderProjectController(
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
           retainedDraft === null
-            ? settledStatus(retained, retainedPreview, targetProjectId)
+            ? settledStatus(retained, retainedPreview, workspaceProjectId)
             : retainedPreview === null ? 'preview_unavailable' : 'draft_ready',
           retained,
           retainedDraft,
@@ -848,8 +853,8 @@ export function createBuilderProjectController(
           answered,
           null,
           false,
-          unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
-          unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
+          unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
+          unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
@@ -863,8 +868,8 @@ export function createBuilderProjectController(
           null,
           null,
           false,
-          unsavedWorkingProjectId(retained, retainedDraft, targetProjectId),
-          unsavedWorkingProject(retained, retainedDraft, targetProjectId, current.workingProject),
+          unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
+          unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
         ));
       }
     });
