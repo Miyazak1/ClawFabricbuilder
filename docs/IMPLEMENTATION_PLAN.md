@@ -642,11 +642,12 @@ Evidence requirements:
   commands out of the steering path while a read-only answer is running. The
   renderer still permits ordinary steering context during active work, but when
   the active status is `answering` and the intent router classifies the new
-  message as `build`, the composer keeps the text editable, records local route
-  evidence, shows a "not changed files yet" notice, and does not call `steer`,
-  `submit`, Save, Review, Git, SQLite, provider, command, or permission
-  authority. A later queue or stop-and-build-next workflow must be a separate
-  gate;
+  message as `build`, the composer records local route evidence, clears the
+  accepted input, shows a queued-build notice, and dispatches it only after the
+  read-only answer has terminally left the active path. The queued dispatch then
+  re-enters the normal route, workspace, and current-project write permission
+  checks before any `submit`, provider, Git, SQLite, Save, Review, command, or
+  permission authority can run;
 - the current provider-output streaming checkpoint lets the main-only
   OpenAI-compatible transport request bounded `text/event-stream` responses only
   when the Generation host supplies an internal observer. The transport assembles

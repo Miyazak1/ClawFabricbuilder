@@ -1599,6 +1599,38 @@ DeepSeek canary coverage.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Composer Active Answer Queued Build Check
+
+This addendum records the follow-up desktop composer checkpoint that turns the
+active-answer build guard into an explicit queue. It extends renderer route
+admission and desktop UI tests only; it does not change main provider
+configuration, Git/SQLite authority, durable permission facts, terminal tools,
+arbitrary command execution, or real-provider DeepSeek canary coverage.
+
+- While a read-only answer is active, a clear build/change message such as
+  "Change the main heading to My Notes." is no longer left for the user to
+  resend. The composer records local route evidence, clears the accepted input,
+  shows a queued notice while the answer remains active, and never calls the
+  active-run steering path for that message.
+- When the answer finishes, the queued message re-enters the normal composer
+  submit path. It still has to satisfy the selected workspace and current
+  project write approval checks before `project.submit` can run.
+- A focused regression covers the queued success path, and another covers the
+  current-project write approval path to ensure queued builds cannot bypass the
+  permission prompt.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\app\BuilderApp.test.tsx src\features\builder\presentation\BuilderComposer.test.tsx --runInBand`;
+  the suites reported 78 passing Vitest tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 608 passing
+  Vitest tests, and the boundary suite reported 663 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

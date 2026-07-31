@@ -414,6 +414,21 @@ type PendingBuildAfterWorkspace = Readonly<{
   messageId: string;
 }>;
 
+type QueuedActiveAnswerBuild = Readonly<{
+  epoch: number;
+  instruction: string;
+  messageId: string;
+}>;
+
+type SubmitInstructionTextOptions = Readonly<{
+  existingMessageId?: string | null;
+}>;
+
+type SubmitInstructionText = (
+  submittedIdea: string,
+  options?: SubmitInstructionTextOptions,
+) => Promise<void>;
+
 type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
   project_id: string;
   instruction: string;
@@ -768,7 +783,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [approvalMode, setApprovalMode] = useState<BuilderComposerApprovalMode>('ask_before_write');
   const [composerRouteDecision, setComposerRouteDecision] =
     useState<BuilderComposerRouteDecisionEvidence | null>(null);
-  const [activeAnswerBuildBlocked, setActiveAnswerBuildBlocked] = useState(false);
+  const [queuedActiveAnswerBuild, setQueuedActiveAnswerBuild] =
+    useState<QueuedActiveAnswerBuild | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -799,8 +815,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const currentProjectWriteApprovalStatusRef =
     useRef<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
+  const queuedActiveAnswerBuildRef = useRef<QueuedActiveAnswerBuild | null>(null);
+  const submitInstructionTextRef = useRef<SubmitInstructionText | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
+  const publishQueuedActiveAnswerBuild = useCallback((queued: QueuedActiveAnswerBuild | null) => {
+    queuedActiveAnswerBuildRef.current = queued;
+    setQueuedActiveAnswerBuild(queued);
+  }, []);
   const createComposerRouteEvidence = useCallback((
     decision: BuilderComposerRouteDecision,
     projectSnapshot: BuilderVisibleProjectSnapshot,
@@ -951,6 +973,29 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [conversation.snapshot]);
 
   useEffect(() => {
+    if (queuedActiveAnswerBuild === null) return undefined;
+    const dispatchQueuedBuild = () => {
+      const queued = queuedActiveAnswerBuildRef.current;
+      if (queued === null) return;
+      if (workspaceEpochRef.current !== queued.epoch) {
+        publishQueuedActiveAnswerBuild(null);
+        return;
+      }
+      if (projectSnapshotRef.current.busy || submitInFlightRef.current) return;
+      publishQueuedActiveAnswerBuild(null);
+      void submitInstructionTextRef.current?.(queued.instruction, {
+        existingMessageId: queued.messageId,
+      });
+    };
+    const initialHandle = window.setTimeout(dispatchQueuedBuild, 0);
+    const intervalHandle = window.setInterval(dispatchQueuedBuild, 50);
+    return () => {
+      window.clearTimeout(initialHandle);
+      window.clearInterval(intervalHandle);
+    };
+  }, [publishQueuedActiveAnswerBuild, queuedActiveAnswerBuild]);
+
+  useEffect(() => {
     if (!catalogNewProjectPending) return;
     if (project.snapshot.busy || project.snapshot.status !== 'new') return;
     const handle = window.setTimeout(() => {
@@ -1038,6 +1083,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     planSourceReadApprovalRef.current = null;
     currentProjectWriteApprovalRef.current = null;
     currentProjectWriteApprovalStatusRef.current = null;
+    publishQueuedActiveAnswerBuild(null);
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
     setApprovedPlanContinuationFailure(null);
@@ -1053,7 +1099,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setActiveFile(null);
     setLiveOutput(null);
     setView('project');
-  }, [publishPlanReviewInFlight]);
+  }, [publishPlanReviewInFlight, publishQueuedActiveAnswerBuild]);
 
   const openProject = useCallback((nextProjectId: string) => {
     resetWorkspace(nextProjectId);
@@ -1280,7 +1326,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (live === null || !projectSnapshotRef.current.busy) return;
     const commandEpoch = workspaceEpochRef.current;
     const submittedIdea = idea;
-    setActiveAnswerBuildBlocked(false);
     setIdea('');
     const steered = await project.steer(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
@@ -1429,51 +1474,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [ports.generator, runPlanProposal]);
 
-  const submitInstruction = useCallback(async () => {
-    if (projectSnapshotRef.current.busy) {
-      const currentSnapshot = projectSnapshotRef.current;
-      const submittedIdea = idea;
-      if (currentSnapshot.status === 'answering' && submittedIdea.trim().length > 0) {
-        const decision = decideBuilderComposerIntent(
-          submittedIdea,
-          composerIntentContext(
-            conversationSnapshotRef.current,
-            currentSnapshot,
-            hiddenComposerWorkingBriefKey,
-            composerModeRef.current,
-            currentProjectWriteApprovalStatusRef.current,
-            effectiveApprovalMode(
-              approvalModeRef.current,
-              currentSnapshot,
-              currentProjectWriteApprovalStatusRef.current,
-            ),
-          ),
-        );
-        if (decision.route === 'build') {
-          const routeWorkingBrief = composerWorkingBrief(
-            conversationSnapshotRef.current,
-            currentSnapshot,
-          );
-          const routeTaskId = routeWorkingBrief !== null
-            && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
-            ? routeWorkingBrief.taskId
-            : null;
-          setComposerRouteDecision(createComposerRouteEvidence(
-            decision,
-            currentSnapshot,
-            null,
-            routeTaskId,
-          ));
-          setActiveAnswerBuildBlocked(true);
-          return;
-        }
-      }
-      await steerInstruction();
-      return;
-    }
-    if (submitInFlightRef.current || idea.trim().length === 0) return;
-    setActiveAnswerBuildBlocked(false);
-    const submittedIdea = idea;
+  const submitInstructionText = useCallback<SubmitInstructionText>(async (
+    submittedIdea,
+    options = Object.freeze({}),
+  ) => {
+    if (submitInFlightRef.current || submittedIdea.trim().length === 0) return;
+    publishQueuedActiveAnswerBuild(null);
     let decision = decideBuilderComposerIntent(
       submittedIdea,
       composerIntentContext(
@@ -1500,7 +1506,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       : null;
     const publishRouteDecision = (
       nextDecision: BuilderComposerRouteDecision,
-      existingMessageId: string | null = null,
+      existingMessageId: string | null = options.existingMessageId ?? null,
       nextTaskId: string | null = routeTaskId,
     ): BuilderComposerRouteDecisionEvidence => {
       const evidence = createComposerRouteEvidence(
@@ -1660,18 +1666,78 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [
     hiddenComposerWorkingBriefKey,
-    idea,
     project,
     ports.generator,
     createComposerRouteEvidence,
+    publishQueuedActiveAnswerBuild,
     readActivityAfterTerminal,
     reviewPlan,
-    steerInstruction,
     submitPlanInstruction,
   ]);
 
+  useLayoutEffect(() => {
+    submitInstructionTextRef.current = submitInstructionText;
+  }, [submitInstructionText]);
+
+  const submitInstruction = useCallback(async () => {
+    if (projectSnapshotRef.current.busy) {
+      const currentSnapshot = projectSnapshotRef.current;
+      const submittedIdea = idea;
+      if (currentSnapshot.status === 'answering' && submittedIdea.trim().length > 0) {
+        const decision = decideBuilderComposerIntent(
+          submittedIdea,
+          composerIntentContext(
+            conversationSnapshotRef.current,
+            currentSnapshot,
+            hiddenComposerWorkingBriefKey,
+            composerModeRef.current,
+            currentProjectWriteApprovalStatusRef.current,
+            effectiveApprovalMode(
+              approvalModeRef.current,
+              currentSnapshot,
+              currentProjectWriteApprovalStatusRef.current,
+            ),
+          ),
+        );
+        if (decision.route === 'build') {
+          const routeWorkingBrief = composerWorkingBrief(
+            conversationSnapshotRef.current,
+            currentSnapshot,
+          );
+          const routeTaskId = routeWorkingBrief !== null
+            && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
+            ? routeWorkingBrief.taskId
+            : null;
+          const routeEvidence = createComposerRouteEvidence(
+            decision,
+            currentSnapshot,
+            null,
+            routeTaskId,
+          );
+          setComposerRouteDecision(routeEvidence);
+          publishQueuedActiveAnswerBuild(Object.freeze({
+            epoch: workspaceEpochRef.current,
+            instruction: submittedIdea,
+            messageId: routeEvidence.messageId,
+          }));
+          setIdea('');
+          return;
+        }
+      }
+      await steerInstruction();
+      return;
+    }
+    await submitInstructionText(idea);
+  }, [
+    hiddenComposerWorkingBriefKey,
+    idea,
+    createComposerRouteEvidence,
+    publishQueuedActiveAnswerBuild,
+    steerInstruction,
+    submitInstructionText,
+  ]);
+
   const changeComposerInstruction = useCallback((value: string) => {
-    setActiveAnswerBuildBlocked(false);
     setIdea(value);
   }, []);
 
@@ -2089,7 +2155,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             </div>
           ) : (
             <BuilderPage
-              activeAnswerBuildBlocked={activeAnswerBuildBlocked
+              activeAnswerBuildBlocked={queuedActiveAnswerBuild !== null
                 && project.snapshot.busy
                 && project.snapshot.status === 'answering'}
               activeFile={activeFile}

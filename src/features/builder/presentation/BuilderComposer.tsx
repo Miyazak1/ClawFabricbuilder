@@ -405,8 +405,9 @@ export function BuilderComposer({
           <p
             className="cf-builder-composer-busy-build-notice"
             data-builder-active-answer-build-blocked="true"
+            data-builder-active-answer-build-queued="true"
           >
-            I&apos;m still answering. This message has not changed files; send it again when I finish.
+            I&apos;m still answering. This change is queued and will start after the answer finishes.
           </p>
         ) : null}
         <footer className="cf-builder-composer-footer">

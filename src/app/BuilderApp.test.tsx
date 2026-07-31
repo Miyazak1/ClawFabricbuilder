@@ -2819,7 +2819,7 @@ describe('BuilderApp v2', () => {
     });
   });
 
-  it('does not silently steer a build command while an answer is active', async () => {
+  it('queues a build command instead of steering while an answer is active', async () => {
     const {
       answer,
       container,
@@ -2861,11 +2861,12 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-active-answer-build-blocked="true"]')?.textContent)
-        .toContain('has not changed files');
+        .toContain('will start after the answer finishes');
+      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).not.toBeNull();
     });
     expect(steer).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe(change);
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('build');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
@@ -2877,6 +2878,75 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-active-answer-build-blocked="true"]')).toBeNull();
     });
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: change });
+    });
+    expect(steer).not.toHaveBeenCalled();
+  });
+
+  it('keeps queued active-answer builds behind current-project write approval', async () => {
+    const {
+      answer,
+      container,
+      emitGenerationStarted,
+      prepareCurrentProjectWriteApproval,
+      resolveAnswer,
+      steer,
+      submit,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      deferredAnswer: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    const question = 'What should I improve before changing files?';
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, question);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+    });
+    const expected = await createBuilderGenerationRequest(question, PROJECT_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+    });
+
+    const change = 'Change the main heading to My Notes.';
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, change);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).not.toBeNull();
+    });
+    expect(steer).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await resolveAnswer();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledWith({
+        project_id: PROJECT_ID,
+      });
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).not.toBeNull();
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(steer).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
+      .toContain('Allow current project changes');
   });
 
   it('proposes a saved-project plan from the desktop composer without generating or saving', async () => {

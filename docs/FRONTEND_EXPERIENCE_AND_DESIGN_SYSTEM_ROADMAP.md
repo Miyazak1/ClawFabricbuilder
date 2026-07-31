@@ -273,9 +273,10 @@ Routing rules:
   approved plan exists;
 - ambiguous changes -> `clarify` before build.
 - while the assistant is answering a read-only question, an explicit
-  build/change message must not be swallowed as `Add context`; keep it visible
-  and tell the user it has not changed files yet, or queue it behind a future
-  stop-and-build-next affordance.
+  build/change message must not be swallowed as `Add context`; the current
+  checkpoint queues it as the next build, tells the user it will start after the
+  answer finishes, and then routes it through the same workspace and write
+  permission checks as any other build request.
 
 ## Conversation-Grounded Execution
 
