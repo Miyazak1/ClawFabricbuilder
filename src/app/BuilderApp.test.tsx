@@ -2473,6 +2473,10 @@ describe('BuilderApp v2', () => {
     });
     readTaskStream.mockClear();
     click(container, 'Plan first');
+    expect(proposePlan).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+      .toContain('Plan mode');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(proposePlan).toHaveBeenCalledOnce();
@@ -2522,6 +2526,10 @@ describe('BuilderApp v2', () => {
     });
     readTaskStream.mockClear();
     click(container, 'Plan first');
+    expect(proposePlan).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+      .toContain('Plan mode');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
@@ -2576,6 +2584,10 @@ describe('BuilderApp v2', () => {
     });
 
     click(container, 'Plan first');
+    expect(proposePlan).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+      .toContain('Plan mode');
+    click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')?.textContent)

@@ -522,6 +522,109 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text-muted);
 }
 
+.cf-builder-composer-add-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.cf-builder-composer-add-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cf-text-muted);
+  cursor: pointer;
+}
+
+.cf-builder-composer-add-button:hover,
+.cf-builder-composer-add-button:focus-visible,
+.cf-builder-composer-add-button[aria-expanded="true"] {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+  outline: none;
+}
+
+.cf-builder-composer-add-menu {
+  position: absolute;
+  z-index: 35;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  min-width: 190px;
+  gap: 2px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-lg);
+  padding: 5px;
+}
+
+.cf-builder-composer-add-menu button {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cf-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.cf-builder-composer-add-menu button:hover:not(:disabled),
+.cf-builder-composer-add-menu button:focus-visible:not(:disabled) {
+  background: var(--cf-surface-muted);
+  outline: none;
+}
+
+.cf-builder-composer-add-menu button:disabled {
+  cursor: default;
+  color: var(--cf-text-soft);
+  opacity: 0.62;
+}
+
+.cf-builder-composer-mode-chip {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: var(--cf-surface);
+  color: var(--cf-primary-text);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 0 4px 0 8px;
+}
+
+.cf-builder-composer-mode-chip button {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cf-text-muted);
+  cursor: pointer;
+}
+
+.cf-builder-composer-mode-chip button:hover,
+.cf-builder-composer-mode-chip button:focus-visible {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+  outline: none;
+}
+
 .cf-builder-workspace-chip {
   display: inline-flex;
   min-height: 40px;

@@ -60,7 +60,7 @@ import {
   type BuilderPlanReviewInFlight,
   type BuilderPlanSourceReadApprovalPrompt,
 } from '../features/builder/presentation/BuilderPage';
-import type { BuilderComposerWorkingBrief } from '../features/builder/presentation/BuilderComposer';
+import type { BuilderComposerMode, BuilderComposerWorkingBrief } from '../features/builder/presentation/BuilderComposer';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -680,6 +680,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [hiddenComposerWorkingBriefKey, setHiddenComposerWorkingBriefKey] = useState<string | null>(null);
+  const [composerMode, setComposerMode] = useState<BuilderComposerMode | null>(null);
   const [composerRouteDecision, setComposerRouteDecision] = useState<BuilderComposerRouteDecision | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -697,6 +698,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const initialWorkspaceAutoOpenRef = useRef(false);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
+  const composerModeRef = useRef<BuilderComposerMode | null>(null);
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
   const planSourceReadApprovalRef = useRef<BuilderPlanSourceReadApprovalPrompt | null>(null);
@@ -837,6 +839,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   useLayoutEffect(() => {
     liveOutputRef.current = liveOutput;
   }, [liveOutput]);
+
+  useLayoutEffect(() => {
+    composerModeRef.current = composerMode;
+  }, [composerMode]);
 
   useLayoutEffect(() => {
     planSourceReadApprovalRef.current = planSourceReadApproval;
@@ -1137,6 +1143,68 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setLiveOutput(null);
   }, [conversation, ports.planReview, project, publishPlanReviewInFlight, readActivityAfterTerminal]);
 
+  const runPlanProposal = useCallback(async (
+    submittedIdea: string,
+    commandEpoch: number,
+    fallbackProjectId: string,
+  ) => {
+    const result = await project.proposePlan(submittedIdea);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    if (result.status === 'submit_failed' || result.status === 'unavailable') {
+      setIdea(submittedIdea);
+    }
+    await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
+    setLiveOutput(null);
+  }, [project, readActivityAfterTerminal]);
+
+  const submitPlanInstruction = useCallback(async (
+    submittedIdea: string,
+    commandEpoch: number,
+    currentSnapshot: BuilderVisibleProjectSnapshot,
+  ): Promise<boolean> => {
+    if (
+      currentSnapshot.busy
+      || currentSnapshot.draft !== null
+      || currentSnapshot.inspectedRevision !== null
+      || currentSnapshot.savedProject === null
+      || !['ready', 'preview_unavailable'].includes(currentSnapshot.status)
+      || submittedIdea.trim().length === 0
+    ) return false;
+    const fallbackProjectId = currentSnapshot.savedProject.target.project_id;
+    setApprovedPlanContinuationFailure(null);
+    setLiveOutput(null);
+    try {
+      const approval = await ports.generator.preparePlanSourceReadApproval({
+        project_id: fallbackProjectId,
+      });
+      if (workspaceEpochRef.current !== commandEpoch) return true;
+      if (approval.state === 'approval_required') {
+        const prompt = Object.freeze({
+          project_id: fallbackProjectId,
+          instruction: submittedIdea,
+          file_count: approval.file_count,
+          state: 'pending' as const,
+        });
+        planSourceReadApprovalRef.current = prompt;
+        setPlanSourceReadApproval(prompt);
+        composerModeRef.current = null;
+        setComposerMode(null);
+        setIdea('');
+        return true;
+      }
+      planSourceReadApprovalRef.current = null;
+      setPlanSourceReadApproval(null);
+      composerModeRef.current = null;
+      setComposerMode(null);
+      setIdea('');
+      await runPlanProposal(submittedIdea, commandEpoch, fallbackProjectId);
+      return true;
+    } catch {
+      if (workspaceEpochRef.current === commandEpoch) setIdea(submittedIdea);
+      return true;
+    }
+  }, [ports.generator, runPlanProposal]);
+
   const submitInstruction = useCallback(async () => {
     if (projectSnapshotRef.current.busy) {
       await steerInstruction();
@@ -1176,9 +1244,17 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     const commandEpoch = workspaceEpochRef.current;
     submitInFlightRef.current = true;
-    setIdea('');
-    setLiveOutput(null);
     try {
+      if (composerModeRef.current === 'plan' || decision.dispatch === 'plan') {
+        const planned = await submitPlanInstruction(
+          submittedIdea,
+          commandEpoch,
+          projectSnapshotRef.current,
+        );
+        if (planned || composerModeRef.current === 'plan') return;
+      }
+      setIdea('');
+      setLiveOutput(null);
       const result = decision.dispatch === 'build'
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
@@ -1191,68 +1267,25 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [hiddenComposerWorkingBriefKey, idea, project, readActivityAfterTerminal, reviewPlan, steerInstruction]);
+  }, [
+    hiddenComposerWorkingBriefKey,
+    idea,
+    project,
+    readActivityAfterTerminal,
+    reviewPlan,
+    steerInstruction,
+    submitPlanInstruction,
+  ]);
 
-  const runPlanProposal = useCallback(async (
-    submittedIdea: string,
-    commandEpoch: number,
-    fallbackProjectId: string,
-  ) => {
-    const result = await project.proposePlan(submittedIdea);
-    if (workspaceEpochRef.current !== commandEpoch) return;
-    if (result.status === 'submit_failed' || result.status === 'unavailable') {
-      setIdea(submittedIdea);
-    }
-    await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
-    setLiveOutput(null);
-  }, [project, readActivityAfterTerminal]);
+  const selectPlanMode = useCallback(() => {
+    composerModeRef.current = 'plan';
+    setComposerMode('plan');
+  }, []);
 
-  const proposePlan = useCallback(async () => {
-    const currentSnapshot = projectSnapshotRef.current;
-    if (
-      currentSnapshot.busy
-      || currentSnapshot.draft !== null
-      || currentSnapshot.inspectedRevision !== null
-      || currentSnapshot.savedProject === null
-      || !['ready', 'preview_unavailable'].includes(currentSnapshot.status)
-      || submitInFlightRef.current
-      || idea.trim().length === 0
-    ) return;
-    const commandEpoch = workspaceEpochRef.current;
-    const submittedIdea = idea;
-    const fallbackProjectId = currentSnapshot.savedProject.target.project_id;
-    submitInFlightRef.current = true;
-    setApprovedPlanContinuationFailure(null);
-    setLiveOutput(null);
-    try {
-      const approval = await ports.generator.preparePlanSourceReadApproval({
-        project_id: fallbackProjectId,
-      });
-      if (workspaceEpochRef.current !== commandEpoch) return;
-      if (approval.state === 'approval_required') {
-        const prompt = Object.freeze({
-          project_id: fallbackProjectId,
-          instruction: submittedIdea,
-          file_count: approval.file_count,
-          state: 'pending' as const,
-        });
-        planSourceReadApprovalRef.current = prompt;
-        setPlanSourceReadApproval(prompt);
-        setIdea('');
-        return;
-      }
-      planSourceReadApprovalRef.current = null;
-      setPlanSourceReadApproval(null);
-      setIdea('');
-      await runPlanProposal(submittedIdea, commandEpoch, fallbackProjectId);
-    } catch {
-      if (workspaceEpochRef.current === commandEpoch) setIdea(submittedIdea);
-    } finally {
-      if (workspaceEpochRef.current === commandEpoch) {
-        submitInFlightRef.current = false;
-      }
-    }
-  }, [idea, ports.generator, runPlanProposal]);
+  const clearComposerMode = useCallback(() => {
+    composerModeRef.current = null;
+    setComposerMode(null);
+  }, []);
 
   const approvePlanSourceRead = useCallback(async () => {
     const prompt = planSourceReadApprovalRef.current;
@@ -1537,6 +1570,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               activeFile={activeFile}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               composerContextStatus={composerContextStatus}
+              composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
               composerWorkingBrief={visibleComposerWorkingBrief}
               instruction={idea}
@@ -1549,9 +1583,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               workspacePickerRequest={workspacePickerRequest}
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}
+              onClearComposerMode={clearComposerMode}
               onDismissWorkspacePicker={dismissWorkspacePicker}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
-              onProposePlan={proposePlan}
+              onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
               onInstructionChange={setIdea}

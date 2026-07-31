@@ -5,6 +5,7 @@ import {
   FolderOpen,
   GitCompareArrows,
   ListChecks,
+  Plus,
   StopCircle,
   X,
 } from 'lucide-react';
@@ -35,6 +36,8 @@ export type BuilderComposerWorkingBrief = Readonly<{
   summary: string;
 }>;
 
+export type BuilderComposerMode = 'plan';
+
 export type BuilderComposerProps = Readonly<{
   busy: boolean;
   canAddContext: boolean;
@@ -48,17 +51,19 @@ export type BuilderComposerProps = Readonly<{
   catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
+  composerMode?: BuilderComposerMode | null;
   composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   hasUnsavedDraft: boolean;
   instruction: string;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onClearComposerWorkingBrief?: (key: string) => void;
+  onClearComposerMode?: () => void;
   onDismissWorkspacePicker?: () => void;
   onFocusDraftReview?: () => void;
   onInstructionChange?: (value: string) => void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
-  onProposePlan?: () => void;
+  onSelectPlanMode?: () => void;
   onSteerInstruction?: () => void;
   onSubmitInstruction?: () => void;
   savedProject: SavedComposerProject | null;
@@ -94,19 +99,21 @@ export function BuilderComposer({
   catalogBusy,
   catalogProjects,
   catalogWorkspaceProjects,
-  composerRouteDecision = null,
   composerContextStatus = null,
+  composerMode = null,
+  composerRouteDecision = null,
   composerWorkingBrief = null,
   hasUnsavedDraft,
   instruction,
   onCancel,
+  onClearComposerMode,
   onClearComposerWorkingBrief,
   onCreateProject,
   onDismissWorkspacePicker,
   onFocusDraftReview,
   onInstructionChange,
   onOpenProject,
-  onProposePlan,
+  onSelectPlanMode,
   onSteerInstruction,
   onSubmitInstruction,
   savedProject,
@@ -134,6 +141,7 @@ export function BuilderComposer({
     title: 'New project',
   }));
   const [workspacePickerDismissedBuildPrompt, setWorkspacePickerDismissedBuildPrompt] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
   const pendingWorkspaceNewProjectRequest = workspaceNewProjectRequest > workspacePickerState.createRequest;
   const workspacePickerOpen = workspacePickerState.open
@@ -209,6 +217,30 @@ export function BuilderComposer({
       open: true,
       request: workspacePickerRequest,
     }));
+  }
+
+  function toggleAddMenu(): void {
+    if (busy && !canAddContext) return;
+    setAddMenuOpen((open) => !open);
+  }
+
+  function openFilesAndFoldersFromAddMenu(): void {
+    setAddMenuOpen(false);
+    setWorkspacePickerDismissedBuildPrompt(false);
+    setWorkspacePickerState((picker) => ({
+      ...picker,
+      buildPrompt: false,
+      createRequest: workspaceNewProjectRequest,
+      creating: false,
+      open: true,
+      request: workspacePickerRequest,
+    }));
+  }
+
+  function selectPlanMode(): void {
+    if (!canProposePlan) return;
+    setAddMenuOpen(false);
+    onSelectPlanMode?.();
   }
 
   function showNewProjectPanel(): void {
@@ -298,6 +330,66 @@ export function BuilderComposer({
         />
         <footer className="cf-builder-composer-footer">
           <div className="cf-builder-composer-tools">
+            <div className="cf-builder-composer-add-menu-wrap">
+              <button
+                aria-expanded={addMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Add context"
+                className="cf-builder-composer-add-button"
+                data-builder-composer-add-menu-button="true"
+                disabled={busy && !canAddContext}
+                onClick={toggleAddMenu}
+                title="Add context"
+                type="button"
+              >
+                <Plus aria-hidden="true" className="size-3.5" />
+              </button>
+              {addMenuOpen ? (
+                <div
+                  className="cf-builder-composer-add-menu"
+                  data-builder-composer-add-menu="true"
+                  role="menu"
+                >
+                  <button
+                    data-builder-composer-add-files="true"
+                    onClick={openFilesAndFoldersFromAddMenu}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <FolderOpen aria-hidden="true" className="size-3.5" />
+                    Files and folders
+                  </button>
+                  <button
+                    data-builder-composer-add-brief="true"
+                    disabled
+                    role="menuitem"
+                    type="button"
+                  >
+                    <ListChecks aria-hidden="true" className="size-3.5" />
+                    Goal / Brief
+                  </button>
+                  <button
+                    data-builder-composer-add-plan-mode="true"
+                    disabled={!canProposePlan}
+                    onClick={selectPlanMode}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <ListChecks aria-hidden="true" className="size-3.5" />
+                    Plan mode
+                  </button>
+                  <button
+                    data-builder-composer-add-approval-mode="true"
+                    disabled
+                    role="menuitem"
+                    type="button"
+                  >
+                    <GitCompareArrows aria-hidden="true" className="size-3.5" />
+                    Approval mode
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <button
               aria-expanded={workspacePickerOpen}
               aria-haspopup="dialog"
@@ -320,11 +412,28 @@ export function BuilderComposer({
                 {composerStatusLabel}
               </span>
             )}
-            {canProposePlan ? (
+            {composerMode === 'plan' ? (
+              <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip="plan">
+                <ListChecks aria-hidden="true" className="size-3.5" />
+                Plan mode
+                {typeof onClearComposerMode === 'function' ? (
+                  <button
+                    aria-label="Remove Plan mode"
+                    data-builder-clear-composer-mode="true"
+                    onClick={onClearComposerMode}
+                    title="Remove Plan mode"
+                    type="button"
+                  >
+                    <X aria-hidden="true" className="size-3" />
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
+            {canProposePlan && composerMode !== 'plan' ? (
               <button
                 className="cf-builder-composer-tool-button"
                 data-builder-propose-plan="true"
-                onClick={onProposePlan}
+                onClick={selectPlanMode}
                 title="Plan first"
                 type="button"
               >

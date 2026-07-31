@@ -1443,13 +1443,13 @@ describe('BuilderPage v2', () => {
 
   it('offers desktop plan-first as a composer tool without adding a second send button', async () => {
     const { draftReady, saved } = await snapshots();
-    const onProposePlan = vi.fn();
+    const onSelectPlanMode = vi.fn();
     const onSubmitInstruction = vi.fn();
     const savedContainer = render(
       <BuilderPage
         activeFile={null}
         instruction="Plan the next project update."
-        onProposePlan={onProposePlan}
+        onSelectPlanMode={onSelectPlanMode}
         onSubmitInstruction={onSubmitInstruction}
         snapshot={saved}
       />,
@@ -1460,14 +1460,14 @@ describe('BuilderPage v2', () => {
     expect(planButton).not.toBeNull();
     expect(planButton?.closest('[data-builder-composer="true"]')).not.toBeNull();
     click(savedContainer, '[data-builder-propose-plan="true"]');
-    expect(onProposePlan).toHaveBeenCalledOnce();
+    expect(onSelectPlanMode).toHaveBeenCalledOnce();
     expect(onSubmitInstruction).not.toHaveBeenCalled();
 
     const draftContainer = render(
       <BuilderPage
         activeFile={null}
         instruction="Plan while draft exists."
-        onProposePlan={onProposePlan}
+        onSelectPlanMode={onSelectPlanMode}
         onSubmitInstruction={onSubmitInstruction}
         snapshot={draftReady}
       />,

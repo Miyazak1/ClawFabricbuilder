@@ -69,6 +69,7 @@ import { BuilderChangesPanel } from './BuilderChangesPanel';
 import {
   BuilderComposer,
   type BuilderComposerContextStatus,
+  type BuilderComposerMode,
   type BuilderComposerWorkingBrief,
 } from './BuilderComposer';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
@@ -105,6 +106,7 @@ export type BuilderPageProps = {
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
+  composerMode?: BuilderComposerMode | null;
   composerWorkingBrief?: BuilderComposerWorkingBrief | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
@@ -122,7 +124,8 @@ export type BuilderPageProps = {
   onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
   onSteerInstruction?: () => void;
-  onProposePlan?: () => void;
+  onSelectPlanMode?: () => void;
+  onClearComposerMode?: () => void;
   onSubmitInstruction?: () => void;
   onRetryGenerate?: () => void;
   onRefreshConversation?: () => Promise<unknown> | void;
@@ -1520,6 +1523,7 @@ export function BuilderPage({
   instruction,
   composerRouteDecision = null,
   composerContextStatus = null,
+  composerMode = null,
   composerWorkingBrief = null,
   onApprovePlanSourceRead,
   onCancel,
@@ -1531,7 +1535,8 @@ export function BuilderPage({
   onOpenProject,
   onOpenProjectLocation,
   onSteerInstruction,
-  onProposePlan,
+  onSelectPlanMode,
+  onClearComposerMode,
   onSubmitInstruction,
   onRetryGenerate,
   onRefreshConversation,
@@ -1642,7 +1647,7 @@ export function BuilderPage({
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory;
-  const canProposePlan = typeof onProposePlan === 'function'
+  const canProposePlan = typeof onSelectPlanMode === 'function'
     && saved !== null
     && !busy
     && !hasUnsavedDraft
@@ -2322,18 +2327,20 @@ export function BuilderPage({
       catalogProjects={catalogProjects}
       catalogWorkspaceProjects={catalogWorkspaceProjects}
       composerContextStatus={composerContextStatus}
+      composerMode={composerMode}
       composerRouteDecision={composerRouteDecision}
       composerWorkingBrief={composerWorkingBrief}
       hasUnsavedDraft={hasUnsavedDraft}
       instruction={instruction}
       onCancel={onCancel}
+      onClearComposerMode={onClearComposerMode}
       onClearComposerWorkingBrief={onClearComposerWorkingBrief}
       onCreateProject={onCreateProject}
       onDismissWorkspacePicker={onDismissWorkspacePicker}
       onFocusDraftReview={focusDraftReview}
       onInstructionChange={onInstructionChange}
       onOpenProject={onOpenProject}
-      onProposePlan={onProposePlan}
+      onSelectPlanMode={onSelectPlanMode}
       onSteerInstruction={onSteerInstruction}
       onSubmitInstruction={onSubmitInstruction}
       savedProject={saved === null

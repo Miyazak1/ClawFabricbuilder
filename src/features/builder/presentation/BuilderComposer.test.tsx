@@ -236,6 +236,70 @@ describe('BuilderComposer', () => {
       .toBe('Continue this draft');
   });
 
+  it('uses the add menu for Plan mode without adding another send command', () => {
+    const onSelectPlanMode = vi.fn();
+    const onSubmitInstruction = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          canProposePlan: true,
+          onSelectPlanMode,
+          onSubmitInstruction,
+          savedProject: {
+            revisionNumber: 2,
+            title: 'Saved dashboard',
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+
+    const menu = container.querySelector('[data-builder-composer-add-menu="true"]');
+    expect(menu).not.toBeNull();
+    expect(menu?.textContent).toContain('Files and folders');
+    expect(menu?.textContent).toContain('Goal / Brief');
+    expect(menu?.textContent).toContain('Plan mode');
+    expect(menu?.textContent).toContain('Approval mode');
+
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+
+    expect(onSelectPlanMode).toHaveBeenCalledOnce();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
+  });
+
+  it('shows a removable Plan mode chip as mode state rather than a second send button', () => {
+    const onClearComposerMode = vi.fn();
+    const onSelectPlanMode = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          canProposePlan: true,
+          composerMode: 'plan',
+          onClearComposerMode,
+          onSelectPlanMode,
+          savedProject: {
+            revisionNumber: 2,
+            title: 'Saved dashboard',
+          },
+        })}
+      />,
+    );
+
+    const chip = container.querySelector('[data-builder-composer-mode-chip="plan"]');
+    expect(chip?.textContent).toContain('Plan mode');
+    expect(container.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+
+    click(container, '[data-builder-clear-composer-mode="true"]');
+
+    expect(onClearComposerMode).toHaveBeenCalledOnce();
+    expect(onSelectPlanMode).not.toHaveBeenCalled();
+  });
+
   it('projects the latest route decision without showing internal routing copy', () => {
     const container = render(
       <BuilderComposer
