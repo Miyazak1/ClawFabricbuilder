@@ -65,14 +65,10 @@ describe('Builder desktop layout styles', () => {
     expect(chatScroll).toContain('flex-direction: column;');
     expect(chatScroll).toContain('align-items: center;');
     expect(chatScroll).toContain('overflow: auto;');
-    expect(chatScroll).toContain('scrollbar-width: thin;');
-    expect(chatScroll).toContain('scrollbar-color: rgba(36, 37, 34, 0.28) transparent;');
+    expect(chatScroll).toContain('scrollbar-width: none;');
+    expect(chatScroll).toContain('-ms-overflow-style: none;');
     expect(source).toContain('.cf-builder-chat-scroll::-webkit-scrollbar');
-    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar')).toContain('width: 6px;');
-    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar-track'))
-      .toContain('background: transparent;');
-    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar-thumb'))
-      .toContain('background-clip: content-box;');
+    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar')).toContain('display: none;');
     expect(chatScroll).not.toContain('display: grid;');
   });
 
@@ -88,7 +84,11 @@ describe('Builder desktop layout styles', () => {
     expect(sidebar).toContain('overflow: hidden;');
     expect(sidebar).toContain('border-left: 1px solid var(--cf-border);');
     expect(handle).toContain('cursor: col-resize;');
-    expect(handle).toContain('left: -5px;');
+    expect(handle).toContain('left: -7px;');
+    expect(handle).toContain('width: 14px;');
+    expect(handle).toContain('touch-action: none;');
+    expect(styleBlock(source, '.cf-builder-artifact-resize-handle::after'))
+      .toContain('background: rgba(36, 37, 34, 0.22);');
     expect(source).not.toContain(
       '.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"]',
     );
