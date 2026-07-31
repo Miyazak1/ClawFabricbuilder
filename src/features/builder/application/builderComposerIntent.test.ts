@@ -246,6 +246,22 @@ describe('routeBuilderComposerIntent', () => {
     });
   });
 
+  it('lets approval mode block build side effects without changing the user intent', () => {
+    expect(decideBuilderComposerIntent('创建登录页', {
+      approvalMode: 'read_only_chat',
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['clear_build'],
+      downgradeReason: null,
+      requiredPermissions: ['write_project'],
+      permissionResult: 'denied',
+      dispatch: 'blocked',
+    });
+  });
+
   it('admits contextual execution only when prior build context and workspace are both present', () => {
     expect(decideBuilderComposerIntent('好，开始吧', {
       hasPriorBuildContext: true,

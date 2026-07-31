@@ -241,11 +241,14 @@ describe('BuilderComposer', () => {
 
   it('uses the add menu for Plan mode without adding another send command', () => {
     const onSelectPlanMode = vi.fn();
+    const onSelectApprovalMode = vi.fn();
     const onSubmitInstruction = vi.fn();
     const container = render(
       <BuilderComposer
         {...props({
+          canAllowCurrentProjectApproval: true,
           canProposePlan: true,
+          onSelectApprovalMode,
           onSelectPlanMode,
           onSubmitInstruction,
           savedProject: {
@@ -267,11 +270,64 @@ describe('BuilderComposer', () => {
     expect(menu?.textContent).toContain('Goal / Brief');
     expect(menu?.textContent).toContain('Plan mode');
     expect(menu?.textContent).toContain('Approval mode');
+    expect(menu?.textContent).toContain('Read-only chat');
+    expect(menu?.textContent).toContain('Ask before write');
+    expect(menu?.textContent).toContain('Allow current project');
 
     click(container, '[data-builder-composer-add-plan-mode="true"]');
 
     expect(onSelectPlanMode).toHaveBeenCalledOnce();
+    expect(onSelectApprovalMode).not.toHaveBeenCalled();
     expect(onSubmitInstruction).not.toHaveBeenCalled();
+  });
+
+  it('selects approval mode from the add menu without adding another send command', () => {
+    const onSelectApprovalMode = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          approvalMode: 'ask_before_write',
+          canAllowCurrentProjectApproval: true,
+          onSelectApprovalMode,
+          savedProject: {
+            revisionNumber: 2,
+            title: 'Saved dashboard',
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
+      .toContain('Ask before write');
+    expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-mode-option="read_only_chat"]');
+
+    expect(onSelectApprovalMode).toHaveBeenCalledExactlyOnceWith('read_only_chat');
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+  });
+
+  it('keeps allow-current-project disabled until a project is selected', () => {
+    const onSelectApprovalMode = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          approvalMode: 'ask_before_write',
+          canAllowCurrentProjectApproval: false,
+          onSelectApprovalMode,
+        })}
+      />,
+    );
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+
+    const allowCurrent = container.querySelector<HTMLButtonElement>(
+      '[data-builder-composer-approval-mode-option="allow_current_project"]',
+    );
+    expect(allowCurrent?.disabled).toBe(true);
+    click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
+    expect(onSelectApprovalMode).not.toHaveBeenCalled();
   });
 
   it('shows a removable Plan mode chip as mode state rather than a second send button', () => {

@@ -383,6 +383,15 @@ Current Builder checkpoint:
 - renderer copy must stay user-facing and must not expose permission IDs,
   receipts, provider details, Git evidence, or source-tree internals.
 
+Approval mode checkpoint:
+
+- the composer `+` menu now exposes the first three Builder-scoped modes:
+  `Read-only chat`, `Ask before write`, and `Allow current project`;
+- the active mode is visible as a compact composer chip;
+- `Read-only chat` prevents draft creation even for explicit build wording;
+- `Allow current project` is available only when a project is selected and uses
+  the existing main-owned approval path before the mode becomes active.
+
 The UI should communicate two separate facts:
 
 ```text

@@ -244,6 +244,7 @@ async function setup(options: Readonly<{
   let resolveGenerate: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
   let approvedPlanGenerateAttempts = 0;
+  let currentProjectWriteAllowed = options.currentProjectWriteApprovalRequired !== true;
   let planReviewRecorded = false;
   async function createDraftForCurrentProject(
     hostRequest: Awaited<ReturnType<typeof createBuilderGenerationRequest>>,
@@ -591,13 +592,14 @@ async function setup(options: Readonly<{
     result: {
       result_version: 'builder-current-project-write-approval-status.v1',
       project_id: (request as { project_id: string }).project_id,
-      state: options.currentProjectWriteApprovalRequired === true ? 'approval_required' : 'ready',
+      state: currentProjectWriteAllowed ? 'ready' : 'approval_required',
       approval_scope: 'current_project_write',
       authority: 'main_selected_project_project_edit_v1',
     },
   }));
   const approveCurrentProjectWrite = vi.fn(async (request: unknown) => {
     if (options.failCurrentProjectWriteApproval === true) throw new Error('approval unavailable');
+    currentProjectWriteAllowed = true;
     return {
       version: 'builder-generation-ipc-result.v1',
       ok: true,
@@ -1788,6 +1790,95 @@ describe('BuilderApp v2', () => {
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('keeps explicit build requests in chat while read-only approval mode is selected', async () => {
+    const {
+      answer,
+      approveCurrentProjectWrite,
+      container,
+      generate,
+      prepareCurrentProjectWriteApproval,
+      saveDraft,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-mode-option="read_only_chat"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
+        .toContain('Read-only chat');
+    });
+
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(prepareCurrentProjectWriteApproval).not.toHaveBeenCalled();
+    expect(approveCurrentProjectWrite).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('blocked');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('denied');
+  });
+
+  it('records allow-current-project mode through main approval before a build', async () => {
+    const {
+      answer,
+      approveCurrentProjectWrite,
+      container,
+      generate,
+      prepareCurrentProjectWriteApproval,
+      saveDraft,
+      submit,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
+
+    await waitFor(() => {
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
+        .toContain('Allow current project');
+    });
+
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('allowed');
+    expect(JSON.stringify(approveCurrentProjectWrite.mock.calls)).not.toMatch(
+      /resource_id|permission_id|source_tree|credential|provider/iu,
+    );
   });
 
   it('keeps exploratory workspace turns in chat after a source folder is bound', async () => {

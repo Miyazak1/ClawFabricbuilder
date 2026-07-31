@@ -6,11 +6,13 @@ import {
   GitCompareArrows,
   ListChecks,
   Plus,
+  ShieldCheck,
   StopCircle,
   X,
 } from 'lucide-react';
 
 import type {
+  BuilderComposerApprovalMode,
   BuilderComposerRouteDecision,
   BuilderComposerRouteDecisionEvidence,
 } from '../application/builderComposerIntent';
@@ -23,6 +25,8 @@ import type {
   BuilderProjectWorkspaceCatalogItem,
 } from '../domain/builderProjectCatalog';
 import { BuilderWorkspacePicker } from './BuilderWorkspacePicker';
+
+export type { BuilderComposerApprovalMode } from '../application/builderComposerIntent';
 
 type SavedComposerProject = Readonly<{
   revisionNumber: number;
@@ -41,8 +45,10 @@ export type BuilderComposerWorkingBrief = Readonly<{
 export type BuilderComposerMode = 'plan';
 
 export type BuilderComposerProps = Readonly<{
+  approvalMode?: BuilderComposerApprovalMode;
   busy: boolean;
   canAddContext: boolean;
+  canAllowCurrentProjectApproval?: boolean;
   canCancel: boolean;
   canEditInstruction: boolean;
   canProposePlan: boolean;
@@ -65,6 +71,7 @@ export type BuilderComposerProps = Readonly<{
   onFocusDraftReview?: () => void;
   onInstructionChange?: (value: string) => void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
+  onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
   onSelectPlanMode?: () => void;
   onSteerInstruction?: () => void;
   onSubmitInstruction?: () => void;
@@ -96,9 +103,17 @@ function sourceFolderBoundaryLabel(folderName: string | undefined): string {
   return `Source folder: ${folderName ?? 'selected folder'}`;
 }
 
+function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
+  if (mode === 'read_only_chat') return 'Read-only chat';
+  if (mode === 'allow_current_project') return 'Allow current project';
+  return 'Ask before write';
+}
+
 export function BuilderComposer({
+  approvalMode = 'ask_before_write',
   busy,
   canAddContext,
+  canAllowCurrentProjectApproval = false,
   canCancel,
   canEditInstruction,
   canProposePlan,
@@ -121,6 +136,7 @@ export function BuilderComposer({
   onFocusDraftReview,
   onInstructionChange,
   onOpenProject,
+  onSelectApprovalMode,
   onSelectPlanMode,
   onSteerInstruction,
   onSubmitInstruction,
@@ -250,6 +266,13 @@ export function BuilderComposer({
     if (!canProposePlan) return;
     setAddMenuOpen(false);
     onSelectPlanMode?.();
+  }
+
+  function selectApprovalMode(mode: BuilderComposerApprovalMode): void {
+    if (typeof onSelectApprovalMode !== 'function') return;
+    if (mode === 'allow_current_project' && !canAllowCurrentProjectApproval) return;
+    setAddMenuOpen(false);
+    void onSelectApprovalMode(mode);
   }
 
   function showNewProjectPanel(): void {
@@ -392,14 +415,41 @@ export function BuilderComposer({
                     <ListChecks aria-hidden="true" className="size-3.5" />
                     Plan mode
                   </button>
+                  <div className="cf-builder-composer-add-menu-label">Approval mode</div>
                   <button
-                    data-builder-composer-add-approval-mode="true"
-                    disabled
-                    role="menuitem"
+                    aria-checked={approvalMode === 'read_only_chat'}
+                    data-builder-composer-approval-mode-option="read_only_chat"
+                    onClick={() => selectApprovalMode('read_only_chat')}
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    <ShieldCheck aria-hidden="true" className="size-3.5" />
+                    Read-only chat
+                  </button>
+                  <button
+                    aria-checked={approvalMode === 'ask_before_write'}
+                    data-builder-composer-approval-mode-option="ask_before_write"
+                    onClick={() => selectApprovalMode('ask_before_write')}
+                    role="menuitemradio"
                     type="button"
                   >
                     <GitCompareArrows aria-hidden="true" className="size-3.5" />
                     Approval mode
+                    <span className="cf-builder-composer-add-menu-hint">Ask before write</span>
+                  </button>
+                  <button
+                    aria-checked={approvalMode === 'allow_current_project'}
+                    data-builder-composer-approval-mode-option="allow_current_project"
+                    disabled={!canAllowCurrentProjectApproval}
+                    onClick={() => selectApprovalMode('allow_current_project')}
+                    role="menuitemradio"
+                    title={canAllowCurrentProjectApproval
+                      ? 'Allow draft preparation in the current project'
+                      : 'Choose a project before allowing current project writes'}
+                    type="button"
+                  >
+                    <ShieldCheck aria-hidden="true" className="size-3.5" />
+                    Allow current project
                   </button>
                 </div>
               ) : null}
@@ -426,6 +476,15 @@ export function BuilderComposer({
                 {composerStatusLabel}
               </span>
             )}
+            <span
+              className="cf-builder-approval-mode-chip"
+              data-builder-approval-mode={approvalMode}
+              data-builder-approval-mode-chip="true"
+              title={approvalModeLabel(approvalMode)}
+            >
+              <ShieldCheck aria-hidden="true" className="size-3.5" />
+              {approvalModeLabel(approvalMode)}
+            </span>
             {composerMode === 'plan' ? (
               <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip="plan">
                 <ListChecks aria-hidden="true" className="size-3.5" />

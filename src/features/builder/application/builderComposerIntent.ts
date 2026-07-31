@@ -23,7 +23,13 @@ export type BuilderComposerIntentDowngradeReason =
   | 'workspace_required'
   | null;
 
+export type BuilderComposerApprovalMode =
+  | 'read_only_chat'
+  | 'ask_before_write'
+  | 'allow_current_project';
+
 export type BuilderComposerIntentContext = Readonly<{
+  approvalMode?: BuilderComposerApprovalMode;
   composerMode?: 'plan' | null;
   hasPriorBuildContext?: boolean;
   hasWorkspace?: boolean;
@@ -166,12 +172,16 @@ function createDecision(
 ): BuilderComposerRouteDecision {
   const requiresWrite = route === 'build';
   const missingWorkspace = requiresWrite && context.hasWorkspace !== true;
+  const deniedByApprovalMode = requiresWrite && context.approvalMode === 'read_only_chat';
   const permissionResult: BuilderComposerIntentPermissionResult = requiresWrite
-    ? missingWorkspace || context.hasWritePermission === false
+    ? deniedByApprovalMode
+      ? 'denied'
+      : missingWorkspace || context.hasWritePermission === false
       ? 'ask'
       : 'allowed'
     : 'not_required';
   const dispatch: BuilderComposerIntentDispatch = (() => {
+    if (requiresWrite && permissionResult === 'denied') return 'blocked';
     if (missingWorkspace) return 'ask_workspace';
     if (requiresWrite && permissionResult === 'ask') return 'ask_permission';
     if (route === 'build') return 'build';

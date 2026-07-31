@@ -302,6 +302,18 @@ Current Builder checkpoint:
 - command, network, terminal, external-directory, publish, and delegation
   permissions remain out of scope until their separate gates exist.
 
+Approval mode checkpoint:
+
+- the desktop composer exposes `Read-only chat`, `Ask before write`, and
+  `Allow current project` as user-facing mode choices;
+- `Read-only chat` keeps the user's build intent inspectable while changing the
+  dispatch to a blocked, side-effect-free answer path;
+- `Allow current project` records approval through the main-owned current
+  project write gate before it is shown as active;
+- mode state is a UI/admission preference only, and does not replace durable
+  permission facts or grant access to commands, network, external directories,
+  publishing, or delegation.
+
 ## Task And Brief Requirements
 
 The router needs a Task Capsule before it can support mature contextual

@@ -68,6 +68,7 @@ import {
 import { BuilderChangesPanel } from './BuilderChangesPanel';
 import {
   BuilderComposer,
+  type BuilderComposerApprovalMode,
   type BuilderComposerContextStatus,
   type BuilderComposerMode,
   type BuilderComposerWorkingBrief,
@@ -109,6 +110,7 @@ export type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
 }>;
 
 export type BuilderPageProps = {
+  approvalMode?: BuilderComposerApprovalMode;
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
@@ -133,6 +135,7 @@ export type BuilderPageProps = {
   onDismissPlanSourceReadApproval?: () => void;
   onDismissCurrentProjectWriteApproval?: () => void;
   onSteerInstruction?: () => void;
+  onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
   onSelectPlanMode?: () => void;
   onClearComposerMode?: () => void;
   onSubmitInstruction?: () => void;
@@ -1532,6 +1535,7 @@ function BuilderArtifactSidebar({
 }
 
 export function BuilderPage({
+  approvalMode = 'ask_before_write',
   instruction,
   composerRouteDecision = null,
   composerContextStatus = null,
@@ -1550,6 +1554,7 @@ export function BuilderPage({
   onOpenProject,
   onOpenProjectLocation,
   onSteerInstruction,
+  onSelectApprovalMode,
   onSelectPlanMode,
   onClearComposerMode,
   onSubmitInstruction,
@@ -2379,8 +2384,10 @@ export function BuilderPage({
 
   const composer = (
     <BuilderComposer
+      approvalMode={approvalMode}
       busy={busy}
       canAddContext={canAddContext}
+      canAllowCurrentProjectApproval={saved !== null || workingProject !== null}
       canCancel={canCancel}
       canEditInstruction={canEditInstruction}
       canProposePlan={canProposePlan}
@@ -2403,6 +2410,7 @@ export function BuilderPage({
       onFocusDraftReview={focusDraftReview}
       onInstructionChange={onInstructionChange}
       onOpenProject={onOpenProject}
+      onSelectApprovalMode={onSelectApprovalMode}
       onSelectPlanMode={onSelectPlanMode}
       onSteerInstruction={onSteerInstruction}
       onSubmitInstruction={onSubmitInstruction}
