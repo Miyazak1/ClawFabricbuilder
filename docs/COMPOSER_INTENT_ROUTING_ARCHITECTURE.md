@@ -162,8 +162,8 @@ can promote contextual execution phrases such as `执行` into `build`.
 
 Plan can be selected by UI as well as by natural language:
 
-- `composerMode: "plan"` from the `+` menu or `Plan first` command forces the
-  next eligible submit through the `plan` route;
+- `composerMode: "plan"` from the `+` menu forces the next eligible submit
+  through the `plan` route;
 - the active mode must be visible as a removable composer chip;
 - after submit, the mode is consumed unless the user pins it explicitly in a
   later product slice;

@@ -260,6 +260,8 @@ describe('BuilderComposer', () => {
     );
 
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Plan first');
     expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
 
     click(container, '[data-builder-composer-add-menu-button="true"]');

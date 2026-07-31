@@ -143,6 +143,14 @@ class FakeLocator {
       this.page.workspacePickerVisible = true;
       this.page.newProjectPanelVisible = true;
     }
+    if (this.selector === SELECTORS.composerAddMenuButton) {
+      this.page.composerAddMenuVisible = true;
+    }
+    if (this.selector === SELECTORS.composerAddPlanMode) {
+      if (this.page.composerAddMenuVisible !== true) throw new Error('composer add menu unavailable');
+      this.page.planModeActive = true;
+      this.page.composerAddMenuVisible = false;
+    }
     if (this.selector === SELECTORS.addSourceFolder) {
       this.page.workspaceBound = true;
       this.page.forceWorkspaceGateForNextBuild = false;
@@ -471,7 +479,12 @@ class FakeRole {
     }
     if (this.name === 'Send') {
       const instruction = this.page.values.get(SELECTORS.idea) ?? '';
-      if (/[?\uFF1F]\s*$/u.test(instruction)) this.page.recordQuestion();
+      if (this.page.planModeActive === true) {
+        this.page.planModeActive = false;
+        if (this.page.requirePlanSourceReadApproval === true) this.page.planSourceReadApprovalVisible = true;
+        else this.page.recordPlanAttempt();
+      }
+      else if (/[?\uFF1F]\s*$/u.test(instruction)) this.page.recordQuestion();
       else if (
         !this.page.workspaceBound
         && (
@@ -483,10 +496,6 @@ class FakeRole {
         this.page.pendingWorkspaceGateInstruction = instruction;
       }
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
-    }
-    if (this.name === 'Plan first') {
-      if (this.page.requirePlanSourceReadApproval === true) this.page.planSourceReadApprovalVisible = true;
-      else this.page.recordPlanAttempt();
     }
     if (this.name === 'Approve plan') this.page.recordPlanApproval();
     if (this.name === 'Retry') this.page.retryCandidateAttempt();
@@ -545,6 +554,7 @@ class FakePage {
     this.changesPanelVisible = false;
     this.changesDisclosureOpen = false;
     this.changesTextOverride = null;
+    this.composerAddMenuVisible = false;
     this.draftSaved = false;
     this.persistSave = true;
     this.events = [];
@@ -569,6 +579,7 @@ class FakePage {
     this.planTurns = 0;
     this.pendingWorkspaceGateInstruction = null;
     this.planSourceReadApprovalVisible = false;
+    this.planModeActive = false;
     this.previewVisible = true;
     this.previewRuntimeBlocked = false;
     this.previewUnavailable = false;
@@ -2380,11 +2391,11 @@ test('approves visible plan source-read prompt before waiting for a plan', async
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Plan first'],
+    ['Send'],
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
-    [SELECTORS.approvePlanSourceRead],
+    [SELECTORS.composerAddMenuButton, SELECTORS.composerAddPlanMode, SELECTORS.approvePlanSourceRead],
   );
 });
 
@@ -2425,8 +2436,13 @@ test('proposes and approves a saved-project plan before creating a draft', async
   });
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Plan first', 'Approve plan'],
+    ['Send', 'Approve plan'],
   );
+  const selectorClicks = page.events.filter((event) => event[0] === 'click').map((event) => event[1]);
+  assert.deepEqual(selectorClicks.slice(0, 2), [
+    SELECTORS.composerAddMenuButton,
+    SELECTORS.composerAddPlanMode,
+  ]);
 });
 
 test('keeps an update candidate pending before the explicit Version 2 save', async (t) => {
@@ -3889,9 +3905,15 @@ test('copies only saved provider profile files and runs without provider input o
     'Send',
     'Send',
     'Back to current',
-    'Plan first',
+    'Send',
     'Approve plan',
   ]);
+  const selectorClicks = electron.pages
+    .flatMap((candidate) => candidate.events)
+    .filter((event) => event[0] === 'click')
+    .map((event) => event[1]);
+  assert.ok(selectorClicks.includes(SELECTORS.composerAddMenuButton));
+  assert.ok(selectorClicks.includes(SELECTORS.composerAddPlanMode));
   assert.equal(
     electron.pages
       .flatMap((candidate) => candidate.events)

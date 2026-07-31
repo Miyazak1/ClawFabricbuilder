@@ -49,6 +49,8 @@ const SELECTORS = Object.freeze({
   artifactSummary: '[data-builder-artifact-summary="true"]',
   artifactTabChanges: '[data-builder-artifact-tab="changes"]',
   artifactTabPreview: '[data-builder-artifact-tab="preview"]',
+  composerAddMenuButton: '[data-builder-composer-add-menu-button="true"]',
+  composerAddPlanMode: '[data-builder-composer-add-plan-mode="true"]',
   baseUrl: '#builder-provider-base-url',
   changeCard: '[data-builder-change-card]',
   changeDiff: '[data-builder-change-diff]',
@@ -2194,7 +2196,9 @@ async function proposePlanViaUi(
 ) {
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
-    await clickByRole(page, 'button', 'Plan first');
+    await page.locator(SELECTORS.composerAddMenuButton).click();
+    await page.locator(SELECTORS.composerAddPlanMode).click();
+    await clickByRole(page, 'button', 'Send');
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_plan_failed');

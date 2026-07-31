@@ -1531,7 +1531,7 @@ describe('BuilderPage v2', () => {
     expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
-  it('offers desktop plan-first as a composer tool without adding a second send button', async () => {
+  it('offers Plan mode from the composer add menu without adding a second send button', async () => {
     const { draftReady, saved } = await snapshots();
     const onSelectPlanMode = vi.fn();
     const onSubmitInstruction = vi.fn();
@@ -1546,10 +1546,14 @@ describe('BuilderPage v2', () => {
     );
 
     expect(savedContainer.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
-    const planButton = savedContainer.querySelector<HTMLButtonElement>('[data-builder-propose-plan="true"]');
-    expect(planButton).not.toBeNull();
-    expect(planButton?.closest('[data-builder-composer="true"]')).not.toBeNull();
-    click(savedContainer, '[data-builder-propose-plan="true"]');
+    expect(savedContainer.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+    click(savedContainer, '[data-builder-composer-add-menu-button="true"]');
+    const planMode = savedContainer.querySelector<HTMLButtonElement>(
+      '[data-builder-composer-add-plan-mode="true"]',
+    );
+    expect(planMode).not.toBeNull();
+    expect(planMode?.closest('[data-builder-composer="true"]')).not.toBeNull();
+    click(savedContainer, '[data-builder-composer-add-plan-mode="true"]');
     expect(onSelectPlanMode).toHaveBeenCalledOnce();
     expect(onSubmitInstruction).not.toHaveBeenCalled();
 

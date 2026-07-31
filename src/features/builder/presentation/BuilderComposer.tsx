@@ -502,18 +502,6 @@ export function BuilderComposer({
                 ) : null}
               </span>
             ) : null}
-            {canProposePlan && composerMode !== 'plan' ? (
-              <button
-                className="cf-builder-composer-tool-button"
-                data-builder-propose-plan="true"
-                onClick={selectPlanMode}
-                title="Plan first"
-                type="button"
-              >
-                <ListChecks aria-hidden="true" className="size-3.5" />
-                Plan first
-              </button>
-            ) : null}
           </div>
           <div className="cf-builder-composer-actions">
             {canCancel ? (

@@ -236,9 +236,8 @@ Interaction rules:
 
 Plan mode can be invoked in two ways:
 
-1. **Explicit UI**: choose `Plan mode` from the `+` menu or click the visible
-   `Plan first` command while it exists. The composer shows a `Plan mode` chip;
-   pressing Send creates a plan proposal instead of building.
+1. **Explicit UI**: choose `Plan mode` from the `+` menu. The composer shows a
+   `Plan mode` chip; pressing Send creates a plan proposal instead of building.
 2. **Natural language**: messages such as `先给我方案`, `进入计划模式`,
    `先不要写代码，列步骤`, or `plan this first` route to `plan` through the
    intent router.

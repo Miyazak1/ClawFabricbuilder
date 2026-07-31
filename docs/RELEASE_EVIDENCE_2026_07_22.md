@@ -1440,6 +1440,38 @@ readiness.
 - `npm.cmd run pack` passed. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Composer Plan Mode Menu Package Check
+
+This addendum records the desktop composer checkpoint after the standalone
+`Plan first` button was retired. It extends renderer composer UI, desktop UI
+tests, packaged canary navigation, and roadmap text only; it does not extend
+main generation authority, provider configuration, Git/SQLite authority,
+command execution, terminal tools, or real-provider canary coverage.
+
+- Explicit Plan mode is now entered from the composer `+` menu. The composer
+  still has one Send command; choosing Plan mode creates the removable `Plan
+  mode` chip, and the next Send routes through plan proposal instead of draft
+  generation.
+- Natural-language plan requests such as "Plan first" or "先给我方案" remain
+  router inputs. They are not the visible extra button path.
+- Saved-project and bound-workspace plan flows, project-read approval, dismissed
+  approval restoration, plan review, and approved-plan continuation still use
+  the same plan authority and do not create draft, Save, or Project Revision
+  facts before explicit approval.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderComposer.test.tsx src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx`
+  and `node --test tests\verify-packaged-canary.test.cjs`; the suites reported
+  133 passing Vitest tests and 51 passing Node tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 575 passing
+  Vitest tests, and the boundary suite reported 661 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

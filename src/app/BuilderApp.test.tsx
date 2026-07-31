@@ -2749,13 +2749,7 @@ describe('BuilderApp v2', () => {
       initiallySaved: true,
       planAfterPropose: true,
     });
-    await waitFor(() => {
-      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
-    });
-    click(container, 'Hello project');
-    await waitFor(() => {
-      expect(container.querySelector('#builder-idea')).not.toBeNull();
-    });
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -2764,13 +2758,20 @@ describe('BuilderApp v2', () => {
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-propose-plan="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-composer-add-menu-button="true"]')).not.toBeNull();
     });
     readTaskStream.mockClear();
-    click(container, 'Plan first');
+    expect(container.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-add-plan-mode="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
     expect(proposePlan).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
-      .toContain('Plan mode');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+        .toContain('Plan mode');
+    });
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
@@ -2932,13 +2933,7 @@ describe('BuilderApp v2', () => {
       planAfterPropose: true,
       planSourceReadApprovalRequired: true,
     });
-    await waitFor(() => {
-      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
-    });
-    click(container, 'Hello project');
-    await waitFor(() => {
-      expect(container.querySelector('#builder-idea')).not.toBeNull();
-    });
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -2947,13 +2942,20 @@ describe('BuilderApp v2', () => {
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-propose-plan="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-composer-add-menu-button="true"]')).not.toBeNull();
     });
     readTaskStream.mockClear();
-    click(container, 'Plan first');
+    expect(container.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-add-plan-mode="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
     expect(proposePlan).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
-      .toContain('Plan mode');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+        .toContain('Plan mode');
+    });
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
@@ -2993,10 +2995,7 @@ describe('BuilderApp v2', () => {
       planAfterPropose: true,
       planSourceReadApprovalRequired: true,
     });
-    await waitFor(() => {
-      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
-    });
-    click(container, 'Hello project');
+    await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -3005,13 +3004,20 @@ describe('BuilderApp v2', () => {
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-propose-plan="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-composer-add-menu-button="true"]')).not.toBeNull();
     });
 
-    click(container, 'Plan first');
+    expect(container.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-add-plan-mode="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
     expect(proposePlan).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
-      .toContain('Plan mode');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+        .toContain('Plan mode');
+    });
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
