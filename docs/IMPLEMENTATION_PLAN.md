@@ -521,12 +521,22 @@ Evidence requirements:
   Conversation fact;
 - the current build-context snapshot contract checkpoint extracts that prompt
   snapshot into a main-side pure contract module with independent sanitization
-  and tests. Generation still recomputes it from the current Conversation event
-  window at prompt construction time; it is not yet a durable Run or Task
-  `TaskContextSnapshot` fact, does not expose snapshot read IPC, and cannot grant
-  read/write/command/network permissions. The next durable slice can record this
-  already-verified public shape instead of reverse-engineering it from prompt
-  text;
+  and tests. Generation still recomputes this prompt snapshot from the current
+  Conversation event window at prompt construction time; it remains prompt
+  context only and cannot grant read/write/command/network permissions;
+- the current run-context snapshot checkpoint records a durable
+  `builder-run-context-snapshot.v1` Conversation fact immediately after a Run
+  starts and before provider progress, tool facts, interruption, cancellation, or
+  terminal outcome. The fact is main-only, digest-bound, replay-validated, and
+  stores only the public route shape, included current message id, task-brief
+  reference, base-revision reference, permission result, and unavailable
+  command/network capabilities. The renderer receives only a compact
+  `run_context_snapshot_recorded` Task Stream projection and never sees the
+  snapshot id, context digest, route decision id, provider, credential, source
+  tree, Git receipt, Save authority, raw prompt, or Project Revision evidence.
+  This creates the first durable "why this run had context" receipt while still
+  granting no read/write/command/network permission and exposing no snapshot read
+  IPC/preload surface;
 - the current route-signal contract checkpoint moves `matched_signals` from a
   broad formatted string into the fixed public Builder route-signal vocabulary.
   Conversation records, main-owned route hints, and prompt snapshots all share

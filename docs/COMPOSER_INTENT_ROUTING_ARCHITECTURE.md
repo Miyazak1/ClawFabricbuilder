@@ -483,6 +483,15 @@ Deliverables:
 - unrelated task messages excluded;
 - user-visible "why this built" diagnostics can be derived.
 
+Current checkpoint: Builder records a main-owned
+`builder-run-context-snapshot.v1` fact after Run start and before provider
+progress, tool facts, interruption, cancellation, or terminal outcome. The
+renderer sees only the compact Task Stream projection; snapshot ids, context
+digests, provider/credential material, source tree details, Git receipts, Save
+facts, raw prompts, and Project Revision evidence remain hidden. The next
+product step can add a user-facing "why this ran" explanation from that public
+projection without inventing context or granting permissions.
+
 ### Slice 6 - Agent-Ready Routing
 
 Goal: prepare persistent Agents and subtask delegation.
