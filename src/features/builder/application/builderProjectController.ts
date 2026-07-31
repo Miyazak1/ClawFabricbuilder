@@ -511,6 +511,7 @@ export function createBuilderProjectController(
       || !current.busy
       || current.inspectedRevision !== null
       || (current.savedProject !== null && current.savedProject.target.project_id !== event.project_id)
+      || (current.savedProject === null && current.workingProjectId !== null && current.workingProjectId !== event.project_id)
     ) return;
     if (target.requestId === null) {
       activeGeneration = Object.freeze({
@@ -1055,23 +1056,38 @@ export function createBuilderProjectController(
       || current.busy
       || current.draft !== null
       || current.inspectedRevision !== null
-      || current.savedProject === null
+      || (current.savedProject === null && current.workingProjectId === null)
       || !['ready', 'preview_unavailable'].includes(current.status)
     ) return current;
     const retained = current.savedProject;
+    const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
+    if (targetProjectId === null) return current;
     const retainedPreview = current.preview;
+    const retainedWorkingProject = unsavedWorkingProject(retained, null, targetProjectId, current.workingProject);
+    const retainedWorkingProjectId = unsavedWorkingProjectId(retained, null, targetProjectId);
     retryableGeneration = null;
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
-      publish(snapshot('submitting', retained, null, retainedPreview, null));
+      publish(snapshot(
+        'submitting',
+        retained,
+        null,
+        retainedPreview,
+        null,
+        null,
+        null,
+        false,
+        retainedWorkingProjectId,
+        retainedWorkingProject,
+      ));
       let requestId: string | null = null;
       let request: Awaited<ReturnType<typeof createBuilderGenerationRequest>> | null = null;
       try {
-        request = await createBuilderGenerationRequest(instruction, retained.target.project_id);
+        request = await createBuilderGenerationRequest(instruction, targetProjectId);
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
           before,
-          projectId: retained.target.project_id,
+          projectId: targetProjectId,
           requestId,
         });
         await sanitizeBuilderGenerationPlan(
@@ -1081,11 +1097,16 @@ export function createBuilderProjectController(
         clearActiveGeneration(request.request_digest, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
         return publish(snapshot(
-          settledStatus(retained, retainedPreview),
+          settledStatus(retained, retainedPreview, targetProjectId),
           retained,
           null,
           retainedPreview,
           null,
+          null,
+          null,
+          false,
+          retainedWorkingProjectId,
+          retainedWorkingProject,
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
@@ -1099,6 +1120,8 @@ export function createBuilderProjectController(
           null,
           null,
           false,
+          retainedWorkingProjectId,
+          retainedWorkingProject,
         ));
       }
     });

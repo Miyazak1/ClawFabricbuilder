@@ -1375,15 +1375,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     commandEpoch: number,
     currentSnapshot: BuilderVisibleProjectSnapshot,
   ): Promise<boolean> => {
+    const fallbackProjectId = visibleConversationProjectId(currentSnapshot);
     if (
       currentSnapshot.busy
       || currentSnapshot.draft !== null
       || currentSnapshot.inspectedRevision !== null
-      || currentSnapshot.savedProject === null
+      || fallbackProjectId === null
       || !['ready', 'preview_unavailable'].includes(currentSnapshot.status)
       || submittedIdea.trim().length === 0
     ) return false;
-    const fallbackProjectId = currentSnapshot.savedProject.target.project_id;
     setApprovedPlanContinuationFailure(null);
     setLiveOutput(null);
     try {

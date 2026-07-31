@@ -589,12 +589,13 @@ Evidence requirements:
   target while preserving the main-owned submit guard above;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
-  renderer plan proposal path instead of the automatic build path. The
-  main-owned `submit` fallback recognizes the same public `explicit_plan`
-  signal but fails closed to a read-only `clarify` route, because `submit` is
-  not the authority for plan proposal evidence and must not create a draft, Git
-  candidate, Save fact, Project Revision, or compatibility path from a plan
-  request;
+  renderer plan proposal path instead of the automatic build path. This works
+  for either a saved project or a bound local workspace before its first saved
+  version; Save Version is not a planning prerequisite. The main-owned
+  `submit` fallback recognizes the same public `explicit_plan` signal but fails
+  closed to a read-only `clarify` route, because `submit` is not the authority
+  for plan proposal evidence and must not create a draft, Git candidate, Save
+  fact, Project Revision, or compatibility path from a plan request;
 - the current durable run-progress checkpoint records fixed main-owned Run
   progress stages (`context_ready`, `provider_request_started`,
   `provider_response_received`, `result_preparing`) before terminal generation,

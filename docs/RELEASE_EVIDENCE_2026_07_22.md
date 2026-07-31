@@ -1333,6 +1333,40 @@ general-purpose command/tool execution readiness.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Bound Workspace Plan Package Check
+
+This addendum records the bound-local-workspace plan checkpoint after Plan mode
+was detached from the saved-version prerequisite. It extends controller,
+desktop composer, and package evidence only; it does not extend installer
+evidence, real-provider DeepSeek canary coverage, arbitrary generated-code
+execution, external-network permissions, or general-purpose command/tool
+execution readiness.
+
+- A bound local workspace before Version 1 can now propose a plan from explicit
+  plan wording such as "帮我先做下方案". Save Version remains the later
+  acceptance step, not a prerequisite for planning.
+- The controller preserves `workingProjectId` and the bound source-folder
+  display state before, during, and after plan proposal. The plan request still
+  sends only the bounded generation request with `existing_project_id`; renderer
+  code does not pass source trees, Git receipts, Save facts, or Project Revision
+  evidence.
+- The desktop composer prepares current-project source-read approval for the
+  selected workspace, calls the plan proposal path, and does not call submit,
+  generate, or Save. Plan proposal remains read-only until the user approves a
+  plan and later grants any required write authority.
+- Focused validation passed through
+  `npm.cmd exec vitest run src/features/builder/application/builderProjectController.test.ts src/app/BuilderApp.test.tsx`;
+  the suite reported 108 passing Vitest tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 574 passing
+  Vitest tests, and the boundary suite reported 660 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

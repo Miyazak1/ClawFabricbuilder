@@ -249,6 +249,10 @@ approval, but it must not write files, save a version, run commands, or publish.
 Approving a plan creates an execution-ready brief; source changes still require
 explicit execution intent plus write permission.
 
+Plan mode may run for either a saved project or a bound local workspace before
+Version 1 exists. Source folders define the read boundary; Save Version is the
+later acceptance step, not a prerequisite for planning.
+
 The internal route should evolve from `answer | build` to:
 
 ```ts

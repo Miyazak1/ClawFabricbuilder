@@ -526,6 +526,44 @@ describe('Builder project controller v2', () => {
     expect(result.answer).toBeNull();
   });
 
+  it('proposes a plan for a bound local project before the first saved version', async () => {
+    const { controller, generate, proposePlan, saveDraft, submit } = setup({
+      createLocalProject: async () => createLocalProjectSelection({
+        projectId: PROJECT_ID,
+        title: 'Unsaved dashboard',
+        sourceFolderName: 'site-source',
+      }),
+    });
+    const bound = await controller.createLocalProject('Unsaved dashboard');
+
+    const result = await controller.proposePlan('帮我先做下方案');
+
+    expect(bound.savedProject).toBeNull();
+    expect(bound.workingProjectId).toBe(PROJECT_ID);
+    expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      version: 'builder-generation-request.v2',
+      instruction: '帮我先做下方案',
+      existing_project_id: PROJECT_ID,
+    }));
+    expect(proposePlan.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('ready');
+    expect(result.savedProject).toBeNull();
+    expect(result.workingProjectId).toBe(PROJECT_ID);
+    expect(result.workingProject).toEqual({
+      project_id: PROJECT_ID,
+      title: 'Unsaved dashboard',
+      source_folders: [{
+        name: 'site-source',
+        status: 'selected',
+      }],
+    });
+    expect(result.draft).toBeNull();
+    expect(result.answer).toBeNull();
+  });
+
   it('discards an unsaved draft by draft_id without saving it', async () => {
     const { controller, rejectDraft, saveDraft } = setup();
     await controller.open(PROJECT_ID);
