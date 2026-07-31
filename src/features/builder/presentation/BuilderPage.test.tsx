@@ -2888,9 +2888,13 @@ describe('BuilderPage v2', () => {
     expect(logs?.closest('[data-builder-artifact-sidebar="true"]')).toBe(updatedSidebar);
     expect(logs?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(logs?.textContent).toContain('Work logs');
-    expect(chatMain?.textContent).not.toContain('Context recorded');
-    expect(logs?.textContent).toContain('Context recorded');
-    expect(logs?.textContent).toContain('The current brief was attached to this run.');
+    expect(chatMain?.textContent).not.toContain('Why this ran');
+    expect(logs?.textContent).toContain('Why this ran');
+    expect(logs?.textContent).toContain('Builder treated this as a change request.');
+    expect(logs?.textContent).toContain('The current brief was attached.');
+    expect(logs?.textContent).toContain('It used the current project version.');
+    expect(logs?.textContent).toContain('Builder was allowed to write in the selected project.');
+    expect(logs?.textContent).toContain('No terminal commands or network access were used.');
     expect(logs?.textContent).toContain('Project context ready');
     expect(logs?.textContent).toContain('I checked the project context needed for this request.');
     expect(logs?.textContent).toContain('Draft proposed');

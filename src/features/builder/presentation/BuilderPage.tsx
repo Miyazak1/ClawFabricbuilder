@@ -525,7 +525,7 @@ function activityTitle(item: BuilderConversationItem): string {
     return item.message_kind === 'steering' ? 'You added context' : 'You';
   }
   if (item.item_kind === 'run_started') return 'Assistant is working';
-  if (item.item_kind === 'run_context_snapshot_recorded') return 'Context recorded';
+  if (item.item_kind === 'run_context_snapshot_recorded') return 'Why this ran';
   if (item.item_kind === 'run_progress_recorded') return progressLabel(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
@@ -647,14 +647,38 @@ function toolResultBody(
   return 'This project step could not finish.';
 }
 
+function runContextSnapshotBody(
+  item: Extract<BuilderConversationItem, { item_kind: 'run_context_snapshot_recorded' }>,
+): string {
+  const intent = item.context.route === 'build'
+    ? 'Builder treated this as a change request.'
+    : item.context.route === 'plan'
+      ? 'Builder prepared a plan instead of changing files.'
+      : item.context.route === 'update_brief'
+        ? 'Builder updated the current brief from this discussion.'
+        : item.context.route === 'clarify'
+          ? 'Builder kept this as a clarification step.'
+          : 'Builder kept this as chat.';
+  const brief = item.context.brief === 'available'
+    ? 'The current brief was attached.'
+    : 'No current brief was attached.';
+  const base = item.context.base === 'project_revision'
+    ? 'It used the current project version.'
+    : 'It used the selected unsaved workspace.';
+  const permission = item.context.permission_result === 'allowed'
+    ? 'Builder was allowed to write in the selected project.'
+    : item.context.permission_result === 'ask'
+      ? 'Builder still needed write approval.'
+      : item.context.permission_result === 'denied'
+        ? 'Write access was not allowed.'
+        : 'No write access was needed.';
+  return `${intent} ${brief} ${base} ${permission} No terminal commands or network access were used.`;
+}
+
 function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') return item.message.text;
   if (item.item_kind === 'run_started') return 'Preparing this request.';
-  if (item.item_kind === 'run_context_snapshot_recorded') {
-    return item.context.brief === 'available'
-      ? 'The current brief was attached to this run.'
-      : 'The request context was recorded for this run.';
-  }
+  if (item.item_kind === 'run_context_snapshot_recorded') return runContextSnapshotBody(item);
   if (item.item_kind === 'run_progress_recorded') return progressBody(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt'
