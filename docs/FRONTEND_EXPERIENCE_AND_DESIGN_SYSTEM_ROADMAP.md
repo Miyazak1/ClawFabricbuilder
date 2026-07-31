@@ -210,8 +210,11 @@ MVP entries:
 
 - **Files and folders**: choose or attach source context, then show it as a
   composer chip. Reading content still follows permission rules.
-- **Brief**: save the current discussion as a working brief or inspect the
-  current brief. This is not Goal mode.
+- **Brief**: save the current discussion as internal working memory for later
+  execution. The default composer should not expose a `Current brief` block or
+  ask users to manage agent memory during normal chat. On-demand inspection and
+  correction belongs in a future Task/Logs or memory disclosure surface. This is
+  not Goal mode.
 - **Plan mode**: make the next submitted message route to `plan`, even if the
   wording is ordinary. It should appear as an active composer chip and be
   removable before sending.
@@ -614,15 +617,18 @@ Exit criteria:
 Scope:
 
 - persist or derive a safe working brief from selected chat turns;
-- show a compact brief summary in the UI;
-- let users update or clear it;
-- feed it into build execution.
+- keep the working brief out of the default composer UI so users can keep
+  chatting naturally;
+- provide future on-demand inspection/correction once the Task Capsule is
+  durable enough to explain what memory is being used;
+- feed the brief into build execution.
 - introduce the composer `+` menu as the place for Brief and Plan mode
   entries, while keeping plugin/tool entries hidden until their gates exist.
 
 Exit criteria:
 
-- multi-turn discussion produces an inspectable brief;
+- multi-turn discussion produces an internal brief that can drive contextual
+  execution without showing raw memory in the composer;
 - brief survives refresh/reopen where Conversation facts support it;
 - contextual execution builds from the brief;
 - ambiguous contextual execution asks for confirmation.
@@ -631,20 +637,19 @@ Exit criteria:
 
 Current checkpoint:
 
-- the desktop composer now derives a compact visible brief from the sanitized
-  Task Stream projection and shows it as `Current brief`, `Approved plan`, or
-  `Current result`;
-- the brief can be cleared in the current renderer session without deleting
-  Conversation history or changing main-owned prompt facts;
-- clearing the visible brief removes renderer-side contextual-build readiness,
-  so short execution phrases return to chat/clarification unless fresh work
-  context appears;
+- the desktop composer derives internal contextual-build readiness from the
+  sanitized Task Stream projection, including approved plans, current results,
+  and task brief facts, but no longer renders a default `Current brief` block or
+  clear button in the composer;
+- the user can keep chatting naturally while the router uses the internal brief
+  to decide whether short phrases such as `按刚才方案做` have enough context to
+  build;
 - the composer `+` menu now enables `Brief` as a visible brief-update
   scaffold. It does not send by itself or add a second send button; it turns the
   current composer text into an explicit user-visible "save this direction"
   message that renderer and main both classify as `update_brief`;
 - provider, credential, source tree, Git, digest, and receipt details remain
-  hidden from the visible brief.
+  hidden from all default composer memory surfaces.
 
 Goal mode remains a separate future agent workflow. A Goal is not a plan,
 working brief, title, or one-shot build request: it means the agent accepts a

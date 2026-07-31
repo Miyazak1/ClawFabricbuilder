@@ -2923,7 +2923,7 @@ describe('BuilderApp v2', () => {
     expect(steer).not.toHaveBeenCalled();
   });
 
-  it('queues Chinese contextual execution after a visible brief while an answer is active', async () => {
+  it('queues Chinese contextual execution after internal brief readiness while an answer is active', async () => {
     const {
       answer,
       container,

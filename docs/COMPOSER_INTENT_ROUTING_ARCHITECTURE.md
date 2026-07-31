@@ -227,7 +227,7 @@ Short execution phrases such as `开始`, `做吧`, `继续`, `go ahead`, or
 - confirmed working brief;
 - approved plan;
 - active draft/candidate requiring a localized change;
-- active task with clear current brief and no blocking open question.
+- active task with clear internal brief state and no blocking open question.
 
 Otherwise route to `clarify`.
 
@@ -373,8 +373,12 @@ type TaskCapsule = {
 };
 ```
 
-The brief must be inspectable and clearable. Clearing a visible brief should
-remove contextual-build readiness without deleting the underlying conversation.
+The brief is agent working memory, not ordinary composer chrome. It should not
+render as a default `Current brief` block or make users manage internal memory
+while they are chatting. The system must still be able to explain, inspect, and
+correct brief state through a future Task/Logs or memory disclosure surface.
+Any correction removes contextual-build readiness for that task without deleting
+the underlying conversation.
 
 ## Route Decision Evidence
 
@@ -500,7 +504,7 @@ Deliverables:
 
 - durable task capsule;
 - brief update route;
-- clear/inspect brief UI;
+- no default composer brief block; future on-demand inspect/correct surface;
 - contextual execution requires brief or approved plan.
 
 ### Slice 4 - Permission Admission

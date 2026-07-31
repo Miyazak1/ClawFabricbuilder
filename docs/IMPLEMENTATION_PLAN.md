@@ -575,18 +575,15 @@ Evidence requirements:
   diagnosis still falls closed to answer. This creates no renderer-owned draft, provider
   call, Git evidence, Save fact, Project Revision, IPC/preload surface, or
   compatibility path;
-- the current visible working-brief checkpoint projects that same conversation
-  grounding into the desktop composer without creating a new authority. Renderer
-  derives a compact `Current brief`, `Approved plan`, or `Current result`
-  display from the already-sanitized Task Stream window and hides any text that
-  looks like internal IDs, digests, provider, credential, source tree, Git, or
-  receipt evidence. Clearing the brief only tells the current renderer composer
-  not to use that visible context for contextual execution; it does not delete
-  or rewrite SQLite Conversation facts, Git candidates, Project Revisions, or
-  provider prompt history. After clearing, a short phrase such as "按刚才方案做"
-  falls back to an answer/clarification turn unless a fresh visible brief or
-  draft context appears. This gives ordinary users an inspectable execution
-  target while preserving the main-owned submit guard above;
+- the current internal working-brief checkpoint projects that same conversation
+  grounding into contextual-build readiness without creating a new authority.
+  Renderer derives approved-plan, current-result, and task-brief availability
+  from the already-sanitized Task Stream window, but does not render a default
+  `Current brief` block or clear button in the desktop composer. The composer
+  must not expose internal IDs, digests, provider, credential, source tree, Git,
+  or receipt evidence as memory UI. A short phrase such as "按刚才方案做" can use
+  the internal brief only when the sanitized conversation facts support it. This
+  keeps ordinary chat natural while preserving the main-owned submit guard above;
 - the current explicit brief-entry checkpoint makes `Brief` in the
   composer `+` menu a real user-visible path into that same task capsule flow.
   Selecting it never sends a message, creates a draft, saves a revision, grants
