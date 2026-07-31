@@ -669,8 +669,10 @@ Evidence requirements:
   Project Revision authority. The desktop chat flow now keeps the durable
   `run_started` / `run_progress_recorded` status row visible beside this
   ephemeral live provider output, so provider text does not hide fact-backed
-  progress. Tool streaming and arbitrary execution remain later independent
-  protocols;
+  progress. Empty live-output waiting rows are suppressed once a Task Stream
+  status row is visible, so the UI does not duplicate "working" copy before the
+  provider has emitted display-safe text. Tool streaming and arbitrary execution
+  remain later independent protocols;
 - the current renderer-safe tool activity projection turns admitted Task Stream
   tool request/result facts into ordinary conversation status language. Pending
   requests remain visible as project steps; once the matching fixed-code result

@@ -2681,11 +2681,9 @@ describe('BuilderApp v2', () => {
     const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
-        .toContain("I'm working on this...");
+      expect(container.querySelector('[data-builder-work-status="true"]')).not.toBeNull();
     });
-    expect(container.querySelector('[data-builder-live-output="true"]')?.getAttribute('data-builder-live-output-state'))
-      .toBe('waiting');
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-conversation-notice="submitting"]')).toBeNull();
     expect(container.querySelector('[data-builder-conversation-notice="generating"]')).toBeNull();
     const startedWorkStatus = container.querySelector('[data-builder-work-status="true"]');
@@ -2788,11 +2786,12 @@ describe('BuilderApp v2', () => {
     const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-work-status="true"]')).not.toBeNull();
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
       expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
         .toBe('Add context');
     });
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     await act(async () => {
       await Promise.resolve();
     });

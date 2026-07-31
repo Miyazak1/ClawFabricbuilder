@@ -2744,7 +2744,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('shows a waiting assistant reply after live work starts but before display-safe text arrives', async () => {
+  it('uses fact-backed work status instead of a duplicate waiting reply before display-safe text arrives', async () => {
     const { saved } = await snapshots();
     const activity = await progressActivity();
     const container = render(
@@ -2763,19 +2763,12 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const liveOutput = container.querySelector('[data-builder-live-output="true"]');
-    expect(liveOutput).not.toBeNull();
-    expect(liveOutput?.getAttribute('data-builder-live-output-state')).toBe('waiting');
-    expect(liveOutput?.getAttribute('data-builder-activity-role')).toBe('assistant');
-    expect(
-      liveOutput?.querySelector('[data-builder-message-surface]')
-        ?.getAttribute('data-builder-message-surface'),
-    ).toBe('plain');
-    expect(liveOutput?.textContent).toContain("I'm working on this...");
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     expect(workStatus).not.toBeNull();
     expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('provider_request_started');
     expect(workStatus?.textContent).toContain('Writing the response.');
+    expect(container.textContent).not.toContain("I'm working on this...");
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
     expect(container.textContent).not.toMatch(

@@ -484,6 +484,16 @@ type ActivityEntry =
   | ActivityItemEntry
   | ActivityWorkStatusEntry;
 
+function shouldShowLiveOutput(
+  liveOutput: BuilderLiveOutputSnapshot | null,
+  entries: readonly ActivityEntry[],
+): liveOutput is BuilderLiveOutputSnapshot {
+  if (liveOutput === null) return false;
+  if (liveOutput.text.length > 0) return true;
+  if (liveOutput.waiting_text !== undefined) return true;
+  return !entries.some((entry) => entry.entry_kind === 'work_status');
+}
+
 function workStatusBody(status: ActivityWorkStatus): string {
   if (status === 'started') return 'Preparing this request.';
   if (status === 'context_ready') return 'Reading the current project context.';
@@ -1238,6 +1248,7 @@ function ActivityPanel({
 }>) {
   const entries = activityEntries(snapshot);
   const visibleEntries = entries;
+  const showLiveOutput = shouldShowLiveOutput(liveOutput, visibleEntries);
   const message = activityMessage(snapshot);
   const canRefresh = snapshot !== null
     && snapshot.project_id !== null
@@ -1266,10 +1277,10 @@ function ActivityPanel({
         </button>
       </header>
       <div className="cf-builder-activity-body-wrap">
-        {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && liveOutput === null ? (
+        {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && !showLiveOutput ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {visibleEntries.length === 0 && liveOutput === null && message !== null ? (
+        {visibleEntries.length === 0 && !showLiveOutput && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
             {message}
           </div>
@@ -1292,7 +1303,7 @@ function ActivityPanel({
                 />
               )
             ))}
-            {liveOutput !== null ? (
+            {showLiveOutput ? (
               <ActivityLiveOutputItem liveOutput={liveOutput} />
             ) : null}
           </ol>
@@ -1333,6 +1344,7 @@ function BuilderArtifactLogsPanel({
   snapshot: BuilderConversationControllerSnapshot | null;
 }>) {
   const entries = artifactLogEntries(snapshot);
+  const showLiveOutput = shouldShowLiveOutput(liveOutput, entries);
   return (
     <section
       aria-label="Work logs"
@@ -1343,7 +1355,7 @@ function BuilderArtifactLogsPanel({
         <h4>Work logs</h4>
         <p>Readable steps from the current conversation.</p>
       </div>
-      {entries.length === 0 && liveOutput === null ? (
+      {entries.length === 0 && !showLiveOutput ? (
         <div className="cf-builder-empty cf-builder-artifact-logs-empty flex min-h-24 items-center justify-center border border-dashed px-3 text-center text-sm">
           Work details will appear here when the assistant reads, plans, or prepares changes.
         </div>
@@ -1365,7 +1377,7 @@ function BuilderArtifactLogsPanel({
               />
             )
           ))}
-          {liveOutput !== null ? (
+          {showLiveOutput ? (
             <ActivityLiveOutputItem liveOutput={liveOutput} />
           ) : null}
         </ol>

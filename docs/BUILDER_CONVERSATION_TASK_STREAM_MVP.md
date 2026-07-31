@@ -303,7 +303,11 @@ MVP should show:
 Current UI checkpoint: durable `run_started` / `run_progress_recorded` status
 rows remain visible in the chat flow even while ephemeral provider live output is
 streaming. Provider text is only assistant-message text; it does not replace the
-fact-backed work step.
+fact-backed work step. When provider live output has not produced display-safe
+text yet, the chat flow uses the recorded work-status row as the visible waiting
+state instead of adding a second default empty assistant reply. A waiting
+live-output row is kept as an early fallback before any work-status item is
+visible, and for explicit waiting copy such as approved-plan continuation.
 
 The first summary can be compact. It should answer:
 

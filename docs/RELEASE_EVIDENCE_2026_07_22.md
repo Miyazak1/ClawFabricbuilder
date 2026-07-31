@@ -1660,6 +1660,35 @@ authority.
   and `asar_entry_count: 757`. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Fact-Backed Waiting State Check
+
+This addendum records a renderer-only follow-up to the live progress checkpoint.
+It removes duplicate empty waiting copy while preserving the same provider live
+output and Task Stream authorities.
+
+- When provider live output is active but has not emitted display-safe text, the
+  chat flow now uses visible `run_started` / `run_progress_recorded` rows as the
+  waiting state instead of rendering a second empty assistant reply.
+- A waiting live-output row remains available before any work-status item is
+  visible and for explicit waiting copy, so approved-plan and generation startup
+  states still have a display-safe fallback.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx --runInBand`;
+  the suite reported 61 passing Vitest tests.
+- Adjacent focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx --runInBand`;
+  the suites reported 127 passing Vitest tests.
+- Full validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. Unit validation reported 39 passing Vitest
+  files and 608 passing tests. Node boundary validation reported 663 passing
+  tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `result_status: builder_package_verified`, `production_csp: network_denied`,
+  and `asar_entry_count: 757`. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
