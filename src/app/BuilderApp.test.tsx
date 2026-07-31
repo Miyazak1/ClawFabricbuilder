@@ -34,6 +34,7 @@ import { createBuilderGenerationRequest } from '../features/builder/application/
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
+const BRIEF_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174000';
 const PENDING_TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174001';
 const PENDING_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174001';
 const PENDING_RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174001';
@@ -1771,6 +1772,46 @@ describe('BuilderApp v2', () => {
     );
   });
 
+  it('continues a pending build when Allow current project is selected from the composer menu', async () => {
+    const {
+      approveCurrentProjectWrite,
+      container,
+      generate,
+      prepareCurrentProjectWriteApproval,
+      saveDraft,
+      submit,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
+        .toContain('Allow current project changes?');
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    });
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
+
+    await waitFor(() => {
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
+        .toContain('Allow current project');
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+    expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledTimes(2);
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('restores the build request to the composer when current-project write approval is dismissed', async () => {
     const {
       approveCurrentProjectWrite,
@@ -1970,18 +2011,16 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    await waitFor(() => {
-      const brief = container.querySelector('[data-builder-composer-brief="true"]');
-      expect(brief?.textContent).toContain('Current brief');
-      expect(brief?.textContent).toContain('星空背景');
-    });
     const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
     expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Current brief');
+    expect(container.textContent).not.toContain('星空背景');
   });
 
-  it('uses Brief from the add menu to record a visible brief update', async () => {
+  it('uses Brief from the add menu to record an internal brief update', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       briefUpdateActivity: true,
       initiallySaved: true,
@@ -2010,10 +2049,8 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('explicit_brief');
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
-        .toContain('Current brief');
-    });
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Current brief');
   });
 
   it('projects the latest route decision for chat, brief update, and admitted build turns', async () => {
@@ -2062,10 +2099,7 @@ describe('BuilderApp v2', () => {
       toBe('builder-composer-message:local:2');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
     expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
-        .toContain('Current brief');
-    });
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
     submit.mockClear();
 
     setComposerInstruction(container, '把按钮颜色改红');
@@ -2084,7 +2118,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-message-id')).
       toBe('builder-composer-message:local:3');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
-    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(BRIEF_TASK_ID);
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {
@@ -2154,11 +2188,10 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
-        .toContain('Current brief');
       expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
         .toBe('Ready to build');
     });
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
     setComposerInstruction(container, '那就写');
     await waitForComposerSubmitReady(container);
@@ -2178,24 +2211,24 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
   });
 
-  it('shows a clearable current brief before contextual execution', async () => {
+  it('keeps current brief memory hidden before contextual execution', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       contextualBuildActivity: true,
       initiallySaved: true,
     });
     await openSavedProject(container);
     await waitFor(() => {
-      const brief = container.querySelector('[data-builder-composer-brief="true"]');
-      expect(brief?.textContent).toContain('Current brief');
-      expect(brief?.textContent).toContain('星空背景');
-      expect(brief?.textContent).toContain('项目卡片');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toBe('Ready to build');
     });
-    expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
-      .not.toMatch(/working_brief|recent_chat_proposal|builder-conversation|sha256:|provider|credential|source_tree|receipt/iu);
-
-    click(container, '[data-builder-clear-composer-brief="true"]');
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.textContent).not.toContain('Current brief');
+    expect(composer?.textContent).not.toContain('星空背景');
+    expect(composer?.textContent).not.toContain('项目卡片');
+    expect(composer?.textContent)
+      .not.toMatch(/working_brief|recent_chat_proposal|builder-conversation|sha256:|provider|credential|source_tree|receipt/iu);
 
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -2210,9 +2243,9 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '按刚才方案做' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '按刚才方案做' });
     });
-    expect(submit).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -2905,9 +2938,10 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
-        .toContain('Current brief');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toBe('Ready to build');
     });
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
     const question = '这个方案还有什么风险？';
     setComposerInstruction(container, question);

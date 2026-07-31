@@ -461,7 +461,7 @@ describe('BuilderComposer', () => {
     );
   });
 
-  it('shows and clears a compact current brief without adding another send path', () => {
+  it('keeps current brief memory out of the default composer UI', () => {
     const onClearComposerWorkingBrief = vi.fn();
     const container = render(
       <BuilderComposer
@@ -479,12 +479,11 @@ describe('BuilderComposer', () => {
       />,
     );
 
-    const brief = container.querySelector('[data-builder-composer-brief="true"]');
-    expect(brief?.textContent).toContain('Current brief');
-    expect(brief?.textContent).toContain('starfield hero');
+    expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Current brief');
+    expect(container.textContent).not.toContain('starfield hero');
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
-
-    click(container, '[data-builder-clear-composer-brief="true"]');
-    expect(onClearComposerWorkingBrief).toHaveBeenCalledExactlyOnceWith('builder-project:current-brief:1:3');
+    expect(onClearComposerWorkingBrief).not.toHaveBeenCalled();
   });
 });

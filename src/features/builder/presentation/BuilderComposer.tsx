@@ -128,12 +128,10 @@ export function BuilderComposer({
   composerContextStatus = null,
   composerMode = null,
   composerRouteDecision = null,
-  composerWorkingBrief = null,
   hasUnsavedDraft,
   instruction,
   onCancel,
   onClearComposerMode,
-  onClearComposerWorkingBrief,
   onCreateProject,
   onDismissWorkspacePicker,
   onFocusDraftReview,
@@ -620,30 +618,6 @@ export function BuilderComposer({
             )}
           </div>
         </footer>
-        {!hasUnsavedDraft && composerWorkingBrief !== null ? (
-          <div
-            className="cf-builder-composer-brief"
-            data-builder-composer-brief="true"
-          >
-            <div className="cf-builder-composer-brief-copy">
-              <span className="cf-builder-composer-brief-label">{composerWorkingBrief.label}</span>
-              <p className="cf-builder-composer-brief-summary">{composerWorkingBrief.summary}</p>
-            </div>
-            {typeof onClearComposerWorkingBrief === 'function' ? (
-              <button
-                aria-label="Clear current brief"
-                className="cf-builder-composer-brief-clear"
-                data-builder-clear-composer-brief="true"
-                onClick={() => onClearComposerWorkingBrief(composerWorkingBrief.key)}
-                title="Clear current brief"
-                type="button"
-              >
-                <X aria-hidden="true" className="size-3.5" />
-                Clear
-              </button>
-            ) : null}
-          </div>
-        ) : null}
         {hasUnsavedDraft ? (
           <div
             className="cf-builder-composer-review-gate"

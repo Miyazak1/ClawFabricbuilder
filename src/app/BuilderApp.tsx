@@ -1783,6 +1783,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       approvalModeRef.current = 'allow_current_project';
       setApprovalMode('allow_current_project');
+      if (prompt !== null && prompt.project_id === projectId) {
+        setIdea('');
+        void submitInstructionTextRef.current?.(prompt.instruction, {
+          existingMessageId: prompt.message_id,
+        });
+      }
     } catch {
       approvalModeRef.current = 'ask_before_write';
       setApprovalMode('ask_before_write');
