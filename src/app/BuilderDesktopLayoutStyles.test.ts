@@ -65,6 +65,14 @@ describe('Builder desktop layout styles', () => {
     expect(chatScroll).toContain('flex-direction: column;');
     expect(chatScroll).toContain('align-items: center;');
     expect(chatScroll).toContain('overflow: auto;');
+    expect(chatScroll).toContain('scrollbar-width: thin;');
+    expect(chatScroll).toContain('scrollbar-color: rgba(36, 37, 34, 0.28) transparent;');
+    expect(source).toContain('.cf-builder-chat-scroll::-webkit-scrollbar');
+    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar')).toContain('width: 6px;');
+    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar-track'))
+      .toContain('background: transparent;');
+    expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar-thumb'))
+      .toContain('background-clip: content-box;');
     expect(chatScroll).not.toContain('display: grid;');
   });
 
