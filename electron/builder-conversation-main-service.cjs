@@ -1407,6 +1407,31 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
+  function failureAssistantMessage(mode, failureCode) {
+    if (failureCode === 'builder_generation_provider_unavailable') {
+      return 'AI is not configured yet.';
+    }
+    if (failureCode === 'builder_generation_provider_transport_error') {
+      return 'The AI service could not be reached.';
+    }
+    if (failureCode === 'builder_generation_provider_http_error') {
+      return 'The AI service could not complete this request.';
+    }
+    if (failureCode === 'builder_generation_timeout') {
+      return mode === 'question'
+        ? 'Answering took too long.'
+        : 'Making this draft took too long.';
+    }
+    if (failureCode === 'builder_generation_structured_response_invalid') {
+      return mode === 'question'
+        ? 'The answer could not be prepared.'
+        : 'The draft could not be prepared.';
+    }
+    return mode === 'question'
+      ? 'The answer could not be prepared.'
+      : 'The draft could not be made.';
+  }
+
   function failureEvents(context, failureCode, completeTurn) {
     const cancelled = failureCode === 'builder_generation_cancelled';
     const interrupted = failureCode === 'builder_generation_timeout';
@@ -1450,9 +1475,7 @@ function createBuilderConversationMainService(rawOptions) {
         }),
         assistant_message: cancelled || interrupted ? null : {
           message_id: context.ids.assistant_message_id,
-          text: context.mode === 'question'
-            ? 'The answer could not be prepared.'
-            : 'The draft could not be made.',
+          text: failureAssistantMessage(context.mode, failureCode),
         },
         candidate_result: null,
         plan_admission: null,

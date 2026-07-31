@@ -1090,6 +1090,7 @@ test('maps timeout and provider failures without reflecting raw errors', async (
   for (const [transportCode, expected] of [
     ['builder_provider_timeout', 'builder_generation_timeout'],
     ['builder_provider_http_error', 'builder_generation_provider_http_error'],
+    ['builder_provider_transport_error', 'builder_generation_provider_transport_error'],
     ['builder_provider_structured_response_invalid', 'builder_generation_structured_response_invalid'],
     ['builder_provider_response_too_large', 'builder_generation_structured_response_invalid'],
     ['builder_provider_failed', 'builder_generation_failed'],

@@ -26,6 +26,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_provider_cancelled: 'AI generation was cancelled.',
   builder_provider_timeout: 'AI generation timed out.',
   builder_provider_http_error: 'The AI service rejected the request.',
+  builder_provider_transport_error: 'The AI service could not be reached.',
   builder_provider_response_too_large: 'The AI response was too large.',
   builder_provider_structured_response_invalid: 'The AI response could not be used.',
   builder_provider_failed: 'AI generation failed.',
@@ -40,6 +41,7 @@ class BuilderOpenAICompatibleTransportError extends Error {
     this.retryable = [
       'builder_provider_unavailable',
       'builder_provider_timeout',
+      'builder_provider_transport_error',
       'builder_provider_failed',
     ].includes(selected);
     this.stack = `${this.name}: ${this.message}`;
@@ -618,7 +620,7 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
     } catch (error) {
       if (controller.signal.aborted) fail(abortCode());
       if (error instanceof BuilderOpenAICompatibleTransportError) throw error;
-      fail('builder_provider_failed');
+      fail('builder_provider_transport_error');
     } finally {
       if (timer !== null) {
         try { clearTimer(timer); } catch { /* cleanup cannot replace the operation result */ }

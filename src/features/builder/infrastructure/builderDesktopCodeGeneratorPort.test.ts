@@ -674,7 +674,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         version: 'builder-generation-ipc-result.v1',
         ok: false,
         error: {
-          code: 'builder_generation_provider_http_error',
+          code: 'builder_generation_provider_transport_error',
           retryable: true,
         },
       }),
@@ -689,7 +689,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         version: 'builder-generation-ipc-result.v1',
         ok: false,
         error: {
-          code: 'builder_generation_provider_http_error',
+          code: 'builder_generation_provider_transport_error',
           retryable: true,
         },
       }),
@@ -707,9 +707,9 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     });
 
     await expect(port.generate(request)).rejects.toMatchObject({
-      code: 'builder_generation_provider_http_error',
+      code: 'builder_generation_provider_transport_error',
       retryable: true,
-      message: 'The AI service could not make this project.',
+      message: 'The AI service could not be reached.',
     });
   });
 

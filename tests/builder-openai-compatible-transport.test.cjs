@@ -510,11 +510,11 @@ test('does not read or expose a non-success provider response body', async () =>
   assert.equal(cancelCalls, 1);
 });
 
-test('returns fixed redacted failures for thrown fetch and missing transport', async () => {
+test('returns fixed redacted transport failures for thrown fetch and missing transport', async () => {
   const transport = createBuilderOpenAICompatibleTransport({
     fetchImpl: async () => { throw new Error(PRIVATE_MARKER); },
   });
-  await expectCode(transport(request()), 'builder_provider_failed');
+  await expectCode(transport(request()), 'builder_provider_transport_error');
   assert.throws(
     () => createBuilderOpenAICompatibleTransport({ fetchImpl: null }),
     (error) => error.code === 'builder_provider_unavailable' && !String(error).includes(PRIVATE_MARKER),

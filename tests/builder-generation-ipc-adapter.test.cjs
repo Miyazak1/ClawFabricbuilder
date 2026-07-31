@@ -473,6 +473,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     ['builder_generation_project_write_permission_required', false],
     ['builder_generation_timeout', true],
     ['builder_generation_provider_http_error', true],
+    ['builder_generation_provider_transport_error', true],
     ['builder_generation_structured_response_invalid', true],
     ['builder_generation_static_preview_contract_rejected', true],
     ['builder_generation_failed', true],

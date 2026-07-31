@@ -741,6 +741,7 @@ function failedStatusMessage(
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Answering took too long. Try again.';
     if (error === 'builder_generation_provider_http_error') return 'The AI service could not answer. Try again.';
+    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Try again.';
     return 'The answer could not be prepared. Try again.';
   }
   if (status === 'submit_failed') {
@@ -749,6 +750,7 @@ function failedStatusMessage(
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
     if (error === 'builder_generation_provider_http_error') return 'The AI service could not complete this request. Try again.';
+    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Try again.';
     return 'This request could not be completed. Try again.';
   }
   if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I make a draft.';
@@ -756,6 +758,7 @@ function failedStatusMessage(
   if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
   if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
   if (error === 'builder_generation_provider_http_error') return 'The AI service could not make this draft. Try again.';
+  if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Try again.';
   if (error === 'builder_generation_structured_response_invalid') return 'The draft could not be prepared. Try again.';
   return 'The draft could not be made. Try again.';
 }

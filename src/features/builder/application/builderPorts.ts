@@ -62,6 +62,7 @@ export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_provider_unavailable'
   | 'builder_generation_timeout'
   | 'builder_generation_provider_http_error'
+  | 'builder_generation_provider_transport_error'
   | 'builder_generation_structured_response_invalid'
   | 'builder_generation_failed';
 
@@ -75,6 +76,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
+  builder_generation_provider_transport_error: true,
   builder_generation_structured_response_invalid: true,
   builder_generation_failed: true,
 });
@@ -87,6 +89,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, stri
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
+  builder_generation_provider_transport_error: 'The AI service could not be reached.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
   builder_generation_failed: 'The project draft could not be generated.',
 });

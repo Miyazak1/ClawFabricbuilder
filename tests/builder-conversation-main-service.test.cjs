@@ -2613,6 +2613,35 @@ test('records a retryable failed run without completing the turn before delibera
   }
 });
 
+test('records fixed public failure summaries for provider connection failures', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service, null, 'Build a static blog.');
+    item.service.record_retryable_failure({
+      context: first,
+      failure_code: 'builder_generation_provider_transport_error',
+    });
+
+    const failedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(failedStream.conversation.items[2], {
+      item_kind: 'run_completed',
+      sequence: 3,
+      turn_id: first.ids.turn_id,
+      run_id: first.ids.run_id,
+      terminal_status: 'failed',
+      result_kind: 'failure',
+      assistant_message: {
+        message_id: first.ids.assistant_message_id,
+        text: 'The AI service could not be reached.',
+      },
+      candidate: null,
+    });
+  } finally {
+    item.database.close();
+    removeRoot(item.root);
+  }
+});
+
 test('closes a retryable failed turn before starting a distinct new turn', () => {
   const item = fixture();
   try {

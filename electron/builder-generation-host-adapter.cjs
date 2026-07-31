@@ -85,6 +85,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_cancelled: 'AI project generation was cancelled.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
+  builder_generation_provider_transport_error: 'The AI service could not be reached.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
   builder_generation_failed: 'The project draft could not be generated.',
 });
@@ -100,6 +101,7 @@ class BuilderGenerationHostAdapterError extends Error {
       'builder_generation_base_unavailable',
       'builder_generation_timeout',
       'builder_generation_provider_http_error',
+      'builder_generation_provider_transport_error',
       'builder_generation_structured_response_invalid',
       'builder_generation_failed',
     ].includes(selected);
@@ -218,6 +220,7 @@ function mapTransportError(error, signal) {
   if (signal.aborted || code === 'builder_provider_cancelled') fail('builder_generation_cancelled');
   if (code === 'builder_provider_timeout') fail('builder_generation_timeout');
   if (code === 'builder_provider_http_error') fail('builder_generation_provider_http_error');
+  if (code === 'builder_provider_transport_error') fail('builder_generation_provider_transport_error');
   if (code === 'builder_provider_structured_response_invalid'
     || code === 'builder_provider_response_too_large') fail('builder_generation_structured_response_invalid');
   if (code === 'builder_provider_unavailable'
