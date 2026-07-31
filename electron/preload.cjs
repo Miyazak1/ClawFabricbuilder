@@ -19,6 +19,10 @@ const PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL =
   'clawfabric-builder:code-generator:prepare-plan-source-read-approval';
 const APPROVE_PLAN_SOURCE_READ_CHANNEL =
   'clawfabric-builder:code-generator:approve-plan-source-read';
+const PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL =
+  'clawfabric-builder:code-generator:prepare-current-project-write-approval';
+const APPROVE_CURRENT_PROJECT_WRITE_CHANNEL =
+  'clawfabric-builder:code-generator:approve-current-project-write';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
@@ -45,7 +49,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v19',
+  bridgeVersion: 'builder-preload.v20',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -96,6 +100,12 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     approvePlanSourceRead(request) {
       return ipcRenderer.invoke(APPROVE_PLAN_SOURCE_READ_CHANNEL, request);
+    },
+    prepareCurrentProjectWriteApproval(request) {
+      return ipcRenderer.invoke(PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL, request);
+    },
+    approveCurrentProjectWrite(request) {
+      return ipcRenderer.invoke(APPROVE_CURRENT_PROJECT_WRITE_CHANNEL, request);
     },
     retry(request) {
       return ipcRenderer.invoke(RETRY_GENERATE_CHANNEL, request);

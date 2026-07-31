@@ -9,6 +9,7 @@ const {
   ANSWER_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
   AVAILABILITY_CHANNEL,
+  APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
   CONTINUE_DRAFT_CHANNEL,
@@ -16,6 +17,7 @@ const {
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
@@ -144,12 +146,26 @@ class BuilderGenerationProjectWorkspaceRequiredError extends Error {
   }
 }
 
+class BuilderGenerationProjectWritePermissionRequiredError extends Error {
+  constructor() {
+    super('Allow current project changes before building.');
+    this.name = 'BuilderGenerationProjectWritePermissionRequiredError';
+    this.code = 'builder_generation_project_write_permission_required';
+    this.retryable = false;
+    this.stack = `${this.name}: ${this.message}`;
+  }
+}
+
 function fail() {
   throw new BuilderGenerationIpcRuntimeError();
 }
 
 function failGenerationProjectWorkspaceRequired() {
   throw new BuilderGenerationProjectWorkspaceRequiredError();
+}
+
+function failGenerationProjectWritePermissionRequired() {
+  throw new BuilderGenerationProjectWritePermissionRequiredError();
 }
 
 function failGenerationBaseUnavailable() {
@@ -1044,6 +1060,22 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     const activeRequests = new Map();
 
+    async function assertSelectedProjectWriteAllowed(projectId) {
+      if (selectionPending || selectedProjectId !== projectId) failGenerationProjectWorkspaceRequired();
+      const decision = await permissionEvaluator.evaluate({
+        policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+        actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+        action: 'project.edit',
+        resource: {
+          resource_kind: 'project',
+          project_id: projectId,
+          resource_id: 'project:self',
+        },
+        now_ms: Date.now(),
+      });
+      if (decision.decision !== 'allowed') failGenerationProjectWritePermissionRequired();
+    }
+
     function trackedGenerationOperation(rawRequest, method) {
       if (selectionPending) fail();
       const request = createBuilderGenerationRequest({
@@ -1068,10 +1100,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       });
     }
 
-    function trackedGenerate(rawRequest) {
+    async function trackedGenerate(rawRequest) {
       publicInstruction(rawRequest);
       if (selectionPending) fail();
       if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
+      await assertSelectedProjectWriteAllowed(selectedProjectId);
       return trackedGenerationOperation(rawRequest, service.generate);
     }
 
@@ -1080,6 +1113,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       if (selectionPending) fail();
       if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
       const projectId = selectedProjectId;
+      await assertSelectedProjectWriteAllowed(projectId);
       const request = createBuilderGenerationRequest({
         instruction: continuationRequest.instruction,
         existing_project_id: projectId,
@@ -1105,10 +1139,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
     }
 
-    function trackedGenerateApprovedPlan(rawRequest) {
+    async function trackedGenerateApprovedPlan(rawRequest) {
       if (selectionPending) fail();
       const request = approvedPlanGenerationRequest(rawRequest);
       if (selectedProjectId !== request.project_id) fail();
+      await assertSelectedProjectWriteAllowed(request.project_id);
       return service.generate_approved_plan(request);
     }
 
@@ -1216,14 +1251,81 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       });
     }
 
-    function trackedSubmit(rawRequest) {
-      return trackedGenerationOperation(rawRequest, service.submit);
+    function assertSelectedProjectWriteApprovalProject(projectId) {
+      if (selectionPending || selectedProjectId !== projectId) failGenerationProjectWorkspaceRequired();
     }
 
-    function trackedRetryGenerate(rawRequest) {
+    async function currentProjectWriteApprovalStatus(rawRequest) {
+      const projectId = planSourceReadApprovalProjectId(rawRequest);
+      assertSelectedProjectWriteApprovalProject(projectId);
+      const decision = await permissionEvaluator.evaluate({
+        policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+        actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+        action: 'project.edit',
+        resource: {
+          resource_kind: 'project',
+          project_id: projectId,
+          resource_id: 'project:self',
+        },
+        now_ms: Date.now(),
+      });
+      return Object.freeze({
+        result_version: 'builder-current-project-write-approval-status.v1',
+        project_id: projectId,
+        state: decision.decision === 'allowed' ? 'ready' : 'approval_required',
+        approval_scope: 'current_project_write',
+        authority: 'main_selected_project_project_edit_v1',
+      });
+    }
+
+    async function approveCurrentProjectWrite(rawRequest) {
+      const projectId = planSourceReadApprovalProjectId(rawRequest);
+      assertSelectedProjectWriteApprovalProject(projectId);
+      const result = await Reflect.apply(options.grantPermissionForExplicitApproval, undefined, [{
+        project_id: projectId,
+        action: 'project.edit',
+        resource_kind: 'project',
+        resource_id: 'project:self',
+      }]);
+      if (
+        !isPlainObject(result)
+        || Object.getOwnPropertyDescriptor(result, 'result_version')?.value !== 'builder-permission-grant-result.v1'
+        || Object.getOwnPropertyDescriptor(result, 'project_id')?.value !== projectId
+        || Object.getOwnPropertyDescriptor(result, 'action')?.value !== 'project.edit'
+        || Object.getOwnPropertyDescriptor(result, 'ui_selection_authority')?.value
+          !== 'main_owned_explicit_user_approval_required'
+      ) fail();
+      const resource = Object.getOwnPropertyDescriptor(result, 'resource')?.value;
+      if (
+        !isPlainObject(resource)
+        || Object.getOwnPropertyDescriptor(resource, 'resource_kind')?.value !== 'project'
+        || Object.getOwnPropertyDescriptor(resource, 'project_id')?.value !== projectId
+        || Object.getOwnPropertyDescriptor(resource, 'resource_id')?.value !== 'project:self'
+      ) fail();
+      const operation = Object.getOwnPropertyDescriptor(result, 'operation')?.value;
+      if (operation !== 'grant_recorded' && operation !== 'grant_existing') fail();
+      return Object.freeze({
+        result_version: 'builder-current-project-write-approval-result.v1',
+        project_id: projectId,
+        operation: operation === 'grant_recorded' ? 'approval_recorded' : 'already_approved',
+        approval_scope: 'current_project_write',
+        authority: 'main_selected_project_project_edit_v1',
+      });
+    }
+
+    async function trackedSubmit(rawRequest) {
       publicInstruction(rawRequest);
       if (selectionPending) fail();
       if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
+      await assertSelectedProjectWriteAllowed(selectedProjectId);
+      return trackedGenerationOperation(rawRequest, service.submit);
+    }
+
+    async function trackedRetryGenerate(rawRequest) {
+      publicInstruction(rawRequest);
+      if (selectionPending) fail();
+      if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
+      await assertSelectedProjectWriteAllowed(selectedProjectId);
       return trackedGenerationOperation(rawRequest, service.retry_generate);
     }
 
@@ -1245,7 +1347,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     function trackedRestoreRevisionAsDraft(rawRequest) {
       const request = restoreRevisionAsDraftRequest(rawRequest);
       if (selectionPending || selectedProjectId !== request.project_id) failGenerationProjectWorkspaceRequired();
-      return Reflect.apply(service.restore_revision_as_draft, service, [request]);
+      return assertSelectedProjectWriteAllowed(request.project_id).then(() => (
+        Reflect.apply(service.restore_revision_as_draft, service, [request])
+      ));
     }
 
     adapter = createBuilderGenerationIpcAdapter({
@@ -1255,6 +1359,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       proposePlan: trackedProposePlan,
       preparePlanSourceReadApproval: planSourceReadApprovalStatus,
       approvePlanSourceRead,
+      prepareCurrentProjectWriteApproval: currentProjectWriteApprovalStatus,
+      approveCurrentProjectWrite,
       submit: trackedSubmit,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
@@ -1466,6 +1572,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({
       channel: APPROVE_PLAN_SOURCE_READ_CHANNEL,
       invoke: adapter.channels.approvePlanSourceRead.invoke,
+    }),
+    Object.freeze({
+      channel: PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+      invoke: adapter.channels.prepareCurrentProjectWriteApproval.invoke,
+    }),
+    Object.freeze({
+      channel: APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
+      invoke: adapter.channels.approveCurrentProjectWrite.invoke,
     }),
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),

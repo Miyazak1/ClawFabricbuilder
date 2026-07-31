@@ -202,6 +202,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.15;
 }
 
+.cf-builder-rail-button[data-builder-rail-item="settings"] {
+  margin-top: auto;
+}
+
 .cf-builder-brand-mark {
   background: var(--cf-primary-soft);
   border: 1px solid var(--cf-primary-border);

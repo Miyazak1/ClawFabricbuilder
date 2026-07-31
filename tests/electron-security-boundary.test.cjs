@@ -45,7 +45,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v19/u);
+  assert.match(preload, /builder-preload\.v20/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /openLocation/u);
@@ -72,6 +72,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:code-generator:prepare-plan-source-read-approval/u);
   assert.match(preload, /approvePlanSourceRead/u);
   assert.match(preload, /clawfabric-builder:code-generator:approve-plan-source-read/u);
+  assert.match(preload, /prepareCurrentProjectWriteApproval/u);
+  assert.match(preload, /clawfabric-builder:code-generator:prepare-current-project-write-approval/u);
+  assert.match(preload, /approveCurrentProjectWrite/u);
+  assert.match(preload, /clawfabric-builder:code-generator:approve-current-project-write/u);
   assert.match(preload, /\bretry\b/u);
   assert.match(preload, /clawfabric-builder:code-generator:retry/u);
   assert.match(preload, /\banswer\b/u);
@@ -110,7 +114,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 35);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 37);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')

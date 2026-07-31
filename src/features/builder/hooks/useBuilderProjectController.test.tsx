@@ -164,6 +164,20 @@ async function renderHook(
     proposePlan,
     preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
     approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+    prepareCurrentProjectWriteApproval: async () => ({
+      result_version: 'builder-current-project-write-approval-status.v1',
+      project_id: PROJECT_ID,
+      state: 'ready',
+      approval_scope: 'current_project_write',
+      authority: 'main_selected_project_project_edit_v1',
+    } as const),
+    approveCurrentProjectWrite: async () => ({
+      result_version: 'builder-current-project-write-approval-result.v1',
+      project_id: PROJECT_ID,
+      operation: 'already_approved',
+      approval_scope: 'current_project_write',
+      authority: 'main_selected_project_project_edit_v1',
+    } as const),
     generate,
     continueDraft: async (request: Readonly<{ instruction: string }>) => createGenerationDraft(
       await createBuilderGenerationRequest(request.instruction, PROJECT_ID),

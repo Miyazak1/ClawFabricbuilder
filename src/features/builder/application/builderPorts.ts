@@ -38,10 +38,27 @@ export type BuilderPlanSourceReadApprovalResult = Readonly<{
   authority: 'main_selected_project_bounded_filesystem_read_v1';
 }>;
 
+export type BuilderCurrentProjectWriteApprovalStatus = Readonly<{
+  result_version: 'builder-current-project-write-approval-status.v1';
+  project_id: string;
+  state: 'ready' | 'approval_required';
+  approval_scope: 'current_project_write';
+  authority: 'main_selected_project_project_edit_v1';
+}>;
+
+export type BuilderCurrentProjectWriteApprovalResult = Readonly<{
+  result_version: 'builder-current-project-write-approval-result.v1';
+  project_id: string;
+  operation: 'approval_recorded' | 'already_approved';
+  approval_scope: 'current_project_write';
+  authority: 'main_selected_project_project_edit_v1';
+}>;
+
 export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_base_unavailable'
   | 'builder_generation_parent_unavailable'
   | 'builder_generation_project_workspace_required'
+  | 'builder_generation_project_write_permission_required'
   | 'builder_generation_provider_unavailable'
   | 'builder_generation_timeout'
   | 'builder_generation_provider_http_error'
@@ -54,6 +71,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   builder_generation_base_unavailable: true,
   builder_generation_parent_unavailable: true,
   builder_generation_project_workspace_required: false,
+  builder_generation_project_write_permission_required: false,
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
@@ -65,6 +83,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, stri
   builder_generation_base_unavailable: 'The current project source is unavailable.',
   builder_generation_parent_unavailable: 'The current project version is unavailable.',
   builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
+  builder_generation_project_write_permission_required: 'Allow current project changes before building.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
@@ -116,6 +135,12 @@ export interface BuilderCodeGeneratorPort {
   approvePlanSourceRead(
     request: Readonly<{ project_id: string }>,
   ): Promise<BuilderPlanSourceReadApprovalResult>;
+  prepareCurrentProjectWriteApproval(
+    request: Readonly<{ project_id: string }>,
+  ): Promise<BuilderCurrentProjectWriteApprovalStatus>;
+  approveCurrentProjectWrite(
+    request: Readonly<{ project_id: string }>,
+  ): Promise<BuilderCurrentProjectWriteApprovalResult>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
   answer(request: BuilderGenerationRequest): Promise<unknown>;
   answerDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;

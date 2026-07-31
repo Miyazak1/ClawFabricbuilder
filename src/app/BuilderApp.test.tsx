@@ -205,6 +205,8 @@ async function setup(options: Readonly<{
   initiallySaved?: boolean;
   planSourceReadApprovalRequired?: boolean;
   failPlanSourceReadApproval?: boolean;
+  currentProjectWriteApprovalRequired?: boolean;
+  failCurrentProjectWriteApproval?: boolean;
   planAfterPropose?: boolean;
   pendingActivity?: boolean;
   pendingPlanActivity?: boolean;
@@ -583,6 +585,31 @@ async function setup(options: Readonly<{
       },
     };
   });
+  const prepareCurrentProjectWriteApproval = vi.fn(async (request: unknown) => ({
+    version: 'builder-generation-ipc-result.v1',
+    ok: true,
+    result: {
+      result_version: 'builder-current-project-write-approval-status.v1',
+      project_id: (request as { project_id: string }).project_id,
+      state: options.currentProjectWriteApprovalRequired === true ? 'approval_required' : 'ready',
+      approval_scope: 'current_project_write',
+      authority: 'main_selected_project_project_edit_v1',
+    },
+  }));
+  const approveCurrentProjectWrite = vi.fn(async (request: unknown) => {
+    if (options.failCurrentProjectWriteApproval === true) throw new Error('approval unavailable');
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: {
+        result_version: 'builder-current-project-write-approval-result.v1',
+        project_id: (request as { project_id: string }).project_id,
+        operation: 'approval_recorded',
+        approval_scope: 'current_project_write',
+        authority: 'main_selected_project_project_edit_v1',
+      },
+    };
+  });
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
@@ -733,6 +760,8 @@ async function setup(options: Readonly<{
       proposePlan,
       preparePlanSourceReadApproval,
       approvePlanSourceRead,
+      prepareCurrentProjectWriteApproval,
+      approveCurrentProjectWrite,
       retry,
       answer,
       answerDraft,
@@ -814,6 +843,8 @@ async function setup(options: Readonly<{
     proposePlan,
     preparePlanSourceReadApproval,
     approvePlanSourceRead,
+    prepareCurrentProjectWriteApproval,
+    approveCurrentProjectWrite,
     submit,
     retry,
     steer,
@@ -1093,6 +1124,8 @@ describe('BuilderApp v2', () => {
     const railLabels = Array.from(container.querySelectorAll('.cf-builder-rail-button'))
       .map((button) => button.textContent);
     expect(railLabels).toEqual(['Projects', 'Settings']);
+    expect(container.querySelector('[data-builder-workbench-rail="true"] .cf-builder-rail-brand')).toBeNull();
+    expect(container.querySelector('[data-builder-rail-item="settings"]')?.textContent).toBe('Settings');
     expect(railLabels).not.toContain('Canvas');
     expect(railLabels).not.toContain('Chat');
   });
@@ -1668,6 +1701,93 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
+  });
+
+  it('asks for current-project write approval before a selected workspace build can start', async () => {
+    const {
+      approveCurrentProjectWrite,
+      container,
+      generate,
+      prepareCurrentProjectWriteApproval,
+      saveDraft,
+      submit,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+      });
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
+        .toContain('Allow current project changes?');
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_permission');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('ask');
+
+    click(container, 'Allow and continue');
+
+    await waitFor(() => {
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+    expect(JSON.stringify(approveCurrentProjectWrite.mock.calls)).not.toMatch(
+      /resource_id|permission_id|source_tree|credential|provider/iu,
+    );
+  });
+
+  it('restores the build request to the composer when current-project write approval is dismissed', async () => {
+    const {
+      approveCurrentProjectWrite,
+      container,
+      generate,
+      prepareCurrentProjectWriteApproval,
+      saveDraft,
+      submit,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
+        .toContain('Allow current project changes?');
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    });
+
+    click(container, 'Not now');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    });
+    expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(approveCurrentProjectWrite).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
   it('keeps exploratory workspace turns in chat after a source folder is bound', async () => {

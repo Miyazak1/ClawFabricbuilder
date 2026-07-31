@@ -288,6 +288,20 @@ Implementation order:
 4. **Agent permissions**: add subtask/delegation and multi-project scopes only
    after persistent Agent identity and Task-centered context are implemented.
 
+Current Builder checkpoint:
+
+- build-side generation is admitted through a main-owned `project.edit` check
+  for the selected project;
+- the composer can ask for current-project write approval before dispatching a
+  build request;
+- renderer-visible approval records expose only scope/status/result, not grant
+  identifiers, source trees, receipts, credentials, or permission authority
+  internals;
+- approved-plan continuations, retries, restores, and generation entry points
+  fail closed at the main runtime if the current-project write grant is absent;
+- command, network, terminal, external-directory, publish, and delegation
+  permissions remain out of scope until their separate gates exist.
+
 ## Task And Brief Requirements
 
 The router needs a Task Capsule before it can support mature contextual

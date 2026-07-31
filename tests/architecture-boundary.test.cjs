@@ -90,6 +90,10 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:code-generator:prepare-plan-source-read-approval/u);
   assert.match(preload, /approvePlanSourceRead/u);
   assert.match(preload, /clawfabric-builder:code-generator:approve-plan-source-read/u);
+  assert.match(preload, /prepareCurrentProjectWriteApproval/u);
+  assert.match(preload, /clawfabric-builder:code-generator:prepare-current-project-write-approval/u);
+  assert.match(preload, /approveCurrentProjectWrite/u);
+  assert.match(preload, /clawfabric-builder:code-generator:approve-current-project-write/u);
   assert.match(preload, /\bretry\b/u);
   assert.match(preload, /clawfabric-builder:code-generator:retry/u);
   assert.match(preload, /\banswer\b/u);
@@ -114,7 +118,7 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:permissions:evaluate/u);
   assert.match(preload, /windowControls/u);
   assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 35);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 37);
 });
 
 test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {

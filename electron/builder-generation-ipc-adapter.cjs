@@ -10,6 +10,10 @@ const PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL =
   'clawfabric-builder:code-generator:prepare-plan-source-read-approval';
 const APPROVE_PLAN_SOURCE_READ_CHANNEL =
   'clawfabric-builder:code-generator:approve-plan-source-read';
+const PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL =
+  'clawfabric-builder:code-generator:prepare-current-project-write-approval';
+const APPROVE_CURRENT_PROJECT_WRITE_CHANNEL =
+  'clawfabric-builder:code-generator:approve-current-project-write';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
@@ -35,6 +39,8 @@ const OPTION_KEYS = Object.freeze([
   'proposePlan',
   'preparePlanSourceReadApproval',
   'approvePlanSourceRead',
+  'prepareCurrentProjectWriteApproval',
+  'approveCurrentProjectWrite',
   'submit',
   'retry',
   'answer',
@@ -55,6 +61,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_cancelled: 'AI project generation was cancelled.',
   builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
+  builder_generation_project_write_permission_required: 'Allow current project changes before building.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
@@ -66,6 +73,7 @@ const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
   builder_generation_parent_unavailable: true,
   builder_generation_provider_unavailable: false,
   builder_generation_project_workspace_required: false,
+  builder_generation_project_write_permission_required: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
   builder_generation_structured_response_invalid: true,
@@ -85,6 +93,7 @@ const CONTROL_ERROR_CODES = new Set([
   'builder_generation_provider_unavailable',
   'builder_generation_cancelled',
   'builder_generation_project_workspace_required',
+  'builder_generation_project_write_permission_required',
   'builder_generation_timeout',
   'builder_generation_failed',
 ]);
@@ -341,6 +350,20 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.approvePlanSourceRead);
         },
       }),
+      prepareCurrentProjectWriteApproval: Object.freeze({
+        channel: PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+        method: 'prepareCurrentProjectWriteApproval',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.prepareCurrentProjectWriteApproval);
+        },
+      }),
+      approveCurrentProjectWrite: Object.freeze({
+        channel: APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
+        method: 'approveCurrentProjectWrite',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.approveCurrentProjectWrite);
+        },
+      }),
       submit: Object.freeze({
         channel: SUBMIT_CHANNEL,
         method: 'submit',
@@ -419,6 +442,8 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'proposePlan',
       'preparePlanSourceReadApproval',
       'approvePlanSourceRead',
+      'prepareCurrentProjectWriteApproval',
+      'approveCurrentProjectWrite',
       'submit',
       'retry',
       'answer',
@@ -449,6 +474,8 @@ module.exports = Object.freeze({
   PROPOSE_PLAN_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
+  PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+  APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   SUBMIT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,

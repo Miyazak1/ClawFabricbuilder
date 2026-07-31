@@ -102,6 +102,12 @@ export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
   state: 'pending' | 'approving' | 'failed';
 }>;
 
+export type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
+  project_id: string;
+  instruction: string;
+  state: 'pending' | 'approving' | 'failed';
+}>;
+
 export type BuilderPageProps = {
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
@@ -114,15 +120,18 @@ export type BuilderPageProps = {
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
   planSourceReadApproval?: BuilderPlanSourceReadApprovalPrompt | null;
+  currentProjectWriteApproval?: BuilderCurrentProjectWriteApprovalPrompt | null;
   workspacePickerRequest?: number;
   workspaceNewProjectRequest?: number;
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
+  onApproveCurrentProjectWrite?: () => Promise<unknown> | void;
   onCancel?: () => void;
   onClearComposerWorkingBrief?: (key: string) => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
+  onDismissCurrentProjectWriteApproval?: () => void;
   onSteerInstruction?: () => void;
   onSelectPlanMode?: () => void;
   onClearComposerMode?: () => void;
@@ -384,11 +393,12 @@ function activityMessage(
 
 function shouldShowActivityPanel(snapshot: BuilderConversationControllerSnapshot | null): boolean {
   if (snapshot === null || snapshot.status === 'idle' || snapshot.status === 'absent') return false;
-  if (activityItems(snapshot).length > 0) return true;
+  const items = activityItems(snapshot);
+  if (items.length > 0) return true;
+  if (snapshot.status === 'unavailable') return false;
   return snapshot.status === 'loading'
     || snapshot.status === 'refreshing'
-    || snapshot.status === 'stale'
-    || snapshot.status === 'unavailable';
+    || snapshot.status === 'stale';
 }
 
 function versionHistoryMessage(
@@ -732,12 +742,14 @@ function failedStatusMessage(
   }
   if (status === 'submit_failed') {
     if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I build.';
+    if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I build.';
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
     if (error === 'builder_generation_provider_http_error') return 'The AI service could not complete this request. Try again.';
     return 'This request could not be completed. Try again.';
   }
   if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I make a draft.';
+  if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I make a draft.';
   if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
   if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
   if (error === 'builder_generation_provider_http_error') return 'The AI service could not make this draft. Try again.';
@@ -1525,10 +1537,13 @@ export function BuilderPage({
   composerContextStatus = null,
   composerMode = null,
   composerWorkingBrief = null,
+  currentProjectWriteApproval = null,
+  onApproveCurrentProjectWrite,
   onApprovePlanSourceRead,
   onCancel,
   onClearComposerWorkingBrief,
   onCreateProject,
+  onDismissCurrentProjectWriteApproval,
   onDismissWorkspacePicker,
   onDismissPlanSourceReadApproval,
   onInstructionChange,
@@ -2314,6 +2329,54 @@ export function BuilderPage({
     </section>
   );
 
+  const currentProjectWriteApprovalCard = currentProjectWriteApproval === null ? null : (
+    <section
+      aria-label="Current project write approval"
+      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
+      data-builder-current-project-write-approval="true"
+    >
+      <div className="cf-builder-review-copy">
+        <div className="cf-builder-review-icon" aria-hidden="true">
+          <LockKeyhole className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="cf-builder-review-title">Allow current project changes?</h2>
+          <p className="cf-builder-review-summary">
+            I can prepare a draft in the selected project folder after you allow writes for this project.
+          </p>
+          <p className="cf-builder-review-note">
+            This does not save a version. You will still review the draft before saving.
+          </p>
+        </div>
+      </div>
+      <div className="cf-builder-review-actions" data-builder-current-project-write-actions="true">
+        {currentProjectWriteApproval.state === 'failed' ? (
+          <p className="cf-builder-review-note" role="alert">
+            I could not record that approval. Try again.
+          </p>
+        ) : null}
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-dismiss-current-project-write="true"
+          disabled={currentProjectWriteApproval.state === 'approving'}
+          onClick={onDismissCurrentProjectWriteApproval}
+          type="button"
+        >
+          Not now
+        </button>
+        <button
+          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-approve-current-project-write="true"
+          disabled={currentProjectWriteApproval.state === 'approving'}
+          onClick={() => { void onApproveCurrentProjectWrite?.(); }}
+          type="button"
+        >
+          {currentProjectWriteApproval.state === 'approving' ? 'Allowing...' : 'Allow and continue'}
+        </button>
+      </div>
+    </section>
+  );
+
   const composer = (
     <BuilderComposer
       busy={busy}
@@ -2589,6 +2652,7 @@ export function BuilderPage({
                 />
               ) : null}
               {planSourceReadApprovalCard}
+              {currentProjectWriteApprovalCard}
 
               {hasUnsavedDraft ? (
                 <div

@@ -161,6 +161,8 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('answerDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
     expect(ports).toMatch(/preparePlanSourceReadApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);
+    expect(ports).toMatch(/prepareCurrentProjectWriteApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
+    expect(ports).toMatch(/approveCurrentProjectWrite\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toContain('retry(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toMatch(/restoreRevisionAsDraft\(\s*request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>/u);
@@ -194,6 +196,8 @@ describe('Builder v2 architecture boundary', () => {
     expect(generationPort).toContain('submit: methods.submit');
     expect(generationPort).toMatch(/preparePlanSourceReadApproval:\s*methods\.preparePlanSourceReadApproval/u);
     expect(generationPort).toMatch(/approvePlanSourceRead:\s*methods\.approvePlanSourceRead/u);
+    expect(generationPort).toMatch(/prepareCurrentProjectWriteApproval:\s*methods\.prepareCurrentProjectWriteApproval/u);
+    expect(generationPort).toMatch(/approveCurrentProjectWrite:\s*methods\.approveCurrentProjectWrite/u);
     expect(generationPort).toContain('project_id: projectId');
     expect(generationPort).toContain('retry: methods.retry');
     expect(generationPort).toContain('answer: methods.answer');

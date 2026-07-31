@@ -372,6 +372,17 @@ Recommended order:
    child tasks require durable, inspectable, revocable permissions before they
    can run background work, delegate, or touch multiple projects.
 
+Current Builder checkpoint:
+
+- selected workspace enables work context, but does not turn ordinary chat into
+  build intent;
+- build intent now asks for current-project write approval before preparing a
+  draft when the selected project has no write grant;
+- the visible approval card is deliberately narrow: it allows draft preparation
+  in the current project only, and does not save a version;
+- renderer copy must stay user-facing and must not expose permission IDs,
+  receipts, provider details, Git evidence, or source-tree internals.
+
 The UI should communicate two separate facts:
 
 ```text

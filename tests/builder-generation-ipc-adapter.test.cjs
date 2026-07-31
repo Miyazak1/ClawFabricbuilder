@@ -12,6 +12,8 @@ const {
   PROPOSE_PLAN_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
+  PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+  APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   SUBMIT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
@@ -59,6 +61,14 @@ function adapter(overrides = {}) {
     approvePlanSourceRead: async (request) => {
       calls.push(['approvePlanSourceRead', request]);
       return { result: 'plan-source-read-approved' };
+    },
+    prepareCurrentProjectWriteApproval: async (request) => {
+      calls.push(['prepareCurrentProjectWriteApproval', request]);
+      return { result: 'current-project-write-status' };
+    },
+    approveCurrentProjectWrite: async (request) => {
+      calls.push(['approveCurrentProjectWrite', request]);
+      return { result: 'current-project-write-approved' };
     },
     submit: async (request) => {
       calls.push(['submit', request]);
@@ -122,6 +132,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'proposePlan',
     'preparePlanSourceReadApproval',
     'approvePlanSourceRead',
+    'prepareCurrentProjectWriteApproval',
+    'approveCurrentProjectWrite',
     'submit',
     'retry',
     'answer',
@@ -142,6 +154,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       PROPOSE_PLAN_CHANNEL,
       PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
       APPROVE_PLAN_SOURCE_READ_CHANNEL,
+      PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+      APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
       SUBMIT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
@@ -203,6 +217,22 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       version: GENERATE_RESULT_VERSION,
       ok: true,
       result: { result: 'plan-source-read-approved' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.prepareCurrentProjectWriteApproval.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'current-project-write-status' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.approveCurrentProjectWrite.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'current-project-write-approved' },
     },
   );
   assert.deepEqual(
@@ -293,6 +323,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['proposePlan', request],
     ['preparePlanSourceReadApproval', request],
     ['approvePlanSourceRead', request],
+    ['prepareCurrentProjectWriteApproval', request],
+    ['approveCurrentProjectWrite', request],
     ['submit', request],
     ['retry', request],
     ['answer', request],
@@ -438,6 +470,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     ['builder_generation_base_unavailable', true],
     ['builder_generation_parent_unavailable', true],
     ['builder_generation_provider_unavailable', false],
+    ['builder_generation_project_write_permission_required', false],
     ['builder_generation_timeout', true],
     ['builder_generation_provider_http_error', true],
     ['builder_generation_structured_response_invalid', true],
@@ -454,6 +487,8 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       proposePlan: () => { throw modified; },
       preparePlanSourceReadApproval: () => { throw modified; },
       approvePlanSourceRead: () => { throw modified; },
+      prepareCurrentProjectWriteApproval: () => { throw modified; },
+      approveCurrentProjectWrite: () => { throw modified; },
       submit: () => { throw modified; },
       retry: () => { throw modified; },
       answer: () => { throw modified; },
@@ -549,6 +584,16 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     approvePlanSourceRead: () => {
       const error = new Error('plan-source-read-approve-private-marker');
       error.code = 'builder_generation_timeout';
+      throw error;
+    },
+    prepareCurrentProjectWriteApproval: () => {
+      const error = new Error('current-project-write-status-private-marker');
+      error.code = 'builder_generation_project_write_permission_required';
+      throw error;
+    },
+    approveCurrentProjectWrite: () => {
+      const error = new Error('current-project-write-approve-private-marker');
+      error.code = 'builder_generation_project_write_permission_required';
       throw error;
     },
     submit: () => {
@@ -698,6 +743,8 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     proposePlan: async () => ({}),
     preparePlanSourceReadApproval: async () => ({}),
     approvePlanSourceRead: async () => ({}),
+    prepareCurrentProjectWriteApproval: async () => ({}),
+    approveCurrentProjectWrite: async () => ({}),
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
@@ -745,6 +792,8 @@ test('keeps cancellation and other control failures as rejected generate invocat
     proposePlan: async () => ({}),
     preparePlanSourceReadApproval: async () => ({}),
     approvePlanSourceRead: async () => ({}),
+    prepareCurrentProjectWriteApproval: async () => ({}),
+    approveCurrentProjectWrite: async () => ({}),
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
@@ -788,6 +837,8 @@ test('keeps cancellation and other control failures as rejected generate invocat
       proposePlan: async () => ({}),
       preparePlanSourceReadApproval: async () => ({}),
       approvePlanSourceRead: async () => ({}),
+      prepareCurrentProjectWriteApproval: async () => ({}),
+      approveCurrentProjectWrite: async () => ({}),
       submit: async () => ({}),
       retry: async () => ({}),
       answer: async () => ({}),
@@ -828,6 +879,8 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       proposePlan: async () => result,
       preparePlanSourceReadApproval: async () => result,
       approvePlanSourceRead: async () => result,
+      prepareCurrentProjectWriteApproval: async () => result,
+      approveCurrentProjectWrite: async () => result,
       submit: async () => result,
       retry: async () => result,
       answer: async () => result,
@@ -883,6 +936,8 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       proposePlan: async () => result,
       preparePlanSourceReadApproval: async () => result,
       approvePlanSourceRead: async () => result,
+      prepareCurrentProjectWriteApproval: async () => result,
+      approveCurrentProjectWrite: async () => result,
       submit: async () => result,
       retry: async () => result,
       answer: async () => result,
@@ -915,6 +970,8 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     proposePlan: async () => ({}),
     preparePlanSourceReadApproval: async () => ({}),
     approvePlanSourceRead: async () => ({}),
+    prepareCurrentProjectWriteApproval: async () => ({}),
+    approveCurrentProjectWrite: async () => ({}),
     submit: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),

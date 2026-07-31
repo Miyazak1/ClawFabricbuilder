@@ -137,6 +137,24 @@ async function snapshots() {
       async approvePlanSourceRead() {
         return PLAN_SOURCE_READ_APPROVED;
       },
+      async prepareCurrentProjectWriteApproval() {
+        return {
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
+      },
+      async approveCurrentProjectWrite() {
+        return {
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
+      },
       async retry(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
         return draft;
@@ -241,6 +259,24 @@ async function workingProjectSnapshot() {
       },
       async approvePlanSourceRead() {
         return PLAN_SOURCE_READ_APPROVED;
+      },
+      async prepareCurrentProjectWriteApproval() {
+        return {
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
+      },
+      async approveCurrentProjectWrite() {
+        return {
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
       },
       async retry(request) {
         draft = await createGenerationDraft(request, readWire.source_tree);
@@ -749,6 +785,24 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async approvePlanSourceRead() {
         return PLAN_SOURCE_READ_APPROVED;
       },
+      async prepareCurrentProjectWriteApproval() {
+        return {
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
+      },
+      async approveCurrentProjectWrite() {
+        return {
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
+      },
       async retry() {
         return draft;
       },
@@ -852,6 +906,24 @@ async function inspectedHistorySnapshot() {
       },
       async approvePlanSourceRead() {
         return PLAN_SOURCE_READ_APPROVED;
+      },
+      async prepareCurrentProjectWriteApproval() {
+        return {
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
+      },
+      async approveCurrentProjectWrite() {
+        return {
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        };
       },
       async retry(request) {
         return createGenerationDraft(request, currentTree);
@@ -1362,8 +1434,8 @@ describe('BuilderPage v2', () => {
         snapshot={fresh}
       />,
     );
-    expect(unavailable.querySelector('[data-builder-activity="true"]')).not.toBeNull();
-    expect(unavailable.textContent).toContain('Activity is unavailable.');
+    expect(unavailable.querySelector('[data-builder-activity="true"]')).toBeNull();
+    expect(unavailable.textContent).not.toContain('Activity is unavailable.');
     expect(unavailable.textContent).not.toContain('No activity yet.');
 
     const stale = render(
@@ -1511,6 +1583,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         answerDraft: async () => null,
@@ -1568,6 +1654,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async () => null,
         answer: async () => null,
         answerDraft: async () => null,
@@ -1624,6 +1724,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async () => null,
         answer: async () => new Promise(() => undefined),
         answerDraft: async () => new Promise(() => undefined),
@@ -1689,6 +1803,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async () => null,
         answer: async () => null,
         answerDraft: async () => null,
@@ -1743,6 +1871,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async () => null,
         answer: async () => null,
         answerDraft: async () => null,
@@ -1816,6 +1958,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         answerDraft: async () => null,
@@ -3496,6 +3652,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async () => null,
         answer: async () => null,
         answerDraft: async () => null,
@@ -3545,6 +3715,20 @@ describe('BuilderPage v2', () => {
         proposePlan: async () => null,
         preparePlanSourceReadApproval: async () => PLAN_SOURCE_READ_READY,
         approvePlanSourceRead: async () => PLAN_SOURCE_READ_APPROVED,
+        prepareCurrentProjectWriteApproval: async () => ({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: PROJECT_ID,
+          state: 'ready',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
+        approveCurrentProjectWrite: async () => ({
+          result_version: 'builder-current-project-write-approval-result.v1',
+          project_id: PROJECT_ID,
+          operation: 'already_approved',
+          approval_scope: 'current_project_write',
+          authority: 'main_selected_project_project_edit_v1',
+        }),
         retry: async (request) => createGenerationDraft(request),
         answer: async () => null,
         answerDraft: async () => null,

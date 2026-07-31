@@ -18,6 +18,8 @@ type BuilderCodeGeneratorBridge = Readonly<{
   proposePlan(request: unknown): Promise<unknown>;
   preparePlanSourceReadApproval(request: unknown): Promise<unknown>;
   approvePlanSourceRead(request: unknown): Promise<unknown>;
+  prepareCurrentProjectWriteApproval(request: unknown): Promise<unknown>;
+  approveCurrentProjectWrite(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   answerDraft(request: unknown): Promise<unknown>;
@@ -39,6 +41,8 @@ const BRIDGE_KEYS = new Set([
   'proposePlan',
   'preparePlanSourceReadApproval',
   'approvePlanSourceRead',
+  'prepareCurrentProjectWriteApproval',
+  'approveCurrentProjectWrite',
   'retry',
   'answer',
   'answerDraft',
@@ -205,6 +209,10 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
         methods.preparePlanSourceReadApproval as BuilderCodeGeneratorBridge['preparePlanSourceReadApproval'],
       approvePlanSourceRead:
         methods.approvePlanSourceRead as BuilderCodeGeneratorBridge['approvePlanSourceRead'],
+      prepareCurrentProjectWriteApproval:
+        methods.prepareCurrentProjectWriteApproval as BuilderCodeGeneratorBridge['prepareCurrentProjectWriteApproval'],
+      approveCurrentProjectWrite:
+        methods.approveCurrentProjectWrite as BuilderCodeGeneratorBridge['approveCurrentProjectWrite'],
       retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
       answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
       answerDraft: methods.answerDraft as BuilderCodeGeneratorBridge['answerDraft'],
@@ -353,6 +361,60 @@ function unwrapPlanSourceReadApprovalResult(
   });
 }
 
+function unwrapCurrentProjectWriteApprovalStatus(
+  value: unknown,
+  expectedProjectId: string,
+): Awaited<ReturnType<BuilderCodeGeneratorPort['prepareCurrentProjectWriteApproval']>> {
+  const result = exactDataRecord(value, [
+    'result_version',
+    'project_id',
+    'state',
+    'approval_scope',
+    'authority',
+  ]);
+  if (
+    result.result_version !== 'builder-current-project-write-approval-status.v1'
+    || result.project_id !== expectedProjectId
+    || (result.state !== 'ready' && result.state !== 'approval_required')
+    || result.approval_scope !== 'current_project_write'
+    || result.authority !== 'main_selected_project_project_edit_v1'
+  ) throw portError();
+  return Object.freeze({
+    result_version: 'builder-current-project-write-approval-status.v1',
+    project_id: safeProjectId(result.project_id),
+    state: result.state,
+    approval_scope: 'current_project_write',
+    authority: 'main_selected_project_project_edit_v1',
+  });
+}
+
+function unwrapCurrentProjectWriteApprovalResult(
+  value: unknown,
+  expectedProjectId: string,
+): Awaited<ReturnType<BuilderCodeGeneratorPort['approveCurrentProjectWrite']>> {
+  const result = exactDataRecord(value, [
+    'result_version',
+    'project_id',
+    'operation',
+    'approval_scope',
+    'authority',
+  ]);
+  if (
+    result.result_version !== 'builder-current-project-write-approval-result.v1'
+    || result.project_id !== expectedProjectId
+    || (result.operation !== 'approval_recorded' && result.operation !== 'already_approved')
+    || result.approval_scope !== 'current_project_write'
+    || result.authority !== 'main_selected_project_project_edit_v1'
+  ) throw portError();
+  return Object.freeze({
+    result_version: 'builder-current-project-write-approval-result.v1',
+    project_id: safeProjectId(result.project_id),
+    operation: result.operation,
+    approval_scope: 'current_project_write',
+    authority: 'main_selected_project_project_edit_v1',
+  });
+}
+
 function unwrapCancelResult(value: unknown, expectedRequestId: string): Readonly<{
   request_id: string;
   cancelled: boolean;
@@ -497,6 +559,28 @@ export function createBuilderDesktopCodeGeneratorPort(
       return callBridge(bridge, bridge.approvePlanSourceRead, [{
         project_id: projectId,
       }]).then((result) => unwrapPlanSourceReadApprovalResult(
+        unwrapGenerationEnvelope(result),
+        projectId,
+      ));
+    },
+    prepareCurrentProjectWriteApproval(
+      request: Parameters<BuilderCodeGeneratorPort['prepareCurrentProjectWriteApproval']>[0],
+    ) {
+      const projectId = safeProjectId(request.project_id);
+      return callBridge(bridge, bridge.prepareCurrentProjectWriteApproval, [{
+        project_id: projectId,
+      }]).then((result) => unwrapCurrentProjectWriteApprovalStatus(
+        unwrapGenerationEnvelope(result),
+        projectId,
+      ));
+    },
+    approveCurrentProjectWrite(
+      request: Parameters<BuilderCodeGeneratorPort['approveCurrentProjectWrite']>[0],
+    ) {
+      const projectId = safeProjectId(request.project_id);
+      return callBridge(bridge, bridge.approveCurrentProjectWrite, [{
+        project_id: projectId,
+      }]).then((result) => unwrapCurrentProjectWriteApprovalResult(
         unwrapGenerationEnvelope(result),
         projectId,
       ));

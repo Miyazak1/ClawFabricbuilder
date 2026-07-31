@@ -12,6 +12,7 @@ const {
   ANSWER_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
   AVAILABILITY_CHANNEL,
+  APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
   CONTINUE_DRAFT_CHANNEL,
@@ -20,6 +21,7 @@ const {
   GENERATE_RESULT_VERSION,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
   REJECT_DRAFT_CHANNEL,
@@ -161,6 +163,8 @@ function runtimeWithService(service, probes = {}) {
           PROPOSE_PLAN_CHANNEL,
           PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
           APPROVE_PLAN_SOURCE_READ_CHANNEL,
+          PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+          APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
           GENERATION_OUTPUT_CHANNEL,
           GENERATION_STARTED_CHANNEL,
           SUBMIT_CHANNEL,
@@ -181,6 +185,12 @@ function runtimeWithService(service, probes = {}) {
                 invoke: (_event, body) => options.preparePlanSourceReadApproval(body),
               },
               approvePlanSourceRead: { invoke: (_event, body) => options.approvePlanSourceRead(body) },
+              prepareCurrentProjectWriteApproval: {
+                invoke: (_event, body) => options.prepareCurrentProjectWriteApproval(body),
+              },
+              approveCurrentProjectWrite: {
+                invoke: (_event, body) => options.approveCurrentProjectWrite(body),
+              },
               submit: { invoke: (_event, body) => options.submit(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
@@ -368,6 +378,11 @@ function runtimeWithService(service, probes = {}) {
                   evaluate(request) {
                     probes.permissionEvaluateRequests ??= [];
                     probes.permissionEvaluateRequests.push(request);
+                    const decision = typeof probes.permissionDecision === 'function'
+                      ? probes.permissionDecision(request)
+                      : request.action === 'project.edit'
+                        ? 'allowed'
+                        : 'denied';
                     return {
                       decision_version: 'builder-permission-decision.v1',
                       policy_version: request.policy_version,
@@ -375,9 +390,11 @@ function runtimeWithService(service, probes = {}) {
                       action: request.action,
                       resource: request.resource,
                       evaluated_at_ms: request.now_ms,
-                      decision: 'denied',
-                      reason: 'no_matching_active_grant',
-                      permission_id: null,
+                      decision,
+                      reason: decision === 'allowed' ? 'matching_active_grant' : 'no_matching_active_grant',
+                      permission_id: decision === 'allowed'
+                        ? 'builder-permission:00000000-0000-4000-8000-000000000001'
+                        : null,
                       permission_authority: 'builder_permission_facts_deny_by_default_v1',
                       ui_selection_authority: 'not_permission',
                     };
@@ -635,6 +652,8 @@ test('registers exactly the controlled generation channels and keeps provider st
     PROPOSE_PLAN_CHANNEL,
     PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
     APPROVE_PLAN_SOURCE_READ_CHANNEL,
+    PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
+    APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
     SUBMIT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
@@ -1308,6 +1327,112 @@ test('prepares and records bounded plan source-read approval without renderer re
   runtime.dispose();
 });
 
+test('requires explicit current-project write approval before build-side generation', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const grantCalls = [];
+  const submitted = [];
+  let harness;
+  const service = {
+    submit(body) {
+      submitted.push(body);
+      return Promise.resolve({ request_id: body.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const probes = {
+    permissionDecision(request) {
+      if (request.action !== 'project.edit') return 'allowed';
+      return grantCalls.length > 0 ? 'allowed' : 'denied';
+    },
+  };
+  harness = runtimeWithService(service, probes);
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval: async (body) => {
+      grantCalls.push(body);
+      harness.context.__grantProjectId = body.project_id;
+      harness.context.__grantAction = body.action;
+      harness.context.__grantResourceKind = body.resource_kind;
+      harness.context.__grantResourceId = body.resource_id;
+      return vm.runInContext(
+        `({
+          result_version: "builder-permission-grant-result.v1",
+          project_id: __grantProjectId,
+          action: __grantAction,
+          resource: {
+            resource_kind: __grantResourceKind,
+            project_id: __grantProjectId,
+            resource_id: __grantResourceId
+          },
+          operation: "grant_recorded",
+          ui_selection_authority: "main_owned_explicit_user_approval_required"
+        })`,
+        harness.context,
+      );
+    },
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+  const approvalRequest = vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context);
+  const status = await ipcMain.handlers.get(PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    approvalRequest,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(status)), {
+    result_version: 'builder-current-project-write-approval-status.v1',
+    project_id: PROJECT_ID,
+    state: 'approval_required',
+    approval_scope: 'current_project_write',
+    authority: 'main_selected_project_project_edit_v1',
+  });
+  await assert.rejects(
+    async () => ipcMain.handlers.get(SUBMIT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext('({ instruction: "Make a timer." })', harness.context),
+    ),
+    { code: 'builder_generation_project_write_permission_required' },
+  );
+  assert.deepEqual(submitted, []);
+
+  const approved = await ipcMain.handlers.get(APPROVE_CURRENT_PROJECT_WRITE_CHANNEL)(
+    { sender: mainWindow.webContents },
+    approvalRequest,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(grantCalls)), [{
+    project_id: PROJECT_ID,
+    action: 'project.edit',
+    resource_kind: 'project',
+    resource_id: 'project:self',
+  }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(approved)), {
+    result_version: 'builder-current-project-write-approval-result.v1',
+    project_id: PROJECT_ID,
+    operation: 'approval_recorded',
+    approval_scope: 'current_project_write',
+    authority: 'main_selected_project_project_edit_v1',
+  });
+  assert.doesNotMatch(JSON.stringify(approved), /permission_id|source_tree|credential|provider/iu);
+
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Make a timer." })', harness.context),
+  );
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].existing_project_id, PROJECT_ID);
+  runtime.dispose();
+});
+
 test('publishes project-id-only task stream change events to the active renderer', async (t) => {
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
@@ -1345,6 +1470,10 @@ test('publishes project-id-only task stream change events to the active renderer
   });
   runtime.register();
 
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, harness.context),
+  );
   await ipcMain.handlers.get(SUBMIT_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Make a timer." })', harness.context),
@@ -1368,7 +1497,7 @@ test('publishes generation started hints to bind live reads without exposing sou
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const probes = {};
-  const requestId = hostRequestDigest('Make a timer.', null);
+  const requestId = hostRequestDigest('Make a timer.', PROJECT_ID);
   const service = {
     generate() { throw new Error('unexpected generate'); },
     async submit() {
@@ -1403,6 +1532,10 @@ test('publishes generation started hints to bind live reads without exposing sou
   });
   runtime.register();
 
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, harness.context),
+  );
   await ipcMain.handlers.get(SUBMIT_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Make a timer." })', harness.context),
@@ -1429,7 +1562,7 @@ test('publishes display-safe generation output deltas without exposing provider 
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const probes = {};
-  const requestId = hostRequestDigest('Make a timer.', null);
+  const requestId = hostRequestDigest('Make a timer.', PROJECT_ID);
   const service = {
     generate() { throw new Error('unexpected generate'); },
     async submit() {
@@ -1469,6 +1602,10 @@ test('publishes display-safe generation output deltas without exposing provider 
   });
   runtime.register();
 
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, harness.context),
+  );
   await ipcMain.handlers.get(SUBMIT_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Make a timer." })', harness.context),
@@ -1519,6 +1656,8 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     SUBMIT_CHANNEL,
+    APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
+    PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
     APPROVE_PLAN_SOURCE_READ_CHANNEL,
     PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
     PROPOSE_PLAN_CHANNEL,
@@ -1544,6 +1683,8 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.equal(removalFailure.handlers.has(GENERATE_APPROVED_PLAN_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(APPROVE_PLAN_SOURCE_READ_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(APPROVE_CURRENT_PROJECT_WRITE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(SUBMIT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RETRY_GENERATE_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(ANSWER_CHANNEL), false);
@@ -2536,12 +2677,12 @@ test('cancels every accepted generation, submit, retry, or answer before removin
   const cancelledAnswer = assert.rejects(answer, { code: 'builder_generation_cancelled' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.dispose(), true);
-  assert.deepEqual(cancelRequests.map((request) => request.request_id), [
+  assert.deepEqual(cancelRequests.map((request) => request.request_id).sort(), [
     hostRequestDigest('Make a timer.', PROJECT_ID),
     hostRequestDigest('Continue the timer.', PROJECT_ID),
     hostRequestDigest('Retry the timer.', PROJECT_ID),
     hostRequestDigest('Explain the timer.', PROJECT_ID),
-  ]);
+  ].sort());
   await cancelledGeneration;
   await cancelledSubmission;
   await cancelledRetry;

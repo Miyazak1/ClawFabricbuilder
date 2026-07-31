@@ -70,6 +70,8 @@ function setup(options: {
   proposePlan?: BuilderCodeGeneratorPort['proposePlan'];
   preparePlanSourceReadApproval?: BuilderCodeGeneratorPort['preparePlanSourceReadApproval'];
   approvePlanSourceRead?: BuilderCodeGeneratorPort['approvePlanSourceRead'];
+  prepareCurrentProjectWriteApproval?: BuilderCodeGeneratorPort['prepareCurrentProjectWriteApproval'];
+  approveCurrentProjectWrite?: BuilderCodeGeneratorPort['approveCurrentProjectWrite'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
   answerDraft?: BuilderCodeGeneratorPort['answerDraft'];
@@ -131,6 +133,20 @@ function setup(options: {
   const approvePlanSourceRead = vi.fn(options.approvePlanSourceRead ?? (async () => (
     PLAN_SOURCE_READ_APPROVED
   )));
+  const prepareCurrentProjectWriteApproval = vi.fn(options.prepareCurrentProjectWriteApproval ?? (async () => ({
+    result_version: 'builder-current-project-write-approval-status.v1',
+    project_id: PROJECT_ID,
+    state: 'ready',
+    approval_scope: 'current_project_write',
+    authority: 'main_selected_project_project_edit_v1',
+  } as const)));
+  const approveCurrentProjectWrite = vi.fn(options.approveCurrentProjectWrite ?? (async () => ({
+    result_version: 'builder-current-project-write-approval-result.v1',
+    project_id: PROJECT_ID,
+    operation: 'already_approved',
+    approval_scope: 'current_project_write',
+    authority: 'main_selected_project_project_edit_v1',
+  } as const)));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
   const answerDraft = vi.fn(options.answerDraft ?? (async (request) => {
@@ -204,6 +220,8 @@ function setup(options: {
       proposePlan,
       preparePlanSourceReadApproval,
       approvePlanSourceRead,
+      prepareCurrentProjectWriteApproval,
+      approveCurrentProjectWrite,
       retry,
       answer,
       answerDraft,
@@ -226,6 +244,8 @@ function setup(options: {
     controller,
     generate,
     generateApprovedPlan,
+    prepareCurrentProjectWriteApproval,
+    approveCurrentProjectWrite,
     proposePlan,
     submit,
     retry,

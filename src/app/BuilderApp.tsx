@@ -24,6 +24,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderCurrentProjectWriteApprovalStatus,
   BuilderGenerationOutputEvent,
   BuilderGenerationStartedEvent,
   BuilderPlanReviewPort,
@@ -266,6 +267,16 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  prepareCurrentProjectWriteApproval(
+    request: Parameters<BuilderCodeGeneratorPort['prepareCurrentProjectWriteApproval']>[0],
+  ) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
+  approveCurrentProjectWrite(request: Parameters<BuilderCodeGeneratorPort['approveCurrentProjectWrite']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -398,6 +409,13 @@ type PendingBuildAfterWorkspace = Readonly<{
   epoch: number;
   instruction: string;
   messageId: string;
+}>;
+
+type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
+  project_id: string;
+  instruction: string;
+  message_id: string;
+  state: 'pending' | 'approving' | 'failed';
 }>;
 
 function latestRestorableDraft(
@@ -661,8 +679,15 @@ function composerIntentContext(
   projectSnapshot: BuilderVisibleProjectSnapshot,
   hiddenComposerWorkingBriefKey: string | null = null,
   composerMode: BuilderComposerMode | null = null,
+  currentProjectWriteApproval:
+    Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null = null,
 ) {
   const currentWorkingBrief = composerWorkingBrief(conversationSnapshot, projectSnapshot);
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  const hasWritePermission = visibleProjectId !== null
+    && currentProjectWriteApproval?.project_id === visibleProjectId
+    ? currentProjectWriteApproval.state === 'ready'
+    : undefined;
   return Object.freeze({
     composerMode,
     hasPriorBuildContext: projectSnapshot.draft !== null
@@ -672,6 +697,7 @@ function composerIntentContext(
         && currentWorkingBrief.key !== hiddenComposerWorkingBriefKey
       ),
     hasWorkspace: hasBuildWorkspace(projectSnapshot),
+    hasWritePermission,
   });
 }
 
@@ -722,6 +748,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [workspaceNewProjectRequest, setWorkspaceNewProjectRequest] = useState(0);
   const [planSourceReadApproval, setPlanSourceReadApproval] =
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
+  const [currentProjectWriteApproval, setCurrentProjectWriteApproval] =
+    useState<BuilderCurrentProjectWriteApprovalPrompt | null>(null);
+  const [currentProjectWriteApprovalStatus, setCurrentProjectWriteApprovalStatus] =
+    useState<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const initialWorkspaceAutoOpenRef = useRef(false);
@@ -732,6 +762,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
   const planSourceReadApprovalRef = useRef<BuilderPlanSourceReadApprovalPrompt | null>(null);
+  const currentProjectWriteApprovalRef = useRef<BuilderCurrentProjectWriteApprovalPrompt | null>(null);
+  const currentProjectWriteApprovalStatusRef =
+    useRef<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
@@ -777,6 +810,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       approvePlanSourceRead(request: Parameters<BuilderCodeGeneratorPort['approvePlanSourceRead']>[0]) {
         return ports.generator.approvePlanSourceRead(request);
+      },
+      prepareCurrentProjectWriteApproval(
+        request: Parameters<BuilderCodeGeneratorPort['prepareCurrentProjectWriteApproval']>[0],
+      ) {
+        return ports.generator.prepareCurrentProjectWriteApproval(request);
+      },
+      approveCurrentProjectWrite(request: Parameters<BuilderCodeGeneratorPort['approveCurrentProjectWrite']>[0]) {
+        return ports.generator.approveCurrentProjectWrite(request);
       },
       retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
         return ports.generator.retry(request);
@@ -859,6 +900,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     project.snapshot,
     hiddenComposerWorkingBriefKey,
     composerMode,
+    currentProjectWriteApprovalStatus,
   );
   const composerContextStatus = currentComposerIntentContext.hasPriorBuildContext
     ? 'ready_to_build'
@@ -895,6 +937,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   useLayoutEffect(() => {
     planSourceReadApprovalRef.current = planSourceReadApproval;
   }, [planSourceReadApproval]);
+
+  useLayoutEffect(() => {
+    currentProjectWriteApprovalRef.current = currentProjectWriteApproval;
+  }, [currentProjectWriteApproval]);
+
+  useLayoutEffect(() => {
+    currentProjectWriteApprovalStatusRef.current = currentProjectWriteApprovalStatus;
+  }, [currentProjectWriteApprovalStatus]);
 
   const publishPlanReviewInFlight = useCallback((value: BuilderPlanReviewInFlight | null) => {
     planReviewInFlightRef.current = value;
@@ -948,10 +998,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     pendingBuildAfterWorkspaceRef.current = null;
     approvedPlanWaitingProjectRef.current = null;
     planSourceReadApprovalRef.current = null;
+    currentProjectWriteApprovalRef.current = null;
+    currentProjectWriteApprovalStatusRef.current = null;
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
     setApprovedPlanContinuationFailure(null);
     setPlanSourceReadApproval(null);
+    setCurrentProjectWriteApproval(null);
+    setCurrentProjectWriteApprovalStatus(null);
     publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
     submitInFlightRef.current = false;
@@ -1045,11 +1099,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       const submittedIdea = pendingBuild.instruction;
-      const decision = decideBuilderComposerIntent(
+      let decision = decideBuilderComposerIntent(
         submittedIdea,
-        composerIntentContext(conversationSnapshotRef.current, result, hiddenComposerWorkingBriefKey),
+        composerIntentContext(
+          conversationSnapshotRef.current,
+          result,
+          hiddenComposerWorkingBriefKey,
+          composerModeRef.current,
+          currentProjectWriteApprovalStatusRef.current,
+        ),
       );
-      setComposerRouteDecision(createComposerRouteEvidence(decision, result, pendingBuild.messageId));
       if (
         decision.route !== 'build'
         || decision.dispatch !== 'build'
@@ -1058,10 +1117,73 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         || result.draft !== null
         || result.inspectedRevision !== null
       ) {
+        const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
+        setComposerRouteDecision(routeEvidence);
         pendingBuildAfterWorkspaceRef.current = null;
         return;
       }
       pendingBuildAfterWorkspaceRef.current = null;
+      const visibleProjectId = visibleConversationProjectId(result);
+      if (visibleProjectId === null) return;
+      let approval: BuilderCurrentProjectWriteApprovalStatus;
+      try {
+        approval = await ports.generator.prepareCurrentProjectWriteApproval({
+          project_id: visibleProjectId,
+        });
+      } catch {
+        approval = Object.freeze({
+          result_version: 'builder-current-project-write-approval-status.v1',
+          project_id: visibleProjectId,
+          state: 'approval_required' as const,
+          approval_scope: 'current_project_write' as const,
+          authority: 'main_selected_project_project_edit_v1' as const,
+        });
+      }
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      const nextPermissionStatus = Object.freeze({
+        project_id: visibleProjectId,
+        state: approval.state,
+      });
+      currentProjectWriteApprovalStatusRef.current = nextPermissionStatus;
+      setCurrentProjectWriteApprovalStatus(nextPermissionStatus);
+      if (approval.state === 'approval_required') {
+        decision = decideBuilderComposerIntent(
+          submittedIdea,
+          composerIntentContext(
+            conversationSnapshotRef.current,
+            result,
+            hiddenComposerWorkingBriefKey,
+            composerModeRef.current,
+            nextPermissionStatus,
+          ),
+        );
+        const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
+        setComposerRouteDecision(routeEvidence);
+        const prompt = Object.freeze({
+          project_id: visibleProjectId,
+          instruction: submittedIdea,
+          message_id: routeEvidence.messageId,
+          state: 'pending' as const,
+        });
+        currentProjectWriteApprovalRef.current = prompt;
+        setCurrentProjectWriteApproval(prompt);
+        setIdea('');
+        return;
+      }
+      currentProjectWriteApprovalRef.current = null;
+      setCurrentProjectWriteApproval(null);
+      decision = decideBuilderComposerIntent(
+        submittedIdea,
+        composerIntentContext(
+          conversationSnapshotRef.current,
+          result,
+          hiddenComposerWorkingBriefKey,
+          composerModeRef.current,
+          nextPermissionStatus,
+        ),
+      );
+      const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
+      setComposerRouteDecision(routeEvidence);
       setIdea('');
       setLiveOutput(null);
       const buildResult = await project.submit(submittedIdea);
@@ -1074,7 +1196,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         submitInFlightRef.current = false;
       }
     }
-  }, [catalog, createComposerRouteEvidence, hiddenComposerWorkingBriefKey, idea, project, readActivityAfterTerminal]);
+  }, [
+    catalog,
+    createComposerRouteEvidence,
+    hiddenComposerWorkingBriefKey,
+    idea,
+    ports.generator,
+    project,
+    readActivityAfterTerminal,
+  ]);
 
   useEffect(() => {
     const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
@@ -1260,13 +1390,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     if (submitInFlightRef.current || idea.trim().length === 0) return;
     const submittedIdea = idea;
-    const decision = decideBuilderComposerIntent(
+    let decision = decideBuilderComposerIntent(
       submittedIdea,
       composerIntentContext(
         conversationSnapshotRef.current,
         projectSnapshotRef.current,
         hiddenComposerWorkingBriefKey,
         composerModeRef.current,
+        currentProjectWriteApprovalStatusRef.current,
       ),
     );
     const routeWorkingBrief = composerWorkingBrief(
@@ -1278,13 +1409,20 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       && decision.route === 'build'
       ? routeWorkingBrief.taskId
       : null;
-    const routeEvidence = createComposerRouteEvidence(
-      decision,
-      projectSnapshotRef.current,
-      null,
-      routeTaskId,
-    );
-    setComposerRouteDecision(routeEvidence);
+    const publishRouteDecision = (
+      nextDecision: BuilderComposerRouteDecision,
+      existingMessageId: string | null = null,
+      nextTaskId: string | null = routeTaskId,
+    ): BuilderComposerRouteDecisionEvidence => {
+      const evidence = createComposerRouteEvidence(
+        nextDecision,
+        projectSnapshotRef.current,
+        existingMessageId,
+        nextTaskId,
+      );
+      setComposerRouteDecision(evidence);
+      return evidence;
+    };
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
     const pendingPlan = pendingPlanReviewRequest(
@@ -1292,6 +1430,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       projectSnapshotRef.current,
     );
     if (pendingPlan !== null && isBuilderComposerContextualBuildIntent(submittedIdea)) {
+      publishRouteDecision(decision);
       submitInFlightRef.current = true;
       setIdea('');
       setLiveOutput(null);
@@ -1303,6 +1442,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     if (decision.dispatch === 'ask_workspace') {
+      const routeEvidence = publishRouteDecision(decision);
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,
@@ -1311,16 +1451,105 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setWorkspacePickerRequest((request) => request + 1);
       return;
     }
+    if (decision.dispatch === 'ask_permission') {
+      const routeEvidence = publishRouteDecision(decision);
+      const projectId = visibleConversationProjectId(projectSnapshotRef.current);
+      if (projectId !== null) {
+        const prompt = Object.freeze({
+          project_id: projectId,
+          instruction: submittedIdea,
+          message_id: routeEvidence.messageId,
+          state: 'pending' as const,
+        });
+        currentProjectWriteApprovalRef.current = prompt;
+        setCurrentProjectWriteApproval(prompt);
+        setIdea('');
+      }
+      return;
+    }
     const commandEpoch = workspaceEpochRef.current;
     submitInFlightRef.current = true;
     try {
       if (composerModeRef.current === 'plan' || decision.dispatch === 'plan') {
+        publishRouteDecision(decision);
         const planned = await submitPlanInstruction(
           submittedIdea,
           commandEpoch,
           projectSnapshotRef.current,
         );
         if (planned || composerModeRef.current === 'plan') return;
+      }
+      if (decision.dispatch === 'build') {
+        const projectId = visibleConversationProjectId(projectSnapshotRef.current);
+        if (projectId === null) return;
+        let approval: BuilderCurrentProjectWriteApprovalStatus;
+        try {
+          approval = await ports.generator.prepareCurrentProjectWriteApproval({
+            project_id: projectId,
+          });
+        } catch {
+          approval = Object.freeze({
+            result_version: 'builder-current-project-write-approval-status.v1',
+            project_id: projectId,
+            state: 'approval_required' as const,
+            approval_scope: 'current_project_write' as const,
+            authority: 'main_selected_project_project_edit_v1' as const,
+          });
+        }
+        if (workspaceEpochRef.current !== commandEpoch) return;
+        const nextPermissionStatus = Object.freeze({
+          project_id: projectId,
+          state: approval.state,
+        });
+        currentProjectWriteApprovalStatusRef.current = nextPermissionStatus;
+        setCurrentProjectWriteApprovalStatus(nextPermissionStatus);
+        if (approval.state === 'approval_required') {
+          decision = decideBuilderComposerIntent(
+            submittedIdea,
+            composerIntentContext(
+              conversationSnapshotRef.current,
+              projectSnapshotRef.current,
+              hiddenComposerWorkingBriefKey,
+              composerModeRef.current,
+              nextPermissionStatus,
+            ),
+          );
+          const routeEvidence = publishRouteDecision(
+            decision,
+            null,
+            routeTaskId,
+          );
+          const prompt = Object.freeze({
+            project_id: projectId,
+            instruction: submittedIdea,
+            message_id: routeEvidence.messageId,
+            state: 'pending' as const,
+          });
+          currentProjectWriteApprovalRef.current = prompt;
+          setCurrentProjectWriteApproval(prompt);
+          setIdea('');
+          return;
+        }
+        currentProjectWriteApprovalRef.current = null;
+        setCurrentProjectWriteApproval(null);
+        decision = decideBuilderComposerIntent(
+          submittedIdea,
+          composerIntentContext(
+            conversationSnapshotRef.current,
+            projectSnapshotRef.current,
+            hiddenComposerWorkingBriefKey,
+            composerModeRef.current,
+            nextPermissionStatus,
+          ),
+        );
+        publishRouteDecision(
+          decision,
+          null,
+          routeTaskId,
+        );
+      }
+      if (decision.dispatch !== 'build') {
+        publishRouteDecision(decision);
       }
       setIdea('');
       setLiveOutput(null);
@@ -1342,6 +1571,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     hiddenComposerWorkingBriefKey,
     idea,
     project,
+    ports.generator,
     createComposerRouteEvidence,
     readActivityAfterTerminal,
     reviewPlan,
@@ -1387,11 +1617,89 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [ports.generator, runPlanProposal]);
 
+  const approveCurrentProjectWrite = useCallback(async () => {
+    const prompt = currentProjectWriteApprovalRef.current;
+    if (prompt === null || submitInFlightRef.current || prompt.state === 'approving') return;
+    const commandEpoch = workspaceEpochRef.current;
+    submitInFlightRef.current = true;
+    const approving = Object.freeze({ ...prompt, state: 'approving' as const });
+    currentProjectWriteApprovalRef.current = approving;
+    setCurrentProjectWriteApproval(approving);
+    setLiveOutput(null);
+    try {
+      await ports.generator.approveCurrentProjectWrite({ project_id: prompt.project_id });
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      const allowed = Object.freeze({
+        project_id: prompt.project_id,
+        state: 'ready' as const,
+      });
+      currentProjectWriteApprovalStatusRef.current = allowed;
+      setCurrentProjectWriteApprovalStatus(allowed);
+      currentProjectWriteApprovalRef.current = null;
+      setCurrentProjectWriteApproval(null);
+      const decision = decideBuilderComposerIntent(
+        prompt.instruction,
+        composerIntentContext(
+          conversationSnapshotRef.current,
+          projectSnapshotRef.current,
+          hiddenComposerWorkingBriefKey,
+          composerModeRef.current,
+          allowed,
+        ),
+      );
+      const routeWorkingBrief = composerWorkingBrief(
+        conversationSnapshotRef.current,
+        projectSnapshotRef.current,
+      );
+      const routeTaskId = routeWorkingBrief !== null
+        && routeWorkingBrief.key !== hiddenComposerWorkingBriefKey
+        && decision.route === 'build'
+        ? routeWorkingBrief.taskId
+        : null;
+      setComposerRouteDecision(createComposerRouteEvidence(
+        decision,
+        projectSnapshotRef.current,
+        prompt.message_id,
+        routeTaskId,
+      ));
+      setIdea('');
+      const result = await project.submit(prompt.instruction);
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      if (!shouldClearSubmittedIdea(result)) setIdea(prompt.instruction);
+      await readActivityAfterTerminal(result, commandEpoch);
+      setLiveOutput(null);
+    } catch {
+      if (workspaceEpochRef.current === commandEpoch) {
+        const failed = Object.freeze({ ...prompt, state: 'failed' as const });
+        currentProjectWriteApprovalRef.current = failed;
+        setCurrentProjectWriteApproval(failed);
+      }
+    } finally {
+      if (workspaceEpochRef.current === commandEpoch) {
+        submitInFlightRef.current = false;
+      }
+    }
+  }, [
+    createComposerRouteEvidence,
+    hiddenComposerWorkingBriefKey,
+    ports.generator,
+    project,
+    readActivityAfterTerminal,
+  ]);
+
   const dismissPlanSourceReadApproval = useCallback(() => {
     const prompt = planSourceReadApprovalRef.current;
     if (prompt === null || prompt.state === 'approving') return;
     planSourceReadApprovalRef.current = null;
     setPlanSourceReadApproval(null);
+    setIdea((current) => (current.trim().length === 0 ? prompt.instruction : current));
+  }, []);
+
+  const dismissCurrentProjectWriteApproval = useCallback(() => {
+    const prompt = currentProjectWriteApprovalRef.current;
+    if (prompt === null || prompt.state === 'approving') return;
+    currentProjectWriteApprovalRef.current = null;
+    setCurrentProjectWriteApproval(null);
     setIdea((current) => (current.trim().length === 0 ? prompt.instruction : current));
   }, []);
 
@@ -1583,16 +1891,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
       <div className="cf-builder-shell">
         <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
-          <div className="cf-builder-rail-brand" aria-hidden="true">
-            <span className="cf-builder-brand-mark cf-builder-brand-mark--icon inline-flex size-8 items-center justify-center">
-              <img alt="" className="cf-builder-brand-icon" src={BUILDER_APP_ICON_SRC} />
-            </span>
-          </div>
           <nav className="cf-builder-rail-nav" aria-label="Builder views">
             {BUILDER_RAIL_ITEMS.filter((item) => item.enabled).map(({ Icon, id, label, view: targetView }) => (
               <button
                 aria-pressed={view === targetView}
                 className="cf-builder-nav-button cf-builder-rail-button inline-flex items-center justify-center gap-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                data-builder-rail-item={id}
                 key={id}
                 onClick={() => {
                   if (targetView !== null) setView(targetView);
@@ -1645,6 +1949,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
               composerWorkingBrief={visibleComposerWorkingBrief}
+              currentProjectWriteApproval={currentProjectWriteApproval}
               instruction={idea}
               liveOutput={liveOutput}
               planReviewFailure={planReviewFailure}
@@ -1653,10 +1958,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               planSourceReadApproval={planSourceReadApproval}
               workspaceNewProjectRequest={workspaceNewProjectRequest}
               workspacePickerRequest={workspacePickerRequest}
+              onApproveCurrentProjectWrite={approveCurrentProjectWrite}
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}
               onClearComposerMode={clearComposerMode}
               onDismissWorkspacePicker={dismissWorkspacePicker}
+              onDismissCurrentProjectWriteApproval={dismissCurrentProjectWriteApproval}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
