@@ -192,7 +192,7 @@ test matrix.
 The composer contains:
 
 - workspace chip: current project/source folder state;
-- add menu: attachments, source context, plan mode, goal/brief, permissions,
+- add menu: attachments, source context, plan mode, brief, permissions,
   and later plugin/tool entries;
 - explicit plan command;
 - permission indicator;
@@ -210,8 +210,8 @@ MVP entries:
 
 - **Files and folders**: choose or attach source context, then show it as a
   composer chip. Reading content still follows permission rules.
-- **Goal / Brief**: save the current discussion as a working brief or inspect
-  the current brief.
+- **Brief**: save the current discussion as a working brief or inspect the
+  current brief. This is not Goal mode.
 - **Plan mode**: make the next submitted message route to `plan`, even if the
   wording is ordinary. It should appear as an active composer chip and be
   removable before sending.
@@ -612,7 +612,7 @@ Scope:
 - show a compact brief summary in the UI;
 - let users update or clear it;
 - feed it into build execution.
-- introduce the composer `+` menu as the place for Goal/Brief and Plan mode
+- introduce the composer `+` menu as the place for Brief and Plan mode
   entries, while keeping plugin/tool entries hidden until their gates exist.
 
 Exit criteria:
@@ -634,8 +634,18 @@ Current checkpoint:
 - clearing the visible brief removes renderer-side contextual-build readiness,
   so short execution phrases return to chat/clarification unless fresh work
   context appears;
+- the composer `+` menu now enables `Brief` as a visible brief-update
+  scaffold. It does not send by itself or add a second send button; it turns the
+  current composer text into an explicit user-visible "save this direction"
+  message that renderer and main both classify as `update_brief`;
 - provider, credential, source tree, Git, digest, and receipt details remain
   hidden from the visible brief.
+
+Goal mode remains a separate future agent workflow. A Goal is not a plan,
+working brief, title, or one-shot build request: it means the agent accepts a
+bounded objective, breaks it into steps, executes, verifies, reports progress,
+and continues until the objective is done or explicitly blocked. The current
+Brief entry must not be presented as that commitment.
 
 ### Slice 3 - Artifact Drawer
 

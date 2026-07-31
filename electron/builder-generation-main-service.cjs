@@ -150,6 +150,13 @@ const EXPLICIT_PLAN_INTENT_PATTERNS = Object.freeze([
   /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))/u,
   /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
 ]);
+const EXPLICIT_BRIEF_INTENT_PATTERNS = Object.freeze([
+  /^(?:保存|记住|记录|保留|沉淀)(?:一下|下)?(?:这个|当前|刚才(?:的)?|上面(?:的)?|前面(?:的)?|这次)?(?:方向|目标|需求|约束|方案|计划|想法|brief|上下文)?(?:[：:，,\s]|$).*/u,
+  /^(?:把|将)(?:这个|当前|刚才(?:的)?|上面(?:的)?|前面(?:的)?|这段|这些|以上|上面的)?(?:方向|目标|需求|约束|方案|计划|想法|内容|上下文|brief)?(?:保存|记录|记住|作为|设为).*/u,
+  /(?:后面|接下来|之后)(?:就)?(?:按|照)(?:这个|这个方向|这个方案|刚才(?:的)?|上面(?:的)?)(?:来|做|写|实现)?/u,
+  /^(?:save|remember|record|keep)\s+(?:this|that|the current).*(?:brief|goal|requirement|direction|plan|context)?/u,
+  /^(?:use|treat)\s+this\s+as\s+(?:the\s+)?(?:brief|current brief|goal|plan|requirements)\b/u,
+]);
 const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
   /^(?:能不能|可以不可以|可不可以)(?:更|再)?好看(?:一点|点)?[?？。.!！]*$/u,
@@ -217,6 +224,7 @@ function shouldSubmitAsExplanation(
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
   if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return true;
+  if (matchesAny(EXPLICIT_BRIEF_INTENT_PATTERNS, text)) return true;
   if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) return true;
   if (matchesAny(CAPABILITY_QUESTION_INTENT_PATTERNS, text)) return true;
   if (hasQuestionMark && hasExplanationIntent) return true;
@@ -305,6 +313,14 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
   if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return explicitPlanSubmitFallbackDecisionHint();
+  if (matchesAny(EXPLICIT_BRIEF_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'update_brief',
+      confidence: 'high',
+      matchedSignals: ['explicit_brief'],
+      dispatch: 'brief_update',
+    });
+  }
   if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) {
     return routeDecisionHint({
       route: 'clarify',

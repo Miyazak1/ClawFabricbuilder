@@ -29,6 +29,11 @@ Space/Membership, Identity/Conversation, and Publication facts.
 Conversation, reactions, presence, and UI state are interaction surfaces, not
 durable work authority.
 
+In this roadmap, a **Goal** is not a plan, todo title, working brief, or single
+build instruction. It is the persistent-agent contract: the agent keeps moving
+through planned steps, execution, verification, repair, and progress reporting
+until the goal is actually done or explicitly blocked.
+
 The staged engineering gates are defined in
 [Implementation Plan](IMPLEMENTATION_PLAN.md).
 
@@ -197,8 +202,8 @@ User experience:
 
 - create named Agents for roles such as Builder, Researcher, Reviewer, or
   Publisher;
-- assign a goal, inspect a plan, observe progress, pause, resume, cancel, and
-  review the result;
+- assign a goal that the agent continues until done or blocked, inspect a plan,
+  observe progress, pause, resume, cancel, and review the result;
 - see budgets, allowed tools, working scope, and recent outcomes in ordinary
   language;
 - agents can continue bounded work across app restarts.

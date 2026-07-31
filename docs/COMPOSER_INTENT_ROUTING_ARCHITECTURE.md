@@ -323,6 +323,29 @@ Approval mode checkpoint:
   permission facts or grant access to commands, network, external directories,
   publishing, or delegation.
 
+## Goal Mode Is Separate
+
+`Goal` must not be used as a synonym for plan, todo, title, working brief, or a
+single build request. In ClawFabric, Goal mode means the user gives a bounded
+objective and the agent accepts responsibility to keep working across steps:
+plan, execute, verify, repair, summarize progress, and continue until the goal
+is genuinely done or explicitly blocked.
+
+This creates a different contract from the existing routes:
+
+- `chat` answers or clarifies without an execution commitment;
+- `plan` produces a reviewable plan and then stops for review or later
+  execution;
+- `update_brief` stores durable task context but does not promise progress;
+- `build` performs one admitted generation or modification turn;
+- `goal` is a future persistent-agent workflow with continuation, progress
+  reporting, verification evidence, and done/blocked terminal states.
+
+The current composer `Brief` entry only feeds the Task Capsule / Working Brief
+path. It must not be presented as Goal mode until the persistent-agent runtime,
+permission admission, progress projection, and completion/blockage semantics are
+implemented.
+
 ## Task And Brief Requirements
 
 The router needs a Task Capsule before it can support mature contextual

@@ -4,6 +4,7 @@ import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
+  isBuilderComposerExplicitBriefIntent,
   routeBuilderComposerIntent,
 } from './builderComposerIntent';
 
@@ -79,6 +80,18 @@ describe('routeBuilderComposerIntent', () => {
     'I am thinking about building a portfolio site.',
   ])('routes %s to update_brief instead of starting a build', (instruction) => {
     expect(routeBuilderComposerIntent(instruction)).toBe('update_brief');
+  });
+
+  it.each([
+    '保存这个方向，后面按这个来：目标用户是小团队',
+    '记住这个需求：先做桌面端',
+    '把这个方案作为当前 brief',
+    '后面按这个方向来',
+    'Save this as the current brief.',
+    'Use this as the requirements.',
+  ])('routes explicit brief request %s to update_brief', (instruction) => {
+    expect(routeBuilderComposerIntent(instruction)).toBe('update_brief');
+    expect(isBuilderComposerExplicitBriefIntent(instruction)).toBe(true);
   });
 
   it.each([
@@ -186,6 +199,22 @@ describe('routeBuilderComposerIntent', () => {
       requiredPermissions: [],
       permissionResult: 'not_required',
       dispatch: 'plan',
+    });
+  });
+
+  it('records explicit brief requests without write admission', () => {
+    expect(decideBuilderComposerIntent('保存这个方向，后面按这个来：目标用户是小团队', {
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'update_brief',
+      confidence: 'high',
+      matchedSignals: ['explicit_brief'],
+      downgradedFrom: null,
+      downgradeReason: null,
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'brief_update',
     });
   });
 

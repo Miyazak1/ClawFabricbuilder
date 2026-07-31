@@ -1505,6 +1505,40 @@ real-provider DeepSeek canary coverage.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Composer Brief Entry Package Check
+
+This addendum records the composer checkpoint after the `+` menu gained an
+explicit Brief entry. It extends renderer composer UI, renderer and main route
+classification, route signal projection, tests, and roadmap text only; it does
+not implement persistent Goal mode, arbitrary command execution, terminal
+tools, provider configuration, external workspace access, or real-provider
+DeepSeek canary coverage.
+
+- The composer `+` menu now offers `Brief`. Choosing it does not send a
+  message, add a second Send command, create a draft, ask for write permission,
+  create Save/Revision facts, or claim a persistent Goal is running.
+- The Brief entry turns the current visible composer text into an explicit
+  brief-update scaffold. Renderer routing and the Electron main fallback both
+  classify the explicit scaffold as `update_brief` / `brief_update` with the
+  public route signal `explicit_brief`.
+- Goal mode remains a separate future agent workflow: a user goal means the
+  agent keeps working across steps until done or blocked. It is not equivalent
+  to a plan, one-shot build, title, to-do, current result, or Brief update.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderComposer.test.tsx src\app\BuilderApp.test.tsx --runInBand`
+  and
+  `node --test tests\builder-generation-main-service.test.cjs tests\builder-route-decision-signals.test.cjs`;
+  the suites reported 74 passing Vitest tests and 44 passing Node tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, `npm.cmd run test:unit`, and
+  `npm.cmd run test:boundaries`. The full unit suite reported 603 passing
+  Vitest tests, and the boundary suite reported 662 passing Node tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

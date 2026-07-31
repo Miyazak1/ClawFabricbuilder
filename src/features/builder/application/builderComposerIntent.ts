@@ -90,6 +90,14 @@ const EXPLICIT_PLAN_PATTERNS = Object.freeze([
   /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
 ]);
 
+const EXPLICIT_BRIEF_PATTERNS = Object.freeze([
+  /^(?:保存|记住|记录|保留|沉淀)(?:一下|下)?(?:这个|当前|刚才(?:的)?|上面(?:的)?|前面(?:的)?|这次)?(?:方向|目标|需求|约束|方案|计划|想法|brief|上下文)?(?:[：:，,\s]|$).*/u,
+  /^(?:把|将)(?:这个|当前|刚才(?:的)?|上面(?:的)?|前面(?:的)?|这段|这些|以上|上面的)?(?:方向|目标|需求|约束|方案|计划|想法|内容|上下文|brief)?(?:保存|记录|记住|作为|设为).*/u,
+  /(?:后面|接下来|之后)(?:就)?(?:按|照)(?:这个|这个方向|这个方案|刚才(?:的)?|上面(?:的)?)(?:来|做|写|实现)?/u,
+  /^(?:save|remember|record|keep)\s+(?:this|that|the current).*(?:brief|goal|requirement|direction|plan|context)?/u,
+  /^(?:use|treat)\s+this\s+as\s+(?:the\s+)?(?:brief|current brief|goal|plan|requirements)\b/u,
+]);
+
 const WORK_DISCUSSION_PATTERNS = Object.freeze([
   /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
   /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|should we|could we|can we|requirements|style direction)\b/u,
@@ -140,6 +148,12 @@ export function isBuilderComposerContextualBuildIntent(instruction: string): boo
   const normalized = normalizeComposerInstruction(instruction);
   if (normalized.length === 0) return false;
   return CONTEXTUAL_BUILD_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isBuilderComposerExplicitBriefIntent(instruction: string): boolean {
+  const normalized = normalizeComposerInstruction(instruction);
+  if (normalized.length === 0) return false;
+  return EXPLICIT_BRIEF_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function routeBuilderComposerIntent(
@@ -222,6 +236,12 @@ export function decideBuilderComposerIntent(
     return createDecision('plan', context, {
       confidence: 'high',
       matchedSignals: ['composer_mode_plan'],
+    });
+  }
+  if (isBuilderComposerExplicitBriefIntent(normalized)) {
+    return createDecision('update_brief', context, {
+      confidence: 'high',
+      matchedSignals: ['explicit_brief'],
     });
   }
   if (WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) {

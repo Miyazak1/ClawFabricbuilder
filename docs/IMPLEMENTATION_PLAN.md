@@ -587,6 +587,18 @@ Evidence requirements:
   falls back to an answer/clarification turn unless a fresh visible brief or
   draft context appears. This gives ordinary users an inspectable execution
   target while preserving the main-owned submit guard above;
+- the current explicit brief-entry checkpoint makes `Brief` in the
+  composer `+` menu a real user-visible path into that same task capsule flow.
+  Selecting it never sends a message, creates a draft, saves a revision, grants
+  write permission, or adds a second submit button. It only scaffolds the current
+  composer text into an explicit brief-update phrase such as
+  "保存这个方向，后面按这个来：...". Renderer routing and the main-owned submit
+  fallback both recognize the fixed public `explicit_brief` signal and route it
+  to `update_brief` / `brief_update`, so the durable task capsule remains
+  main-owned and no hidden renderer-only route truth is introduced. This is not
+  Goal mode: a Goal is a future persistent-agent commitment to continue working,
+  verify, and report progress until done or blocked, not a working brief or
+  one-shot build request;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

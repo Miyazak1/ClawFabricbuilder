@@ -72,6 +72,7 @@ export type BuilderComposerProps = Readonly<{
   onInstructionChange?: (value: string) => void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
+  onSelectBriefMode?: () => void;
   onSelectPlanMode?: () => void;
   onSteerInstruction?: () => void;
   onSubmitInstruction?: () => void;
@@ -137,6 +138,7 @@ export function BuilderComposer({
   onInstructionChange,
   onOpenProject,
   onSelectApprovalMode,
+  onSelectBriefMode,
   onSelectPlanMode,
   onSteerInstruction,
   onSubmitInstruction,
@@ -266,6 +268,11 @@ export function BuilderComposer({
     if (!canProposePlan) return;
     setAddMenuOpen(false);
     onSelectPlanMode?.();
+  }
+
+  function selectBriefMode(): void {
+    setAddMenuOpen(false);
+    onSelectBriefMode?.();
   }
 
   function selectApprovalMode(mode: BuilderComposerApprovalMode): void {
@@ -398,12 +405,12 @@ export function BuilderComposer({
                   </button>
                   <button
                     data-builder-composer-add-brief="true"
-                    disabled
+                    onClick={selectBriefMode}
                     role="menuitem"
                     type="button"
                   >
                     <ListChecks aria-hidden="true" className="size-3.5" />
-                    Goal / Brief
+                    Brief
                   </button>
                   <button
                     data-builder-composer-add-plan-mode="true"

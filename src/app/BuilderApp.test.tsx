@@ -338,7 +338,7 @@ async function setup(options: Readonly<{
     submitAttempts += 1;
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
-    if (options.briefUpdateActivity === true && /(?:我想|我要|我们要|希望|需要|would like|want)/iu.test(instruction)) {
+    if (options.briefUpdateActivity === true && /(?:我想|我要|我们要|希望|需要|保存这个方向|would like|want|save this|use this as)/iu.test(instruction)) {
       return {
         version: 'builder-generation-ipc-result.v1',
         ok: true,
@@ -1962,6 +1962,41 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
     expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+  });
+
+  it('uses Brief from the add menu to record a visible brief update', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      briefUpdateActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    setComposerInstruction(container, '目标用户是小团队，视觉要克制');
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-brief="true"]');
+
+    const scaffolded = '保存这个方向，后面按这个来：目标用户是小团队，视觉要克制';
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe(scaffolded);
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: scaffolded });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('update_brief');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('brief_update');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('explicit_brief');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
+        .toContain('Current brief');
+    });
   });
 
   it('projects the latest route decision for chat, brief update, and admitted build turns', async () => {

@@ -8,6 +8,7 @@ const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
   'contextual_build_phrase',
   'current_artifact_defect',
   'empty_message',
+  'explicit_brief',
   'explicit_plan',
   'exploratory_work',
   'read_only',

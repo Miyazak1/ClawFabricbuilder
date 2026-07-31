@@ -2425,6 +2425,7 @@ test('submits one composer turn through main-owned work or explanation routing',
         || input.messages[1].content.includes('我想创建一个登录页')
         || input.messages[1].content.includes('我想做一个登录页')
         || input.messages[1].content.includes('我要做一个登录页')
+        || input.messages[1].content.includes('保存这个方向')
         || input.messages[1].content.includes('可以帮我做一个登录页吗')
         || input.messages[1].content.includes('Can you build a login page')
         || input.messages[1].content.includes('Should we create a dashboard')
@@ -2463,6 +2464,10 @@ test('submits one composer turn through main-owned work or explanation routing',
   }));
   const declarativeBriefAnswer = await service.submit(request({
     instruction: '我要做一个登录页',
+    existingProjectId: PROJECT_ID,
+  }));
+  const explicitBriefAnswer = await service.submit(request({
+    instruction: '保存这个方向，后面按这个来：目标用户是小团队',
     existingProjectId: PROJECT_ID,
   }));
   const chineseCapabilityQuestionAnswer = await service.submit(request({
@@ -2511,6 +2516,8 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(exploratoryBriefAnswer.admissions.draft, 'not_created');
   assert.equal(declarativeBriefAnswer.result_kind, 'explanation');
   assert.equal(declarativeBriefAnswer.admissions.draft, 'not_created');
+  assert.equal(explicitBriefAnswer.result_kind, 'explanation');
+  assert.equal(explicitBriefAnswer.admissions.draft, 'not_created');
   assert.equal(chineseCapabilityQuestionAnswer.result_kind, 'explanation');
   assert.equal(chineseCapabilityQuestionAnswer.admissions.draft, 'not_created');
   assert.equal(englishCapabilityQuestionAnswer.result_kind, 'explanation');
@@ -2531,9 +2538,9 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(contextualWithoutBriefAnswer.admissions.draft, 'not_created');
   assert.equal(contextualWithoutBriefAnswer.project_id, PROJECT_ID);
   assert.equal(lifecycle.calls.begin.length, 3);
-  assert.equal(lifecycle.calls.question.length, 12);
+  assert.equal(lifecycle.calls.question.length, 13);
   assert.equal(lifecycle.calls.candidate.length, 3);
-  assert.equal(lifecycle.calls.explanation.length, 12);
+  assert.equal(lifecycle.calls.explanation.length, 13);
   assert.deepEqual(
     lifecycle.calls.begin.map((input) => input.route_decision_hint.route),
     ['build', 'build', 'build'],
@@ -2547,6 +2554,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     [
       'clarify',
       'clarify',
+      'update_brief',
       'update_brief',
       'update_brief',
       'clarify',
@@ -2566,6 +2574,7 @@ test('submits one composer turn through main-owned work or explanation routing',
       'reply',
       'brief_update',
       'brief_update',
+      'brief_update',
       'reply',
       'reply',
       'reply',
@@ -2576,13 +2585,14 @@ test('submits one composer turn through main-owned work or explanation routing',
       'reply',
     ],
   );
+  assert.deepEqual(lifecycle.calls.question[4].route_decision_hint.matched_signals, ['explicit_brief']);
   assert.deepEqual(
     lifecycle.calls.question.slice(-2).map((input) => input.route_decision_hint.downgrade_reason),
     ['missing_prior_build_context', 'missing_prior_build_context'],
   );
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 3);
-  assert.deepEqual(startedEvents.map((event) => event.event_version), Array(15).fill('builder-generation-started.v1'));
+  assert.deepEqual(startedEvents.map((event) => event.event_version), Array(16).fill('builder-generation-started.v1'));
   assert.deepEqual(startedEvents.map((event) => event.request_id), [
     draft.request_id,
     chineseDirectDraft.request_id,
@@ -2591,6 +2601,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     exploratoryDesignQuestionAnswer.request_id,
     exploratoryBriefAnswer.request_id,
     declarativeBriefAnswer.request_id,
+    explicitBriefAnswer.request_id,
     chineseCapabilityQuestionAnswer.request_id,
     englishCapabilityQuestionAnswer.request_id,
     englishDiscussionQuestionAnswer.request_id,
@@ -2608,6 +2619,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     exploratoryDesignQuestionAnswer.project_id,
     exploratoryBriefAnswer.project_id,
     declarativeBriefAnswer.project_id,
+    explicitBriefAnswer.project_id,
     chineseCapabilityQuestionAnswer.project_id,
     englishCapabilityQuestionAnswer.project_id,
     englishDiscussionQuestionAnswer.project_id,
@@ -2626,6 +2638,7 @@ test('submits one composer turn through main-owned work or explanation routing',
       exploratoryDesignQuestionAnswer,
       exploratoryBriefAnswer,
       declarativeBriefAnswer,
+      explicitBriefAnswer,
       chineseCapabilityQuestionAnswer,
       englishCapabilityQuestionAnswer,
       englishDiscussionQuestionAnswer,

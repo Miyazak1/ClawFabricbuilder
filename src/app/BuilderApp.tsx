@@ -50,6 +50,7 @@ import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
+  isBuilderComposerExplicitBriefIntent,
   type BuilderComposerApprovalMode,
   type BuilderComposerRouteDecision,
   type BuilderComposerRouteDecisionEvidence,
@@ -69,6 +70,7 @@ import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderP
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
 const BUILDER_APP_ICON_SRC = 'app-icon.ico';
+const COMPOSER_BRIEF_SCAFFOLD = '保存这个方向，后面按这个来：';
 
 export type BuilderAppProps = Readonly<{
   bridgeRoot?: unknown;
@@ -556,6 +558,13 @@ function compactComposerBriefText(value: string): string | null {
   if (normalized.length === 0 || COMPOSER_BRIEF_INTERNAL_TEXT_PATTERN.test(normalized)) return null;
   if (normalized.length <= COMPOSER_BRIEF_MAX_TEXT_LENGTH) return normalized;
   return `${normalized.slice(0, COMPOSER_BRIEF_MAX_TEXT_LENGTH - 3).trimEnd()}...`;
+}
+
+function composerBriefScaffold(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return COMPOSER_BRIEF_SCAFFOLD;
+  if (isBuilderComposerExplicitBriefIntent(trimmed)) return value;
+  return `${COMPOSER_BRIEF_SCAFFOLD}${trimmed}`;
 }
 
 function taskStreamRunKey(item: Readonly<{ turn_id: string; run_id: string }>): string {
@@ -1626,6 +1635,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setComposerMode('plan');
   }, []);
 
+  const selectBriefMode = useCallback(() => {
+    composerModeRef.current = null;
+    setComposerMode(null);
+    setIdea((current) => composerBriefScaffold(current));
+  }, []);
+
   const selectApprovalMode = useCallback(async (mode: BuilderComposerApprovalMode) => {
     if (mode !== 'allow_current_project') {
       approvalModeRef.current = mode;
@@ -2053,6 +2068,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onDismissCurrentProjectWriteApproval={dismissCurrentProjectWriteApproval}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onSelectApprovalMode={selectApprovalMode}
+              onSelectBriefMode={selectBriefMode}
               onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
               onSteerInstruction={liveOutput === null ? undefined : steerInstruction}
