@@ -2890,6 +2890,67 @@ describe('BuilderApp v2', () => {
     expect(steer).not.toHaveBeenCalled();
   });
 
+  it('queues Chinese contextual execution after a visible brief while an answer is active', async () => {
+    const {
+      answer,
+      container,
+      emitGenerationStarted,
+      resolveAnswer,
+      steer,
+      submit,
+    } = await setup({
+      contextualBuildActivity: true,
+      deferredAnswer: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-brief="true"]')?.textContent)
+        .toContain('Current brief');
+    });
+
+    const question = '这个方案还有什么风险？';
+    setComposerInstruction(container, question);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+    });
+    const expected = await createBuilderGenerationRequest(question, PROJECT_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+    });
+
+    const contextualExecution = '那就写';
+    setComposerInstruction(container, contextualExecution);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).not.toBeNull();
+    });
+    expect(steer).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('contextual_build_phrase');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+
+    await act(async () => {
+      await resolveAnswer();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: contextualExecution });
+    });
+    expect(steer).not.toHaveBeenCalled();
+  });
+
   it('keeps queued active-answer builds behind current-project write approval', async () => {
     const {
       answer,
