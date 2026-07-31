@@ -18,6 +18,7 @@
     "test": "npm run test:unit && npm run test:boundaries",
     "build": "npm run typecheck && vite build",
     "verify:package": "node scripts/verify-package.cjs",
+    "verify:packaged-launch": "node scripts/verify-packaged-launch-smoke.cjs",
     "verify:packaged-canary": "node scripts/verify-packaged-canary.cjs",
     "verify:packaged-canary:deepseek": "node scripts/verify-deepseek-packaged-canary.cjs",
     "pack": "npm run build && electron-builder --dir && npm run verify:package",

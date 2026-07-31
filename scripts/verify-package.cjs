@@ -131,6 +131,7 @@ for (const forbiddenTest of [
   assert.equal(packagedFiles.includes(forbiddenTest), false, forbiddenTest);
 }
 assert.equal(packagedFiles.includes('/scripts/verify-packaged-canary.cjs'), false);
+assert.equal(packagedFiles.includes('/scripts/verify-packaged-launch-smoke.cjs'), false);
 const allowedPackagedNodeModuleRoots = Object.freeze([
   '/node_modules/b4a/',
   '/node_modules/bare-events/',
@@ -179,6 +180,10 @@ assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'playwright-
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'pngjs'), false);
 assert.equal(workspacePackageJson.dependencies?.dugite, '3.2.2');
 assert.equal(workspacePackageJson.devDependencies?.dugite, undefined);
+assert.equal(
+  workspacePackageJson.scripts['verify:packaged-launch'],
+  'node scripts/verify-packaged-launch-smoke.cjs',
+);
 assert.equal(workspacePackageJson.scripts['verify:packaged-canary'], 'node scripts/verify-packaged-canary.cjs');
 assert.equal(workspacePackageJson.build.nsis.deleteAppDataOnUninstall, false);
 const unpackedDugiteRoot = path.join(unpackedArchive, 'node_modules', 'dugite');
