@@ -298,7 +298,10 @@ MVP should show:
   provider errors, prompts, credentials, source evidence, Git receipts, or
   internal exception material;
 - a completion summary derived from the terminal result, candidate summary,
-  plan summary, verification status, and review state when available.
+  plan summary, verification status, and review state when available. A
+  successful chat-only explanation should not add a separate mechanical summary
+  under the assistant answer; the answer text is already the user-facing
+  terminal result.
 
 Current UI checkpoint: durable `run_started` / `run_progress_recorded` status
 rows remain visible in the chat flow even while ephemeral provider live output is

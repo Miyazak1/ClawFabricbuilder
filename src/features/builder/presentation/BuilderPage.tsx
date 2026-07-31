@@ -1074,7 +1074,9 @@ function ActivityItem({
       >
         <div className="cf-builder-activity-title">{activityTitle(item)}</div>
         <p className="cf-builder-activity-body">{activityBody(item)}</p>
-        {item.item_kind === 'run_completed' ? (
+        {item.item_kind === 'run_completed' && (
+          item.terminal_status !== 'succeeded' || item.result_kind !== 'explanation'
+        ) ? (
           <ActivityCompletionSummaryView hasUnsavedDraft={hasUnsavedDraft} item={item} />
         ) : null}
         {item.item_kind === 'run_completed' && item.candidate !== null ? (

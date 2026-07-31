@@ -595,8 +595,10 @@ Scope:
   `tool_call_result_recorded`, and `run_completed`;
 - keep progress rows compact and readable in the chat flow;
 - keep detailed logs available in the artifact drawer on demand;
-- add a terminal completion summary for answer, plan, candidate, failure,
-  cancellation, and interruption outcomes;
+- add a terminal completion summary for plan, candidate, failure, cancellation,
+  and interruption outcomes. For a successful chat-only answer, the answer text
+  itself is the completion; do not add a mechanical "no files changed" summary
+  under ordinary conversation;
 - avoid invented steps: every displayed work step must map to a sanitized Task
   Stream or live-output fact.
 

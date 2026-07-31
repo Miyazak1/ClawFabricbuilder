@@ -2741,14 +2741,10 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(assistant?.textContent).toContain('This answer does not change files.');
-    const summary = assistant?.querySelector('[data-builder-completion-summary="true"]');
-    expect(summary?.getAttribute('data-builder-completion-result')).toBe('explanation');
-    expect(summary?.textContent).toContain('What happened');
-    expect(summary?.textContent).toContain('The assistant answered.');
-    expect(summary?.textContent).toContain('Changed');
-    expect(summary?.textContent).toContain('No files were changed.');
-    expect(summary?.textContent).toContain('Next');
-    expect(summary?.textContent).toContain('Ask a follow-up or describe the next change.');
+    expect(assistant?.querySelector('[data-builder-completion-summary="true"]')).toBeNull();
+    expect(assistant?.textContent).not.toContain('What happened');
+    expect(assistant?.textContent).not.toContain('The assistant answered.');
+    expect(assistant?.textContent).not.toContain('No files were changed.');
     expect(started).toBeNull();
     expect(working).toBeNull();
     expect(answered).toBeNull();
