@@ -2672,6 +2672,7 @@ test('records a retryable failed run without completing the turn before delibera
 test('explains generic failures after the AI request starts without exposing provider details', () => {
   const item = fixture();
   const questionItem = fixture(1_200, 12_000);
+  const serviceItem = fixture(1_300, 13_000);
   try {
     const first = begin(item.service, null, 'Build a static blog.');
     const contextReady = item.service.record_run_progress({
@@ -2725,9 +2726,34 @@ test('explains generic failures after the AI request starts without exposing pro
       JSON.stringify([failedStream, questionStream]),
       /provider\.example|credential|api[_-]?key|Bearer/u,
     );
+
+    const serviceFailure = begin(serviceItem.service, null, 'Build a static blog.');
+    const serviceContextReady = serviceItem.service.record_run_progress({
+      context: serviceFailure,
+      stage: 'context_ready',
+    });
+    const serviceRequestStarted = serviceItem.service.record_run_progress({
+      context: serviceContextReady,
+      stage: 'provider_request_started',
+    });
+    serviceItem.service.record_retryable_failure({
+      context: serviceRequestStarted,
+      failure_code: 'builder_generation_service_unavailable',
+    });
+
+    const serviceFailureStream = serviceItem.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(
+      serviceFailureStream.conversation.items[4].assistant_message.text,
+      'The AI request ended before it returned a usable draft.',
+    );
+    assert.doesNotMatch(
+      JSON.stringify(serviceFailureStream),
+      /provider\.example|credential|api[_-]?key|Bearer/u,
+    );
   } finally {
     item.close();
     questionItem.close();
+    serviceItem.close();
   }
 });
 

@@ -1367,6 +1367,41 @@ execution readiness.
   entries. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-07-31 Provider-Started Failure Explanation Package Check
+
+This addendum records a narrow desktop failure-explanation checkpoint after a
+real local conversation showed `context_ready` and `provider_request_started`
+before a generic draft or answer failure. It extends main-only Conversation
+summary text and package evidence only; it does not extend installer evidence,
+real-provider DeepSeek canary coverage, arbitrary generated-code execution,
+external-network permissions, or general-purpose command/tool execution
+readiness.
+
+- When the durable run has already recorded `provider_request_started`, an
+  otherwise generic terminal failure now tells the user that the AI request
+  ended before it returned a usable draft or answer. This avoids the older
+  "draft could not be made" fallback for provider-started runs while still
+  exposing no provider endpoint, credential, prompt, source tree, Git receipt,
+  or internal failure object.
+- The local event audit found that the failed draft and follow-up answer both
+  reached `context_ready` and `provider_request_started`, so the observed
+  failure was not a build-context snapshot admission failure before provider
+  dispatch. A later answer and candidate on the same project succeeded and the
+  candidate was accepted, so this checkpoint does not classify the package as
+  globally unable to generate.
+- Focused validation passed through
+  `node --test tests\builder-conversation-main-service.test.cjs` and
+  `node --test tests\builder-generation-main-service.test.cjs tests\builder-task-stream-projection.test.cjs`;
+  the suites reported 34 and 57 passing Node tests.
+- Repository validation passed through `npm.cmd run lint` and
+  `npm.cmd run test:boundaries`; the boundary suite reported 660 passing Node
+  tests.
+- `npm.cmd run pack` passed. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 757 ASAR
+  entries. The refreshed executable is
+  `release\win-unpacked\ClawFabric Builder.exe`.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

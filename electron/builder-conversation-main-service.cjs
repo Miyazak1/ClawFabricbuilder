@@ -1476,7 +1476,7 @@ function createBuilderConversationMainService(rawOptions) {
         ? 'The answer could not be prepared.'
         : 'The draft could not be prepared.';
     }
-    if (failureCode === 'builder_generation_failed' && lastProgressStage === 'provider_request_started') {
+    if (lastProgressStage === 'provider_request_started') {
       return mode === 'question'
         ? 'The AI request ended before it returned a usable answer.'
         : 'The AI request ended before it returned a usable draft.';
