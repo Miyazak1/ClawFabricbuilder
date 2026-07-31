@@ -53,6 +53,10 @@ describe('Builder desktop layout styles', () => {
     expect(builderShell).toContain('overflow: hidden;');
     expect(workbenchFrame).toContain('height: 100%;');
     expect(workbenchFrame).toContain('overflow: hidden;');
+    expect(workbenchFrame).toContain('border: 1px solid var(--cf-border);');
+    expect(workbenchFrame).not.toContain('border-left: 0;');
+    expect(workbenchFrame).toContain('border-radius: 8px 0 0 0;');
+    expect(source).not.toContain('.cf-builder-workbench-frame::before');
     expect(surfaceBody).toContain('overflow: hidden;');
     expect(surfaceBody).not.toContain('overflow: auto;');
     expect(chatMain).toContain('grid-template-rows: minmax(0, 1fr) auto;');
