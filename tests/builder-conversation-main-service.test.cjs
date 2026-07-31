@@ -2669,6 +2669,68 @@ test('records a retryable failed run without completing the turn before delibera
   }
 });
 
+test('explains generic failures after the AI request starts without exposing provider details', () => {
+  const item = fixture();
+  const questionItem = fixture(1_200, 12_000);
+  try {
+    const first = begin(item.service, null, 'Build a static blog.');
+    const contextReady = item.service.record_run_progress({
+      context: first,
+      stage: 'context_ready',
+    });
+    const requestStarted = item.service.record_run_progress({
+      context: contextReady,
+      stage: 'provider_request_started',
+    });
+    item.service.record_retryable_failure({
+      context: requestStarted,
+      failure_code: 'builder_generation_failed',
+    });
+
+    const failedStream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(failedStream.conversation.items[4], {
+      item_kind: 'run_completed',
+      sequence: 5,
+      turn_id: first.ids.turn_id,
+      run_id: first.ids.run_id,
+      terminal_status: 'failed',
+      result_kind: 'failure',
+      assistant_message: {
+        message_id: first.ids.assistant_message_id,
+        text: 'The AI request ended before it returned a usable draft.',
+      },
+      candidate: null,
+    });
+
+    const question = beginQuestion(questionItem.service, null, 'What happened?');
+    const questionReady = questionItem.service.record_run_progress({
+      context: question,
+      stage: 'context_ready',
+    });
+    const questionRequestStarted = questionItem.service.record_run_progress({
+      context: questionReady,
+      stage: 'provider_request_started',
+    });
+    questionItem.service.record_retryable_failure({
+      context: questionRequestStarted,
+      failure_code: 'builder_generation_failed',
+    });
+
+    const questionStream = questionItem.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(
+      questionStream.conversation.items[4].assistant_message.text,
+      'The AI request ended before it returned a usable answer.',
+    );
+    assert.doesNotMatch(
+      JSON.stringify([failedStream, questionStream]),
+      /provider\.example|credential|api[_-]?key|Bearer/u,
+    );
+  } finally {
+    item.close();
+    questionItem.close();
+  }
+});
+
 test('records fixed public failure summaries for provider connection failures', () => {
   const item = fixture();
   try {

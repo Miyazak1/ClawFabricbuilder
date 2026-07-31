@@ -1442,7 +1442,21 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
-  function failureAssistantMessage(mode, failureCode) {
+  function latestRunProgressStage(context) {
+    for (const event of [...context.events].reverse()) {
+      if (
+        event.event_type === 'run_progress_recorded'
+        && event.payload.turn_id === context.ids.turn_id
+        && event.payload.run_id === context.ids.run_id
+        && typeof event.payload.stage === 'string'
+      ) {
+        return event.payload.stage;
+      }
+    }
+    return null;
+  }
+
+  function failureAssistantMessage(mode, failureCode, lastProgressStage) {
     if (failureCode === 'builder_generation_provider_unavailable') {
       return 'AI is not configured yet.';
     }
@@ -1461,6 +1475,11 @@ function createBuilderConversationMainService(rawOptions) {
       return mode === 'question'
         ? 'The answer could not be prepared.'
         : 'The draft could not be prepared.';
+    }
+    if (failureCode === 'builder_generation_failed' && lastProgressStage === 'provider_request_started') {
+      return mode === 'question'
+        ? 'The AI request ended before it returned a usable answer.'
+        : 'The AI request ended before it returned a usable draft.';
     }
     return mode === 'question'
       ? 'The answer could not be prepared.'
@@ -1510,7 +1529,7 @@ function createBuilderConversationMainService(rawOptions) {
         }),
         assistant_message: cancelled || interrupted ? null : {
           message_id: context.ids.assistant_message_id,
-          text: failureAssistantMessage(context.mode, failureCode),
+          text: failureAssistantMessage(context.mode, failureCode, latestRunProgressStage(context)),
         },
         candidate_result: null,
         plan_admission: null,
