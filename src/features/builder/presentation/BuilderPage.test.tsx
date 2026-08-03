@@ -1425,6 +1425,19 @@ describe('BuilderPage v2', () => {
       .toContain('Unsaved dashboard');
     expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
       .toContain('site-source');
+    const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    expect(container.querySelector('[data-builder-workspace-control-tab="permissions"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-permissions="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-control-tab="permissions"]');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('permissions');
+    expect(container.querySelector('[data-builder-artifact-permissions="true"]')?.textContent)
+      .toContain('Unsaved dashboard');
+    expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
 
     click(container, '[data-builder-workspace-chip="true"]');
 

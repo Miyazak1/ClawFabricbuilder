@@ -2114,8 +2114,6 @@ export function BuilderPage({
             ? 'source'
             : hasUnsavedDraft
               ? 'changes'
-              : showPermissionsPanel
-                ? 'permissions'
               : null;
   const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
     active: BuilderArtifactTab | null;
