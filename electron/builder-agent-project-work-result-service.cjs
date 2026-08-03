@@ -18,18 +18,28 @@ const {
   BUILDER_AGENT_SUPERVISION_LEASE_STORE_VERSION,
   BuilderAgentSupervisionLeaseStoreError,
 } = require('./builder-agent-supervision-lease-store.cjs');
+const {
+  BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
+  BuilderAgentSupervisedActionAdmissionStoreError,
+} = require('./builder-agent-supervised-action-admission-store.cjs');
 
 const BUILDER_AGENT_PROJECT_WORK_RESULT_SERVICE_VERSION =
   'builder-agent-project-work-result-service.v1';
 const BUILDER_AGENT_PROJECT_WORK_RESULT_SERVICE_RESULT_VERSION =
   'builder-agent-project-work-result-service-result.v1';
-const BUDGET_AUDIT_ID_PATTERN = /^builder-agent-budget-audit:[0-9a-f]{64}$/u;
-const SERVICE_KEYS = Object.freeze(['lease_store', 'budget_audit_store', 'project_work_store']);
+const SUPERVISED_ACTION_ADMISSION_ID_PATTERN =
+  /^builder-agent-supervised-action-admission:[0-9a-f]{64}$/u;
+const SERVICE_KEYS = Object.freeze([
+  'lease_store',
+  'budget_audit_store',
+  'supervised_action_admission_store',
+  'project_work_store',
+]);
 const RECORD_RESULT_KEYS = Object.freeze([
   'assignment',
   'active_status',
   'lease',
-  'budget_audit_id',
+  'supervised_action_admission_id',
   'result_input',
   'now_ms',
 ]);
@@ -101,8 +111,8 @@ function safeTimestamp(value) {
   return value;
 }
 
-function safeBudgetAuditId(value) {
-  if (typeof value !== 'string' || !BUDGET_AUDIT_ID_PATTERN.test(value)) {
+function safeSupervisedActionAdmissionId(value) {
+  if (typeof value !== 'string' || !SUPERVISED_ACTION_ADMISSION_ID_PATTERN.test(value)) {
     fail('builder_agent_project_work_result_service_invalid');
   }
   return value;
@@ -144,6 +154,11 @@ function safeStores(rawStores) {
       BUILDER_AGENT_BUDGET_AUDIT_STORE_VERSION,
       ['read_audit', 'list_lease_audits'],
     ),
+    supervised_action_admission_store: safeStore(
+      valueAt(rawStores, 'supervised_action_admission_store'),
+      BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
+      ['read_admission', 'list_task_admissions', 'list_run_admissions'],
+    ),
     project_work_store: safeStore(
       valueAt(rawStores, 'project_work_store'),
       BUILDER_AGENT_PROJECT_WORK_STORE_VERSION,
@@ -165,6 +180,7 @@ function normalizeOperationError(error) {
     error instanceof BuilderAgentProjectWorkStoreError
     || error instanceof BuilderAgentBudgetAuditStoreError
     || error instanceof BuilderAgentSupervisionLeaseStoreError
+    || error instanceof BuilderAgentSupervisedActionAdmissionStoreError
   ) {
     if (/_conflict$/u.test(error.code)) {
       return new BuilderAgentProjectWorkResultServiceError(
@@ -190,6 +206,8 @@ function serviceEvidence() {
     service_authority: 'main_owned_agent_project_work_result_service',
     lease_store_authority: 'main_owned_agent_supervision_lease_store',
     budget_audit_store_authority: 'main_owned_agent_budget_audit_store',
+    supervised_action_admission_store_authority: 'main_owned_agent_supervised_action_admission_store',
+    supervised_action_admission_authority: 'main_agent_supervised_action_admission_contract_v1',
     project_work_store_authority: 'main_owned_agent_project_work_store',
     renderer_authority: 'not_present',
     ipc_authority: 'not_present',
@@ -199,6 +217,7 @@ function serviceEvidence() {
     permission_grant_authority: false,
     credential_storage: 'not_present',
     source_access: 'not_present',
+    source_read: 'not_present',
     source_write: 'not_present',
     process_run: false,
     revision_authority: false,
@@ -216,7 +235,62 @@ function budgetAuditFact(auditRead) {
   return entry.audit;
 }
 
-function requireAllowedFinishForReviewBudgetAudit(stores, budgetAuditId, result) {
+function admissionFact(admissionRead) {
+  if (admissionRead.status !== 'ready') fail('builder_agent_project_work_result_service_conflict');
+  const entry = admissionRead.supervised_action_admission;
+  if (!entry || !entry.admission) fail('builder_agent_project_work_result_service_invalid');
+  return entry.admission;
+}
+
+function requireFinishForReviewAdmission(stores, supervisedActionAdmissionId, result) {
+  const admissionRead = stores.supervised_action_admission_store.read_admission({
+    admission_id: supervisedActionAdmissionId,
+    owner_id: result.owner_id,
+  });
+  const admission = admissionFact(admissionRead);
+  const taskAdmissions = stores.supervised_action_admission_store.list_task_admissions({
+    owner_id: result.owner_id,
+    project_id: result.project_id,
+    task_id: result.task_id,
+  });
+  const runAdmissions = stores.supervised_action_admission_store.list_run_admissions({
+    owner_id: result.owner_id,
+    project_id: result.project_id,
+    task_id: result.task_id,
+    run_id: result.run_id,
+  });
+  if (
+    taskAdmissions.status !== 'ready'
+    || !taskAdmissions.supervised_action_admissions.some(
+      (entry) => entry.admission.admission_id === supervisedActionAdmissionId,
+    )
+    || runAdmissions.status !== 'ready'
+    || !runAdmissions.supervised_action_admissions.some(
+      (entry) => entry.admission.admission_id === supervisedActionAdmissionId,
+    )
+    || admission.assignment_id !== result.assignment_id
+    || admission.assignment_status_id !== result.assignment_status_id
+    || admission.lease_id !== result.lease_id
+    || admission.agent_id !== result.agent_id
+    || admission.agent_version_id !== result.agent_version_id
+    || admission.owner_id !== result.owner_id
+    || admission.project_id !== result.project_id
+    || admission.conversation_id !== result.conversation_id
+    || admission.task_id !== result.task_id
+    || admission.run_id !== result.run_id
+    || admission.requested_next_action !== 'finish_for_review'
+    || admission.next_gate !== 'project_work_result_required_later'
+    || admission.admitted_at_ms > result.observed_at_ms
+  ) fail('builder_agent_project_work_result_service_invalid');
+  return freezeDeep({
+    admission,
+    admission_read: admissionRead,
+    run_admissions: runAdmissions,
+    task_admissions: taskAdmissions,
+  });
+}
+
+function requireAllowedFinishForReviewBudgetAudit(stores, budgetAuditId, result, admission) {
   const auditRead = stores.budget_audit_store.read_audit({
     budget_audit_id: budgetAuditId,
     owner_id: result.owner_id,
@@ -241,9 +315,12 @@ function requireAllowedFinishForReviewBudgetAudit(stores, budgetAuditId, result)
     || audit.conversation_id !== result.conversation_id
     || audit.task_id !== result.task_id
     || audit.run_id !== result.run_id
+    || audit.budget_audit_id !== admission.budget_audit_id
     || audit.requested_next_action !== 'finish_for_review'
     || audit.outcome.decision !== 'allowed'
     || audit.outcome.reason !== 'none'
+    || audit.observed_at_ms !== admission.budget_audit_observed_at_ms
+    || audit.observed_at_ms > admission.admitted_at_ms
     || audit.observed_at_ms > result.observed_at_ms
   ) fail('builder_agent_project_work_result_service_invalid');
   return freezeDeep({ audit, audit_read: auditRead, lease_audits: leaseAudits });
@@ -254,7 +331,9 @@ function recordProjectWorkResult(stores, rawRequest) {
   const assignment = valueAt(rawRequest, 'assignment');
   const activeStatus = valueAt(rawRequest, 'active_status');
   const lease = valueAt(rawRequest, 'lease');
-  const budgetAuditId = safeBudgetAuditId(valueAt(rawRequest, 'budget_audit_id'));
+  const supervisedActionAdmissionId = safeSupervisedActionAdmissionId(
+    valueAt(rawRequest, 'supervised_action_admission_id'),
+  );
   const nowMs = safeTimestamp(valueAt(rawRequest, 'now_ms'));
   const result = createBuilderAgentProjectWorkResultRecord(
     valueAt(rawRequest, 'result_input'),
@@ -274,7 +353,17 @@ function recordProjectWorkResult(stores, rawRequest) {
     || leaseRead.active_lease === null
     || leaseRead.active_lease.lease.lease_id !== result.lease_id
   ) fail('builder_agent_project_work_result_service_conflict');
-  const budgetEvidence = requireAllowedFinishForReviewBudgetAudit(stores, budgetAuditId, result);
+  const admissionEvidence = requireFinishForReviewAdmission(
+    stores,
+    supervisedActionAdmissionId,
+    result,
+  );
+  const budgetEvidence = requireAllowedFinishForReviewBudgetAudit(
+    stores,
+    admissionEvidence.admission.budget_audit_id,
+    result,
+    admissionEvidence.admission,
+  );
 
   const resultStoreWrite = stores.project_work_store.record_result({
     assignment,
@@ -310,6 +399,10 @@ function recordProjectWorkResult(stores, rawRequest) {
     work_kind: result.work_kind,
     result_status: result.result.status,
     result,
+    supervised_action_admission: admissionEvidence.admission,
+    supervised_action_admission_read: admissionEvidence.admission_read,
+    action_task_admissions: admissionEvidence.task_admissions,
+    action_run_admissions: admissionEvidence.run_admissions,
     lease_read: leaseRead,
     budget_audit: budgetEvidence.audit,
     budget_audit_read: budgetEvidence.audit_read,

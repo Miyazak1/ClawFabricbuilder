@@ -929,16 +929,19 @@ Current checkpoint:
   or tests, mutates no Git or Project Revision facts, and creates no Review or
   Artifact authority.
 - the current Agent project work result service composes the active supervision
-  lease read, allowed Budget Audit read, and Project Work Result store as a
-  main-only owner-review result gate. It creates project-edit or project-test
-  result receipts only when a store-backed budget audit for the same active
-  lease allowed `finish_for_review` before the result time, records or replays
-  that fixed-summary result, and verifies it through read-by-result and
-  task-scoped listing. It opens no IPC/preload path, shows no Agents UI,
-  dispatches no provider/model or tool, grants no permissions, reads no
-  credentials or source, writes no files, runs no process or tests, mutates no
-  Git or Project Revision facts, creates no generic Review row, and creates no
-  Artifact or materialized source authority.
+  lease read, Supervised Action Admission store, allowed Budget Audit read, and
+  Project Work Result store as a main-only owner-review result gate. It creates
+  project-edit or project-test result receipts only when a store-backed
+  supervised action admission requested `finish_for_review`, points to the
+  later Project Work Result gate, belongs to the same Project/Conversation/Task/
+  Run and active lease, and its referenced budget audit also allowed
+  `finish_for_review` before the result time. The service records or replays
+  that fixed-summary result and verifies it through action admission reads,
+  budget audit reads, read-by-result, and task-scoped listing. It opens no
+  IPC/preload path, shows no Agents UI, dispatches no provider/model or tool,
+  grants no permissions, reads no credentials or source, writes no files, runs
+  no process or tests, mutates no Git or Project Revision facts, creates no
+  generic Review row, and creates no Artifact or materialized source authority.
 - the current Agent project work result review contract adds a pure main-side
   owner decision receipt over one recorded project work result. It can approve
   a proposed project-edit or project-test result for a later materialization
@@ -1281,6 +1284,19 @@ Current checkpoint:
   Revision facts, and creates no Review or Artifact authority. Actual
   supervised Agent execution, tool-call creation, private source context
   collection, and result-for-review creation remain later checkpoints.
+- the current Agent Project Work Result service admission checkpoint connects
+  the `finish_for_review` supervised action admission to the existing Project
+  Work Result service. The result service now accepts a supervised action
+  admission id instead of raw budget audit id, reads that admission from the
+  admission store, verifies Task/Run admission listings, requires
+  `requested_next_action=finish_for_review` and
+  `next_gate=project_work_result_required_later`, and then verifies the
+  referenced allowed Budget Audit before recording the result. It still opens no
+  IPC/preload path, shows no Agents UI, dispatches no provider/model or tool,
+  creates no tool call, reads no source, grants no permission, stores no raw
+  context, mutates no Git or Project Revision facts, and creates no generic
+  Review row or Artifact authority. Actual result review, materialization, tool
+  execution, and source access remain separate later gates.
 
 ### Track B - People and Spaces
 

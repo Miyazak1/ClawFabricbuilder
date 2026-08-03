@@ -35,6 +35,16 @@ const {
   createBuilderAgentBudgetAuditStore,
 } = require('../electron/builder-agent-budget-audit-store.cjs');
 const {
+  createBuilderAgentTaskContextSnapshot,
+} = require('../electron/builder-agent-task-context-snapshot.cjs');
+const {
+  createBuilderAgentSupervisedActionAdmission,
+} = require('../electron/builder-agent-supervised-action-admission.cjs');
+const {
+  BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
+  createBuilderAgentSupervisedActionAdmissionStore,
+} = require('../electron/builder-agent-supervised-action-admission-store.cjs');
+const {
   BUILDER_AGENT_PROJECT_WORK_RESULT_RECORD_KIND,
   BUILDER_AGENT_PROJECT_WORK_RESULT_RECORD_VERSION,
   createBuilderAgentProjectWorkResultRecord,
@@ -57,6 +67,11 @@ const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-4266141740
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174006';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174007';
 const SUPERVISOR_ID = 'builder-supervisor:123e4567-e89b-42d3-a456-426614174008';
+const MEMORY_ID = `builder-agent-memory:${'a'.repeat(64)}`;
+const MESSAGE_ID = 'builder-message:123e4567-e89b-42d3-a456-426614174009';
+const ARTIFACT_ID = `builder-artifact:${'b'.repeat(64)}`;
+const RUN_EVENT_ID = `builder-run-event:${'c'.repeat(64)}`;
+const PERMISSION_ID = `builder-permission:${'d'.repeat(64)}`;
 
 function temporaryRoot(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -66,6 +81,9 @@ function openStores(root) {
   return {
     lease_store: createBuilderAgentSupervisionLeaseStore(path.join(root, 'leases.sqlite')),
     budget_audit_store: createBuilderAgentBudgetAuditStore(path.join(root, 'budget-audits.sqlite')),
+    supervised_action_admission_store: createBuilderAgentSupervisedActionAdmissionStore(
+      path.join(root, 'action-admissions.sqlite'),
+    ),
     project_work_store: createBuilderAgentProjectWorkStore(path.join(root, 'project-work.sqlite')),
   };
 }
@@ -73,6 +91,7 @@ function openStores(root) {
 function closeStores(stores) {
   stores.lease_store.close();
   stores.budget_audit_store.close();
+  stores.supervised_action_admission_store.close();
   stores.project_work_store.close();
 }
 
@@ -204,6 +223,52 @@ function budgetAudit(facts, overrides = {}) {
   );
 }
 
+function actionRequestId(index = 1) {
+  return `builder-agent-action-request:123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
+}
+
+function contextSnapshot(facts, audit, overrides = {}) {
+  return createBuilderAgentTaskContextSnapshot({
+    agent_definition: facts.definition,
+    agent_version: facts.version,
+    assignment: facts.assignment,
+    active_status: facts.activeStatus,
+    lease: facts.lease,
+    budget_audit: audit,
+    included_memory_ids: [MEMORY_ID],
+    included_message_ids: [MESSAGE_ID],
+    included_artifact_ids: [ARTIFACT_ID],
+    included_run_event_ids: [RUN_EVENT_ID],
+    included_permission_ids: [PERMISSION_ID],
+    parent_task_context_projection: null,
+    base_project_revision: {
+      status: 'available',
+      revision_receipt_digest: `sha256:${'e'.repeat(64)}`,
+      commit_oid: 'f'.repeat(40),
+    },
+    token_budget: {
+      max_input_tokens: 32_000,
+      reserved_output_tokens: 4_096,
+      selection_policy: 'deterministic_task_local_budget_v1',
+    },
+    created_at_ms: audit.observed_at_ms + 2,
+    ...overrides,
+  });
+}
+
+function actionAdmission(facts, audit, overrides = {}) {
+  const snapshot = overrides.snapshot ?? contextSnapshot(facts, audit, overrides.snapshot_input ?? {});
+  return createBuilderAgentSupervisedActionAdmission({
+    context_snapshot: snapshot,
+    action_request_id: overrides.action_request_id ?? actionRequestId(overrides.request_index ?? 1),
+    requested_next_action: overrides.requested_next_action ?? snapshot.action_admission.requested_next_action,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    admitted_at_ms: overrides.admitted_at_ms ?? snapshot.created_at_ms + 2,
+  });
+}
+
 function resultInput(facts, overrides = {}) {
   const workKind = overrides.work_kind ?? 'project_edit';
   const status = overrides.status ?? 'proposed';
@@ -261,12 +326,17 @@ function seedBudgetAudit(stores, facts, audit = budgetAudit(facts)) {
   return audit;
 }
 
-function request(facts, audit, overrides = {}) {
+function seedActionAdmission(stores, facts, audit, admission = actionAdmission(facts, audit)) {
+  stores.supervised_action_admission_store.record_admission({ admission });
+  return admission;
+}
+
+function request(facts, admission, overrides = {}) {
   return {
     assignment: facts.assignment,
     active_status: facts.activeStatus,
     lease: facts.lease,
-    budget_audit_id: audit.budget_audit_id,
+    supervised_action_admission_id: admission.admission_id,
     result_input: resultInput(facts, overrides.result_input ?? {}),
     now_ms: overrides.now_ms ?? 100,
   };
@@ -292,21 +362,29 @@ function assertServiceError(fn, code) {
   );
 }
 
-test('records a project work result only after an allowed finish-for-review budget audit', (t) => {
+test('records a project work result only after a finish-for-review action admission', (t) => {
   const { service, stores } = serviceFor(t);
   const facts = fixture();
   const audit = budgetAudit(facts);
+  const admission = actionAdmission(facts, audit);
   const expectedResult = workResult(facts);
   seedActiveLease(stores, facts);
   seedBudgetAudit(stores, facts, audit);
+  seedActionAdmission(stores, facts, audit, admission);
 
-  const result = service.record_project_work_result(request(facts, audit));
+  const result = service.record_project_work_result(request(facts, admission));
   assert.equal(result.result_version, BUILDER_AGENT_PROJECT_WORK_RESULT_SERVICE_RESULT_VERSION);
   assert.equal(result.service_version, BUILDER_AGENT_PROJECT_WORK_RESULT_SERVICE_VERSION);
   assert.equal(result.status, 'ready');
   assert.equal(result.work_kind, 'project_edit');
   assert.equal(result.result_status, 'proposed');
   assert.deepEqual(result.result, expectedResult);
+  assert.equal(result.supervised_action_admission.admission_id, admission.admission_id);
+  assert.equal(result.supervised_action_admission.requested_next_action, 'finish_for_review');
+  assert.equal(result.supervised_action_admission.next_gate, 'project_work_result_required_later');
+  assert.equal(result.supervised_action_admission_read.status, 'ready');
+  assert.equal(result.action_task_admissions.supervised_action_admissions.length, 1);
+  assert.equal(result.action_run_admissions.supervised_action_admissions.length, 1);
   assert.equal(result.budget_audit.budget_audit_id, audit.budget_audit_id);
   assert.equal(result.budget_audit.requested_next_action, 'finish_for_review');
   assert.equal(result.budget_audit.outcome.decision, 'allowed');
@@ -315,13 +393,17 @@ test('records a project work result only after an allowed finish-for-review budg
   assert.equal(result.task_results.work_results.length, 1);
   assert.equal(result.operations.project_work_store, 'work_result_recorded');
   assert.equal(result.evidence.service_authority, 'main_owned_agent_project_work_result_service');
+  assert.equal(
+    result.evidence.supervised_action_admission_store_authority,
+    'main_owned_agent_supervised_action_admission_store',
+  );
   assert.equal(result.evidence.provider_dispatch, false);
   assert.equal(result.evidence.tool_dispatch, false);
   assert.equal(result.evidence.source_access, 'not_present');
   assert.equal(result.evidence.materialization_authority, false);
   assert.equal(result.evidence.review_authority, 'required_later');
 
-  const replay = service.record_project_work_result(request(facts, audit));
+  const replay = service.record_project_work_result(request(facts, admission));
   assert.equal(replay.operations.project_work_store, 'work_result_replayed');
   assert.deepEqual(replay.result, result.result);
 });
@@ -332,10 +414,12 @@ test('records a blocked project test result while keeping review and materializa
     lease: { lease_epoch: 2, acquired_at_ms: 60, expires_at_ms: 150 },
   });
   const audit = budgetAudit(facts, { observed_at_ms: 95 });
+  const admission = actionAdmission(facts, audit);
   seedActiveLease(stores, facts);
   seedBudgetAudit(stores, facts, audit);
+  seedActionAdmission(stores, facts, audit, admission);
 
-  const result = service.record_project_work_result(request(facts, audit, {
+  const result = service.record_project_work_result(request(facts, admission, {
     now_ms: 105,
     result_input: {
       work_kind: 'project_test',
@@ -359,27 +443,30 @@ test('recovers project work result service state across restart through idempote
   const stores = openStores(root);
   seedActiveLease(stores, facts);
   const audit = seedBudgetAudit(stores, facts);
+  const admission = seedActionAdmission(stores, facts, audit);
   const service = createBuilderAgentProjectWorkResultService(stores);
-  const first = service.record_project_work_result(request(facts, audit));
+  const first = service.record_project_work_result(request(facts, admission));
   closeStores(stores);
 
   const reopened = openStores(root);
   const restarted = createBuilderAgentProjectWorkResultService(reopened);
-  const replay = restarted.record_project_work_result(request(facts, audit));
+  const replay = restarted.record_project_work_result(request(facts, admission));
   assert.equal(replay.operations.project_work_store, 'work_result_replayed');
   assert.deepEqual(replay.result, first.result);
   closeStores(reopened);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('fails closed before recording results for missing, denied, stale, or wrong budget evidence', (t) => {
+test('fails closed before recording results for missing, wrong, denied, or stale action evidence', (t) => {
   const { service, stores } = serviceFor(t);
   const facts = fixture();
   const audit = budgetAudit(facts);
+  const admission = actionAdmission(facts, audit);
   seedActiveLease(stores, facts);
+  seedBudgetAudit(stores, facts, audit);
 
   assertServiceError(
-    () => service.record_project_work_result(request(facts, audit)),
+    () => service.record_project_work_result(request(facts, admission)),
     'builder_agent_project_work_result_service_conflict',
   );
   assert.equal(
@@ -395,8 +482,14 @@ test('fails closed before recording results for missing, denied, stale, or wrong
     observed_at_ms: 91,
     requested_next_action: 'start_step',
   }));
+  const startStepAdmission = seedActionAdmission(
+    stores,
+    facts,
+    startStepAudit,
+    actionAdmission(facts, startStepAudit, { request_index: 2 }),
+  );
   assertServiceError(
-    () => service.record_project_work_result(request(facts, startStepAudit)),
+    () => service.record_project_work_result(request(facts, startStepAdmission)),
     'builder_agent_project_work_result_service_invalid',
   );
 
@@ -414,18 +507,24 @@ test('fails closed before recording results for missing, denied, stale, or wrong
       reason: 'max_tool_calls_reached',
     },
   }));
-  assertServiceError(
-    () => service.record_project_work_result(request(facts, deniedToolAudit)),
-    'builder_agent_project_work_result_service_invalid',
+  assert.throws(
+    () => actionAdmission(facts, deniedToolAudit, { request_index: 3 }),
+    (error) => error?.name === 'BuilderAgentTaskContextSnapshotError',
   );
 
   const finishAudit = seedBudgetAudit(stores, facts, budgetAudit(facts, { observed_at_ms: 93 }));
+  const finishAdmission = seedActionAdmission(
+    stores,
+    facts,
+    finishAudit,
+    actionAdmission(facts, finishAudit, { request_index: 4 }),
+  );
   assertServiceError(
-    () => service.record_project_work_result(request(facts, finishAudit, { now_ms: 101 })),
+    () => service.record_project_work_result(request(facts, finishAdmission, { now_ms: 101 })),
     'builder_agent_project_work_result_service_invalid',
   );
   assertServiceError(
-    () => service.record_project_work_result(request(facts, finishAudit, {
+    () => service.record_project_work_result(request(facts, finishAdmission, {
       now_ms: 140,
       result_input: { observed_at_ms: 140 },
     })),
@@ -443,6 +542,7 @@ test('fails closed before recording results for missing, denied, stale, or wrong
     () => createBuilderAgentProjectWorkResultService({
       lease_store: stores.lease_store,
       budget_audit_store: stores.budget_audit_store,
+      supervised_action_admission_store: stores.supervised_action_admission_store,
       project_work_store: { store_version: BUILDER_AGENT_PROJECT_WORK_STORE_VERSION },
     }),
     'builder_agent_project_work_result_service_invalid',
@@ -451,6 +551,18 @@ test('fails closed before recording results for missing, denied, stale, or wrong
     () => createBuilderAgentProjectWorkResultService({
       lease_store: stores.lease_store,
       budget_audit_store: { store_version: BUILDER_AGENT_BUDGET_AUDIT_STORE_VERSION },
+      supervised_action_admission_store: stores.supervised_action_admission_store,
+      project_work_store: stores.project_work_store,
+    }),
+    'builder_agent_project_work_result_service_invalid',
+  );
+  assertServiceError(
+    () => createBuilderAgentProjectWorkResultService({
+      lease_store: stores.lease_store,
+      budget_audit_store: stores.budget_audit_store,
+      supervised_action_admission_store: {
+        store_version: BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
+      },
       project_work_store: stores.project_work_store,
     }),
     'builder_agent_project_work_result_service_invalid',

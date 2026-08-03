@@ -3195,6 +3195,60 @@ installer evidence, or a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Project Work Result Admission Gate Package Check
+
+This addendum records the package checkpoint after connecting the existing
+Agent Project Work Result service to the store-backed Supervised Action
+Admission chain. A Project Work Result now requires a persisted
+`finish_for_review` supervised action admission before it can record a
+reviewable project-edit or project-test result. The checkpoint does not enable
+visible Agents UI, autonomous Agent execution, provider/model dispatch, tool
+calls, command execution, source reads or writes, generic Review row creation,
+Artifact creation, source materialization, check runs, Project Revision
+creation, Git mutation, permission grants, IPC/preload commands, installer
+evidence, or a real saved-profile DeepSeek canary pass.
+
+- The result service now accepts a supervised action admission id, reads that
+  admission from the main-owned admission store, verifies Task and Run admission
+  listings, requires `requested_next_action=finish_for_review` and
+  `next_gate=project_work_result_required_later`, and only then verifies the
+  referenced allowed Budget Audit before recording or replaying the Project
+  Work Result.
+- The service evidence now includes
+  `main_owned_agent_supervised_action_admission_store` and
+  `main_agent_supervised_action_admission_contract_v1` authority while
+  preserving fixed no-authority fields for renderer, IPC, provider/model
+  dispatch, tool dispatch, permission grants, credential storage, source
+  access/read/write, process run, Revision, generic Review row creation,
+  Artifact creation, and materialization.
+- Focused validation passed through
+  `node --test tests\builder-agent-project-work-result-service.test.cjs`; the
+  command reported 5 passing Node tests.
+- Adjacent Agent chain validation passed through Assignment, Supervision Lease,
+  Budget Audit, Agent Task Context Snapshot contract/store/service, Supervised
+  Action Admission contract/store/service, and Project Work contract/store/
+  service tests; the command reported 76 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 890 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. The first attempt hit a transient
+  Windows `EBUSY` lock while writing
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`; an
+  immediate retry succeeded. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 797 ASAR
+  entries. The refreshed executable timestamp was 2026-08-04 05:34:00 local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

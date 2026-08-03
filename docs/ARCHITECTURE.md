@@ -294,13 +294,15 @@ starts no Run or execution, dispatches no provider/tool, grants no permission,
 reads or writes no source, mutates no Git or Project Revision, creates no
 Review or Artifact, and exposes no IPC/preload or visible Agents UI. The
 current Agent Project Work Result service is only a main-only composition gate
-over the active supervision lease read, allowed Budget Audit read, and Project
-Work Result store: it records or replays fixed project-edit or project-test
-result receipts for later owner review only after an allowed
-`finish_for_review` budget audit for the same active lease. It still creates no
-generic Review row, Artifact, source materialization, check run, Git fact,
-Project Revision, provider/tool dispatch, permission grant, IPC/preload
-command, or visible Agents UI. The current Agent Project Work Result review
+over the active supervision lease read, store-backed Supervised Action
+Admission read, allowed Budget Audit read, and Project Work Result store: it
+records or replays fixed project-edit or project-test result receipts for later
+owner review only after a persisted `finish_for_review` supervised action
+admission whose budget audit also allowed `finish_for_review` for the same
+active lease before the result time. It still creates no generic Review row,
+Artifact, source materialization, check run, Git fact, Project Revision,
+provider/tool dispatch, permission grant, IPC/preload command, or visible
+Agents UI. The current Agent Project Work Result review
 contract and store are only a main-owned owner decision boundary over one
 recorded project work result: they can approve a proposed result for a later
 project materialization gate, reject it, or acknowledge a blocked/failed result
