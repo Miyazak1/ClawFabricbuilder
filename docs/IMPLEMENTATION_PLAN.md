@@ -1256,6 +1256,18 @@ Current checkpoint:
   permission, stores no raw context, mutates no Git or Project Revision facts,
   and creates no Review or Artifact authority. Actual supervised Agent
   execution after this admission remains a later checkpoint.
+- the current Agent Supervised Action Admission store checkpoint persists those
+  admission receipts as restart-replayable SQLite facts. The store verifies the
+  admission contract, enforces one admission per Task Context Snapshot and
+  action request, exposes owner-scoped reads by admission id and snapshot id,
+  lists admissions by Task or Run, and reports only
+  `main_owned_agent_supervised_action_admission_store` evidence. It still opens
+  no IPC/preload path, shows no Agents UI, dispatches no provider/model or tool,
+  creates no tool call, reads no source, records no Project Work Result, grants
+  no permission, stores no raw context, mutates no Git or Project Revision
+  facts, and creates no Review or Artifact authority. Actual supervised Agent
+  execution, tool-call creation, private source context collection, and
+  result-for-review creation remain later checkpoints.
 
 ### Track B - People and Spaces
 
