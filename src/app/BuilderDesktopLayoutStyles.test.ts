@@ -466,6 +466,7 @@ describe('Builder desktop layout styles', () => {
     expect(workspaceLabel).toContain('white-space: nowrap;');
     expect(workspaceDetail).toContain('white-space: nowrap;');
     expect(workspaceDetail).toContain('line-height: 1.15;');
-    expect(picker).toContain('top: 48px;');
+    expect(picker).toContain('bottom: calc(100% - 44px);');
+    expect(picker).not.toContain('top: 48px;');
   });
 });

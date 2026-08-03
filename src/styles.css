@@ -704,11 +704,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-workspace-picker {
   position: absolute;
   z-index: 30;
-  top: 48px;
+  bottom: calc(100% - 44px);
   left: 12px;
   display: grid;
   width: min(360px, calc(100% - 24px));
-  max-height: min(430px, 64vh);
+  max-height: min(430px, 52vh);
   min-width: 0;
   gap: 8px;
   overflow: hidden;
