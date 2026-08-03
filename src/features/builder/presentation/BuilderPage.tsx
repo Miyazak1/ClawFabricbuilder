@@ -305,8 +305,13 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
 function isArtifactLogEntry(entry: ActivityEntry): boolean {
   if (entry.entry_kind === 'work_status') return true;
   const { item } = entry;
+  return isArtifactLogItem(item);
+}
+
+function isArtifactLogItem(item: BuilderConversationItem): boolean {
   if (
     item.item_kind === 'run_control_requested'
+    || item.item_kind === 'run_context_snapshot_recorded'
     || item.item_kind === 'task_brief_updated'
     || item.item_kind === 'tool_call_requested'
     || item.item_kind === 'tool_call_result_recorded'
@@ -319,14 +324,43 @@ function isArtifactLogEntry(entry: ActivityEntry): boolean {
   return false;
 }
 
+function artifactWorkStatusEntry(
+  item: Extract<BuilderConversationItem, { item_kind: 'run_started' | 'run_progress_recorded' }>,
+): ActivityWorkStatusEntry {
+  return {
+    entry_kind: 'work_status',
+    key: `${item.turn_id}:${item.run_id}:${item.sequence}`,
+    sequence: item.sequence,
+    status: item.item_kind === 'run_started' ? 'started' : item.stage,
+    hidden: false,
+  };
+}
+
 function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
-  const entries = activityEntries(snapshot).filter(isArtifactLogEntry);
-  const runContextEntries: ActivityItemEntry[] = activityItems(snapshot)
-    .filter((item): item is Extract<BuilderConversationItem, { item_kind: 'run_context_snapshot_recorded' }> => (
-      item.item_kind === 'run_context_snapshot_recorded'
-    ))
-    .map((item) => ({ entry_kind: 'item', item, hidden: false }));
-  return [...entries, ...runContextEntries].sort((left, right) => {
+  const entries: ActivityEntry[] = [];
+  const toolRequestEntries = new Map<string, ActivityItemEntry>();
+  for (const item of activityItems(snapshot)) {
+    if (item.item_kind === 'run_started' || item.item_kind === 'run_progress_recorded') {
+      entries.push(artifactWorkStatusEntry(item));
+      continue;
+    }
+    if (item.item_kind === 'tool_call_requested') {
+      const entry: ActivityItemEntry = { entry_kind: 'item', item, hidden: false };
+      toolRequestEntries.set(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`, entry);
+      entries.push(entry);
+      continue;
+    }
+    if (item.item_kind === 'tool_call_result_recorded') {
+      const toolRequestEntry = toolRequestEntries.get(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`);
+      if (toolRequestEntry !== undefined) toolRequestEntry.hidden = true;
+      entries.push({ entry_kind: 'item', item, hidden: false });
+      continue;
+    }
+    if (isArtifactLogItem(item)) {
+      entries.push({ entry_kind: 'item', item, hidden: false });
+    }
+  }
+  return entries.filter((entry) => !entry.hidden).sort((left, right) => {
     const leftSequence = left.entry_kind === 'work_status' ? left.sequence : left.item.sequence;
     const rightSequence = right.entry_kind === 'work_status' ? right.sequence : right.item.sequence;
     return leftSequence - rightSequence;

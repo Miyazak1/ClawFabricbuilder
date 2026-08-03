@@ -2954,6 +2954,39 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('keeps completed run progress available in on-demand work logs', async () => {
+    const { saved } = await snapshots();
+    const activity = await failedRunActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+    const failed = container.querySelector('[data-builder-activity-card="Could not finish"]');
+    expect(failed?.querySelector('[data-builder-completion-summary="true"]')).not.toBeNull();
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="logs"]');
+
+    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
+    const logStatuses = logs?.querySelectorAll('[data-builder-work-status="true"]');
+    expect(logs).not.toBeNull();
+    expect(logStatuses).toHaveLength(4);
+    expect(logs?.textContent).toContain('Preparing this request.');
+    expect(logs?.textContent).toContain('Reading the current project context.');
+    expect(logs?.textContent).toContain('Writing the response.');
+    expect(logs?.textContent).toContain('Checking the response.');
+    expect(logs?.textContent).toContain('Could not finish');
+    expect(logs?.textContent).not.toMatch(
+      /provider_response_received|provider_request_started|context_ready|result_preparing|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
   it('keeps active work status visible beside the streaming assistant reply', async () => {
     const { saved } = await snapshots();
     const activity = await progressActivity();
