@@ -448,6 +448,18 @@ hard-coded route signals and fail if any signal is missing from the public
 vocabulary. Adding a route signal is therefore a route-contract change, not a
 local UI string tweak.
 
+Current semantic parity checkpoint: signal vocabulary alone is not enough. A
+shared route-decision fixture now locks representative composer messages across
+the renderer's temporary route preview and main-owned `submit` fallback. The
+fixture covers read-only chat, clarification, brief updates, explicit plan
+fallback, future Goal clarification, project-bound build, local Markdown
+artifact creation, and missing-context downgrade evidence. Renderer tests assert
+the preview decision. Main-service tests submit the same instructions through
+the real main boundary and assert whether the result is an explanation or a
+Git-backed candidate. Updating one classifier without updating the shared
+fixture and the other boundary is therefore a route-contract failure, not a
+frontend-only change.
+
 Current Task Capsule checkpoint: `update_brief` stays read-only. Selecting a
 workspace does not turn exploratory product discussion into work admission, and
 must not request current-project write permission. The renderer dispatches these
