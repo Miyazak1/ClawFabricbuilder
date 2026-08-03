@@ -56,6 +56,10 @@ const {
   createBuilderToolSourceContextCollector,
 } = require('../electron/builder-tool-source-context-collector.cjs');
 const {
+  BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_RECORD_STORE_VERSION,
+  createBuilderAgentPrivateSourceContextRecordStore,
+} = require('../electron/builder-agent-private-source-context-record-store.cjs');
+const {
   BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_SERVICE_RESULT_VERSION,
   BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_SERVICE_VERSION,
   BuilderAgentPrivateSourceContextServiceError,
@@ -274,6 +278,8 @@ function fixture({
   const store = createBuilderAgentSupervisedActionAdmissionStore(
     path.join(root, 'action-admissions.sqlite'),
   );
+  const recordStorePath = path.join(root, 'private-source-context-records.sqlite');
+  const recordStore = createBuilderAgentPrivateSourceContextRecordStore(recordStorePath);
   const { admission } = createAdmissionForContext(context, action, index);
   if (seedAdmission) store.record_admission({ admission });
   const permissionCalls = [];
@@ -309,6 +315,7 @@ function fixture({
     now_ms: nowMs,
   });
   const service = createBuilderAgentPrivateSourceContextService({
+    private_source_context_record_store: recordStore,
     supervised_action_admission_store: store,
     source_context_collector: collector,
   });
@@ -319,11 +326,14 @@ function fixture({
     conversation,
     context,
     admission,
+    recordStore,
+    recordStorePath,
     store,
     permissionCalls,
     service,
     close() {
-      store.close();
+      try { store.close(); } catch { /* best-effort test cleanup */ }
+      try { this.recordStore?.close(); } catch { /* best-effort test cleanup */ }
       database.close();
       removeRoot(root);
     },
@@ -386,14 +396,46 @@ test('collects private source context only from a store-backed read-private-sour
       result.source_context_result.private_source_context.files.map((file) => [file.path, file.content]),
       [['src/app.tsx', 'export const answer = 42;\n']],
     );
+    assert.equal(result.private_source_context_record.owner_id, OWNER_ID);
+    assert.equal(result.private_source_context_record.project_id, PROJECT_ID);
+    assert.equal(result.private_source_context_record.task_id, item.context.ids.task_id);
+    assert.equal(result.private_source_context_record.run_id, item.context.ids.run_id);
+    assert.equal(result.private_source_context_record.source_context_status, 'succeeded');
+    assert.equal(result.private_source_context_record.resource_count, 1);
+    assert.equal(result.private_source_context_record.file_count, 1);
+    assert.equal(result.private_source_context_record_store_write.operation, 'agent_private_source_context_record_recorded');
+    assert.equal(result.private_source_context_record_read.status, 'ready');
+    assert.equal(result.admission_private_source_context_record_read.status, 'ready');
+    assert.equal(result.task_private_source_context_records.status, 'ready');
+    assert.equal(result.task_private_source_context_records.agent_private_source_context_records.length, 1);
+    assert.equal(result.run_private_source_context_records.status, 'ready');
+    assert.equal(result.run_private_source_context_records.agent_private_source_context_records.length, 1);
+    assert.equal(result.operations.private_source_context_record_store, 'agent_private_source_context_record_recorded');
+    assert.equal(
+      result.private_source_context_record.authority.source_access,
+      'digest_only_private_source_context_receipt',
+    );
+    assert.doesNotMatch(
+      JSON.stringify(result.private_source_context_record),
+      /src\/app\.tsx|export const answer|"private_source_context"|"resource_id"|provider_secret|credential_secret|commit_oid|tree_oid/iu,
+    );
     assert.equal(result.evidence.service_authority, 'main_owned_agent_private_source_context_service');
     assert.equal(result.evidence.source_context_collector_authority, 'main_tool_source_context_collector_v1');
+    assert.equal(
+      result.evidence.private_source_context_record_store_authority,
+      'main_owned_agent_private_source_context_record_store',
+    );
+    assert.equal(
+      result.evidence.private_source_context_record_authority,
+      'main_agent_private_source_context_record_contract_v1',
+    );
     assert.equal(result.evidence.renderer_authority, 'not_present');
     assert.equal(result.evidence.provider_dispatch, false);
     assert.equal(result.evidence.model_dispatch, false);
     assert.equal(result.evidence.source_access, 'private_main_only_collector_result');
     assert.equal(result.evidence.source_write, 'not_present');
     assert.equal(result.evidence.revision_authority, false);
+    assert.equal(result.evidence.private_source_context_record_storage, 'digest_only_receipt_store');
 
     const stream = item.conversation.read_stream({ project_id: PROJECT_ID });
     assert.equal(stream.conversation.head_sequence, 4);
@@ -406,6 +448,31 @@ test('collects private source context only from a store-backed read-private-sour
       JSON.stringify(stream),
       /export const answer|src\/app\.tsx|private_source_context|permission_id|record_digest|policy_digest|provider|credential|commit_oid|tree_oid/iu,
     );
+    assert.equal(item.permissionCalls.length, 1);
+    await assert.rejects(
+      item.service.collect_agent_private_source_context(request(item)),
+      (error) => assertServiceError(error, 'builder_agent_private_source_context_service_conflict'),
+    );
+    assert.equal(item.permissionCalls.length, 1);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 4);
+
+    item.recordStore.close();
+    item.recordStore = null;
+    const restartedRecordStore = createBuilderAgentPrivateSourceContextRecordStore(item.recordStorePath);
+    try {
+      assert.equal(restartedRecordStore.store_version, BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_RECORD_STORE_VERSION);
+      const restored = restartedRecordStore.read_private_source_context_for_admission({
+        supervised_action_admission_id: item.admission.admission_id,
+        owner_id: OWNER_ID,
+      });
+      assert.equal(restored.status, 'ready');
+      assert.deepEqual(
+        restored.agent_private_source_context_record.private_source_context_record,
+        result.private_source_context_record,
+      );
+    } finally {
+      restartedRecordStore.close();
+    }
   } finally {
     item.close();
   }
@@ -511,10 +578,17 @@ test('source boundary stays main-only and exposes no renderer, provider, Git, or
   assert.match(source, /main_owned_agent_private_source_context_service/u);
   assert.match(source, /main_owned_agent_supervised_action_admission_store/u);
   assert.match(source, /main_tool_source_context_collector_v1/u);
+  assert.match(source, /main_owned_agent_private_source_context_record_store/u);
+  assert.match(source, /main_agent_private_source_context_record_contract_v1/u);
+  assert.match(source, /record_private_source_context/u);
+  assert.match(source, /read_private_source_context_for_admission/u);
+  assert.match(source, /list_task_private_source_contexts/u);
+  assert.match(source, /list_run_private_source_contexts/u);
   assert.match(source, /admission\.requested_next_action !== 'read_private_source'/u);
   assert.match(source, /source_context_collector_required_later/u);
   assert.match(source, /collect_project_source_context/u);
   assert.match(source, /private_main_only_collector_result/u);
+  assert.match(source, /digest_only_receipt_store/u);
   assert.match(source, /source_write: 'not_present'/u);
   assert.doesNotMatch(
     source,

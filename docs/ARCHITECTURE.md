@@ -476,9 +476,15 @@ verifies Task/Run admission listings, accepts only
 `next_gate=source_context_collector_required_later`, verifies the supplied
 trusted Conversation work Run context against the admitted Project,
 Conversation, Task, and Run, and then returns the collector's private bounded
-source-context result only to the main caller. It still exposes no IPC/preload
-command, visible Agents UI, provider/model dispatch, source write, Git
-mutation, Project Revision, generic Review row, or Artifact authority. These
+source-context result only to the main caller. It now converts that result into
+a digest-only Private Source Context record, records the receipt through the
+Private Source Context Record store, and verifies read-by-digest,
+read-by-admission, Task listing, and Run listing before returning. If a receipt
+for the same admission already exists, the service fails closed before invoking
+the collector; restart recovery restores the digest receipt, not raw source
+content. It still exposes no IPC/preload command, visible Agents UI,
+provider/model dispatch, source write, Git mutation, Project Revision, generic
+Review row, or Artifact authority. These
 Agent authorities expose no Agents UI, IPC/preload command, permission grant,
 provider/model dispatch, arbitrary tool execution, source write, Git mutation,
 Review, Revision, or Artifact authority. The current Agent Private Source
@@ -491,8 +497,9 @@ Private Source Context record store persists those digest-only receipts as
 restart-replayable SQLite facts keyed by record digest and supervised action
 admission id, with owner-scoped reads and Task/Run listings. The store verifies
 canonical record JSON, schema fingerprint, runtime pragmas, and row/receipt
-consistency, but it does not connect the Private Source Context service to
-durable storage yet. Together they are still main-only contracts with no
+consistency. The Private Source Context service uses the store only for digest
+receipt durability; the store itself performs no source read and cannot
+rehydrate raw private source. Together they are still main-only contracts with no
 IPC/preload command, no visible Agents UI, no provider/model/tool dispatch, no
 permission grant, no source read by the store, no raw source storage, no source
 write, no Git/Project Revision mutation, no Review row, and no Artifact

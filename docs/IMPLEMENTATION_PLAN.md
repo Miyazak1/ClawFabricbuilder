@@ -1358,14 +1358,21 @@ Current checkpoint:
   admission listings; requires `requested_next_action=read_private_source` and
   `next_gate=source_context_collector_required_later`; cross-checks the
   supplied work Run context against the admitted Project, Conversation, Task,
-  and Run; and then invokes the collector. The returned private source context
-  remains main-only and not durable public UI state, while Conversation receives
-  only the collector's already-sanitized tool request and fixed result facts.
-  It still opens no IPC/preload path, shows no Agents UI, dispatches no
-  provider/model, grants no permission, writes no source, runs no process,
-  mutates no Git or Project Revision facts, and creates no generic Review row
-  or Artifact authority. Actual Agent step running, arbitrary tool dispatch,
-  materialization, and user-visible Agents workflow remain separate later gates.
+  and Run; rejects an already-recorded receipt for the same admission before
+  invoking the collector; and then invokes the collector. The service now
+  converts the collector result into a digest-only Private Source Context
+  record, records that receipt through the Private Source Context Record store,
+  and verifies read-by-digest, read-by-admission, Task listing, and Run listing
+  before returning. The returned private source context remains main-only and
+  not durable public UI state, while Conversation receives only the collector's
+  already-sanitized tool request and fixed result facts. Restart recovery
+  restores the digest receipt, not raw source content, and the service does not
+  silently re-read source to fake raw-context replay. It still opens no
+  IPC/preload path, shows no Agents UI, dispatches no provider/model, grants no
+  permission, writes no source, runs no process, mutates no Git or Project
+  Revision facts, and creates no generic Review row or Artifact authority.
+  Actual Agent step running, arbitrary tool dispatch, materialization, and
+  user-visible Agents workflow remain separate later gates.
 - the current Agent Private Source Context record checkpoint adds a pure
   main-side digest-only receipt for one `read_private_source` supervised action
   admission plus one Source Context Collector result. It revalidates the
@@ -1385,8 +1392,9 @@ Current checkpoint:
   opens no IPC/preload path, shows no Agents UI, dispatches no provider/model or
   tool, executes no tool, grants no permission, reads or writes no source, stores
   no raw source content, mutates no Git or Project Revision facts, and creates
-  no generic Review row or Artifact authority. Connecting the Private Source
-  Context service to this store remains a separate later checkpoint.
+  no generic Review row or Artifact authority. The Private Source Context
+  service now uses this store only for digest receipt durability; the store
+  itself still performs no source read and cannot rehydrate raw private source.
 - the current Agent Project Work Result service admission checkpoint connects
   the `finish_for_review` supervised action admission to the existing Project
   Work Result service. The result service now accepts a supervised action

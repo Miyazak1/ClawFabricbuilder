@@ -3770,6 +3770,59 @@ run a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Private Source Context Service Store-Replay Package Check
+
+This addendum records the package checkpoint after connecting the Agent Private
+Source Context service to the main-owned Private Source Context Record store.
+The service still accepts only a store-backed `read_private_source` supervised
+action admission for a trusted Conversation work Run, collects bounded private
+source context through the main-only Source Context Collector, and returns that
+private source context only to the main caller. It now also creates the
+digest-only Private Source Context record, records that receipt in SQLite, and
+verifies read-by-digest, read-by-admission, Task listing, and Run listing before
+returning. If the same admission already has a stored receipt, the service fails
+closed before invoking the collector; restart recovery restores the digest
+receipt, not raw source content. This checkpoint does not enable visible Agents
+UI, expose IPC/preload commands, dispatch providers/models/tools, execute
+commands, grant permissions, write source, store raw source paths or content,
+mutate Git, create Project Revisions, create Review or Artifact authority,
+produce installer evidence, or run a real saved-profile DeepSeek canary pass.
+
+- Service evidence now records
+  `main_owned_agent_private_source_context_record_store`,
+  `main_agent_private_source_context_record_contract_v1`, and
+  `digest_only_receipt_store` alongside the existing Source Context Collector
+  and Supervised Action Admission authorities. It preserves fixed no-authority
+  fields for renderer, IPC, provider/model dispatch, permission grants,
+  credentials, source writes, process run, network access, Revision, Review,
+  Artifact, and raw-context durability.
+- Focused validation passed through
+  `node --test tests\builder-agent-private-source-context-service.test.cjs`;
+  the command reported 4 passing Node tests, including duplicate-admission
+  rejection before a second collector invocation and restart readback of the
+  stored digest receipt.
+- Adjacent Agent source/admission/plan validation passed through Agent Private
+  Source Context service, record contract/store, Source Context Collector, Plan
+  Proposal Record, and Supervised Action Admission store/service tests; the
+  command reported 33 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 926 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 805 ASAR
+  entries. The refreshed executable timestamp was 2026-08-04 07:43:39 local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

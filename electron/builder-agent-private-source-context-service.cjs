@@ -3,6 +3,14 @@
 const { types: utilTypes } = require('node:util');
 
 const {
+  BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_RECORD_STORE_VERSION,
+  BuilderAgentPrivateSourceContextRecordStoreError,
+} = require('./builder-agent-private-source-context-record-store.cjs');
+const {
+  BuilderAgentPrivateSourceContextRecordError,
+  createBuilderAgentPrivateSourceContextRecord,
+} = require('./builder-agent-private-source-context-record.cjs');
+const {
   BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
   BuilderAgentSupervisedActionAdmissionStoreError,
 } = require('./builder-agent-supervised-action-admission-store.cjs');
@@ -26,6 +34,7 @@ const RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
 const ADMISSION_ID_PATTERN = /^builder-agent-supervised-action-admission:[0-9a-f]{64}$/u;
 const TOOL_CALL_ID_PATTERN = new RegExp(`^builder-tool-call:${UUID_SOURCE}$`, 'u');
 const SERVICE_KEYS = Object.freeze([
+  'private_source_context_record_store',
   'supervised_action_admission_store',
   'source_context_collector',
 ]);
@@ -202,6 +211,17 @@ function safeCollector(value) {
 function safeServices(rawServices) {
   exactObject(rawServices, SERVICE_KEYS);
   return freezeDeep({
+    private_source_context_record_store: safeStore(
+      valueAt(rawServices, 'private_source_context_record_store'),
+      BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_RECORD_STORE_VERSION,
+      [
+        'record_private_source_context',
+        'read_private_source_context',
+        'read_private_source_context_for_admission',
+        'list_task_private_source_contexts',
+        'list_run_private_source_contexts',
+      ],
+    ),
     supervised_action_admission_store: safeStore(
       valueAt(rawServices, 'supervised_action_admission_store'),
       BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
@@ -220,7 +240,15 @@ function normalizeOperationError(error) {
       'builder_agent_private_source_context_service_unavailable',
     );
   }
-  if (error instanceof BuilderAgentSupervisedActionAdmissionStoreError) {
+  if (error instanceof BuilderAgentPrivateSourceContextRecordError) {
+    return new BuilderAgentPrivateSourceContextServiceError(
+      'builder_agent_private_source_context_service_invalid',
+    );
+  }
+  if (
+    error instanceof BuilderAgentSupervisedActionAdmissionStoreError
+    || error instanceof BuilderAgentPrivateSourceContextRecordStoreError
+  ) {
     if (/_conflict$/u.test(error.code)) {
       return new BuilderAgentPrivateSourceContextServiceError(
         'builder_agent_private_source_context_service_conflict',
@@ -246,6 +274,10 @@ function serviceEvidence() {
     supervised_action_admission_store_authority: 'main_owned_agent_supervised_action_admission_store',
     supervised_action_admission_authority: 'main_agent_supervised_action_admission_contract_v1',
     source_context_collector_authority: 'main_tool_source_context_collector_v1',
+    private_source_context_record_store_authority:
+      'main_owned_agent_private_source_context_record_store',
+    private_source_context_record_authority:
+      'main_agent_private_source_context_record_contract_v1',
     permission_authority: 'main_permission_decision_before_tool_dispatch_v1',
     conversation_authority: 'trusted_conversation_main_service_methods',
     renderer_authority: 'not_present',
@@ -265,7 +297,8 @@ function serviceEvidence() {
     review_authority: false,
     artifact_authority: false,
     raw_context_storage: 'not_durable',
-    recovery_model: 'store_backed_action_admission_plus_collector_replay',
+    private_source_context_record_storage: 'digest_only_receipt_store',
+    recovery_model: 'store_backed_action_admission_plus_digest_receipt_replay',
   });
 }
 
@@ -465,6 +498,88 @@ function verifySourceContextResult(result, binding, resourceIds) {
   ) fail('builder_agent_private_source_context_service_invalid');
 }
 
+function requireNoExistingPrivateSourceContextRecord(services, ownerId, admissionId) {
+  const existing = services.private_source_context_record_store.read_private_source_context_for_admission({
+    supervised_action_admission_id: admissionId,
+    owner_id: ownerId,
+  });
+  if (existing.status === 'ready') {
+    fail('builder_agent_private_source_context_service_conflict');
+  }
+  if (existing.status !== 'absent') {
+    fail('builder_agent_private_source_context_service_invalid');
+  }
+}
+
+function privateSourceContextRecordFact(recordRead) {
+  if (recordRead.status !== 'ready') {
+    fail('builder_agent_private_source_context_service_conflict');
+  }
+  const entry = recordRead.agent_private_source_context_record;
+  if (!entry || !entry.private_source_context_record) {
+    fail('builder_agent_private_source_context_service_invalid');
+  }
+  return entry.private_source_context_record;
+}
+
+function privateSourceContextRecordFromWrite(recordWrite) {
+  const entry = recordWrite.agent_private_source_context_record;
+  if (!entry || !entry.private_source_context_record) {
+    fail('builder_agent_private_source_context_service_invalid');
+  }
+  return entry.private_source_context_record;
+}
+
+function verifyPrivateSourceContextRecordStore(services, ownerId, admission, record) {
+  const recordWrite = services.private_source_context_record_store.record_private_source_context({
+    private_source_context_record: record,
+  });
+  const storedRecord = privateSourceContextRecordFromWrite(recordWrite);
+  const recordRead = services.private_source_context_record_store.read_private_source_context({
+    record_digest: record.record_digest,
+    owner_id: ownerId,
+  });
+  const admissionRecordRead = services.private_source_context_record_store
+    .read_private_source_context_for_admission({
+      supervised_action_admission_id: admission.admission_id,
+      owner_id: ownerId,
+    });
+  const taskRecords = services.private_source_context_record_store.list_task_private_source_contexts({
+    owner_id: admission.owner_id,
+    project_id: admission.project_id,
+    task_id: admission.task_id,
+  });
+  const runRecords = services.private_source_context_record_store.list_run_private_source_contexts({
+    owner_id: admission.owner_id,
+    project_id: admission.project_id,
+    task_id: admission.task_id,
+    run_id: admission.run_id,
+  });
+  const digestRecord = privateSourceContextRecordFact(recordRead);
+  const admissionRecord = privateSourceContextRecordFact(admissionRecordRead);
+  if (
+    storedRecord.record_digest !== record.record_digest
+    || digestRecord.record_digest !== record.record_digest
+    || admissionRecord.record_digest !== record.record_digest
+    || taskRecords.status !== 'ready'
+    || runRecords.status !== 'ready'
+    || !taskRecords.agent_private_source_context_records.some(
+      (entry) => entry.private_source_context_record.record_digest === record.record_digest,
+    )
+    || !runRecords.agent_private_source_context_records.some(
+      (entry) => entry.private_source_context_record.record_digest === record.record_digest,
+    )
+  ) fail('builder_agent_private_source_context_service_invalid');
+  return freezeDeep({
+    private_source_context_record: storedRecord,
+    private_source_context_record_store_write: recordWrite,
+    private_source_context_record_read: recordRead,
+    admission_private_source_context_record_read: admissionRecordRead,
+    task_private_source_context_records: taskRecords,
+    run_private_source_context_records: runRecords,
+  });
+}
+
 async function collectAgentPrivateSourceContext(services, rawRequest) {
   exactObject(rawRequest, COLLECT_KEYS);
   const ownerId = safeOwnerId(valueAt(rawRequest, 'owner_id'));
@@ -478,11 +593,22 @@ async function collectAgentPrivateSourceContext(services, rawRequest) {
     admissionId,
     binding,
   );
+  requireNoExistingPrivateSourceContextRecord(services, ownerId, admissionId);
   const sourceContextResult = await services.source_context_collector.collect_project_source_context({
     context,
     resource_ids: resourceIds,
   });
   verifySourceContextResult(sourceContextResult, binding, resourceIds);
+  const privateSourceContextRecord = createBuilderAgentPrivateSourceContextRecord({
+    supervised_action_admission: admissionEvidence.admission,
+    source_context_result: sourceContextResult,
+  });
+  const recordEvidence = verifyPrivateSourceContextRecordStore(
+    services,
+    ownerId,
+    admissionEvidence.admission,
+    privateSourceContextRecord,
+  );
   return freezeDeep({
     result_version: BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_SERVICE_RESULT_VERSION,
     service_version: BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_SERVICE_VERSION,
@@ -496,6 +622,18 @@ async function collectAgentPrivateSourceContext(services, rawRequest) {
     action_run_admissions: admissionEvidence.run_admissions,
     resource_ids: resourceIds,
     source_context_result: sourceContextResult,
+    private_source_context_record: recordEvidence.private_source_context_record,
+    private_source_context_record_store_write:
+      recordEvidence.private_source_context_record_store_write,
+    private_source_context_record_read: recordEvidence.private_source_context_record_read,
+    admission_private_source_context_record_read:
+      recordEvidence.admission_private_source_context_record_read,
+    task_private_source_context_records: recordEvidence.task_private_source_context_records,
+    run_private_source_context_records: recordEvidence.run_private_source_context_records,
+    operations: freezeDeep({
+      private_source_context_record_store:
+        recordEvidence.private_source_context_record_store_write.operation,
+    }),
     evidence: serviceEvidence(),
   });
 }
