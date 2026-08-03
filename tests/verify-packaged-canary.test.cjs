@@ -3048,6 +3048,61 @@ test('accepts active-run steering messages without changing candidate or revisio
   );
 });
 
+test('observes a local Markdown artifact draft through workspace and review gates', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  const draft = await generateProjectViaUi(page, 'Create a README.md with concise project notes.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+  ).current.product_revision_receipt;
+  const evidence = await readSanitizedBridgeEvidence(page, firstRevision.project_id);
+
+  assert.deepEqual(draft, {
+    live_output: liveOutputEvidence(),
+    pre_save_catalog_empty: true,
+    review_diff: reviewDiffEvidence(),
+    saved_via_ui: true,
+    unsaved_draft_observed: true,
+    workspace_gate: workspaceGateEvidence(),
+  });
+  assert.deepEqual(
+    assertTaskStreamCandidateFacts(evidence, firstRevision, 1),
+    {
+      answer_count: 0,
+      accepted_review_count: 1,
+      candidate_ready_count: 1,
+      candidate_reviewed_count: 1,
+      candidate_result_count: 1,
+      explanation_result_count: 0,
+      head_sequence: 5,
+      item_count: 5,
+      latest_candidate_bound_to_revision: true,
+      latest_candidate_review: 'accepted',
+      latest_saved_revision_number: 1,
+      run_progress_count: 0,
+      source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
+    },
+  );
+  assert.equal(page.questionTurns, 0);
+  assert.equal(page.candidateTurns, 1);
+  assert.equal(page.savedRevision, 1);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['New project', 'Send'],
+  );
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'fill').map((event) => event[2]),
+    ['Create a README.md with concise project notes.'],
+  );
+});
+
 test('verifies Version 1 before saving a second unsaved draft as Version 2', async (t) => {
   const page = new FakePage();
   installBridge(page);
