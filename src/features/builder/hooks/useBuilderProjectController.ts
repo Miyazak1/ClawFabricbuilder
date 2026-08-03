@@ -19,6 +19,7 @@ export type UseBuilderProjectControllerOptions = Readonly<
 
 export type UseBuilderProjectControllerResult = Readonly<{
   snapshot: BuilderProjectControllerSnapshot;
+  retainConversationProject: BuilderProjectController['retainConversationProject'];
   createLocalProject: BuilderProjectController['createLocalProject'];
   submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
@@ -46,6 +47,7 @@ const UNAVAILABLE_SNAPSHOT: BuilderProjectControllerSnapshot = Object.freeze({
   preview: null,
   error: 'unavailable',
   retryableGeneration: false,
+  conversationProjectId: null,
   workingProjectId: null,
   workingProject: null,
 });
@@ -95,6 +97,10 @@ export function useBuilderProjectController(
   );
   const createLocalProject = useCallback<BuilderProjectController['createLocalProject']>(
     (projectTitle) => controller.createLocalProject(projectTitle).catch(() => controller.getSnapshot()),
+    [controller],
+  );
+  const retainConversationProject = useCallback<BuilderProjectController['retainConversationProject']>(
+    (projectId) => controller.retainConversationProject(projectId),
     [controller],
   );
   const submit = useCallback<BuilderProjectController['submit']>(
@@ -156,6 +162,7 @@ export function useBuilderProjectController(
   return useMemo(
     () => Object.freeze({
       snapshot,
+      retainConversationProject,
       createLocalProject,
       submit,
       answer,
@@ -174,6 +181,7 @@ export function useBuilderProjectController(
     }),
     [
       snapshot,
+      retainConversationProject,
       createLocalProject,
       submit,
       answer,

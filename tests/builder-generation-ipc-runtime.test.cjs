@@ -2209,10 +2209,22 @@ test('keeps selected project identity in main and accepts only instruction over 
     },
     answer(body) {
       answered.push(body);
+      runtimeModule.context.__answerStartedRequestId = body.request_digest;
+      runtimeModule.context.__answerStartedProjectId = body.existing_project_id ?? PROJECT_ID;
+      probes.serviceOptions.onGenerationStarted(vm.runInContext(
+        `({
+          event_version: "builder-generation-started.v1",
+          request_id: __answerStartedRequestId,
+          project_id: __answerStartedProjectId
+        })`,
+        runtimeModule.context,
+      ));
       return Promise.resolve({
         version: 'builder-generation-result.v2',
         result_kind: 'explanation',
         request_id: body.request_digest,
+        project_id: body.existing_project_id ?? PROJECT_ID,
+        existing_project_id: body.existing_project_id,
       });
     },
     answer_draft(body) {
@@ -2384,6 +2396,15 @@ test('keeps selected project identity in main and accepts only instruction over 
   );
   assert.equal(answered[1].existing_project_id, null);
   assert.equal(answered[1].request_digest, hostRequestDigest('Explain the fresh project.', null));
+  await ipcMain.handlers.get(ANSWER_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Keep discussing before choosing a folder." })', runtimeModule.context),
+  );
+  assert.equal(answered[2].existing_project_id, PROJECT_ID);
+  assert.equal(
+    answered[2].request_digest,
+    hostRequestDigest('Keep discussing before choosing a folder.', PROJECT_ID),
+  );
   await assert.rejects(
     async () => ipcMain.handlers.get(GENERATE_APPROVED_PLAN_CHANNEL)(
       { sender: mainWindow.webContents },

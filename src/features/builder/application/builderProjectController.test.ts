@@ -712,6 +712,46 @@ describe('Builder project controller v2', () => {
     expect(failed.draft).toBeNull();
   });
 
+  it('keeps recorded chat project identity when the first public answer result fails', async () => {
+    let startedListener: ((event: { request_id: string; project_id: string }) => void) | null = null;
+    const { answer, controller } = setup({
+      subscribeStarted(listener) {
+        startedListener = listener as (event: { request_id: string; project_id: string }) => void;
+        return () => undefined;
+      },
+      answer: async (request) => {
+        startedListener?.({
+          request_id: request.request_digest,
+          project_id: PROJECT_ID,
+        });
+        if (request.existing_project_id === null) {
+          throw new BuilderGenerationDiagnosticError('builder_generation_structured_response_invalid');
+        }
+        return createGenerationAnswer(request);
+      },
+    });
+
+    const first = await controller.answer('What can you help me with before I choose a project folder?');
+    const second = await controller.answer('Can we keep discussing before I choose a project folder?');
+
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer.mock.calls[0][0]).toMatchObject({
+      existing_project_id: null,
+    });
+    expect(answer.mock.calls[1][0]).toMatchObject({
+      existing_project_id: PROJECT_ID,
+    });
+    expect(first.status).toBe('answer_failed');
+    expect(first.conversationProjectId).toBe(PROJECT_ID);
+    expect(first.workingProjectId).toBeNull();
+    expect(second.status).toBe('new');
+    expect(second.answer?.project_id).toBe(PROJECT_ID);
+    expect(second.conversationProjectId).toBe(PROJECT_ID);
+    expect(second.workingProjectId).toBeNull();
+    expect(second.savedProject).toBeNull();
+    expect(second.draft).toBeNull();
+  });
+
   it('binds a selected source folder to the answered logical project instead of forking it', async () => {
     const { controller, createLocalProject } = setup({
       createLocalProject: async (request) => createLocalProjectSelection({

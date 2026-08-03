@@ -26,6 +26,7 @@ const PROVIDER_SECRETS_DIRECTORY_NAME = 'builder-provider-secrets-v1';
 const SESSION_DATA_DIRECTORY_NAME = 'session-data';
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const CANARY_PLAN_PROPOSAL_TIMEOUT_MS = 120_000;
+const CANARY_QUESTION_ANSWER_TIMEOUT_MS = 120_000;
 const CANARY_CURRENT_PROJECT_WRITE_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PLAN_SOURCE_READ_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PROJECT_READY_TIMEOUT_MS = 15_000;
@@ -2334,17 +2335,43 @@ async function assertNoQuestionAnswerFailureNotice(page) {
   }
 }
 
-async function askInitialChatQuestionViaUi(page, question = CANARY_INITIAL_CHAT_QUESTION) {
+async function waitForVisibleQuestionAnswers(page, expectedVisibleAnswers) {
+  try {
+    await page.locator(SELECTORS.questionAnswer).waitFor({
+      state: 'visible',
+      timeout: CANARY_QUESTION_ANSWER_TIMEOUT_MS,
+    });
+  } catch {
+    return 'answer_timeout';
+  }
+  const deadline = Date.now() + CANARY_QUESTION_ANSWER_TIMEOUT_MS;
+  while (Date.now() <= deadline) {
+    try {
+      if (await page.locator(SELECTORS.questionAnswer).count() >= expectedVisibleAnswers) return 'answer';
+    } catch {
+      // Keep polling until the bounded wait expires.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return 'answer_timeout';
+}
+
+async function askInitialChatQuestionViaUi(
+  page,
+  question = CANARY_INITIAL_CHAT_QUESTION,
+  expectedVisibleAnswers = 1,
+) {
   try {
     await page.locator(SELECTORS.idea).fill(question);
     await clickByRole(page, 'button', 'Send');
-    const answer = page.locator(SELECTORS.questionAnswer).waitFor({ state: 'visible' })
-      .then(() => 'answer', () => 'answer_timeout');
+    const answer = waitForVisibleQuestionAnswers(page, expectedVisibleAnswers);
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
     if (outcome !== 'answer') fail('canary_question_failed');
     await assertNoQuestionAnswerFailureNotice(page);
+    const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
+    if (visibleAnswerCount < expectedVisibleAnswers) fail('canary_question_failed');
     await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
     await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
@@ -2372,6 +2399,7 @@ async function askInitialChatQuestionViaUi(page, question = CANARY_INITIAL_CHAT_
     no_draft_created: true,
     no_workspace_required: true,
     ui_answer_observed: true,
+    visible_answer_count: expectedVisibleAnswers,
   });
 }
 
@@ -2381,17 +2409,19 @@ async function askProjectQuestionViaUi(
   question = CANARY_QUESTION,
   expectedCandidateTurns = currentProject.revision_number,
   expectedQuestionTurns = 1,
+  expectedVisibleAnswers = expectedQuestionTurns,
 ) {
   try {
     await page.locator(SELECTORS.idea).fill(question);
     await clickByRole(page, 'button', 'Send');
-    const answer = page.locator(SELECTORS.questionAnswer).waitFor({ state: 'visible' })
-      .then(() => 'answer', () => 'answer_timeout');
+    const answer = waitForVisibleQuestionAnswers(page, expectedVisibleAnswers);
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
     if (outcome !== 'answer') fail('canary_question_failed');
     await assertNoQuestionAnswerFailureNotice(page);
+    const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
+    if (visibleAnswerCount < expectedVisibleAnswers) fail('canary_question_failed');
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_question_failed');
@@ -2410,6 +2440,7 @@ async function askProjectQuestionViaUi(
         expectedQuestionTurns,
       ),
       ui_answer_observed: true,
+      visible_answer_count: expectedVisibleAnswers,
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) {
@@ -2677,6 +2708,7 @@ async function inspectHistoryVersionViaUi(
   currentPreviewEvidence,
   currentTaskStream,
   gate,
+  expectedQuestionTurns = 1,
 ) {
   const historicalVersion = historicalRevision.revision_number;
   const currentVersion = currentRevision.revision_number;
@@ -2723,7 +2755,7 @@ async function inspectHistoryVersionViaUi(
       viewingEvidence,
       currentRevision,
       currentVersion,
-      1,
+      expectedQuestionTurns,
     );
     if (digestCanonical(viewingTaskStream) !== digestCanonical(currentTaskStream)) {
       fail('canary_history_current_failed');
@@ -5037,6 +5069,11 @@ async function runPackagedCanary(rawInput, options = {}) {
       gate.allow();
     }
     const initialChat = await askInitialChatQuestionViaUi(page);
+    const initialChatFollowup = await askInitialChatQuestionViaUi(
+      page,
+      'Can we keep discussing before I choose a project folder?',
+      2,
+    );
     const initialDraft = await generateProjectViaUi(page, input.idea);
     const initialSavedActivity = await captureSavedActivityEvidence(page, 1);
     const initialEvidence = await readSanitizedBridgeEvidence(page, null, 'canary_read_evidence_initial_saved_failed');
@@ -5050,11 +5087,18 @@ async function runPackagedCanary(rawInput, options = {}) {
     const initialTaskStream = assertTaskStreamCandidateFacts(initialCurrentEvidence, initialRevision, 1);
     const initialPreviewEvidence = await capturePreviewEvidence(page, gate);
     const question = await askProjectQuestionViaUi(page, initialRevision, CANARY_QUESTION, 1, 1);
+    const followupQuestion = await askProjectQuestionViaUi(
+      page,
+      initialRevision,
+      'Can we keep discussing the audience before changing files?',
+      1,
+      2,
+    );
     const pendingUpdateDraft = await createUpdateDraftViaUi(
       page,
       initialRevision,
       CANARY_UPDATE_INSTRUCTION,
-      1,
+      2,
     );
     const pendingUpdateEvidence = await readSanitizedBridgeEvidence(
       page,
@@ -5063,7 +5107,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
     if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
-    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 1);
+    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 2);
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
     if (!staticPreviewSrcdocChanged(pendingUpdatePreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
@@ -5083,7 +5127,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
     await assertCustomChromeControls(pendingRestartPage);
     await openProjectFromCatalogById(pendingRestartPage, initialRevision, 'canary_restart_open_failed');
-    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 1);
+    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 2);
     const pendingRestartProject = projectFromReadEvidence(pendingRestart.evidence, 1);
     if (!sameCatalogProjectRevision(pendingRestartProject, initialProject)) {
       fail('canary_pending_draft_restart_failed');
@@ -5114,7 +5158,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const updatedRevision = exactRevisionFromReadEvidence(updatedCurrentEvidence, updatedProject);
     assertRevisionAdvance(initialRevision, updatedRevision);
-    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 1);
+    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 2);
     const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (!staticPreviewSrcdocChanged(updatedPreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
@@ -5147,7 +5191,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       await failRestartVersion(restartedPage);
     }
     const restartProject = projectFromReadEvidence(restartEvidence, 2);
-    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 1);
+    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 2);
     const restartPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     const history = await inspectHistoryVersionViaUi(
       restartedPage,
@@ -5157,6 +5201,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartPreviewEvidence,
       restartTaskStream,
       gate,
+      2,
     );
     const network = recorder.snapshot();
     if (network.renderer_unexpected_network_count !== 0) fail('canary_evidence_failed');
@@ -5177,7 +5222,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       updatedRevision,
       CANARY_RESTART_CONTINUATION_INSTRUCTION,
       2,
-      1,
+      2,
       1,
     );
     const planProposalProject = projectFromReadEvidence(
@@ -5195,7 +5240,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartedPage,
       updatedRevision,
       3,
-      1,
+      2,
       1,
     );
     const restartContinuationEvidence = await readSanitizedBridgeEvidence(
@@ -5212,7 +5257,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartContinuationEvidence,
       updatedRevision,
       3,
-      1,
+      2,
       {
         approvedPlanReviews: 1,
         planTurns: 1,
@@ -5254,7 +5299,9 @@ async function runPackagedCanary(rawInput, options = {}) {
       }),
       question: Object.freeze({
         initial_chat: initialChat,
+        initial_chat_followup: initialChatFollowup,
         after_initial_save: question,
+        after_initial_save_followup: followupQuestion,
       }),
       preview: Object.freeze({
         initial: initialPreviewEvidence,

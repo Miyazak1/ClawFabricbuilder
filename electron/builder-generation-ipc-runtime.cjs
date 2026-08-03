@@ -974,8 +974,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let taskStreamAdapter;
   let planReviewAdapter;
   let selectedProjectId = null;
+  let selectedConversationProjectId = null;
   let selectionEpoch = 0;
   let selectionPending = false;
+  const activeRequests = new Map();
+  const activeAnswerRequests = new Set();
   let activeRequestIds = () => Object.freeze([]);
   try {
     projectMainAuthority = createBuilderProjectMainAuthority({
@@ -1038,9 +1041,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       sourceContextCollector,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
+        const started = generationStartedEvent(event);
+        if (
+          selectedProjectId === null
+          && activeAnswerRequests.has(started.request_id)
+          && selectedConversationProjectId === null
+        ) {
+          selectedConversationProjectId = started.project_id;
+        }
         const webContents = activeWebContents(options.mainWindowRef);
         if (webContents === null) return;
-        webContents.send(GENERATION_STARTED_CHANNEL, generationStartedEvent(event));
+        webContents.send(GENERATION_STARTED_CHANNEL, started);
       },
       onProviderOutputDelta(event) {
         const webContents = activeWebContents(options.mainWindowRef);
@@ -1058,8 +1069,6 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       createUuid: randomUUID,
       nowMs: () => Date.now(),
     });
-    const activeRequests = new Map();
-
     async function assertSelectedProjectWriteAllowed(projectId) {
       if (selectionPending || selectedProjectId !== projectId) failGenerationProjectWorkspaceRequired();
       const decision = await permissionEvaluator.evaluate({
@@ -1330,7 +1339,48 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
 
     function trackedAnswer(rawRequest) {
-      return trackedGenerationOperation(rawRequest, service.answer);
+      if (selectionPending) fail();
+      const request = createBuilderGenerationRequest({
+        instruction: publicInstruction(rawRequest),
+        existing_project_id: selectedProjectId ?? selectedConversationProjectId,
+      });
+      const requestId = request.request_digest;
+      activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
+      activeAnswerRequests.add(requestId);
+      let operation;
+      try {
+        operation = Promise.resolve(Reflect.apply(service.answer, service, [request]));
+      } catch (error) {
+        const remaining = (activeRequests.get(requestId) ?? 1) - 1;
+        if (remaining === 0) activeRequests.delete(requestId);
+        else activeRequests.set(requestId, remaining);
+        activeAnswerRequests.delete(requestId);
+        throw error;
+      }
+      return operation.then((result) => {
+        if (
+          selectedProjectId === null
+          && result !== null
+          && typeof result === 'object'
+          && Object.getPrototypeOf(result) === Object.prototype
+        ) {
+          const projectId = Object.getOwnPropertyDescriptor(result, 'project_id');
+          if (
+            projectId
+            && Object.hasOwn(projectId, 'value')
+            && typeof projectId.value === 'string'
+            && PROJECT_ID_PATTERN.test(projectId.value)
+          ) {
+            selectedConversationProjectId = projectId.value;
+          }
+        }
+        return result;
+      }).finally(() => {
+        const remaining = (activeRequests.get(requestId) ?? 1) - 1;
+        if (remaining === 0) activeRequests.delete(requestId);
+        else activeRequests.set(requestId, remaining);
+        activeAnswerRequests.delete(requestId);
+      });
     }
 
     async function trackedAnswerDraft(rawRequest) {
@@ -1378,6 +1428,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const operationEpoch = ++selectionEpoch;
       selectionPending = projectId !== null;
       selectedProjectId = null;
+      selectedConversationProjectId = null;
       if (projectId === null) {
         return Object.freeze({
           result_version: 'builder-project-selection-result.v1',
@@ -1447,6 +1498,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const operationEpoch = ++selectionEpoch;
       selectionPending = true;
       selectedProjectId = null;
+      selectedConversationProjectId = request.project_id;
       let projectRootPath;
       try {
         const windowRef = Reflect.apply(options.mainWindowRef, undefined, []);
@@ -1466,6 +1518,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       if (projectRootPath === null) {
         if (operationEpoch === selectionEpoch) selectionPending = false;
+        selectedConversationProjectId = request.project_id;
         return Object.freeze({
           result_version: 'builder-project-selection-result.v1',
           operation: 'new_selected',
@@ -1504,6 +1557,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       workspaceBoundProjectId(result, projectId);
       if (operationEpoch === selectionEpoch) {
         selectedProjectId = projectId;
+        selectedConversationProjectId = null;
         selectionPending = false;
       }
       return Object.freeze({

@@ -79,6 +79,7 @@ export type BuilderProjectControllerSnapshot = Readonly<{
   preview: BuilderSourceTreePreviewProjection | null;
   error: BuilderProjectControllerError;
   retryableGeneration: boolean;
+  conversationProjectId: string | null;
   workingProjectId: string | null;
   workingProject: BuilderWorkingProject | null;
 }>;
@@ -97,6 +98,7 @@ type RetryableGeneration =
 export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
+  retainConversationProject(projectId: string): BuilderProjectControllerSnapshot;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
   createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot>;
   submit(instruction: string): Promise<BuilderProjectControllerSnapshot>;
@@ -173,6 +175,7 @@ function snapshot(
   retryableGeneration = false,
   workingProjectId: string | null = null,
   workingProject: BuilderWorkingProject | null = null,
+  conversationProjectId: string | null = null,
 ): BuilderProjectControllerSnapshot {
   const selectedWorkingProject = workingProjectId !== null
     && workingProject !== null
@@ -195,6 +198,7 @@ function snapshot(
     preview,
     error,
     retryableGeneration,
+    conversationProjectId,
     workingProjectId,
     workingProject: selectedWorkingProject,
   });
@@ -531,6 +535,7 @@ export function createBuilderProjectController(
       current.retryableGeneration,
       event.project_id,
       current.workingProject,
+      event.project_id,
     ));
   });
 
@@ -566,6 +571,7 @@ export function createBuilderProjectController(
         false,
         unsavedWorkingProjectId(savedProject, draft, current.workingProjectId),
         unsavedWorkingProject(savedProject, draft, current.workingProjectId, current.workingProject),
+        current.conversationProjectId,
       ));
     } catch {
       if (disposed || operationEpoch !== epoch) return current;
@@ -580,6 +586,7 @@ export function createBuilderProjectController(
         false,
         unsavedWorkingProjectId(savedProject, draft, current.workingProjectId),
         unsavedWorkingProject(savedProject, draft, current.workingProjectId, current.workingProject),
+        current.conversationProjectId,
       ));
     }
   }
@@ -675,7 +682,29 @@ export function createBuilderProjectController(
       false,
       value.workingProjectId,
       value.workingProject,
+      value.conversationProjectId,
     );
+  }
+
+  function retainConversationProject(projectId: string): BuilderProjectControllerSnapshot {
+    if (disposed || !PROJECT_ID_PATTERN.test(projectId)) return current;
+    if (current.savedProject !== null && current.savedProject.target.project_id !== projectId) return current;
+    if (current.draft !== null && current.draft.project_id !== projectId) return current;
+    if (current.workingProjectId !== null && current.workingProjectId !== projectId) return current;
+    if (current.answer?.project_id === projectId || current.conversationProjectId === projectId) return current;
+    return publish(snapshot(
+      current.status,
+      current.savedProject,
+      current.draft,
+      current.preview,
+      current.error,
+      current.answer,
+      current.inspectedRevision,
+      current.retryableGeneration,
+      current.workingProjectId,
+      current.workingProject,
+      projectId,
+    ));
   }
 
   async function bindProjectForBuild(
@@ -752,7 +781,7 @@ export function createBuilderProjectController(
     inFlight = null;
     activeGeneration = null;
     retryableGeneration = null;
-    const logicalProjectId = current.answer?.project_id ?? null;
+    const logicalProjectId = current.answer?.project_id ?? current.conversationProjectId ?? null;
     return run(async (operationEpoch) => {
       publish(snapshot('opening', null, null, null, null));
       try {
@@ -802,6 +831,7 @@ export function createBuilderProjectController(
       ?? retained?.target.project_id
       ?? current.workingProjectId
       ?? current.answer?.project_id
+      ?? current.conversationProjectId
       ?? null;
     const workspaceProjectId = retainedDraft?.project_id ?? retained?.target.project_id ?? current.workingProjectId;
     const retainedAnswer = current.answer;
@@ -819,6 +849,7 @@ export function createBuilderProjectController(
         false,
         unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
         unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
+        current.conversationProjectId,
       ));
       let requestId: string | null = null;
       try {
@@ -856,10 +887,14 @@ export function createBuilderProjectController(
           false,
           unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
           unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
+          answered.project_id,
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
+        const failedConversationProjectId = current.conversationProjectId
+          ?? retainedAnswer?.project_id
+          ?? targetProjectId;
         return publish(snapshot(
           'answer_failed',
           retained,
@@ -871,6 +906,7 @@ export function createBuilderProjectController(
           false,
           unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
           unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
+          failedConversationProjectId,
         ));
       }
     });
@@ -1712,6 +1748,7 @@ export function createBuilderProjectController(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    retainConversationProject,
     open,
     createLocalProject,
     submit,

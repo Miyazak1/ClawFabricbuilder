@@ -379,6 +379,9 @@ class FakeLocator {
     if (this.selector === SELECTORS.previewRuntimeBlocked) {
       return this.page.previewRuntimeBlocked ? 1 : 0;
     }
+    if (this.selector === SELECTORS.questionAnswer) {
+      return this.page.questionTurns;
+    }
     return 1;
   }
 
@@ -973,15 +976,19 @@ function taskStreamConversation(
   ];
   const questionUserMessageIds = [
     'builder-message:15151515-1515-4515-8515-151515151515',
+    'builder-message:33333333-3333-4333-8333-333333333333',
   ];
   const questionAssistantMessageIds = [
     'builder-message:16161616-1616-4616-8616-161616161616',
+    'builder-message:34343434-3434-4434-8434-343434343434',
   ];
   const questionTurnIds = [
     'builder-turn:17171717-1717-4717-8717-171717171717',
+    'builder-turn:35353535-3535-4535-8535-353535353535',
   ];
   const questionRunIds = [
     'builder-run:18181818-1818-4818-8818-181818181818',
+    'builder-run:36363636-3636-4636-8636-363636363636',
   ];
   const planUserMessageIds = [
     'builder-message:24242424-2424-4242-8424-242424242424',
@@ -2593,6 +2600,7 @@ test('answers a saved-project question without creating a draft or revision', as
       tool_result_count: 0,
     },
     ui_answer_observed: true,
+    visible_answer_count: 1,
   });
   assert.deepEqual(
     assertTaskStreamExplanationFacts(evidence, firstRevision, 1, 1),
@@ -2621,6 +2629,7 @@ test('answers an initial no-folder chat question without opening workspace or dr
     no_draft_created: true,
     no_workspace_required: true,
     ui_answer_observed: true,
+    visible_answer_count: 1,
   });
   assert.equal(page.questionTurns, 1);
   assert.equal(page.candidateTurns, 0);
@@ -2640,6 +2649,33 @@ test('answers an initial no-folder chat question without opening workspace or dr
     event[0] === 'isVisible'
     && event[1] === SELECTORS.questionAnswerFailedNotice
   )), true);
+});
+
+test('keeps consecutive initial no-folder chat answers visible', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await askInitialChatQuestionViaUi(page);
+  const followup = await askInitialChatQuestionViaUi(
+    page,
+    'Can we keep discussing before I choose a project folder?',
+    2,
+  );
+
+  assert.deepEqual(followup, {
+    answer_failure_notice_absent: true,
+    catalog_remained_empty: true,
+    no_draft_created: true,
+    no_workspace_required: true,
+    ui_answer_observed: true,
+    visible_answer_count: 2,
+  });
+  assert.equal(page.questionTurns, 2);
+  assert.equal(page.candidateTurns, 0);
+  assert.equal(page.savedRevision, 0);
+  assert.equal(page.workspacePickerVisible, false);
+  assert.equal(page.unsavedDraftVisible, false);
 });
 
 test('rejects an initial no-folder chat question when answer_failed remains visible', async (t) => {
@@ -2685,6 +2721,39 @@ test('rejects a saved-project question when answer_failed remains visible after 
     event[0] === 'isVisible'
     && event[1] === SELECTORS.questionAnswerFailedNotice
   )), true);
+});
+
+test('keeps consecutive saved-project chat answers visible without creating a draft', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+    1,
+    0,
+  ).current.product_revision_receipt;
+
+  const first = await askProjectQuestionViaUi(page, firstRevision, CANARY_QUESTION, 1, 1);
+  const second = await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    'Can we keep discussing the audience before changing files?',
+    1,
+    2,
+  );
+
+  assert.equal(first.visible_answer_count, 1);
+  assert.equal(second.visible_answer_count, 2);
+  assert.equal(second.task_stream.answer_count, 2);
+  assert.equal(second.task_stream.explanation_result_count, 2);
+  assert.equal(page.questionTurns, 2);
+  assert.equal(page.candidateTurns, 1);
+  assert.equal(page.savedRevision, 1);
+  assert.equal(page.unsavedDraftVisible, false);
 });
 
 test('rejects explanations that are not bound to a taskless question turn', () => {
@@ -3242,7 +3311,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
           true,
           1,
         ).current.product_revision_receipt;
-        await askProjectQuestionViaUi(page, first, CANARY_QUESTION, 1, 2);
+        await askProjectQuestionViaUi(page, first, CANARY_QUESTION, 1, 2, 1);
       },
       stage: 'question_evidence',
     },
@@ -4061,14 +4130,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       plan_review_actions_visible: true,
       saved_revision_unchanged: true,
       task_stream: {
-        answer_count: 1,
+        answer_count: 2,
         accepted_review_count: 2,
         candidate_ready_count: 2,
         candidate_reviewed_count: 2,
         candidate_result_count: 2,
-        explanation_result_count: 1,
-        head_sequence: 20,
-        item_count: 20,
+        explanation_result_count: 2,
+        head_sequence: 24,
+        item_count: 24,
         latest_plan_review: 'pending',
         plan_ready_count: 1,
         plan_result_count: 1,
@@ -4089,6 +4158,15 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       no_draft_created: true,
       no_workspace_required: true,
       ui_answer_observed: true,
+      visible_answer_count: 1,
+    },
+    initial_chat_followup: {
+      answer_failure_notice_absent: true,
+      catalog_remained_empty: true,
+      no_draft_created: true,
+      no_workspace_required: true,
+      ui_answer_observed: true,
+      visible_answer_count: 2,
     },
     after_initial_save: {
       answer_failure_notice_absent: true,
@@ -4110,6 +4188,29 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
         tool_result_count: 0,
       },
       ui_answer_observed: true,
+      visible_answer_count: 1,
+    },
+    after_initial_save_followup: {
+      answer_failure_notice_absent: true,
+      saved_revision_unchanged: true,
+      task_stream: {
+        answer_count: 2,
+        accepted_review_count: 1,
+        candidate_ready_count: 1,
+        candidate_reviewed_count: 1,
+        candidate_result_count: 1,
+        explanation_result_count: 2,
+        head_sequence: 13,
+        item_count: 13,
+        latest_candidate_review: 'accepted',
+        revision_unchanged: true,
+        run_progress_count: 0,
+        source_availability: 'not_loaded',
+        tool_request_count: 0,
+        tool_result_count: 0,
+      },
+      ui_answer_observed: true,
+      visible_answer_count: 2,
     },
   });
   assert.deepEqual(result.task_stream, {
@@ -4147,14 +4248,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     pending_update: {
-      answer_count: 1,
+      answer_count: 2,
       accepted_review_count: 1,
       candidate_ready_count: 2,
       candidate_reviewed_count: 1,
       candidate_result_count: 2,
-      explanation_result_count: 1,
-      head_sequence: 13,
-      item_count: 13,
+      explanation_result_count: 2,
+      head_sequence: 17,
+      item_count: 17,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       run_progress_count: 0,
@@ -4164,14 +4265,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     pending_update_restart: {
-      answer_count: 1,
+      answer_count: 2,
       accepted_review_count: 1,
       candidate_ready_count: 2,
       candidate_reviewed_count: 1,
       candidate_result_count: 2,
-      explanation_result_count: 1,
-      head_sequence: 13,
-      item_count: 13,
+      explanation_result_count: 2,
+      head_sequence: 17,
+      item_count: 17,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       run_progress_count: 0,
@@ -4181,14 +4282,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     updated: {
-      answer_count: 1,
+      answer_count: 2,
       accepted_review_count: 2,
       candidate_ready_count: 2,
       candidate_reviewed_count: 2,
       candidate_result_count: 2,
-      explanation_result_count: 1,
-      head_sequence: 14,
-      item_count: 14,
+      explanation_result_count: 2,
+      head_sequence: 18,
+      item_count: 18,
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
@@ -4198,14 +4299,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     restart: {
-      answer_count: 1,
+      answer_count: 2,
       accepted_review_count: 2,
       candidate_ready_count: 2,
       candidate_reviewed_count: 2,
       candidate_result_count: 2,
-      explanation_result_count: 1,
-      head_sequence: 14,
-      item_count: 14,
+      explanation_result_count: 2,
+      head_sequence: 18,
+      item_count: 18,
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
@@ -4215,14 +4316,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     restart_continuation: {
-      answer_count: 1,
+      answer_count: 2,
       accepted_review_count: 2,
       candidate_ready_count: 3,
       candidate_reviewed_count: 2,
       candidate_result_count: 3,
-      explanation_result_count: 1,
-      head_sequence: 25,
-      item_count: 25,
+      explanation_result_count: 2,
+      head_sequence: 29,
+      item_count: 29,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       latest_plan_review: 'approved',
@@ -4410,12 +4511,14 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.plan.restart_continuation.task_stream.plan_ready_count, 1);
   assert.equal(result.question.initial_chat.no_draft_created, true);
   assert.equal(result.question.initial_chat.no_workspace_required, true);
+  assert.equal(result.question.initial_chat_followup.visible_answer_count, 2);
   assert.equal(result.question.after_initial_save.saved_revision_unchanged, true);
   assert.equal(result.question.after_initial_save.ui_answer_observed, true);
+  assert.equal(result.question.after_initial_save_followup.visible_answer_count, 2);
   assert.equal(result.task_stream.question_did_not_advance_candidate_count, true);
   assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
-  assert.equal(result.task_stream.updated.answer_count, 1);
+  assert.equal(result.task_stream.updated.answer_count, 2);
   assert.equal(result.task_stream.restart_continuation.candidate_ready_count, 3);
   assert.equal(result.task_stream.restart_continuation.accepted_review_count, 2);
   assert.equal(result.task_stream.restart_continuation_advanced_candidate_count, true);
@@ -4436,7 +4539,9 @@ test('copies only saved provider profile files and runs without provider input o
     .map((event) => event[2]);
   assert.deepEqual(roleClicks, [
     'Send',
+    'Send',
     'New project',
+    'Send',
     'Send',
     'Send',
     'Send',

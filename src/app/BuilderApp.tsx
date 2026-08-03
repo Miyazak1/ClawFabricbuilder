@@ -395,6 +395,7 @@ function visibleConversationProjectId(
   return snapshot.draft?.project_id
     ?? snapshot.savedProject?.target.project_id
     ?? snapshot.answer?.project_id
+    ?? snapshot.conversationProjectId
     ?? snapshot.workingProjectId
     ?? null;
 }
@@ -1064,6 +1065,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     currentProjectWriteApprovalStatusRef.current = currentProjectWriteApprovalStatus;
   }, [currentProjectWriteApprovalStatus]);
 
+  const { retainConversationProject } = project;
+
   const publishPlanReviewInFlight = useCallback((value: BuilderPlanReviewInFlight | null) => {
     planReviewInFlightRef.current = value;
     setPlanReviewInFlight(value);
@@ -1075,6 +1078,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       const visibleProjectId = visibleConversationProjectId(currentSnapshot);
       if (!currentSnapshot.busy) return;
       if (visibleProjectId !== null && visibleProjectId !== event.project_id) return;
+      retainConversationProject(event.project_id);
       const nextLiveOutput = Object.freeze({
         state: 'streaming',
         request_id: event.request_id,
@@ -1088,7 +1092,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       liveOutputRef.current = nextLiveOutput;
       setLiveOutput(nextLiveOutput);
     }) ?? (() => undefined)
-  ), [ports.generator]);
+  ), [ports.generator, retainConversationProject]);
 
   useEffect(() => (
     ports.generator.subscribeOutput?.((event) => {

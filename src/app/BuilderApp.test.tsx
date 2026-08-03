@@ -205,6 +205,7 @@ async function setup(options: Readonly<{
   deferredGenerate?: boolean;
   failFirstAnswer?: boolean;
   failAnswerAfterFirst?: boolean;
+  consecutiveAnswerActivity?: boolean;
   recordedFirstAnswerAfterFailedPublicResult?: boolean;
   recordedAnswerAfterFailedPublicResult?: boolean;
   failGenerate?: boolean;
@@ -251,6 +252,7 @@ async function setup(options: Readonly<{
   let saved = options.initiallySaved === true;
   let selectedProjectId: string | null = null;
   let latestAnswerInstruction: string | null = null;
+  const answerInstructions: string[] = [];
   let latestDraft = await createGenerationDraft();
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveAnswer: (() => Promise<void>) | null = null;
@@ -327,6 +329,7 @@ async function setup(options: Readonly<{
     answerAttempts += 1;
     const instruction = (request as { instruction: string }).instruction;
     latestAnswerInstruction = instruction;
+    answerInstructions.push(instruction);
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
     const shouldFailAnswer = (options.failFirstAnswer === true && answerAttempts === 1)
       || (options.failAnswerAfterFirst === true && answerAttempts > 1);
@@ -694,6 +697,20 @@ async function setup(options: Readonly<{
                   .test(latestAnswerInstruction))
             )
               ? createContextualBuildTaskStreamWire()
+            : options.consecutiveAnswerActivity === true
+              && answerAttempts > 1
+              && answerInstructions.length > 1
+              ? createTwoAnswerTaskStreamWire({
+                firstQuestionText: answerInstructions[0],
+                secondAnswerText: 'This is the second read-only answer.',
+                secondQuestionText: answerInstructions.at(-1) ?? 'What did I just ask?',
+              })
+            : options.consecutiveAnswerActivity === true
+              && answerAttempts > 0
+              && latestAnswerInstruction !== null
+              ? createAnswerTaskStreamWire({
+                questionText: latestAnswerInstruction,
+              })
             : options.recordedAnswerAfterFailedPublicResult === true
               && options.failAnswerAfterFirst === true
               && answerAttempts > 1
@@ -1308,6 +1325,82 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('Activity is unavailable');
 
     await resolveAnswer();
+  });
+
+  it('keeps both consecutive read-only chat turns visible without a source folder', async () => {
+    const { answer, container, generate, readTaskStream, saveDraft, submit } = await setup({
+      consecutiveAnswerActivity: true,
+    });
+
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(container.textContent).toContain('hi');
+      expect(container.textContent).toContain('This answer does not change files.');
+    });
+
+    setComposerInstruction(container, '你对当下的 LLM 有什么看法？');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('hi');
+      expect(container.textContent).toContain('This answer does not change files.');
+      expect(container.textContent).toContain('你对当下的 LLM 有什么看法？');
+      expect(container.textContent).toContain('This is the second read-only answer.');
+    });
+
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+  });
+
+  it('keeps both consecutive saved-project chat turns visible without creating a draft', async () => {
+    const { answer, container, generate, readTaskStream, saveDraft, submit } = await setup({
+      consecutiveAnswerActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    readTaskStream.mockClear();
+
+    setComposerInstruction(container, 'What should I consider before changing this project?');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({
+        instruction: 'What should I consider before changing this project?',
+      });
+      expect(container.textContent).toContain('What should I consider before changing this project?');
+      expect(container.textContent).toContain('This answer does not change files.');
+    });
+
+    setComposerInstruction(container, 'Can we discuss the audience more?');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('What should I consider before changing this project?');
+      expect(container.textContent).toContain('This answer does not change files.');
+      expect(container.textContent).toContain('Can we discuss the audience more?');
+      expect(container.textContent).toContain('This is the second read-only answer.');
+    });
+
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
   it('keeps prior read-only chat visible when the next answer fails without a source folder', async () => {
