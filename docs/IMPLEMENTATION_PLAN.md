@@ -1241,6 +1241,21 @@ Current checkpoint:
   Git or Project Revision facts, stores no raw context, and creates no Review
   or Artifact authority. Actual supervised Agent execution after this receipt
   remains a later checkpoint.
+- the current Agent Supervised Action Admission checkpoint adds a pure main-side
+  digest-bound admission receipt over one store-backed Task Context Snapshot
+  receipt. It accepts only a running, non-interrupted, non-cancelled Run state;
+  requires the requested next action to match the snapshot's Budget Audit
+  admission; binds snapshot id, context digest, Assignment/Status/Lease/Budget
+  Audit/Agent/Project/Conversation/Task/Run identity, bounded context counts,
+  token budget, fixed lifecycle, and fixed authority; and routes the action only
+  to the next required gate (`start_step` -> later Agent step runner,
+  `call_tool` -> later tool-call record, `read_private_source` -> later source
+  context collector, `finish_for_review` -> later Project Work Result service).
+  It opens no IPC/preload path, shows no Agents UI, dispatches no provider/model
+  or tool, creates no tool call, reads no source, records no result, grants no
+  permission, stores no raw context, mutates no Git or Project Revision facts,
+  and creates no Review or Artifact authority. Actual supervised Agent
+  execution after this admission remains a later checkpoint.
 
 ### Track B - People and Spaces
 
