@@ -3364,6 +3364,62 @@ real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Step Start Service Package Check
+
+This addendum records the package checkpoint after connecting the `start_step`
+supervised action admission to a main-only Agent Step Start service. The
+service creates only a deterministic step-start receipt after verifying a
+store-backed `start_step` supervised action admission and the referenced
+allowed Budget Audit. The checkpoint does not enable visible Agents UI,
+autonomous Agent step execution, provider/model dispatch, arbitrary tool
+dispatch, command execution, source reads or writes, generic Review row
+creation, Artifact creation, materialization, check runs, Project Revision
+creation, Git mutation, permission grants, IPC/preload commands, installer
+evidence, or a real saved-profile DeepSeek canary pass.
+
+- The service accepts only owner id, supervised action admission id, Run step
+  id, step index, and started time. It reads the admission from the main-owned
+  admission store, verifies Task and Run admission listings, requires
+  `requested_next_action=start_step` and
+  `next_gate=agent_step_runner_required_later`, reads the referenced Budget
+  Audit from the main-owned budget audit store, verifies lease audit listings,
+  and requires the step index to equal the budget audit's prior
+  `step_count + 1`.
+- The service evidence records `main_owned_agent_step_start_service`,
+  `main_agent_step_start_receipt_contract_v1`,
+  `main_owned_agent_supervised_action_admission_store`,
+  `main_agent_supervised_action_admission_contract_v1`,
+  `main_owned_agent_budget_audit_store`, and
+  `main_agent_budget_audit_contract_v1` authority while preserving fixed
+  no-authority fields for renderer, IPC, provider/model dispatch, tool
+  dispatch, step execution, permission grants, credential storage, source
+  access/read/write, process run, network access, Revision, Review, Artifact,
+  and raw context storage.
+- Focused validation passed through
+  `node --test tests\builder-agent-step-start-service.test.cjs`; the command
+  reported 4 passing Node tests.
+- Adjacent Agent step/admission/budget validation passed through Budget Audit
+  contract/store/service, Agent Task Context Snapshot contract/store/service,
+  Supervised Action Admission contract/store/service, and Agent Step Start
+  service tests; the command reported 48 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 902 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 800 ASAR
+  entries. The refreshed executable timestamp was 2026-08-04 06:06:46 local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

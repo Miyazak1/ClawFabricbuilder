@@ -431,22 +431,28 @@ the next required gate (`start_step`, `call_tool`, `read_private_source`, or
 snapshot, Task, or Run identity. The service records an admission only from a
 store-backed Task Context Snapshot and verifies admission-store replay before
 returning a ready result. This chain stores refs, counts, budget facts, fixed
-lifecycle/authority codes, and digests; it carries no raw
-transcript, prompt, source content, provider/model envelope, tool output,
-permission grant, Review row, Artifact payload, Git fact, Project Revision,
-IPC/preload command, or visible Agents UI authority. The current Agent Tool Call
-Record service connects a persisted `call_tool` supervised action admission to
-the existing main-only Tool Call Record contract: it reads the admission by
-owner, verifies Task/Run admission listings, accepts only
+lifecycle/authority codes, and digests; it carries no raw transcript, prompt,
+source content, provider/model envelope, tool output, permission grant, Review
+row, Artifact payload, Git fact, Project Revision, IPC/preload command, or
+visible Agents UI authority. The current Agent Step Start service connects a
+persisted `start_step` supervised action admission to a deterministic main-only
+step-start receipt: it reads the admission and the referenced Budget Audit from
+their stores, verifies Task/Run and lease audit listings, accepts only
+`next_gate=agent_step_runner_required_later`, requires the requested step index
+to be exactly the budget's prior step count plus one, and still starts no
+provider/model/tool execution. The current Agent Tool Call Record service
+connects a persisted `call_tool` supervised action admission to the existing
+main-only Tool Call Record contract: it reads the admission by owner, verifies
+Task/Run admission listings, accepts only
 `next_gate=tool_call_record_required_later`, and creates a deterministic
 pre-dispatch tool-call record from a main-issued Tool Session Policy plus an
 allowed Tool Permission Admission. It still does not dispatch or execute the
 tool, read source, store raw output, grant permission, mutate Git, create a
 Project Revision, expose IPC/preload, or show visible Agents UI. Actual Agent
-execution, tool dispatch/execution, and further step-runner orchestration
-remain separate later gates. The current Agent Private Source Context service
-connects a persisted `read_private_source` supervised action admission to the
-existing main-only Source Context Collector: it reads the admission by owner,
+execution, model/tool dispatch, and further step-runner orchestration remain
+separate later gates. The current Agent Private Source Context service connects
+a persisted `read_private_source` supervised action admission to the existing
+main-only Source Context Collector: it reads the admission by owner,
 verifies Task/Run admission listings, accepts only
 `next_gate=source_context_collector_required_later`, verifies the supplied
 trusted Conversation work Run context against the admitted Project,
