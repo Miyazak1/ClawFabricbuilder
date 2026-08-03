@@ -908,6 +908,16 @@ Current checkpoint:
   no process or tests; mutates no Git or Project Revision facts; and creates no
   Review/Artifact authority. Real Review/Artifact materialization remains a
   separate gate.
+- the current Agent Delegation result review contract adds a pure main-side
+  owner decision receipt over an admitted child result. It can approve a
+  proposed child result for a later parent materialization gate, reject it, or
+  acknowledge a blocked/failed child result without materialization. It binds the
+  Delegation, returned result, local admission receipt, parent/child
+  Conversation/Task/Run identity, owner, project, fixed result summary, and
+  owner decision. It creates no generic Review row, Artifact, child assignment,
+  provider/tool dispatch, permission grant, source materialization, Git
+  mutation, Project Revision, or parent Task mutation authority. Persisting that
+  review receipt remains the next independent store gate.
 
 ### Track B - People and Spaces
 

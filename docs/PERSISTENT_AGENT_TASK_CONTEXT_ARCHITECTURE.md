@@ -429,6 +429,8 @@ Exit criteria:
 
 - child task receives a scoped objective and context subset;
 - child result returns as a proposal or evidence;
+- owner review over an admitted child result is recorded before any parent
+  materialization;
 - parent does not inherit unreviewed child output as truth.
 
 ### Slice G - Tool-Using Persistent Agents

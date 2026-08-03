@@ -38,13 +38,16 @@ Delegation result store for restart-safe parent/child result lookup. It also has
 a pure main-side local Contribution-like admission contract that can admit a
 recorded child result to the parent review boundary without creating a Review,
 Artifact, or parent materialization, plus a main-only Delegation result
-admission store for restart-safe parent/child admission lookup. The Agent stores
-and Delegation contracts are not visible activation: they create no
-provider/tool dispatch, permission grant, child assignment execution, Review,
-Revision, or Artifact authority. The lease and Delegation stores are local
-evidence only, not Agent execution or Run dispatch. The remaining authorities
-are roadmap contracts and must be introduced through independent implementation
-gates.
+admission store for restart-safe parent/child admission lookup. It also has a
+pure main-side Delegation result review decision contract that records owner
+approval, rejection, or acknowledgement of an admitted child result without
+creating a generic Review row, Artifact, parent mutation, or materialized source
+change. The Agent stores and Delegation contracts are not visible activation:
+they create no provider/tool dispatch, permission grant, child assignment
+execution, Revision, Artifact, or parent materialization authority. The lease
+and Delegation stores are local evidence only, not Agent execution or Run
+dispatch. The remaining authorities are roadmap contracts and must be introduced
+through independent implementation gates.
 
 ## Actor Model
 
@@ -91,7 +94,10 @@ child authority = parent allowed scope
 
 A delegation must bind identities, task, expected result, budget, cancellation,
 and permission subset. Results return to the parent or user as evidence-backed
-work requiring the same admission and review rules as human contributions.
+work requiring the same admission and review rules as human contributions. A
+local owner review decision can make a delegated result eligible for a later
+materialization gate, but it still does not mutate the parent task or project by
+itself.
 
 ## Collaboration Boundary
 
