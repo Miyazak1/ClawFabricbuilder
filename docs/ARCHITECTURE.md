@@ -402,9 +402,16 @@ it records that the reviewed child result is eligible for a later parent
 materialization gate while still creating no store/service row, generic Review
 row, Artifact, child Assignment, child Run, parent mutation, source
 materialization, Project Revision, provider/tool dispatch, permission grant,
-IPC/preload command, or visible Agents UI. These Agent authorities expose no
-Agents UI, IPC/preload command, permission grant, provider/tool dispatch, source
-read, Git mutation, Review, Revision, or Artifact authority.
+IPC/preload command, or visible Agents UI. The current Agent Delegation result
+parent materialization eligibility store persists those receipts in main-owned
+SQLite with owner-scoped reads, parent/child Task eligibility listing,
+read-by-review lookup, one eligibility per reviewed child result, and
+restart/idempotency/schema-fingerprint checks, but still creates no service row,
+generic Review row, Artifact, parent mutation, source materialization, Git fact,
+Project Revision, provider/tool dispatch, permission grant, or parent
+materialization. These Agent authorities expose no Agents UI, IPC/preload
+command, permission grant, provider/tool dispatch, source read, Git mutation,
+Review, Revision, or Artifact authority.
 
 ## Project Storage Model
 

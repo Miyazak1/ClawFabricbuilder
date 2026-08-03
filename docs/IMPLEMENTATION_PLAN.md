@@ -1133,6 +1133,18 @@ Current checkpoint:
   materialization, source materialization, check run, Project Revision, Git
   mutation, provider/model dispatch, tool call, permission grant, IPC/preload
   command, or visible Agents UI.
+- the current Agent Delegation result parent materialization eligibility store
+  persists those eligibility receipts in a strict main-only SQLite store with
+  restart restore, idempotent replay, owner-scoped reads, parent-task and
+  child-task eligibility listing, read-by-review lookup, one eligibility per
+  reviewed child result, schema fingerprint verification, and fixed redacted
+  failures. It stores only indexed identity plus canonical
+  Delegation/result/admission/review/eligibility receipts; opens no IPC/preload
+  path; shows no Agents UI; grants no permission; dispatches no provider/model
+  or tool; reads no credentials or source; writes no files; runs no process or
+  tests; mutates no Git or Project Revision facts; and creates no generic
+  Review row, Artifact, child Assignment, child Run, or parent materialization
+  authority. Real parent materialization remains a separate gate.
 
 ### Track B - People and Spaces
 
