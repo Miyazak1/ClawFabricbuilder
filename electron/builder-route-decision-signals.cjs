@@ -4,6 +4,7 @@ const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
   'capability_question',
   'chat_default',
   'clear_build',
+  'composer_mode_plan',
   'contextual_build',
   'contextual_build_phrase',
   'current_artifact_defect',

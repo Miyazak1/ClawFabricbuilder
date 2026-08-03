@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
@@ -13,6 +15,7 @@ test('defines the fixed public route-decision signal vocabulary', () => {
     'capability_question',
     'chat_default',
     'clear_build',
+    'composer_mode_plan',
     'contextual_build',
     'contextual_build_phrase',
     'current_artifact_defect',
@@ -34,4 +37,30 @@ test('defines the fixed public route-decision signal vocabulary', () => {
   assert.equal(isPublicBuilderRouteDecisionSignal('test_work_turn'), false);
   assert.equal(isPublicBuilderRouteDecisionSignal(''), false);
   assert.equal(isPublicBuilderRouteDecisionSignal(null), false);
+});
+
+test('keeps classifier route-decision signals inside the public vocabulary', () => {
+  const root = path.join(__dirname, '..');
+  const sources = [
+    'electron/builder-generation-main-service.cjs',
+    'src/features/builder/application/builderComposerIntent.ts',
+  ];
+  const patterns = [
+    /matchedSignals:\s*\[\s*'([^']+)'\s*\]/gu,
+    /(?:answerRouteDecisionHint|buildRouteDecisionHint)\(\[\s*'([^']+)'\s*\]\)/gu,
+  ];
+  const signals = [];
+  for (const source of sources) {
+    const body = fs.readFileSync(path.join(root, source), 'utf8');
+    for (const pattern of patterns) {
+      for (const match of body.matchAll(pattern)) {
+        signals.push({ source, signal: match[1] });
+      }
+    }
+  }
+  assert.notEqual(signals.length, 0);
+  assert.deepEqual(
+    signals.filter(({ signal }) => !isPublicBuilderRouteDecisionSignal(signal)),
+    [],
+  );
 });
