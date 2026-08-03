@@ -1202,6 +1202,20 @@ Current checkpoint:
   source tree, display summary text, provider/model facts, permission grant,
   generic Review row, Artifact, source materialization, check run, Git fact,
   Project Revision, IPC/preload path, or visible Agents UI.
+- the current Agent Task Context Snapshot contract checkpoint adds a pure
+  main-side digest-bound snapshot receipt for one owner-supervised Agent action
+  context. It verifies Agent Definition/Version, active Assignment status,
+  active supervision lease, allowed Budget Audit, bounded task-local memory/
+  message/artifact/run-event/permission references, optional base revision
+  receipt digest, token budget, and the optional parent task context projection
+  from reviewed child results. It records only references, fixed action
+  admission facts, counts, budget values, and digest identity; it stores no
+  prompt, raw transcript, current brief text, child output, source tree, file
+  content, provider/model envelope, credential, generic Review row, Artifact
+  payload, source materialization, check run output, Git fact, Project Revision
+  row, IPC/preload path, or visible Agents UI. Store-backed context snapshot
+  persistence and using the snapshot before real provider/tool dispatch remain
+  later gates.
 
 ### Track B - People and Spaces
 
