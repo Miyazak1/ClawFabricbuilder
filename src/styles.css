@@ -1278,11 +1278,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 3px;
 }
 
-.cf-builder-workspace-control-tabs {
+.cf-builder-workspace-menu-wrap {
+  position: relative;
   display: inline-flex;
   min-width: 0;
-  align-items: center;
-  gap: 2px;
 }
 
 .cf-builder-workspace-control-button {
@@ -1309,6 +1308,72 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
+}
+
+.cf-builder-workspace-menu-button {
+  width: auto;
+  max-width: 150px;
+  gap: 5px;
+  padding-inline: 7px 6px;
+  color: var(--cf-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.cf-builder-workspace-menu-button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-builder-workspace-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  min-width: 176px;
+  gap: 2px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-md);
+  padding: 4px;
+}
+
+.cf-builder-workspace-menu-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cf-text-soft);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 7px 8px;
+  text-align: left;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.cf-builder-workspace-menu-item:hover,
+.cf-builder-workspace-menu-item:focus-visible {
+  border-color: var(--cf-border);
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+  outline: none;
+}
+
+.cf-builder-workspace-menu-item[data-active="true"] {
+  border-color: color-mix(in srgb, var(--cf-primary) 28%, var(--cf-border));
+  background: color-mix(in srgb, var(--cf-primary) 8%, var(--cf-surface));
+  color: var(--cf-primary-text);
 }
 
 .cf-builder-workspace-control-button:hover,

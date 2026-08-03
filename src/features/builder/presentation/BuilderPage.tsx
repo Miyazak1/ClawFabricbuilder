@@ -12,6 +12,7 @@ import {
 import {
   AlertCircle,
   Bot,
+  ChevronDown,
   CheckCircle2,
   Eye,
   FileCode2,
@@ -21,6 +22,7 @@ import {
   ListChecks,
   LockKeyhole,
   Maximize2,
+  Menu,
   Minimize2,
   PanelRightClose,
   PanelRightOpen,
@@ -1811,6 +1813,7 @@ export function BuilderPage({
   const [artifactWidth, setArtifactWidth] = useState(ARTIFACT_DEFAULT_WIDTH_PX);
   const [artifactWidthMaximum, setArtifactWidthMaximum] = useState(ARTIFACT_MAX_WIDTH_PX);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const changesPanelIdentity = [
     draft?.draft_id ?? 'no-draft',
     inspected?.target.revision_receipt_digest ?? 'no-inspected',
@@ -1879,6 +1882,7 @@ export function BuilderPage({
     if (showLogsPanel) tabs.push('logs');
     return tabs;
   }, [hasUnsavedDraft, showLogsPanel, showResultFlow, showVersionHistoryPanel, sourceFile]);
+  const hasArtifactControls = artifactTabs.length > 0;
   const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && sourceFile !== null
     ? 'source'
     : viewingHistory && showResultFlow
@@ -1908,6 +1912,8 @@ export function BuilderPage({
     ? requestedArtifactTab
     : null;
   const showArtifactSidebar = activeArtifactTab !== null;
+  const activeWorkspaceMenuLabel = activeArtifactTab === null ? 'Workspace' : artifactTabLabel(activeArtifactTab);
+  const workspaceMenuVisible = workspaceMenuOpen && hasArtifactControls;
   const openLocationProjectId = draft?.project_id
     ?? inspected?.target.project_id
     ?? saved?.target.project_id
@@ -1939,6 +1945,36 @@ export function BuilderPage({
       window.removeEventListener('resize', clampForCurrentShell);
     };
   }, [showArtifactSidebar]);
+
+  useEffect(() => {
+    if (!workspaceMenuVisible) return undefined;
+    function closeWorkspaceMenu(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        target.closest('[data-builder-workspace-menu="true"], [data-builder-workspace-menu-button="true"]')
+        !== null
+      ) {
+        return;
+      }
+      setWorkspaceMenuOpen(false);
+    }
+    function closeWorkspaceMenuOnEscape(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setWorkspaceMenuOpen(false);
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLButtonElement>('[data-builder-workspace-menu-button="true"]')
+          ?.focus({ preventScroll: true });
+      });
+    }
+    document.addEventListener('pointerdown', closeWorkspaceMenu);
+    window.addEventListener('keydown', closeWorkspaceMenuOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeWorkspaceMenu);
+      window.removeEventListener('keydown', closeWorkspaceMenuOnEscape);
+    };
+  }, [workspaceMenuVisible]);
 
   useEffect(() => {
     if (!previewExpandedVisible) return undefined;
@@ -2078,6 +2114,16 @@ export function BuilderPage({
     setActiveArtifactTab(tab);
     if (tab === 'changes') setChangesPanelOpen(true);
     if (tab === 'source') setSourceDisclosureOpen(true);
+  }
+
+  function toggleWorkspaceMenu(): void {
+    if (!hasArtifactControls) return;
+    setWorkspaceMenuOpen((open) => !open);
+  }
+
+  function openWorkspaceMenuTab(tab: BuilderArtifactTab): void {
+    openArtifactTab(tab);
+    setWorkspaceMenuOpen(false);
   }
 
   function minimizeArtifactSidebar(): void {
@@ -2554,7 +2600,6 @@ export function BuilderPage({
       showPreview={showResultFlow}
     />
   ) : null;
-  const hasArtifactControls = artifactTabs.length > 0;
   const workspaceControls = openLocationProjectId !== null || hasArtifactControls ? (
     <div
       aria-label="Workspace artifact controls"
@@ -2578,22 +2623,46 @@ export function BuilderPage({
       ) : null}
       {hasArtifactControls ? (
         <>
-          <div className="cf-builder-workspace-control-tabs" role="group" aria-label="Artifact views">
-            {artifactTabs.map((tab) => (
-              <button
-                aria-label={`Open ${artifactTabLabel(tab)}`}
-                aria-pressed={activeArtifactTab === tab}
-                className="cf-builder-workspace-control-button cf-builder-workspace-tab-control"
-                data-active={activeArtifactTab === tab ? 'true' : undefined}
-                data-builder-workspace-control-tab={tab}
-                key={tab}
-                onClick={() => openArtifactTab(tab)}
-                title={`Open ${artifactTabLabel(tab)}`}
-                type="button"
+          <div className="cf-builder-workspace-menu-wrap">
+            <button
+              aria-expanded={workspaceMenuVisible}
+              aria-haspopup="menu"
+              aria-label="Workspace menu"
+              className="cf-builder-workspace-control-button cf-builder-workspace-menu-button"
+              data-active={showArtifactSidebar ? 'true' : undefined}
+              data-builder-workspace-menu-button="true"
+              onClick={toggleWorkspaceMenu}
+              title="Workspace menu"
+              type="button"
+            >
+              <Menu aria-hidden="true" className="size-3.5" />
+              <span>{activeWorkspaceMenuLabel}</span>
+              <ChevronDown aria-hidden="true" className="size-3" />
+            </button>
+            {workspaceMenuVisible ? (
+              <div
+                aria-label="Workspace menu"
+                className="cf-builder-workspace-menu"
+                data-builder-workspace-menu="true"
+                role="menu"
               >
-                <ArtifactTabIcon tab={tab} />
-              </button>
-            ))}
+                {artifactTabs.map((tab) => (
+                  <button
+                    aria-checked={activeArtifactTab === tab}
+                    className="cf-builder-workspace-menu-item"
+                    data-active={activeArtifactTab === tab ? 'true' : undefined}
+                    data-builder-workspace-control-tab={tab}
+                    key={tab}
+                    onClick={() => openWorkspaceMenuTab(tab)}
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    <ArtifactTabIcon tab={tab} />
+                    <span>{artifactTabLabel(tab)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <button
             aria-label="Minimize artifact panel"

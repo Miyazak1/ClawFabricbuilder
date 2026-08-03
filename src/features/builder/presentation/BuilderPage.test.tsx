@@ -2355,12 +2355,28 @@ describe('BuilderPage v2', () => {
     expect(workspaceControls?.getAttribute('data-builder-workspace-drawer-visible')).toBe('true');
     expect(workspaceControls?.textContent).not.toContain('Terminal');
     expect(workspaceControls?.textContent).toContain('Open location');
+    expect(workspaceControls?.textContent).toContain('Preview');
     expect(container.querySelector('[data-builder-open-project-location="true"]')?.getAttribute('aria-label'))
       .toBe('Open location');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
+      .toBe('Workspace menu');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-expanded'))
+      .toBe('false');
+    expect(container.querySelector('[data-builder-workspace-menu="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    const workspaceMenu = container.querySelector('[data-builder-workspace-menu="true"]');
+    expect(workspaceMenu).not.toBeNull();
+    expect(workspaceMenu?.textContent).toContain('Preview');
+    expect(workspaceMenu?.textContent).toContain('Changes');
+    expect(workspaceMenu?.textContent).not.toContain('Terminal');
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-pressed'))
+      .toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-checked'))
       .toBe('true');
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="source"]')).toBeNull();
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+    expect(container.querySelector('[data-builder-workspace-menu="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-minimize-artifact="true"]')?.getAttribute('aria-label'))
       .toBe('Minimize artifact panel');
     expect(container.querySelector('[data-builder-toggle-artifact="true"]')?.getAttribute('aria-label'))
@@ -2468,12 +2484,16 @@ describe('BuilderPage v2', () => {
       .toBe('Show artifact panel');
     expect(container.querySelector('[data-builder-composer="true"]')?.closest('[data-builder-chat-main="true"]'))
       .toBe(chatMain);
+    click(container, '[data-builder-workspace-menu-button="true"]');
     click(container, '[data-builder-workspace-control-tab="changes"]');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('changes');
     expect(container.querySelector('[data-builder-workspace-controls="true"]')?.getAttribute('data-builder-workspace-drawer-visible'))
       .toBe('true');
-    expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')?.getAttribute('aria-pressed'))
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
+      .toContain('Changes');
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')?.getAttribute('aria-checked'))
       .toBe('true');
     click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
@@ -3042,10 +3062,14 @@ describe('BuilderPage v2', () => {
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
     const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
     const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
-    const logsControl = container.querySelector<HTMLButtonElement>('[data-builder-workspace-control-tab="logs"]');
     expect(chatMain).not.toBeNull();
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
     expect(sidebar).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
+      .toContain('Workspace');
+    expect(container.querySelector('[data-builder-workspace-control-tab="logs"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    const logsControl = container.querySelector<HTMLButtonElement>('[data-builder-workspace-control-tab="logs"]');
     expect(logsControl).not.toBeNull();
     expect(container.querySelector('[data-builder-artifact-logs="true"]')).toBeNull();
 
@@ -3093,6 +3117,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-current-direction="true"]')).toBeNull();
     expect(chatMain?.textContent).not.toContain('Current direction');
 
+    click(container, '[data-builder-workspace-menu-button="true"]');
     click(container, '[data-builder-workspace-control-tab="logs"]');
 
     const logs = container.querySelector('[data-builder-artifact-logs="true"]');

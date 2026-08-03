@@ -433,6 +433,17 @@ Permission: what the app is allowed to do now.
 A selected project folder is never an approval mode by itself. It only defines
 the resource that a later approval may cover.
 
+Workspace controls checkpoint:
+
+- the top-right Builder workspace controls now expose `Open location`, a
+  `Workspace` menu for the currently available artifact tabs, and separate
+  minimize/show-hide drawer controls;
+- the workspace menu is only a renderer-safe artifact navigation surface; it
+  does not run commands, request provider work, or expose future Terminal
+  capability before the corresponding authority exists;
+- the right artifact workspace remains resizable and independently scrollable,
+  while the chat/composer column remains the primary conversation surface.
+
 ### Terminal And Command-Line Tools
 
 ClawFabric does not currently support arbitrary command-line execution as a
