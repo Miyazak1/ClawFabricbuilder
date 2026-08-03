@@ -409,9 +409,16 @@ read-by-review lookup, one eligibility per reviewed child result, and
 restart/idempotency/schema-fingerprint checks, but still creates no service row,
 generic Review row, Artifact, parent mutation, source materialization, Git fact,
 Project Revision, provider/tool dispatch, permission grant, or parent
-materialization. These Agent authorities expose no Agents UI, IPC/preload
-command, permission grant, provider/tool dispatch, source read, Git mutation,
-Review, Revision, or Artifact authority.
+materialization. The current Agent Delegation result parent materialization
+eligibility service composes the review store and eligibility store: it reads
+the store-backed owner review, verifies parent/child Task review listings,
+records or replays the eligibility receipt, and verifies parent/child Task
+eligibility listings plus read-by-eligibility and read-by-review while still
+creating no generic Review row, Artifact, parent mutation, source
+materialization, Git fact, Project Revision, provider/tool dispatch, permission
+grant, or parent materialization. These Agent authorities expose no Agents UI,
+IPC/preload command, permission grant, provider/tool dispatch, source read, Git
+mutation, Review, Revision, or Artifact authority.
 
 ## Project Storage Model
 

@@ -312,7 +312,10 @@ Delegation result parent materialization eligibility contract can record only
 that an approved proposed child result is eligible for a later parent
 materialization gate, and the Delegation result parent materialization
 eligibility store can persist those receipts for restart-safe owner and
-parent/child Task lookup. This is still local evidence only: it creates no child
+parent/child Task lookup. The Delegation result parent materialization
+eligibility service can record or replay that eligibility receipt only after
+reading a store-backed owner review and verifying parent/child Task review and
+eligibility listings. This is still local evidence only: it creates no child
 Assignment or Run, dispatches no model or tool, grants no permission, writes no
 source files, saves no Project Revision, creates no Review/Artifact, performs no
 parent materialization, and exposes no visible Agents UI.

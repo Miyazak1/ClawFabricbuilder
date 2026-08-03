@@ -89,7 +89,10 @@ review listings, plus a pure main-side Delegation result parent materialization
 eligibility contract that records only that an approved proposed child result is
 eligible for a later parent materialization gate, plus a main-only Delegation
 result parent materialization eligibility store for restart-safe parent/child
-Task lookup. The Agent stores and Delegation contracts are not visible
+Task lookup, plus a main-only Delegation result parent materialization
+eligibility service that records or replays eligibility receipts only after
+reading a store-backed owner review and verifying parent/child Task review and
+eligibility listings. The Agent stores and Delegation contracts are not visible
 activation: they create no provider/tool dispatch, permission grant, child
 assignment execution, Revision, Artifact, generic Review row, or parent
 materialization authority. The lease and Delegation stores are local evidence

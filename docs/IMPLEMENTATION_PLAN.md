@@ -1145,6 +1145,17 @@ Current checkpoint:
   tests; mutates no Git or Project Revision facts; and creates no generic
   Review row, Artifact, child Assignment, child Run, or parent materialization
   authority. Real parent materialization remains a separate gate.
+- the current Agent Delegation result parent materialization eligibility service
+  composes the Delegation result review store and eligibility store. It reads
+  the store-backed owner review, verifies parent-task and child-task review
+  listings, records or replays the eligibility receipt, and verifies
+  read-by-eligibility, read-by-review, parent-task eligibility listing, and
+  child-task eligibility listing. It accepts only owner-approved proposed child
+  result reviews; rejects rejected reviews and blocked/failed acknowledgements;
+  and still creates no child Assignment, child Run, generic Review row,
+  Artifact, parent materialization, source materialization, check run, Project
+  Revision, Git mutation, provider/model dispatch, tool call, permission grant,
+  IPC/preload command, or visible Agents UI.
 
 ### Track B - People and Spaces
 
