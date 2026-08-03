@@ -36,10 +36,12 @@ can prove an admitted Assignment is recorded as queued, a main-only local
 Goal-to-Assignment materialization receipt store for restart-safe lookup, a
 main-only Goal-to-Assignment materialization service that composes the
 admission, Assignment, and materialization stores through idempotent replay, a
-main-only local Agent Assignment/status record store, and a main-only local
-Agent Supervision Lease/release record store. These Goal facts and
-materialization receipts currently
-start no run or execution. It also has a pure main-side Agent
+main-only local Agent Assignment/status record store, a main-only Agent
+Assignment supervision service that records or replays active Assignment status
+and an active supervision lease only after lease-window preflight, and a
+main-only local Agent Supervision Lease/release record store. These Goal,
+Assignment, materialization, and supervision facts currently start no run or
+execution. It also has a pure main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and
 review-return evidence, plus a main-only Agent Delegation receipt store for
 restart-safe parent/child Task lookup. It now has a pure main-side Agent

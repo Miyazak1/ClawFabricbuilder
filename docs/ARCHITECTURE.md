@@ -274,6 +274,14 @@ Artifact, and exposes no IPC/preload or visible Goal UI. The current Agent
 Assignment store is only an internal owner-supervised assignment/status fact authority: it
 persists one Agent version binding to a Project/Conversation/Task/Run and
 ordered assignment status records in main-owned SQLite. The current
+Agent Assignment supervision service is only a main-only composition gate over
+the Assignment store and Agent Supervision Lease store: it records or replays a
+queued Assignment's `active` status, preflights the supervision lease time
+window before changing Assignment state, records or replays the active lease,
+and recovers through idempotent store replay after restart. It still starts no
+Run or execution, dispatches no provider/tool, grants no permission, reads or
+writes no source, mutates no Git or Project Revision, creates no Review or
+Artifact, and exposes no IPC/preload or visible Agents UI. The current
 Agent Supervision Lease store is only an internal supervision evidence authority: it
 persists one active-assignment lease/release chain in main-owned SQLite and
 enforces one unreleased and unexpired lease per assignment with monotonic lease

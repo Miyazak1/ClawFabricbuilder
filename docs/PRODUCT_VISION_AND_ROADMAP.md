@@ -264,12 +264,16 @@ admitted Assignment is recorded in the Assignment store with its initial
 owner/task, read-by-Assignment, and read-by-admission lookup. Builder also has
 a main-only materialization service that composes those stores to record or
 replay the admission, queued Assignment, and materialization receipt without
-starting execution. They record and restore bounded objectives with
+starting execution. Builder also has a main-only Assignment supervision service
+that records or replays the queued Assignment's `active` status and active
+supervision lease only after lease-window preflight, still without starting
+execution. They record and restore bounded objectives with
 `continuous_until_done_or_blocked` semantics, owner-reviewed completion,
 ordered owner status decisions, and an active-Goal bridge into a future
 owner-supervised Assignment candidate. The materialization receipt, store, and
-service still do not start a Run, dispatch a model or tool, write source files,
-save a Project Revision, create a Review/Artifact, or expose a visible Goal UI.
+supervision services still do not start a Run, dispatch a model or tool, write
+source files, save a Project Revision, create a Review/Artifact, or expose a
+visible Goal UI.
 
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,

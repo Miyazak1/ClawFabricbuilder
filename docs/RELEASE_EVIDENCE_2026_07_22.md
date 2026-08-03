@@ -2019,6 +2019,48 @@ DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Assignment Supervision Service Package Check
+
+This addendum records the package checkpoint after adding a main-only Agent
+Assignment supervision service. It extends local Agent fact-chain supervision
+evidence only; it does not enable visible Agents UI, autonomous Agent
+execution, model/tool dispatch, source reads or writes, terminal tools, network
+access, publication, installer evidence, or a real saved-profile DeepSeek
+canary pass.
+
+- The supervision service composes the existing Agent Assignment store and
+  Agent Supervision Lease store. It reads the store-backed queued Assignment,
+  preflights the active supervision lease and current time window before
+  changing Assignment state, records or replays the Assignment's `active`
+  status, records or replays the active lease, and recovers through idempotent
+  store replay after restart.
+- The service keeps active Assignment supervision separate from execution. It
+  starts no Run, dispatches no provider/model or tool, grants no permission,
+  reads or writes no source, mutates no Git fact or Project Revision, and
+  creates no Review/Artifact authority or visible Agents UI.
+- Focused validation passed through
+  `node --test tests\builder-agent-assignment-supervision-service.test.cjs`;
+  the command reported 4 passing Node tests.
+- Adjacent Agent validation passed through
+  `node --test tests\builder-agent-assignment-supervision-service.test.cjs tests\builder-agent-supervision-lease-contract.test.cjs tests\builder-agent-supervision-lease-store.test.cjs tests\builder-agent-assignment-contract.test.cjs tests\builder-agent-assignment-store.test.cjs tests\builder-agent-project-work-result.test.cjs tests\builder-agent-project-work-result-store.test.cjs tests\builder-agent-budget-audit.test.cjs tests\builder-agent-budget-audit-store.test.cjs tests\builder-agent-delegation.test.cjs tests\builder-agent-delegation-store.test.cjs`;
+  the command reported 32 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 772 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 773 ASAR
+  entries. The refreshed executable timestamp was `2026/8/4 00:09:06` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, and
+  `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

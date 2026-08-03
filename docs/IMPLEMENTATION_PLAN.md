@@ -865,6 +865,16 @@ Current checkpoint:
   exposes no IPC/preload, shows no Agents UI, dispatches no providers or tools,
   grants no permissions, reads no credentials or source, mutates no Git or
   Project Revision facts, and creates no Review/Artifact authority.
+- the current Agent assignment supervision service composes the Assignment
+  store and Agent supervision lease store as a main-only activation evidence
+  gate. It reads the store-backed queued Assignment, preflights the active
+  supervision lease and current time window before changing Assignment state,
+  records or replays the Assignment's `active` status, records or replays the
+  active lease, and recovers through idempotent store replay. It opens no
+  IPC/preload path, shows no Agents UI, starts no Run or execution, dispatches
+  no providers, models, or tools, grants no permissions, reads no credentials
+  or source, writes no files, mutates no Git or Project Revision facts, and
+  creates no Review or Artifact authority.
 - the current Agent supervision lease store persists those lease and release
   records in a strict main-only SQLite store with restart restore, idempotent
   replay, owner-scoped reads, one unreleased and unexpired lease per assignment,
