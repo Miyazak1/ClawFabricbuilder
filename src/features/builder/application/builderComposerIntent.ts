@@ -98,6 +98,14 @@ const EXPLICIT_BRIEF_PATTERNS = Object.freeze([
   /^(?:use|treat)\s+this\s+as\s+(?:the\s+)?(?:brief|current brief|goal|plan|requirements)\b/u,
 ]);
 
+const GOAL_MODE_PATTERNS = Object.freeze([
+  /(?:目标模式|goal\s*mode|persistent\s+goal|持续目标|长期目标)/u,
+  /(?:设定|设置|创建|建立|给你|交给你).{0,24}(?:目标|goal).{0,48}(?:持续|一直|自动|连续|自己|直到|完成为止|做完|阻塞|blocked|done)/u,
+  /(?:持续|一直|连续|自动|自己).{0,32}(?:工作|推进|执行|修改|实现|验证|修复).{0,48}(?:直到|到)(?:真正)?(?:完成|做好|做完|done|blocked|阻塞)/u,
+  /(?:keep|continue)\s+(?:working|going|iterating|building|fixing|verifying)\b.{0,80}\b(?:until|till)\b.{0,40}\b(?:done|complete|completed|blocked)\b/u,
+  /\b(?:set|create|start|give\s+you)\s+(?:a\s+)?goal\b.{0,80}\b(?:until|done|complete|completed|blocked)\b/u,
+]);
+
 const WORK_DISCUSSION_PATTERNS = Object.freeze([
   /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
   /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|should we|could we|can we|requirements|style direction)\b/u,
@@ -236,6 +244,12 @@ export function decideBuilderComposerIntent(
     return createDecision('plan', context, {
       confidence: 'high',
       matchedSignals: ['composer_mode_plan'],
+    });
+  }
+  if (GOAL_MODE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('clarify', context, {
+      confidence: 'high',
+      matchedSignals: ['goal_mode_request'],
     });
   }
   if (isBuilderComposerExplicitBriefIntent(normalized)) {

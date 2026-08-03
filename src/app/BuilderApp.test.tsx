@@ -2157,6 +2157,37 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('星空背景');
   });
 
+  it('does not treat future Goal mode requests as current build or brief authority', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+
+    setComposerInstruction(container, '进入目标模式，一直帮我改到完成为止');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({
+        instruction: '进入目标模式，一直帮我改到完成为止',
+      });
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('clarify');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('reply');
+    expect(composer?.getAttribute('data-builder-route-permission')).toBe('not_required');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('goal_mode_request');
+  });
+
   it('keeps Brief menu updates on the read-only task capsule path', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       briefUpdateActivity: true,

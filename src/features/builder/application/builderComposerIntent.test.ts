@@ -95,6 +95,29 @@ describe('routeBuilderComposerIntent', () => {
   });
 
   it.each([
+    '进入目标模式，一直帮我改到完成为止',
+    '给你一个目标：持续完善这个项目直到完成或阻塞',
+    '设定一个长期目标，自己执行验证直到 done',
+    'Keep working on this goal until it is done or blocked.',
+    'Set a goal and continue working until completed.',
+  ])('keeps future Goal mode request %s on a read-only clarification route', (instruction) => {
+    expect(decideBuilderComposerIntent(instruction, {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'clarify',
+      confidence: 'high',
+      matchedSignals: ['goal_mode_request'],
+      downgradedFrom: null,
+      downgradeReason: null,
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+    });
+  });
+
+  it.each([
     '先规划一下这个项目',
     '先做个方案',
     '帮我先做下方案',
