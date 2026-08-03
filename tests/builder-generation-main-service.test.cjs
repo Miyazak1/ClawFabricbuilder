@@ -1990,6 +1990,63 @@ test('records a provider explanation without creating Git candidate, draft, or s
   );
 });
 
+test('records read-only exploratory answer turns as task brief context without write admission', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Jay Chou</main>\n' }],
+  });
+  const reads = [];
+  const transportInputs = [];
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(query) {
+          reads.push(query);
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation({
+          explanation: '可以先做一个周杰伦作品主题站，包含首页、音乐时间线和专辑卡片。',
+        })),
+      };
+    },
+  });
+
+  const result = await service.answer(request({
+    instruction: '我打算做一个周杰伦相关的网站，帮我出下方案',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, PROJECT_ID);
+  assert.equal(result.admissions.conversation, 'sqlite_recorded');
+  assert.equal(result.admissions.draft, 'not_created');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.match(result.explanation, /周杰伦作品主题站/u);
+  assert.deepEqual(reads, [{ project_id: PROJECT_ID }]);
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(git.receipts.length, 0);
+  assert.equal(transportInputs.length, 1);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'update_brief');
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.dispatch, 'brief_update');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.required_permissions, []);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.permission_result, 'not_required');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['exploratory_work']);
+});
+
 test('answers local read-only chat without dispatching provider transport', async () => {
   const transportInputs = [];
   const startedEvents = [];

@@ -383,6 +383,18 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
   return answerRouteDecisionHint(['chat_default']);
 }
 
+function classifyReadOnlyAnswerRouteDecision(instruction, hasContextualBuildContext = false) {
+  const decision = classifySubmitRouteDecision(instruction, hasContextualBuildContext);
+  if (decision.route !== 'build') return decision;
+  return routeDecisionHint({
+    route: 'clarify',
+    confidence: decision.confidence === 'high' ? 'medium' : decision.confidence,
+    matchedSignals: decision.matched_signals,
+    downgradedFrom: 'build',
+    downgradeReason: decision.downgrade_reason ?? 'ambiguous_build_intent',
+  });
+}
+
 function localCasualChatReply(instruction) {
   const text = normalizedIntentText(instruction);
   if (text.length === 0 || !CASUAL_CHAT_INTENT_PATTERN.test(text)) return null;
@@ -1371,6 +1383,22 @@ function createBuilderGenerationMainService(rawOptions) {
       return config;
     } finally {
       bindingAuthority = false;
+    }
+  }
+
+  function hasContextualBuildContextForRequest(request) {
+    if (request.existing_project_id === null || !isContextualSubmitContextIntent(request.instruction)) {
+      return false;
+    }
+    try {
+      return hasContextualBuildContextInTaskStream(
+        Reflect.apply(readConversationStream, options.conversationService, [{
+          project_id: request.existing_project_id,
+        }]),
+        request.existing_project_id,
+      );
+    } catch {
+      return false;
     }
   }
 
@@ -2643,19 +2671,7 @@ function createBuilderGenerationMainService(rawOptions) {
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    let hasContextualBuildContext = false;
-    if (request.existing_project_id !== null && isContextualSubmitContextIntent(request.instruction)) {
-      try {
-        hasContextualBuildContext = hasContextualBuildContextInTaskStream(
-          Reflect.apply(readConversationStream, options.conversationService, [{
-            project_id: request.existing_project_id,
-          }]),
-          request.existing_project_id,
-        );
-      } catch {
-        hasContextualBuildContext = false;
-      }
-    }
+    const hasContextualBuildContext = hasContextualBuildContextForRequest(request);
     const shouldAnswer = shouldSubmitAsExplanation(
       request.instruction,
       hasContextualBuildContext,
@@ -2732,7 +2748,13 @@ function createBuilderGenerationMainService(rawOptions) {
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    return startAnswer(request);
+    return startAnswer(
+      request,
+      classifyReadOnlyAnswerRouteDecision(
+        request.instruction,
+        hasContextualBuildContextForRequest(request),
+      ),
+    );
   }
 
   async function answerDraft(rawRequest) {

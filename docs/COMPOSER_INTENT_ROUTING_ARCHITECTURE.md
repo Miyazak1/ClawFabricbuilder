@@ -417,13 +417,12 @@ Save authority.
 
 Current Task Capsule checkpoint: `update_brief` stays read-only. Selecting a
 workspace does not turn exploratory product discussion into work admission, and
-must not request current-project write permission. Until the main-owned
-read-only brief recorder exists, the renderer dispatches these turns through the
-answer path while preserving route-decision evidence. The next architecture
-slice should add a main conversation service path that records
-`task_brief_updated` / `builder-task-capsule.v1` without draft, Save, command,
-or source-write authority. Later build route evidence can then bind to the
-visible task id derived from the sanitized task stream.
+must not request current-project write permission. The renderer dispatches these
+turns through the answer path; generation main performs its own read-only route
+classification and the conversation main service records `task_brief_updated` /
+`builder-task-capsule.v1` without draft, Save, command, or source-write
+authority. Later build route evidence can then bind to the visible task id
+derived from the sanitized task stream.
 
 ## Test Matrix
 

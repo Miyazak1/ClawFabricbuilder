@@ -12,7 +12,6 @@ import {
   CONVERSATION_ID,
   PROJECT_ID,
   RUN_ID,
-  TASK_ID,
   TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
@@ -243,6 +242,7 @@ async function setup(options: Readonly<{
   const catalogWire = await createCatalogWire();
   let saved = options.initiallySaved === true;
   let selectedProjectId: string | null = null;
+  let latestAnswerInstruction: string | null = null;
   let latestDraft = await createGenerationDraft();
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveAnswer: (() => Promise<void>) | null = null;
@@ -316,6 +316,7 @@ async function setup(options: Readonly<{
   });
   const answer = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
+    latestAnswerInstruction = instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
     if (options.deferredAnswer === true) {
       return new Promise<unknown>((resolve) => {
@@ -647,7 +648,12 @@ async function setup(options: Readonly<{
           ? createPlanTaskStreamWire()
           : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
             ? createRejectedTaskStreamWire()
-            : options.briefUpdateActivity === true && submit.mock.calls.length > 0
+            : options.briefUpdateActivity === true && (
+              submit.mock.calls.length > 0
+              || (latestAnswerInstruction !== null
+                && /(?:我想|我要|我们要|希望|需要|保存这个方向|would like|want|save this|use this as)/iu
+                  .test(latestAnswerInstruction))
+            )
               ? createContextualBuildTaskStreamWire()
             : options.answerActivity === true
               ? createAnswerTaskStreamWire()
@@ -2022,7 +2028,7 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('星空背景');
   });
 
-  it('keeps Brief menu updates read-only until the main brief recorder exists', async () => {
+  it('keeps Brief menu updates on the read-only task capsule path', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       briefUpdateActivity: true,
       initiallySaved: true,
@@ -2121,7 +2127,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-message-id')).
       toBe('builder-composer-message:local:3');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
-    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(TASK_ID);
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
   });
 
   it('builds from a contextual execution phrase only after prior discussion creates work context', async () => {
