@@ -2200,7 +2200,7 @@ test('observes draft review diff before Save without leaking internal evidence',
   page.reviewTextOverride = 'Review before saving sha256:secret';
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_text_failed',
   );
 });
 
@@ -2212,7 +2212,7 @@ test('rejects conversation activity that overlaps the draft review checkpoint', 
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_activity_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2220,14 +2220,53 @@ test('rejects conversation activity that overlaps the draft review checkpoint', 
   )), false);
 });
 
-test('rejects squeezed draft review actions before Save', async () => {
+test('rejects draft review actions that leave the checkpoint before Save', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 1016, y: 286, width: 24, height: 96 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_checkpoint_child_bounds_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
+});
+
+test('rejects draft review checkpoint bounds that cannot support review actions', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 340, height: 136 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_checkpoint_width_failed',
+  );
+
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 84 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
+  );
+
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 136 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCopy, { x: 326, y: 234, width: 300, height: 62 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_checkpoint_copy_width_failed',
+  );
+});
+
+test('rejects squeezed draft review action geometry before Save', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 678, y: 308, width: 24, height: 32 });
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_checkpoint_action_geometry_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2242,7 +2281,7 @@ test('rejects draft review copy that visually overlaps itself', async () => {
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_checkpoint_text_stack_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2260,7 +2299,7 @@ test('rejects draft review actions that overlap the preview explanation', async 
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_checkpoint_text_stack_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2275,7 +2314,7 @@ test('rejects draft artifact preview rendered inside the chat area', async () =>
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_artifact_layout_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2291,7 +2330,7 @@ test('rejects draft changes panels that overlap the review checkpoint', async ()
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_changes_layout_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2306,7 +2345,7 @@ test('rejects draft artifact sidebar without a draggable resize handle', async (
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_artifact_layout_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2321,7 +2360,7 @@ test('rejects draft diffs rendered outside the changes panel', async () => {
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_failed',
+    (error) => error.code === 'canary_review_diff_changes_layout_failed',
   );
 });
 
