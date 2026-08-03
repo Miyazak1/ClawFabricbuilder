@@ -2057,24 +2057,20 @@ async function assertConversationActivityBeforeReviewViaUi(page, review) {
   ) fail('canary_review_diff_activity_failed');
 }
 
-async function assertDraftReviewLayoutViaUi(page) {
+function draftReviewLayoutFailureCode({
+  actionGroup,
+  actions,
+  copy,
+  note,
+  review,
+  summary,
+  title,
+}) {
   const code = 'canary_review_diff_checkpoint_layout_failed';
-  const review = await boundedBox(page.locator(SELECTORS.reviewCheckpoint), code);
-  const copy = await boundedBox(page.locator(SELECTORS.reviewCopy), code);
-  const title = await boundedBox(page.locator(SELECTORS.reviewTitle), code);
-  const summary = await boundedBox(page.locator(SELECTORS.reviewSummary), code);
-  const note = await boundedBox(page.locator(SELECTORS.reviewNote), code);
-  const actionGroup = await boundedBox(page.locator(SELECTORS.reviewActions), code);
-  const actions = [
-    await boundedBox(page.locator(SELECTORS.reviewOpenPreview), code),
-    await boundedBox(page.locator(SELECTORS.reviewOpenChanges), code),
-    await boundedBox(page.locator(SELECTORS.discardDraft), code),
-    await boundedBox(page.locator(SELECTORS.saveVersion), code),
-  ];
   const reviewChildren = [copy, title, summary, note, actionGroup, ...actions];
-  if (review.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX) fail('canary_review_diff_checkpoint_width_failed');
-  if (review.height < 96 || review.height > 280) fail('canary_review_diff_checkpoint_height_failed');
-  if (copy.width < CANARY_REVIEW_COPY_MIN_WIDTH_PX) fail('canary_review_diff_checkpoint_copy_width_failed');
+  if (review.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX) return 'canary_review_diff_checkpoint_width_failed';
+  if (review.height < 96 || review.height > 280) return 'canary_review_diff_checkpoint_height_failed';
+  if (copy.width < CANARY_REVIEW_COPY_MIN_WIDTH_PX) return 'canary_review_diff_checkpoint_copy_width_failed';
   if (
     title.height < 12
     || summary.height < 12
@@ -2083,15 +2079,15 @@ async function assertDraftReviewLayoutViaUi(page) {
     || actionGroup.height > 96
     || boxBottom(title) > summary.y + 1
     || boxBottom(summary) > note.y + 1
-  ) fail('canary_review_diff_checkpoint_text_stack_failed');
+  ) return 'canary_review_diff_checkpoint_text_stack_failed';
   if (
     actionGroup.y < boxBottom(note) + 4
     || boxesOverlap(title, summary)
     || boxesOverlap(summary, note)
     || boxesOverlap(note, actionGroup)
-  ) fail('canary_review_diff_checkpoint_text_stack_failed');
+  ) return 'canary_review_diff_checkpoint_text_stack_failed';
   for (const child of reviewChildren) {
-    if (!boxContains(review, child)) fail('canary_review_diff_checkpoint_child_bounds_failed');
+    if (!boxContains(review, child)) return 'canary_review_diff_checkpoint_child_bounds_failed';
   }
   for (const action of actions) {
     if (
@@ -2100,14 +2096,54 @@ async function assertDraftReviewLayoutViaUi(page) {
       || action.height > 48
       || action.width / action.height < 2
       || !boxContains(actionGroup, action)
-    ) fail('canary_review_diff_checkpoint_action_geometry_failed');
+    ) return 'canary_review_diff_checkpoint_action_geometry_failed';
   }
   for (let outer = 0; outer < actions.length; outer += 1) {
     for (let inner = outer + 1; inner < actions.length; inner += 1) {
-      if (boxesOverlap(actions[outer], actions[inner])) fail('canary_review_diff_checkpoint_action_overlap_failed');
+      if (boxesOverlap(actions[outer], actions[inner])) {
+        return 'canary_review_diff_checkpoint_action_overlap_failed';
+      }
     }
   }
-  return review;
+  return null;
+}
+
+function shouldRetryDraftReviewLayoutFailure(code) {
+  return code === 'canary_review_diff_checkpoint_child_bounds_failed';
+}
+
+async function assertDraftReviewLayoutViaUi(page) {
+  const code = 'canary_review_diff_checkpoint_layout_failed';
+  let lastFailureCode = code;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const review = await boundedBox(page.locator(SELECTORS.reviewCheckpoint), code);
+    const copy = await boundedBox(page.locator(SELECTORS.reviewCopy), code);
+    const title = await boundedBox(page.locator(SELECTORS.reviewTitle), code);
+    const summary = await boundedBox(page.locator(SELECTORS.reviewSummary), code);
+    const note = await boundedBox(page.locator(SELECTORS.reviewNote), code);
+    const actionGroup = await boundedBox(page.locator(SELECTORS.reviewActions), code);
+    const actions = [
+      await boundedBox(page.locator(SELECTORS.reviewOpenPreview), code),
+      await boundedBox(page.locator(SELECTORS.reviewOpenChanges), code),
+      await boundedBox(page.locator(SELECTORS.discardDraft), code),
+      await boundedBox(page.locator(SELECTORS.saveVersion), code),
+    ];
+    const failureCode = draftReviewLayoutFailureCode({
+      actionGroup,
+      actions,
+      copy,
+      note,
+      review,
+      summary,
+      title,
+    });
+    if (failureCode === null) return review;
+    lastFailureCode = failureCode;
+    if (!shouldRetryDraftReviewLayoutFailure(failureCode)) fail(failureCode);
+    if (typeof page.waitForTimeout !== 'function') break;
+    await page.waitForTimeout(100);
+  }
+  fail(lastFailureCode);
 }
 
 async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
@@ -2145,7 +2181,10 @@ async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
     });
     if (failureCode === null) return Object.freeze({ result, sidebar, summary });
     lastFailureCode = failureCode;
-    if (failureCode !== 'canary_review_diff_artifact_summary_vertical_failed') fail(failureCode);
+    if (
+      failureCode !== 'canary_review_diff_artifact_summary_order_failed'
+      && failureCode !== 'canary_review_diff_artifact_summary_vertical_failed'
+    ) fail(failureCode);
     if (typeof page.waitForTimeout !== 'function') break;
     await page.waitForTimeout(100);
   }

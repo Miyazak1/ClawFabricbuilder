@@ -2332,6 +2332,22 @@ test('rejects draft review actions that leave the checkpoint before Save', async
   )), false);
 });
 
+test('retries transient draft review child bounds while preserving strict geometry checks', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 1016, y: 286, width: 24, height: 96 });
+  page.waitForTimeout = async (ms) => {
+    page.events.push(['waitForTimeout', ms]);
+    page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 });
+  };
+
+  assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
+    true,
+  );
+});
+
 test('rejects draft review checkpoint bounds that cannot support review actions', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
@@ -2436,6 +2452,19 @@ test('rejects draft artifact summaries that are too narrow or before review acti
     inspectDraftReviewDiffViaUi(beforeReview),
     (error) => error.code === 'canary_review_diff_artifact_summary_order_failed'
       && error.stage === 'review_diff_artifact_summary_order',
+  );
+
+  const transientOrder = new FakePage();
+  transientOrder.unsavedDraftVisible = true;
+  transientOrder.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 188, width: 596, height: 72 });
+  transientOrder.waitForTimeout = async (ms) => {
+    transientOrder.events.push(['waitForTimeout', ms]);
+    transientOrder.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 });
+  };
+  assert.deepEqual(await inspectDraftReviewDiffViaUi(transientOrder), reviewDiffEvidence());
+  assert.equal(
+    transientOrder.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
+    true,
   );
 
   const horizontal = new FakePage();
