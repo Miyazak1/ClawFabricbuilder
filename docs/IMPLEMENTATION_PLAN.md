@@ -1298,20 +1298,21 @@ Current checkpoint:
   no process, stores no raw context, mutates no Git or Project Revision facts,
   and creates no generic Review row or Artifact authority.
 - the current Agent Step Start service checkpoint connects the `start_step`
-  supervised action admission to that receipt contract. The service accepts
-  owner id, supervised action admission id, run step id, step index, and
-  started time; reads the admission from the admission store; verifies Task/Run
-  admission listings; requires
+  supervised action admission to that receipt contract and the Step Start
+  store. The service accepts owner id, supervised action admission id, run step
+  id, step index, and started time; reads the admission from the admission
+  store; verifies Task/Run admission listings; requires
   `requested_next_action=start_step` and
   `next_gate=agent_step_runner_required_later`; reads the referenced Budget
   Audit from the budget audit store; verifies lease audit listings; and
   requires the requested step index to equal the budget audit's prior
-  `step_count + 1`. It opens no IPC/preload path, shows no Agents UI,
-  dispatches no provider/model or tool, executes no step, grants no permission,
-  reads or writes no source, runs no process, stores no raw context, mutates no
-  Git or Project Revision facts, and creates no generic Review row or Artifact
-  authority. Actual step execution, model/tool dispatch, and result recording
-  remain later gates.
+  `step_count + 1`; it then records the receipt in the Step Start store and
+  verifies replay by step id, admission id, Task, and Run. It opens no
+  IPC/preload path, shows no Agents UI, dispatches no provider/model or tool,
+  executes no step, grants no permission, reads or writes no source, runs no
+  process, stores no raw context, mutates no Git or Project Revision facts, and
+  creates no generic Review row or Artifact authority. Actual step execution,
+  model/tool dispatch, and result recording remain later gates.
 - the current Agent Step Start store checkpoint persists those digest-bound
   step-start receipts as restart-replayable SQLite facts. The store verifies
   the Step Start receipt contract, enforces one start per Run step id and

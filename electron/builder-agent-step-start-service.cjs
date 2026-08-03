@@ -8,6 +8,10 @@ const {
   sanitizeBuilderAgentStepStartReceipt,
 } = require('./builder-agent-step-start-contract.cjs');
 const {
+  BUILDER_AGENT_STEP_START_STORE_VERSION,
+  BuilderAgentStepStartStoreError,
+} = require('./builder-agent-step-start-store.cjs');
+const {
   BUILDER_AGENT_BUDGET_AUDIT_STORE_VERSION,
   BuilderAgentBudgetAuditStoreError,
 } = require('./builder-agent-budget-audit-store.cjs');
@@ -26,6 +30,7 @@ const STEP_ID_PATTERN = new RegExp(`^builder-run-step:${UUID_SOURCE}$`, 'u');
 const ADMISSION_ID_PATTERN = /^builder-agent-supervised-action-admission:[0-9a-f]{64}$/u;
 const SERVICE_KEYS = Object.freeze([
   'budget_audit_store',
+  'step_start_store',
   'supervised_action_admission_store',
 ]);
 const START_STEP_KEYS = Object.freeze([
@@ -167,6 +172,17 @@ function safeStores(rawStores) {
       BUILDER_AGENT_BUDGET_AUDIT_STORE_VERSION,
       ['read_audit', 'list_lease_audits'],
     ),
+    step_start_store: safeStore(
+      valueAt(rawStores, 'step_start_store'),
+      BUILDER_AGENT_STEP_START_STORE_VERSION,
+      [
+        'record_step_start',
+        'read_step_start',
+        'read_step_start_for_admission',
+        'list_task_step_starts',
+        'list_run_step_starts',
+      ],
+    ),
     supervised_action_admission_store: safeStore(
       valueAt(rawStores, 'supervised_action_admission_store'),
       BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
@@ -186,6 +202,7 @@ function normalizeOperationError(error) {
   }
   if (
     error instanceof BuilderAgentBudgetAuditStoreError
+    || error instanceof BuilderAgentStepStartStoreError
     || error instanceof BuilderAgentSupervisedActionAdmissionStoreError
   ) {
     if (/_conflict$/u.test(error.code)) {
@@ -210,6 +227,7 @@ function normalizeOperationError(error) {
 function serviceEvidence() {
   return freezeDeep({
     service_authority: 'main_owned_agent_step_start_service',
+    step_start_store_authority: 'main_owned_agent_step_start_store',
     step_start_receipt_authority: 'main_agent_step_start_receipt_contract_v1',
     supervised_action_admission_store_authority: 'main_owned_agent_supervised_action_admission_store',
     supervised_action_admission_authority: 'main_agent_supervised_action_admission_contract_v1',
@@ -232,7 +250,7 @@ function serviceEvidence() {
     review_authority: false,
     artifact_authority: false,
     raw_context_storage: false,
-    recovery_model: 'deterministic_step_receipt_from_store_backed_action_admission',
+    recovery_model: 'idempotent_step_start_store_replay',
   });
 }
 
@@ -248,6 +266,13 @@ function auditFact(auditRead) {
   const entry = auditRead.budget_audit;
   if (!entry || !entry.audit) fail('builder_agent_step_start_service_invalid');
   return entry.audit;
+}
+
+function stepStartFact(stepStartRead) {
+  if (stepStartRead.status !== 'ready') fail('builder_agent_step_start_service_conflict');
+  const entry = stepStartRead.agent_step_start;
+  if (!entry || !entry.step_start_receipt) fail('builder_agent_step_start_service_invalid');
+  return entry.step_start_receipt;
 }
 
 function requireStartStepAdmission(stores, ownerId, admissionId) {
@@ -339,6 +364,42 @@ function admitAgentStepStart(stores, rawRequest) {
     step_index: stepIndex,
     started_at_ms: startedAtMs,
   }));
+  const stepStartWrite = stores.step_start_store.record_step_start({
+    step_start_receipt: receipt,
+  });
+  const stepStartRead = stores.step_start_store.read_step_start({
+    step_id: receipt.step_id,
+    owner_id: receipt.owner_id,
+  });
+  const admissionStepStartRead = stores.step_start_store.read_step_start_for_admission({
+    supervised_action_admission_id: receipt.supervised_action_admission_id,
+    owner_id: receipt.owner_id,
+  });
+  const taskStepStarts = stores.step_start_store.list_task_step_starts({
+    owner_id: receipt.owner_id,
+    project_id: receipt.project_id,
+    task_id: receipt.task_id,
+  });
+  const runStepStarts = stores.step_start_store.list_run_step_starts({
+    owner_id: receipt.owner_id,
+    project_id: receipt.project_id,
+    task_id: receipt.task_id,
+    run_id: receipt.run_id,
+  });
+  const storedReceipt = stepStartFact(stepStartRead);
+  const admissionStoredReceipt = stepStartFact(admissionStepStartRead);
+  if (
+    storedReceipt.step_start_receipt_digest !== receipt.step_start_receipt_digest
+    || admissionStoredReceipt.step_start_receipt_digest !== receipt.step_start_receipt_digest
+    || taskStepStarts.status !== 'ready'
+    || !taskStepStarts.agent_step_starts.some(
+      (entry) => entry.step_start_receipt.step_start_receipt_digest === receipt.step_start_receipt_digest,
+    )
+    || runStepStarts.status !== 'ready'
+    || !runStepStarts.agent_step_starts.some(
+      (entry) => entry.step_start_receipt.step_start_receipt_digest === receipt.step_start_receipt_digest,
+    )
+  ) fail('builder_agent_step_start_service_invalid');
   return freezeDeep({
     result_version: BUILDER_AGENT_STEP_START_SERVICE_RESULT_VERSION,
     service_version: BUILDER_AGENT_STEP_START_SERVICE_VERSION,
@@ -346,7 +407,12 @@ function admitAgentStepStart(stores, rawRequest) {
     status: 'ready',
     requested_next_action: admissionEvidence.admission.requested_next_action,
     next_gate: admissionEvidence.admission.next_gate,
-    step_start_receipt: receipt,
+    step_start_receipt: storedReceipt,
+    step_start_store_write: stepStartWrite,
+    step_start_read: stepStartRead,
+    admission_step_start_read: admissionStepStartRead,
+    task_step_starts: taskStepStarts,
+    run_step_starts: runStepStarts,
     supervised_action_admission: admissionEvidence.admission,
     supervised_action_admission_read: admissionEvidence.admission_read,
     action_task_admissions: admissionEvidence.task_admissions,
@@ -354,6 +420,9 @@ function admitAgentStepStart(stores, rawRequest) {
     budget_audit: budgetEvidence.audit,
     budget_audit_read: budgetEvidence.audit_read,
     lease_audits: budgetEvidence.lease_audits,
+    operations: {
+      step_start_store: stepStartWrite.operation,
+    },
     evidence: serviceEvidence(),
   });
 }

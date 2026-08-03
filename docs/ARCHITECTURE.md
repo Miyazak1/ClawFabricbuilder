@@ -444,13 +444,14 @@ persisted `start_step` supervised action admission to that contract: it reads
 the admission and the referenced Budget Audit from their stores, verifies
 Task/Run and lease audit listings, accepts only
 `next_gate=agent_step_runner_required_later`, requires the requested step index
-to be exactly the budget's prior step count plus one, and still starts no
-provider/model/tool execution. The current Agent Step Start store persists
-those step-start receipts as restart-replayable SQLite facts, keyed by Run step
-id, supervised action admission id, and receipt digest, with owner-scoped
-Task/Run listings and schema-fingerprint/tamper checks; it still starts no
-step, dispatches no provider/model/tool, reads or writes no source, and exposes
-no IPC/preload or visible Agents UI. The current Agent Tool Call Record service
+to be exactly the budget's prior step count plus one, records the receipt in
+the Step Start store, and verifies store replay by step id, admission id, Task,
+and Run. The current Agent Step Start store persists those step-start receipts
+as restart-replayable SQLite facts, keyed by Run step id, supervised action
+admission id, and receipt digest, with owner-scoped Task/Run listings and
+schema-fingerprint/tamper checks. Together they still start no step, dispatch no
+provider/model/tool, read or write no source, and expose no IPC/preload or
+visible Agents UI. The current Agent Tool Call Record service
 connects a persisted `call_tool` supervised action admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies
 Task/Run admission listings, accepts only

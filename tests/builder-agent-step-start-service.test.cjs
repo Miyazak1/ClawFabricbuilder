@@ -41,6 +41,10 @@ const {
   createBuilderAgentSupervisedActionAdmissionStore,
 } = require('../electron/builder-agent-supervised-action-admission-store.cjs');
 const {
+  BUILDER_AGENT_STEP_START_STORE_VERSION,
+  createBuilderAgentStepStartStore,
+} = require('../electron/builder-agent-step-start-store.cjs');
+const {
   BUILDER_AGENT_STEP_START_CONTRACT_VERSION,
   BuilderAgentStepStartContractError,
   createBuilderAgentStepStartReceipt,
@@ -235,16 +239,21 @@ function serviceFor(t) {
   const admissionStore = createBuilderAgentSupervisedActionAdmissionStore(
     path.join(root, 'action-admissions.sqlite'),
   );
+  const stepStartStore = createBuilderAgentStepStartStore(
+    path.join(root, 'step-starts.sqlite'),
+  );
   const service = createBuilderAgentStepStartService({
     budget_audit_store: budgetStore,
+    step_start_store: stepStartStore,
     supervised_action_admission_store: admissionStore,
   });
   t.after(() => {
     budgetStore.close();
     admissionStore.close();
+    stepStartStore.close();
     removeRoot(root);
   });
-  return { admissionStore, budgetStore, service };
+  return { admissionStore, budgetStore, service, stepStartStore };
 }
 
 function seedStores(stores, records, { seedBudget = true, seedAdmission = true } = {}) {
@@ -421,7 +430,14 @@ test('admits a deterministic Agent step start only after start-step admission an
   assert.equal(result.step_start_receipt.authority.provider_dispatch, false);
   assert.equal(result.step_start_receipt.authority.tool_dispatch, false);
   assert.equal(result.step_start_receipt.authority.execution_authority, false);
+  assert.equal(result.step_start_store_write.operation, 'agent_step_start_recorded');
+  assert.equal(result.step_start_read.status, 'ready');
+  assert.equal(result.admission_step_start_read.status, 'ready');
+  assert.equal(result.task_step_starts.agent_step_starts.length, 1);
+  assert.equal(result.run_step_starts.agent_step_starts.length, 1);
+  assert.equal(result.operations.step_start_store, 'agent_step_start_recorded');
   assert.equal(result.evidence.service_authority, 'main_owned_agent_step_start_service');
+  assert.equal(result.evidence.step_start_store_authority, 'main_owned_agent_step_start_store');
   assert.equal(result.evidence.step_start_receipt_authority, 'main_agent_step_start_receipt_contract_v1');
   assert.equal(result.evidence.provider_dispatch, false);
   assert.equal(result.evidence.tool_dispatch, false);
@@ -431,6 +447,7 @@ test('admits a deterministic Agent step start only after start-step admission an
 
   const replay = stores.service.admit_agent_step_start(request(records));
   assert.deepEqual(replay.step_start_receipt, result.step_start_receipt);
+  assert.equal(replay.operations.step_start_store, 'agent_step_start_replayed');
 });
 
 test('fails closed without start-step admission, budget audit, or correct step sequence', (t) => {
@@ -491,9 +508,22 @@ test('rejects malformed stores and hostile requests without leaking private mate
       budget_audit_store: {
         store_version: 'wrong-version',
       },
+      step_start_store: {
+        store_version: BUILDER_AGENT_STEP_START_STORE_VERSION,
+      },
       supervised_action_admission_store: {
         store_version: BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
       },
+    }),
+    (error) => assertServiceError(error),
+  );
+  assert.throws(
+    () => createBuilderAgentStepStartService({
+      budget_audit_store: stores.budgetStore,
+      step_start_store: {
+        store_version: 'wrong-version',
+      },
+      supervised_action_admission_store: stores.admissionStore,
     }),
     (error) => assertServiceError(error),
   );
@@ -528,6 +558,7 @@ test('source boundary remains a main-only step-start admission gate without exec
   assert.match(source, /createBuilderAgentStepStartReceipt/u);
   assert.match(source, /sanitizeBuilderAgentStepStartReceipt/u);
   assert.match(source, /main_owned_agent_step_start_service/u);
+  assert.match(source, /main_owned_agent_step_start_store/u);
   assert.match(source, /main_agent_step_start_receipt_contract_v1/u);
   assert.match(source, /main_owned_agent_budget_audit_store/u);
   assert.match(source, /main_owned_agent_supervised_action_admission_store/u);
