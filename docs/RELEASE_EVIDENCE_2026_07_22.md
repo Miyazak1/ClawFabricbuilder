@@ -1689,6 +1689,47 @@ output and Task Stream authorities.
   and `asar_entry_count: 757`. The refreshed executable is
   `release\win-unpacked\ClawFabric Builder.exe`.
 
+## 2026-08-03 Current Package Smoke And Contract Check
+
+This addendum records the current local package and contract evidence after the
+August 3 chat-first, composer, Artifact workspace, Markdown artifact routing,
+and Agent Delegation result review checkpoints. It is not a real-provider
+DeepSeek canary pass, does not extend installer evidence, code-signing status,
+mobile evidence, arbitrary generated-code execution, terminal tools, network
+permission, publication, or persistent Agent autonomy.
+
+- The current desktop package remains the unpacked executable at
+  `release\win-unpacked\ClawFabric Builder.exe`. The executable timestamp was
+  `2026/8/3 22:05:47` local time. The later architecture documentation-only
+  checkpoint does not change the packaged payload because packaging includes
+  `electron/**/*`, `dist/**/*`, and `package.json`, not the docs tree.
+- Package verification passed through `npm.cmd run verify:package`. It reported
+  `builder_package_verified`, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, production network-denying CSP, and 765 ASAR entries.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, the expected executable path, isolated
+  user-data launch, and `provider_configured: false` for the isolated smoke
+  profile.
+- Focused frontend validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderComposer.test.tsx src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx src\features\builder\application\builderComposerIntent.test.ts src\features\builder\application\builderProjectController.test.ts --runInBand`;
+  the suites reported 5 passing files and 362 passing Vitest tests. This covers
+  the single composer action while busy, independent Approval mode menu,
+  composer context bar, consecutive no-folder and saved-project chat history,
+  selected-workspace chat routing, contextual build admission, plan review, and
+  Artifact workspace projection.
+- Focused Node contract validation passed through
+  `node --test tests\verify-packaged-canary.test.cjs tests\builder-generation-ipc-runtime.test.cjs tests\builder-generation-main-service.test.cjs tests\builder-route-decision-signals.test.cjs tests\builder-agent-delegation-result-review-store.test.cjs`;
+  the command reported 148 passing Node tests. This covers packaged canary
+  geometry/evidence contracts, generation IPC runtime boundaries, main route
+  fallback parity, local Markdown artifact build admission, chat/plan/build
+  dispatch contracts, route-decision signal vocabulary, and the main-only Agent
+  Delegation result review store.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Real-provider generation, network stability, saved-profile
+  credential handling, multi-turn provider behavior, and preview evidence must
+  still be proven by an explicit `verify:packaged-canary:deepseek -- --execute`
+  run before claiming full real-provider desktop readiness for this checkpoint.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
