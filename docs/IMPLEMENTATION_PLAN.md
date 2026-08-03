@@ -872,6 +872,14 @@ Current checkpoint:
   grants no permission; dispatches no provider/model or tool; reads no
   credentials or source; writes no files; runs no process or tests; mutates no
   Git or Project Revision facts; and creates no Review/Artifact authority.
+- the current Agent Delegation result contract adds a pure main-side receipt
+  for returning a delegated child Task result to the parent Task review
+  boundary. It binds the Delegation receipt, parent/child Conversation/Task/Run
+  identity, owner, project, result status, fixed display summary, and
+  no-direct-parent-mutation materialization boundary. It carries no raw child
+  output, patch, source tree, provider output, credential, permission grant,
+  child assignment, Review, Artifact, Git, or Project Revision authority. A
+  durable result store and Review/Contribution admission remain separate gates.
 
 ### Track B - People and Spaces
 

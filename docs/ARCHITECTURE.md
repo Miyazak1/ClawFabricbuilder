@@ -242,8 +242,11 @@ intersection, cancellation propagation, and review-return boundary, but creates
 no child assignment or execution. The current Agent Delegation store is only an
 internal durable delegation evidence authority: it persists those receipts in
 main-owned SQLite with parent/child Task listing and child Task/Run duplicate
-protection, but still creates no child assignment or execution. These Agent
-authorities expose no Agents UI,
+protection, but still creates no child assignment or execution. The current
+Agent Delegation result contract is only a pure parent-review return receipt:
+it records that a delegated child Task result is ready, blocked, or failed for
+parent review without raw output, Review creation, or parent materialization.
+These Agent authorities expose no Agents UI,
 IPC/preload command, permission grant, provider/tool dispatch, source read, Git
 mutation, Review, Revision, or Artifact authority.
 
