@@ -1168,6 +1168,18 @@ Current checkpoint:
   IPC/preload command, or visible Agents UI. Store-backed parent context
   materialization and any future user-visible Agent context projection remain
   separate later gates.
+- the current Agent Delegation result parent materialization store persists
+  those parent task context receipts in a strict main-only SQLite store with
+  restart restore, idempotent replay, owner-scoped reads, read-by-eligibility
+  lookup, parent-task and child-task listing, one materialization per
+  eligibility/review/admission/result chain, schema fingerprint verification,
+  and fixed redacted failures. It stores only indexed identity plus canonical
+  Delegation/result/admission/review/eligibility/materialization receipts; it
+  creates no generic Review row, Artifact, child Assignment, child Run, source
+  materialization, check run, Project Revision, Git mutation, provider/model
+  dispatch, tool call, permission grant, IPC/preload command, or visible Agents
+  UI. The service gate that composes the eligibility store and materialization
+  store remains a separate later checkpoint.
 
 ### Track B - People and Spaces
 
