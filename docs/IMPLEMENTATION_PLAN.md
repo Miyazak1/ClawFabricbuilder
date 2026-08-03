@@ -1023,6 +1023,17 @@ Current checkpoint:
   grants no permission; dispatches no provider/model or tool; reads no
   credentials or source; writes no files; runs no process or tests; mutates no
   Git or Project Revision facts; and creates no Review/Artifact authority.
+- the current Agent Delegation service composes the Agent Definition store,
+  Assignment store, Supervision Lease store, and Delegation store as a
+  main-only delegation-recording gate. It reads the store-backed active parent
+  Assignment, verifies task assignment listing, requires a currently active
+  supervision lease for the parent Assignment, reads the active target Agent
+  and current version, records or replays the Delegation receipt, and verifies
+  parent-task and child-task Delegation listings. It creates no child
+  Assignment or child Run, opens no IPC/preload path, shows no Agents UI,
+  grants no permission, dispatches no provider/model or tool, reads no
+  credentials or source, writes no files, runs no process or tests, mutates no
+  Git or Project Revision facts, and creates no Review/Artifact authority.
 - the current Agent Delegation result contract adds a pure main-side receipt
   for returning a delegated child Task result to the parent Task review
   boundary. It binds the Delegation receipt, parent/child Conversation/Task/Run

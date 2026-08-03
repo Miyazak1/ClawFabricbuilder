@@ -341,6 +341,13 @@ Delegation store is only an
 internal durable delegation evidence authority: it persists those receipts in
 main-owned SQLite with parent/child Task listing and child Task/Run duplicate
 protection, but still creates no child assignment or execution. The current
+Agent Delegation service is only a main-only composition gate over the Agent
+Definition store, Assignment store, Supervision Lease store, and Delegation
+store: it reads the active parent Assignment, active parent lease, and active
+target Agent facts from stores, records or replays the Delegation receipt, and
+verifies parent/child Task listing. It still creates no child Assignment, child
+Run, provider/tool dispatch, permission grant, source read/write, Review,
+Artifact, Project Revision, IPC/preload command, or visible Agents UI. The current
 Agent Delegation result contract is only a pure parent-review return receipt:
 it records that a delegated child Task result is ready, blocked, or failed for
 parent review without raw output, Review creation, or parent materialization.

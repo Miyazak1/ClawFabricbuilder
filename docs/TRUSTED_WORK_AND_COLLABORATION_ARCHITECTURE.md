@@ -61,7 +61,10 @@ materialization, supervision, budget, result, result-review, review-release,
 and review-assignment-close facts currently start no run or execution. It also
 has a pure main-side Agent Delegation contract for scoped parent/child Agent,
 Task, permission, budget, and review-return evidence, plus a main-only Agent
-Delegation receipt store for restart-safe parent/child Task lookup. It now has a pure main-side Agent
+Delegation receipt store for restart-safe parent/child Task lookup, plus a
+main-only Agent Delegation service that records or replays Delegation receipts
+only after reading store-backed active parent Assignment, active parent lease,
+and active target Agent facts. It now has a pure main-side Agent
 Delegation result-return contract that can bind a child Task result summary back
 to parent review without raw output or materialization, plus a main-only
 Delegation result store for restart-safe parent/child result lookup. It also has

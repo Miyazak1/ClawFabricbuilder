@@ -294,6 +294,15 @@ review-assignment-close facts still do not start a Run, dispatch a model or
 tool, write source files, save a Project Revision, create a Review/Artifact,
 or expose a visible Goal UI.
 
+Current Agent-to-Agent checkpoint: Builder has pure main-side Delegation
+contract/store facts and a main-only Delegation service that can record or
+replay a scoped Delegation only after reading a store-backed active parent
+Assignment, active parent supervision lease, and active target Agent/current
+version. This is still local evidence only: it creates no child Assignment or
+Run, dispatches no model or tool, grants no permission, writes no source files,
+saves no Project Revision, creates no Review/Artifact, and exposes no visible
+Agents UI.
+
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,
 decisions, permissions, run evidence, artifacts, and child delegations are
