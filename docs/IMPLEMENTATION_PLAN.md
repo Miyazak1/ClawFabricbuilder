@@ -1375,9 +1375,18 @@ Current checkpoint:
   and a canonical record digest. It stores no raw file paths or file content,
   source-context result body, provider/model envelope, credential, Git fact,
   Project Revision, generic Review row, Artifact payload, IPC/preload command,
-  or visible Agents UI authority. Persisting/replaying these receipts through a
-  store and connecting the Private Source Context service to that store remain
-  separate later checkpoints.
+  or visible Agents UI authority.
+- the current Agent Private Source Context record store checkpoint persists
+  those digest-only receipts as restart-replayable SQLite facts. The store
+  verifies the record contract, enforces one row per record digest and
+  supervised action admission id, exposes owner-scoped reads by digest and
+  admission id plus Task/Run listings, and verifies canonical record JSON,
+  schema fingerprint, runtime pragmas, and row/receipt consistency. It still
+  opens no IPC/preload path, shows no Agents UI, dispatches no provider/model or
+  tool, executes no tool, grants no permission, reads or writes no source, stores
+  no raw source content, mutates no Git or Project Revision facts, and creates
+  no generic Review row or Artifact authority. Connecting the Private Source
+  Context service to this store remains a separate later checkpoint.
 - the current Agent Project Work Result service admission checkpoint connects
   the `finish_for_review` supervised action admission to the existing Project
   Work Result service. The result service now accepts a supervised action

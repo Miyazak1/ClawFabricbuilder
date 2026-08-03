@@ -486,10 +486,16 @@ Context record contract can now turn a `read_private_source` supervised action
 admission and one collector result into a deterministic digest-only receipt. It
 revalidates the bounded source tree, keeps only resource/content digests, file
 counts, byte counts, context/head/request binding, lifecycle, and authority, and
-rejects raw file paths or content in the persisted shape. It is still a pure
-main-only contract with no store/service replay, no IPC/preload command, no
-visible Agents UI, no provider/model/tool dispatch, no permission grant, no
-source write, no Git/Project Revision mutation, no Review row, and no Artifact
+rejects raw file paths or content in the persisted shape. The current Agent
+Private Source Context record store persists those digest-only receipts as
+restart-replayable SQLite facts keyed by record digest and supervised action
+admission id, with owner-scoped reads and Task/Run listings. The store verifies
+canonical record JSON, schema fingerprint, runtime pragmas, and row/receipt
+consistency, but it does not connect the Private Source Context service to
+durable storage yet. Together they are still main-only contracts with no
+IPC/preload command, no visible Agents UI, no provider/model/tool dispatch, no
+permission grant, no source read by the store, no raw source storage, no source
+write, no Git/Project Revision mutation, no Review row, and no Artifact
 authority.
 
 ## Project Storage Model
