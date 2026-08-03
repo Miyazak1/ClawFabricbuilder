@@ -406,6 +406,25 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   white-space: nowrap;
 }
 
+.cf-builder-composer-context-clear {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--cf-text-muted);
+}
+
+.cf-builder-composer-context-clear:hover:not(:disabled),
+.cf-builder-composer-context-clear:focus-visible {
+  border-color: var(--cf-border);
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+}
+
 .cf-builder-composer-textarea {
   min-height: 76px;
   max-height: 180px;
@@ -491,7 +510,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text-muted);
 }
 
-.cf-builder-composer-add-menu-wrap {
+.cf-builder-composer-add-menu-wrap,
+.cf-builder-composer-approval-wrap {
   position: relative;
   display: inline-flex;
 }
@@ -517,7 +537,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   outline: none;
 }
 
-.cf-builder-composer-add-menu {
+.cf-builder-composer-add-menu,
+.cf-builder-composer-approval-menu {
   position: absolute;
   z-index: 35;
   bottom: calc(100% + 8px);
@@ -532,7 +553,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 5px;
 }
 
-.cf-builder-composer-add-menu button {
+.cf-builder-composer-approval-menu {
+  min-width: 230px;
+}
+
+.cf-builder-composer-add-menu button,
+.cf-builder-composer-approval-menu button {
   display: flex;
   min-height: 30px;
   align-items: center;
@@ -564,18 +590,22 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-weight: 600;
 }
 
-.cf-builder-composer-add-menu button[aria-checked="true"] {
+.cf-builder-composer-add-menu button[aria-checked="true"],
+.cf-builder-composer-approval-menu button[aria-checked="true"] {
   background: color-mix(in srgb, var(--cf-primary) 8%, var(--cf-surface));
   color: var(--cf-primary-text);
 }
 
 .cf-builder-composer-add-menu button:hover:not(:disabled),
-.cf-builder-composer-add-menu button:focus-visible:not(:disabled) {
+.cf-builder-composer-add-menu button:focus-visible:not(:disabled),
+.cf-builder-composer-approval-menu button:hover:not(:disabled),
+.cf-builder-composer-approval-menu button:focus-visible:not(:disabled) {
   background: var(--cf-surface-muted);
   outline: none;
 }
 
-.cf-builder-composer-add-menu button:disabled {
+.cf-builder-composer-add-menu button:disabled,
+.cf-builder-composer-approval-menu button:disabled {
   cursor: default;
   color: var(--cf-text-soft);
   opacity: 0.62;
@@ -595,7 +625,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0 4px 0 8px;
 }
 
-.cf-builder-approval-mode-chip {
+.cf-builder-composer-approval-button {
   display: inline-flex;
   min-height: 28px;
   max-width: 190px;
@@ -607,6 +637,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-radius: 7px;
   background: var(--cf-surface);
   color: var(--cf-text-soft);
+  cursor: pointer;
   font-size: 12px;
   font-weight: 650;
   padding: 0 8px;
@@ -614,11 +645,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   white-space: nowrap;
 }
 
-.cf-builder-approval-mode-chip[data-builder-approval-mode="read_only_chat"] {
+.cf-builder-composer-approval-button:hover,
+.cf-builder-composer-approval-button:focus-visible,
+.cf-builder-composer-approval-button[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--cf-primary) 36%, var(--cf-border));
+  background: color-mix(in srgb, var(--cf-primary) 7%, var(--cf-surface));
+  color: var(--cf-primary-text);
+  outline: none;
+}
+
+.cf-builder-composer-approval-button[data-builder-approval-mode="read_only_chat"] {
   color: var(--cf-text-muted);
 }
 
-.cf-builder-approval-mode-chip[data-builder-approval-mode="allow_current_project"] {
+.cf-builder-composer-approval-button[data-builder-approval-mode="allow_current_project"] {
   border-color: color-mix(in srgb, var(--cf-primary) 28%, var(--cf-border));
   background: color-mix(in srgb, var(--cf-primary) 7%, var(--cf-surface));
   color: var(--cf-primary-text);

@@ -132,6 +132,7 @@ export type BuilderPageProps = {
   onApproveCurrentProjectWrite?: () => Promise<unknown> | void;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
+  onClearWorkspaceSelection?: () => void;
   onDismissWorkspacePicker?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
   onDismissCurrentProjectWriteApproval?: () => void;
@@ -1759,6 +1760,7 @@ export function BuilderPage({
   onApprovePlanSourceRead,
   onCancel,
   onCreateProject,
+  onClearWorkspaceSelection,
   onDismissCurrentProjectWriteApproval,
   onDismissWorkspacePicker,
   onDismissPlanSourceReadApproval,
@@ -2680,6 +2682,7 @@ export function BuilderPage({
       instruction={instruction}
       onCancel={onCancel}
       onClearComposerMode={onClearComposerMode}
+      onClearWorkspaceSelection={onClearWorkspaceSelection}
       onCreateProject={onCreateProject}
       onDismissWorkspacePicker={onDismissWorkspacePicker}
       onFocusDraftReview={focusDraftReview}

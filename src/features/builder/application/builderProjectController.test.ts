@@ -775,6 +775,35 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
   });
 
+  it('clears the selected workspace without deleting the visible conversation identity', async () => {
+    const { answer, controller, submit } = setup();
+    await controller.open(PROJECT_ID);
+
+    const cleared = controller.clearWorkspaceSelection();
+
+    expect(cleared.status).toBe('new');
+    expect(cleared.savedProject).toBeNull();
+    expect(cleared.workingProjectId).toBeNull();
+    expect(cleared.workingProject).toBeNull();
+    expect(cleared.conversationProjectId).toBe(PROJECT_ID);
+
+    await controller.answer('Can we keep chatting?');
+
+    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      existing_project_id: PROJECT_ID,
+      instruction: 'Can we keep chatting?',
+      request_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      version: 'builder-generation-request.v2',
+    }));
+
+    const blocked = await controller.submit('Build the discussed page.');
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(blocked.status).toBe('submit_failed');
+    expect(blocked.error).toBe('builder_generation_project_workspace_required');
+    expect(blocked.conversationProjectId).toBe(PROJECT_ID);
+  });
+
   it('submits one composer turn that can produce an unsaved draft', async () => {
     const { controller, generate, saveDraft, submit } = setup();
     await controller.open(PROJECT_ID);

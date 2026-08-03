@@ -1254,6 +1254,36 @@ describe('BuilderApp v2', () => {
     expect(openLocation).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
   });
 
+  it('clears the current composer workspace without deleting projects or starting a build', async () => {
+    const { container, createLocalProject, open, submit } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+    open.mockClear();
+
+    setComposerInstruction(container, 'Create a notes page.');
+    click(container, '[data-builder-clear-workspace-selection="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('Choose project');
+    });
+    expect(open).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Create a notes page.');
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)?.textContent)
+        .toContain('Hello project');
+    });
+
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
+        .toContain('Choose or create a project before I build.');
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+  });
+
   it('routes the sidebar new-project command into source folder binding before work starts', async () => {
     const { container, createLocalProject, generate, submit } = await setup();
 
@@ -2220,7 +2250,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     });
 
-    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
     click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
 
     await waitFor(() => {
@@ -2289,7 +2319,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
 
-    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
     click(container, '[data-builder-composer-approval-mode-option="read_only_chat"]');
 
     expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
@@ -2329,7 +2359,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
 
-    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
     click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
 
     await waitFor(() => {

@@ -99,6 +99,7 @@ export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
   retainConversationProject(projectId: string): BuilderProjectControllerSnapshot;
+  clearWorkspaceSelection(): BuilderProjectControllerSnapshot;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
   createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot>;
   submit(instruction: string): Promise<BuilderProjectControllerSnapshot>;
@@ -226,6 +227,7 @@ function buildWorkspaceRequiredSnapshot(
   retained: BuilderProjectReadSnapshot | null,
   preview: BuilderSourceTreePreviewProjection | null,
   answer: BuilderGenerationAnswer | null,
+  conversationProjectId: string | null = null,
 ): BuilderProjectControllerSnapshot {
   return snapshot(
     status,
@@ -236,6 +238,9 @@ function buildWorkspaceRequiredSnapshot(
     answer,
     null,
     false,
+    null,
+    null,
+    conversationProjectId,
   );
 }
 
@@ -707,6 +712,37 @@ export function createBuilderProjectController(
     ));
   }
 
+  function clearWorkspaceSelection(): BuilderProjectControllerSnapshot {
+    if (
+      disposed
+      || current.busy
+      || current.draft !== null
+      || current.inspectedRevision !== null
+      || (current.savedProject === null && current.workingProjectId === null)
+    ) return current;
+    epoch += 1;
+    inFlight = null;
+    activeGeneration = null;
+    retryableGeneration = null;
+    const retainedConversationProjectId = current.conversationProjectId
+      ?? current.answer?.project_id
+      ?? current.savedProject?.target.project_id
+      ?? current.workingProjectId;
+    return publish(snapshot(
+      'new',
+      null,
+      null,
+      null,
+      null,
+      current.answer,
+      null,
+      false,
+      null,
+      null,
+      retainedConversationProjectId,
+    ));
+  }
+
   async function bindProjectForBuild(
     status: 'submit_failed' | 'generation_failed',
     retained: BuilderProjectReadSnapshot | null,
@@ -714,7 +750,7 @@ export function createBuilderProjectController(
   ): Promise<string | null> {
     const existingProjectId = retained?.target.project_id ?? current.workingProjectId;
     if (existingProjectId !== null) return existingProjectId;
-    publish(buildWorkspaceRequiredSnapshot(status, retained, preview, current.answer));
+    publish(buildWorkspaceRequiredSnapshot(status, retained, preview, current.answer, current.conversationProjectId));
     return null;
   }
 
@@ -1191,6 +1227,7 @@ export function createBuilderProjectController(
           retained,
           current.preview,
           current.answer,
+          current.conversationProjectId,
         ));
       }
       const retainedPreview = current.preview;
@@ -1319,6 +1356,7 @@ export function createBuilderProjectController(
         retained,
         current.preview,
         current.answer,
+        current.conversationProjectId,
       ));
     }
     const before = current;
@@ -1749,6 +1787,7 @@ export function createBuilderProjectController(
       return () => listeners.delete(listener);
     },
     retainConversationProject,
+    clearWorkspaceSelection,
     open,
     createLocalProject,
     submit,

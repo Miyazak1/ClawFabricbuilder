@@ -1385,6 +1385,27 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
   });
 
+  it('passes current workspace clearing through the composer context bar', async () => {
+    const { saved } = await snapshots();
+    const onClearWorkspaceSelection = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction="Keep discussing."
+        onClearWorkspaceSelection={onClearWorkspaceSelection}
+        snapshot={saved}
+      />,
+    );
+
+    const clear = container.querySelector('[data-builder-clear-workspace-selection="true"]');
+    expect(clear).not.toBeNull();
+    expect(clear?.closest('[data-builder-composer-context-bar="true"]')).not.toBeNull();
+
+    click(container, '[data-builder-clear-workspace-selection="true"]');
+
+    expect(onClearWorkspaceSelection).toHaveBeenCalledOnce();
+  });
+
   it('keeps the current source folder visible in the project picker before first save', async () => {
     const working = await workingProjectSnapshot();
     const onCreateProject = vi.fn();

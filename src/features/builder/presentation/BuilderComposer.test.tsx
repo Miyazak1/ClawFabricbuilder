@@ -353,6 +353,49 @@ describe('BuilderComposer', () => {
     expect(draft.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
   });
 
+  it('clears the selected workspace from the context bar without touching the footer', () => {
+    const onClearWorkspaceSelection = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          onClearWorkspaceSelection,
+          savedProject: {
+            revisionNumber: 2,
+            title: 'Saved dashboard',
+          },
+        })}
+      />,
+    );
+
+    const clear = container.querySelector<HTMLButtonElement>('[data-builder-clear-workspace-selection="true"]');
+    const contextBar = container.querySelector('[data-builder-composer-context-bar="true"]');
+    const footer = container.querySelector('.cf-builder-composer-footer');
+    expect(clear).not.toBeNull();
+    expect(clear?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
+    expect(clear?.closest('.cf-builder-composer-footer')).not.toBe(footer);
+
+    click(container, '[data-builder-clear-workspace-selection="true"]');
+
+    expect(onClearWorkspaceSelection).toHaveBeenCalledOnce();
+  });
+
+  it('does not offer workspace clearing while an unsaved draft is awaiting review', () => {
+    const container = render(
+      <BuilderComposer
+        {...props({
+          hasUnsavedDraft: true,
+          onClearWorkspaceSelection: vi.fn(),
+          savedProject: {
+            revisionNumber: 2,
+            title: 'Saved dashboard',
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-clear-workspace-selection="true"]')).toBeNull();
+  });
+
   it('uses the add menu for Plan mode without adding another send command', () => {
     const onSelectPlanMode = vi.fn();
     const onSelectBriefMode = vi.fn();
@@ -387,10 +430,10 @@ describe('BuilderComposer', () => {
     expect(menu?.textContent).toContain('Files and folders');
     expect(menu?.textContent).toContain('Brief');
     expect(menu?.textContent).toContain('Plan mode');
-    expect(menu?.textContent).toContain('Approval mode');
-    expect(menu?.textContent).toContain('Read-only chat');
-    expect(menu?.textContent).toContain('Ask before write');
-    expect(menu?.textContent).toContain('Allow current project');
+    expect(menu?.textContent).not.toContain('Approval mode');
+    expect(menu?.textContent).not.toContain('Read-only chat');
+    expect(menu?.textContent).not.toContain('Ask before write');
+    expect(menu?.textContent).not.toContain('Allow current project');
 
     click(container, '[data-builder-composer-add-brief="true"]');
     expect(onSelectBriefMode).toHaveBeenCalledOnce();
@@ -408,7 +451,7 @@ describe('BuilderComposer', () => {
     expect(onSubmitInstruction).not.toHaveBeenCalled();
   });
 
-  it('selects approval mode from the add menu without adding another send command', () => {
+  it('selects approval mode from its own menu without adding another send command', () => {
     const onSelectApprovalMode = vi.fn();
     const container = render(
       <BuilderComposer
@@ -425,15 +468,19 @@ describe('BuilderComposer', () => {
     );
 
     expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-approval-menu-button="true"]')?.textContent)
+      .toContain('Ask before write');
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
 
-    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-approval-menu="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-composer-approval-mode-option="ask_before_write"]')
       ?.getAttribute('aria-checked')).toBe('true');
     click(container, '[data-builder-composer-approval-mode-option="read_only_chat"]');
 
     expect(onSelectApprovalMode).toHaveBeenCalledExactlyOnceWith('read_only_chat');
-    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-approval-menu="true"]')).toBeNull();
   });
 
   it('closes composer popovers when clicking outside them', () => {
@@ -449,10 +496,14 @@ describe('BuilderComposer', () => {
 
     click(container, '[data-builder-composer-add-menu-button="true"]');
     expect(container.querySelector('[data-builder-composer-add-menu="true"]')).not.toBeNull();
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-approval-menu="true"]')).not.toBeNull();
     act(() => {
       document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
     });
     expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-approval-menu="true"]')).toBeNull();
 
     click(container, '[data-builder-workspace-chip="true"]');
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).not.toBeNull();
@@ -474,7 +525,7 @@ describe('BuilderComposer', () => {
       />,
     );
 
-    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
 
     const allowCurrent = container.querySelector<HTMLButtonElement>(
       '[data-builder-composer-approval-mode-option="allow_current_project"]',

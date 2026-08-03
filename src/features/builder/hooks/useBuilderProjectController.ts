@@ -20,6 +20,7 @@ export type UseBuilderProjectControllerOptions = Readonly<
 export type UseBuilderProjectControllerResult = Readonly<{
   snapshot: BuilderProjectControllerSnapshot;
   retainConversationProject: BuilderProjectController['retainConversationProject'];
+  clearWorkspaceSelection: BuilderProjectController['clearWorkspaceSelection'];
   createLocalProject: BuilderProjectController['createLocalProject'];
   submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
@@ -74,6 +75,8 @@ export function useBuilderProjectController(
   useLayoutEffect(() => {
     const current = controller.getSnapshot();
     const selectedProjectId = current.savedProject?.target.project_id ?? current.workingProjectId;
+    const conversationProjectId = current.conversationProjectId ?? current.answer?.project_id;
+    if (projectId === undefined && selectedProjectId === null && conversationProjectId !== null) return;
     if (projectId !== undefined && selectedProjectId === projectId) return;
     void controller.open(projectId).catch(() => undefined);
   }, [controller, projectId]);
@@ -101,6 +104,10 @@ export function useBuilderProjectController(
   );
   const retainConversationProject = useCallback<BuilderProjectController['retainConversationProject']>(
     (projectId) => controller.retainConversationProject(projectId),
+    [controller],
+  );
+  const clearWorkspaceSelection = useCallback<BuilderProjectController['clearWorkspaceSelection']>(
+    () => controller.clearWorkspaceSelection(),
     [controller],
   );
   const submit = useCallback<BuilderProjectController['submit']>(
@@ -163,6 +170,7 @@ export function useBuilderProjectController(
     () => Object.freeze({
       snapshot,
       retainConversationProject,
+      clearWorkspaceSelection,
       createLocalProject,
       submit,
       answer,
@@ -182,6 +190,7 @@ export function useBuilderProjectController(
     [
       snapshot,
       retainConversationProject,
+      clearWorkspaceSelection,
       createLocalProject,
       submit,
       answer,

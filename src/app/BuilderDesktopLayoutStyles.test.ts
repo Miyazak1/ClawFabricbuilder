@@ -449,16 +449,22 @@ describe('Builder desktop layout styles', () => {
     const shell = styleBlock(source, '.cf-builder-composer-shell');
     const contextBar = styleBlock(source, '.cf-builder-composer-context-bar');
     const contextPill = styleBlock(source, '.cf-builder-composer-context-pill');
+    const contextClear = styleBlock(source, '.cf-builder-composer-context-clear');
     const workspaceChip = styleBlock(source, '.cf-builder-workspace-chip');
     const workspaceCopy = styleBlock(source, '.cf-builder-workspace-chip-copy');
     const workspaceLabel = styleBlock(source, '.cf-builder-workspace-chip-label');
     const workspaceDetail = styleBlock(source, '.cf-builder-workspace-chip-detail');
     const picker = styleBlock(source, '.cf-builder-workspace-picker');
+    const approvalButton = styleBlock(source, '.cf-builder-composer-approval-button');
+    const approvalMenu = styleBlockContaining(source, '.cf-builder-composer-approval-menu', 'min-width: 230px;');
+    const floatingMenus = styleBlock(source, '.cf-builder-composer-add-menu,\n.cf-builder-composer-approval-menu');
 
     expect(shell).toContain('grid-template-rows: auto minmax(72px, auto) auto;');
     expect(contextBar).toContain('display: flex;');
     expect(contextBar).toContain('padding: 8px 10px 0;');
     expect(contextPill).toContain('white-space: nowrap;');
+    expect(contextClear).toContain('width: 28px;');
+    expect(contextClear).toContain('border-radius: 7px;');
     expect(workspaceChip).toContain('min-height: 34px;');
     expect(workspaceChip).toContain('padding: 3px 8px;');
     expect(workspaceCopy).toContain('display: grid;');
@@ -468,5 +474,10 @@ describe('Builder desktop layout styles', () => {
     expect(workspaceDetail).toContain('line-height: 1.15;');
     expect(picker).toContain('bottom: calc(100% - 44px);');
     expect(picker).not.toContain('top: 48px;');
+    expect(approvalButton).toContain('min-height: 28px;');
+    expect(approvalButton).toContain('cursor: pointer;');
+    expect(approvalMenu).toContain('min-width: 230px;');
+    expect(floatingMenus).toContain('position: absolute;');
+    expect(floatingMenus).toContain('bottom: calc(100% + 8px);');
   });
 });

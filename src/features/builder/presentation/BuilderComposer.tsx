@@ -65,6 +65,7 @@ export type BuilderComposerProps = Readonly<{
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onClearComposerMode?: () => void;
+  onClearWorkspaceSelection?: () => void;
   onDismissWorkspacePicker?: () => void;
   onFocusDraftReview?: () => void;
   onInstructionChange?: (value: string) => void;
@@ -101,6 +102,12 @@ function sourceFolderBoundaryLabel(folderName: string | undefined): string {
   return `Source folder: ${folderName ?? 'selected folder'}`;
 }
 
+function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
+  if (mode === 'read_only_chat') return 'Read-only chat';
+  if (mode === 'allow_current_project') return 'Allow current project';
+  return 'Ask before write';
+}
+
 export function BuilderComposer({
   activeAnswerBuildBlocked = false,
   approvalMode = 'ask_before_write',
@@ -120,6 +127,7 @@ export function BuilderComposer({
   instruction,
   onCancel,
   onClearComposerMode,
+  onClearWorkspaceSelection,
   onCreateProject,
   onDismissWorkspacePicker,
   onFocusDraftReview,
@@ -156,6 +164,7 @@ export function BuilderComposer({
   }));
   const [workspacePickerDismissedBuildPrompt, setWorkspacePickerDismissedBuildPrompt] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
   const pendingWorkspaceNewProjectRequest = workspaceNewProjectRequest > workspacePickerState.createRequest;
   const workspacePickerOpen = workspacePickerState.open
@@ -181,6 +190,10 @@ export function BuilderComposer({
   const workspaceEnvironmentLabels = [
     savedProject !== null || workingProject !== null ? 'Local' : null,
   ].filter((label): label is string => label !== null);
+  const hasWorkspaceSelection = savedProject !== null || workingProject !== null;
+  const canClearWorkspaceSelection = hasWorkspaceSelection
+    && !hasUnsavedDraft
+    && typeof onClearWorkspaceSelection === 'function';
   const composerRouteEvidence = routeDecisionEvidence(composerRouteDecision);
   const composerPlaceholder = (() => {
     if (hasUnsavedDraft) return 'Ask about this draft, or describe the next change...';
@@ -237,7 +250,7 @@ export function BuilderComposer({
   }
 
   useEffect(() => {
-    if (!addMenuOpen && !workspacePickerOpen) return undefined;
+    if (!addMenuOpen && !approvalMenuOpen && !workspacePickerOpen) return undefined;
     function closeFloatingPanels(event: PointerEvent): void {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -247,6 +260,14 @@ export function BuilderComposer({
           === null
       ) {
         setAddMenuOpen(false);
+      }
+      if (
+        approvalMenuOpen
+        && target.closest(
+          '[data-builder-composer-approval-menu="true"], [data-builder-composer-approval-menu-button="true"]',
+        ) === null
+      ) {
+        setApprovalMenuOpen(false);
       }
       if (
         workspacePickerOpen
@@ -268,6 +289,7 @@ export function BuilderComposer({
     return () => document.removeEventListener('pointerdown', closeFloatingPanels);
   }, [
     addMenuOpen,
+    approvalMenuOpen,
     onDismissWorkspacePicker,
     workspaceNewProjectRequest,
     workspacePickerBuildPrompt,
@@ -292,9 +314,23 @@ export function BuilderComposer({
     }));
   }
 
+  function clearWorkspaceSelection(): void {
+    if (!canClearWorkspaceSelection || busy) return;
+    closeWorkspacePicker();
+    setAddMenuOpen(false);
+    onClearWorkspaceSelection?.();
+  }
+
   function toggleAddMenu(): void {
     if (busy && !canAddContext) return;
+    setApprovalMenuOpen(false);
     setAddMenuOpen((open) => !open);
+  }
+
+  function toggleApprovalMenu(): void {
+    if (busy && !canAddContext) return;
+    setAddMenuOpen(false);
+    setApprovalMenuOpen((open) => !open);
   }
 
   function openFilesAndFoldersFromAddMenu(): void {
@@ -324,7 +360,7 @@ export function BuilderComposer({
   function selectApprovalMode(mode: BuilderComposerApprovalMode): void {
     if (typeof onSelectApprovalMode !== 'function') return;
     if (mode === 'allow_current_project' && !canAllowCurrentProjectApproval) return;
-    setAddMenuOpen(false);
+    setApprovalMenuOpen(false);
     void onSelectApprovalMode(mode);
   }
 
@@ -432,6 +468,19 @@ export function BuilderComposer({
               ))}
             </span>
           ) : null}
+          {canClearWorkspaceSelection ? (
+            <button
+              aria-label="Clear current project from composer"
+              className="cf-builder-composer-context-clear"
+              data-builder-clear-workspace-selection="true"
+              disabled={busy}
+              onClick={clearWorkspaceSelection}
+              title="Clear current project from composer"
+              type="button"
+            >
+              <X aria-hidden="true" className="size-3.5" />
+            </button>
+          ) : null}
         </div>
         <textarea
           aria-label="Ask a question, or describe what to build or change"
@@ -506,6 +555,31 @@ export function BuilderComposer({
                     <ListChecks aria-hidden="true" className="size-3.5" />
                     Plan mode
                   </button>
+                </div>
+              ) : null}
+            </div>
+            <div className="cf-builder-composer-approval-wrap">
+              <button
+                aria-expanded={approvalMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Approval mode"
+                className="cf-builder-composer-approval-button"
+                data-builder-approval-mode={approvalMode}
+                data-builder-composer-approval-menu-button="true"
+                disabled={busy && !canAddContext}
+                onClick={toggleApprovalMenu}
+                title={`Approval mode: ${approvalModeLabel(approvalMode)}`}
+                type="button"
+              >
+                <ShieldCheck aria-hidden="true" className="size-3.5" />
+                {approvalModeLabel(approvalMode)}
+              </button>
+              {approvalMenuOpen ? (
+                <div
+                  className="cf-builder-composer-approval-menu"
+                  data-builder-composer-approval-menu="true"
+                  role="menu"
+                >
                   <div className="cf-builder-composer-add-menu-label">Approval mode</div>
                   <button
                     aria-checked={approvalMode === 'read_only_chat'}
@@ -525,8 +599,7 @@ export function BuilderComposer({
                     type="button"
                   >
                     <GitCompareArrows aria-hidden="true" className="size-3.5" />
-                    Approval mode
-                    <span className="cf-builder-composer-add-menu-hint">Ask before write</span>
+                    Ask before write
                   </button>
                   <button
                     aria-checked={approvalMode === 'allow_current_project'}

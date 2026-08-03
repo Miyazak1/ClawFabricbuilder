@@ -1158,6 +1158,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(nextProjectId, { preserveIdea: true });
   }, [resetWorkspace]);
 
+  const clearComposerWorkspaceSelection = useCallback(() => {
+    project.clearWorkspaceSelection();
+    resetWorkspace(undefined, { preserveIdea: true });
+  }, [project, resetWorkspace]);
+
   const startNewProjectFromCatalog = useCallback(() => {
     resetWorkspace(undefined);
     setCatalogNewProjectPending(true);
@@ -2233,6 +2238,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}
               onClearComposerMode={clearComposerMode}
+              onClearWorkspaceSelection={clearComposerWorkspaceSelection}
               onDismissWorkspacePicker={dismissWorkspacePicker}
               onDismissCurrentProjectWriteApproval={dismissCurrentProjectWriteApproval}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}

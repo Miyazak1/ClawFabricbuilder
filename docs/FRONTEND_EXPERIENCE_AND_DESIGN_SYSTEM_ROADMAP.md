@@ -211,11 +211,12 @@ test matrix.
 
 The composer contains:
 
-- workspace chip: current project/source folder state;
-- add menu: attachments, source context, plan mode, brief, permissions,
-  and later plugin/tool entries;
+- workspace context bar: current project/source folder state, local context, and
+  a clear-current-workspace control when no unsaved draft is awaiting review;
+- add menu: attachments, source context, plan mode, brief, and later plugin/tool
+  entries;
 - explicit plan command;
-- permission indicator;
+- permission mode control;
 - send button;
 - contextual status such as `Discussing`, `Ready to build`, `Building draft`,
   or `Review draft`.
@@ -238,8 +239,17 @@ MVP entries:
 - **Plan mode**: make the next submitted message route to `plan`, even if the
   wording is ordinary. It should appear as an active composer chip and be
   removable before sending.
-- **Approval mode**: once the permission slice exists, expose the current
-  read/write approval mode here.
+
+Approval mode is adjacent to the `+` menu rather than hidden inside it. The
+bottom-left composer tools should read as:
+
+```text
+[Files/Brief/Plan] [Approval mode]
+```
+
+This keeps added context and execution policy separate: `+` changes what is
+attached or how the next message is interpreted, while Approval mode changes
+the read/write admission preference for side-effecting work.
 
 Later entries:
 
@@ -440,12 +450,24 @@ Current Builder checkpoint:
 
 Approval mode checkpoint:
 
-- the composer `+` menu now exposes the first three Builder-scoped modes:
+- the composer footer exposes the first three Builder-scoped modes through a
+  compact Approval mode control next to the `+` menu:
   `Read-only chat`, `Ask before write`, and `Allow current project`;
-- the active mode is visible as a compact composer chip;
+- the active mode is visible on that control, not as a passive chip competing
+  with typing space;
 - `Read-only chat` prevents draft creation even for explicit build wording;
 - `Allow current project` is available only when a project is selected and uses
   the existing main-owned approval path before the mode becomes active.
+
+Composer context bar checkpoint:
+
+- project/source-folder context lives on the composer top edge, not in the
+  footer tool row;
+- the clear-current-project control only removes the current composer/workspace
+  selection. It does not delete the Project, clear the Conversation, erase the
+  current input, save/discard a draft, or grant/revoke permissions;
+- when no workspace is selected, chat can continue, while build still re-enters
+  the normal workspace and write-permission admission path.
 
 The UI should communicate two separate facts:
 

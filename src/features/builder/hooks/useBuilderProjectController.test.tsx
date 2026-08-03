@@ -286,6 +286,24 @@ describe('useBuilderProjectController', () => {
     });
   });
 
+  it('clears the selected project without reopening empty selection or dropping conversation identity', async () => {
+    const hook = await renderHook(PROJECT_ID);
+    await waitFor(() => {
+      expect(hook.current().snapshot.savedProject?.target.project_id).toBe(PROJECT_ID);
+    });
+    hook.open.mockClear();
+
+    act(() => {
+      hook.current().clearWorkspaceSelection();
+    });
+    await hook.selectProject(undefined);
+
+    expect(hook.open).not.toHaveBeenCalled();
+    expect(hook.current().snapshot.savedProject).toBeNull();
+    expect(hook.current().snapshot.workingProjectId).toBeNull();
+    expect(hook.current().snapshot.conversationProjectId).toBe(PROJECT_ID);
+  });
+
   it('keeps generation unsaved until the explicit save command', async () => {
     const hook = await renderHook(PROJECT_ID);
     await waitFor(() => {
@@ -505,7 +523,6 @@ describe('useBuilderProjectController', () => {
     await waitFor(() => {
       expect(hook.current().snapshot.status).toBe('ready');
     });
-    expect(hook.open).toHaveBeenCalledWith({ project_id: null });
     expect(hook.open).toHaveBeenLastCalledWith({ project_id: PROJECT_ID });
 
     await act(async () => {
