@@ -2775,6 +2775,56 @@ installer evidence, or a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Delegation Result Parent Materialization Service Package Check
+
+This addendum records the package checkpoint after adding the strict main-only
+service that composes the parent materialization eligibility store and parent
+materialization store. It records or replays an already eligible delegated
+child result as a parent task context receipt for later owner-supervised use;
+it does not enable visible Agents UI, autonomous child Agent execution, generic
+Review row creation, Artifact creation, source materialization, check runs,
+Project Revision creation, Git mutation, provider/model dispatch, tool calls,
+permission grants, IPC/preload commands, installer evidence, or a real
+saved-profile DeepSeek canary pass.
+
+- The service reads the store-backed eligibility receipt, verifies parent-task
+  and child-task eligibility listings, creates the parent materialization
+  receipt, records or replays it through the materialization store, and verifies
+  read-by-materialization, read-by-eligibility, parent-task materialization
+  listing, and child-task materialization listing before returning a main-side
+  result. It fails closed on missing eligibility, owner drift, time drift,
+  malformed materialization input, replay conflicts, malformed stores, hostile
+  inputs, and redacted internal failures.
+- The service records only
+  `main_owned_agent_delegation_result_parent_materialization_service` evidence
+  authority over `local_parent_task_context_receipt_only` materialization. It
+  carries no raw child output, patch, source tree, generic Review id, Artifact
+  id, Project Revision fact, provider/model envelope, credential, permission
+  grant, IPC/preload path, or visible Agents UI authority.
+- Focused validation passed through
+  `node --test tests\builder-agent-delegation-result-parent-materialization-service.test.cjs`;
+  the command reported 5 passing Node tests.
+- Adjacent Agent Delegation A2 validation passed through the Delegation,
+  result, admission, review, eligibility, materialization, store, and service
+  Node contract set; the command reported 85 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 855 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 790 ASAR
+  entries. The refreshed executable timestamp was `2026/8/4 03:58:24` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

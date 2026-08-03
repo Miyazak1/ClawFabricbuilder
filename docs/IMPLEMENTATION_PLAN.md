@@ -1180,6 +1180,17 @@ Current checkpoint:
   dispatch, tool call, permission grant, IPC/preload command, or visible Agents
   UI. The service gate that composes the eligibility store and materialization
   store remains a separate later checkpoint.
+- the current Agent Delegation result parent materialization service composes
+  the eligibility store and parent materialization store as a main-only
+  materialization-recording gate. It accepts only an owner id, eligibility id,
+  materialization input, and observation time; reads the store-backed
+  eligibility receipt; verifies parent-task and child-task eligibility
+  listings; records or replays the parent task context receipt; and verifies
+  read-by-materialization, read-by-eligibility, parent-task materialization
+  listing, and child-task materialization listing. It creates no generic Review
+  row, Artifact, child Assignment, child Run, source materialization, check run,
+  Project Revision, Git mutation, provider/model dispatch, tool call,
+  permission grant, IPC/preload command, or visible Agents UI.
 
 ### Track B - People and Spaces
 
