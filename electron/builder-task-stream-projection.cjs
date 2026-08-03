@@ -233,6 +233,8 @@ function itemFromEvent(event, progressStagesByRun) {
           recorded_state: 'recorded',
           route: snapshot.route_decision.route,
           dispatch: snapshot.route_decision.dispatch,
+          downgraded_from: snapshot.route_decision.downgraded_from,
+          downgrade_reason: snapshot.route_decision.downgrade_reason,
           brief: snapshot.brief_reference.status === 'task_capsule_update'
             ? 'available'
             : 'not_available',

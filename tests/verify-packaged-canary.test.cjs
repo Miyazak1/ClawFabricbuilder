@@ -1459,6 +1459,8 @@ function addContextSnapshotAndBriefFacts(evidence) {
             recorded_state: 'recorded',
             route: 'build',
             dispatch: 'build',
+            downgraded_from: null,
+            downgrade_reason: null,
             brief: 'available',
             base: 'new_project_or_unsaved',
             permission_result: 'allowed',

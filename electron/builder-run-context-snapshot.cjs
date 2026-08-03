@@ -46,6 +46,8 @@ const ROUTE_DECISION_KEYS = Object.freeze([
   'route',
   'dispatch',
   'matched_signals',
+  'downgraded_from',
+  'downgrade_reason',
 ]);
 const BRIEF_REFERENCE_KEYS = Object.freeze([
   'status',
@@ -77,6 +79,7 @@ const SNAPSHOT_ID_PATTERN = /^builder-run-context-snapshot:[0-9a-f]{64}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
 const DISPATCHES = Object.freeze(['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked']);
+const DOWNGRADE_REASONS = Object.freeze(['ambiguous_build_intent', 'missing_prior_build_context', 'workspace_required']);
 const PERMISSIONS = Object.freeze(['project_read', 'write_project']);
 const PERMISSION_RESULTS = Object.freeze(['not_required', 'allowed', 'ask', 'denied']);
 
@@ -221,6 +224,8 @@ function sanitizeRouteDecision(value) {
     route: safeEnum(valueAt(source, 'route'), ROUTES),
     dispatch: safeEnum(valueAt(source, 'dispatch'), DISPATCHES),
     matched_signals: denseSignals(valueAt(source, 'matched_signals')),
+    downgraded_from: nullable(valueAt(source, 'downgraded_from'), (item) => safeEnum(item, ROUTES)),
+    downgrade_reason: nullable(valueAt(source, 'downgrade_reason'), (item) => safeEnum(item, DOWNGRADE_REASONS)),
   };
 }
 
@@ -374,6 +379,8 @@ function createBuilderRunContextSnapshot(input) {
     route: valueAt(routeDecisionSource, 'route'),
     dispatch: valueAt(routeDecisionSource, 'dispatch'),
     matched_signals: valueAt(routeDecisionSource, 'matched_signals'),
+    downgraded_from: valueAt(routeDecisionSource, 'downgraded_from'),
+    downgrade_reason: valueAt(routeDecisionSource, 'downgrade_reason'),
   });
   const taskCapsule = valueAt(source, 'latest_task_capsule');
   const body = snapshotBodyFrom({

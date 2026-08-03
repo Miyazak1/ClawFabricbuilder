@@ -7,6 +7,9 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  createBuilderRunContextSnapshot,
+} = require('../electron/builder-run-context-snapshot.cjs');
+const {
   CONVERSATION_AUTHORITY,
   CONVERSATION_EVENT_KIND,
   CONVERSATION_EVENT_VERSION,
@@ -179,6 +182,21 @@ function candidateReceipt(turnId, taskId, runId) {
     product_revision_admission: 'not_recorded',
     replay: false,
   };
+}
+
+function runContextSnapshot({ turnId, taskId, runId, routeDecisionRecord, messageId }) {
+  return createBuilderRunContextSnapshot({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    message_id: messageId,
+    route_decision: routeDecisionRecord,
+    latest_task_capsule: null,
+    base_revision: null,
+    created_at_ms: 4_000,
+  });
 }
 
 async function toolCallRecord({
@@ -677,6 +695,77 @@ test('projects task brief updates as compact renderer-safe context items', () =>
   assert.doesNotMatch(
     JSON.stringify(stream),
     /route_decision|builder-route-decision|provider|credential|source_tree|revision_receipt|commit_oid/iu,
+  );
+});
+
+test('projects route downgrade facts without exposing private route evidence', () => {
+  const events = [];
+  const turnId = id('turn', 240);
+  const runId = id('run', 241);
+  const messageId = id('message', 242);
+  append(events, 'turn_submitted', {
+    message: { message_id: messageId, text: '那就写' },
+    turn_id: turnId,
+    mode: 'question',
+    task: null,
+    base_revision: null,
+    route_decision: routeDecision({
+      message: { message_id: messageId, text: '那就写' },
+      mode: 'question',
+      task: null,
+    }, {
+      route: 'clarify',
+      confidence: 'medium',
+      matched_signals: ['clear_build'],
+      downgraded_from: 'build',
+      downgrade_reason: 'missing_prior_build_context',
+      dispatch: 'reply',
+    }),
+  }, 240);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: null,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 241);
+  append(events, 'run_context_snapshot_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    snapshot: runContextSnapshot({
+      turnId,
+      taskId: null,
+      runId,
+      messageId,
+      routeDecisionRecord: events[0].payload.route_decision,
+    }),
+  }, 242);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.deepEqual(stream.conversation.items[2], {
+    item_kind: 'run_context_snapshot_recorded',
+    sequence: 3,
+    turn_id: turnId,
+    run_id: runId,
+    task_id: null,
+    context: {
+      recorded_state: 'recorded',
+      route: 'clarify',
+      dispatch: 'reply',
+      downgraded_from: 'build',
+      downgrade_reason: 'missing_prior_build_context',
+      brief: 'not_available',
+      base: 'new_project_or_unsaved',
+      permission_result: 'not_required',
+      command_execution: 'not_included',
+      network_access: 'not_included',
+    },
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /route_decision|builder-route-decision|confidence|required_permissions|provider|credential|source_tree|revision_receipt|commit_oid/iu,
   );
 });
 

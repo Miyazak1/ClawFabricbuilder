@@ -135,6 +135,8 @@ export type BuilderConversationItem =
       recorded_state: 'recorded';
       route: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
       dispatch: 'reply' | 'brief_update' | 'plan' | 'build' | 'ask_workspace' | 'ask_permission' | 'blocked';
+      downgraded_from: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build' | null;
+      downgrade_reason: 'ambiguous_build_intent' | 'missing_prior_build_context' | 'workspace_required' | null;
       brief: 'available' | 'not_available';
       base: 'new_project_or_unsaved' | 'project_revision';
       permission_result: 'not_required' | 'allowed' | 'ask' | 'denied';
@@ -352,6 +354,8 @@ const RUN_CONTEXT_SNAPSHOT_CONTEXT_KEYS = Object.freeze([
   'recorded_state',
   'route',
   'dispatch',
+  'downgraded_from',
+  'downgrade_reason',
   'brief',
   'base',
   'permission_result',
@@ -443,6 +447,21 @@ const RUN_PROGRESS_STAGES: readonly BuilderConversationRunProgressStage[] = Obje
   'provider_request_started',
   'provider_response_received',
   'result_preparing',
+]);
+const RUN_CONTEXT_ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
+const RUN_CONTEXT_DISPATCHES = Object.freeze([
+  'reply',
+  'brief_update',
+  'plan',
+  'build',
+  'ask_workspace',
+  'ask_permission',
+  'blocked',
+]);
+const RUN_CONTEXT_DOWNGRADE_REASONS = Object.freeze([
+  'ambiguous_build_intent',
+  'missing_prior_build_context',
+  'workspace_required',
 ]);
 const TOOL_RESULT_SUMMARY_BY_CODE: Readonly<Record<BuilderConversationToolResultSummaryCode, string>> = Object.freeze({
   completed_without_raw_output: 'This step completed. Details were not kept.',
@@ -834,12 +853,16 @@ function sanitizeRunContextSnapshotRecorded(
   const context = exactRecord(source.context, RUN_CONTEXT_SNAPSHOT_CONTEXT_KEYS);
   const route = context.route;
   const dispatch = context.dispatch;
+  const downgradedFrom = context.downgraded_from;
+  const downgradeReason = context.downgrade_reason;
   const brief = context.brief;
   const base = context.base;
   const permissionResult = context.permission_result;
   if (
-    !['answer', 'clarify', 'update_brief', 'plan', 'build'].includes(route as string)
-    || !['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked'].includes(dispatch as string)
+    !RUN_CONTEXT_ROUTES.includes(route as string)
+    || !RUN_CONTEXT_DISPATCHES.includes(dispatch as string)
+    || (downgradedFrom !== null && !RUN_CONTEXT_ROUTES.includes(downgradedFrom as string))
+    || (downgradeReason !== null && !RUN_CONTEXT_DOWNGRADE_REASONS.includes(downgradeReason as string))
     || !['available', 'not_available'].includes(brief as string)
     || !['new_project_or_unsaved', 'project_revision'].includes(base as string)
     || !['not_required', 'allowed', 'ask', 'denied'].includes(permissionResult as string)
@@ -857,6 +880,8 @@ function sanitizeRunContextSnapshotRecorded(
       recorded_state: 'recorded',
       route: route as 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build',
       dispatch: dispatch as 'reply' | 'brief_update' | 'plan' | 'build' | 'ask_workspace' | 'ask_permission' | 'blocked',
+      downgraded_from: downgradedFrom as 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build' | null,
+      downgrade_reason: downgradeReason as 'ambiguous_build_intent' | 'missing_prior_build_context' | 'workspace_required' | null,
       brief: brief as 'available' | 'not_available',
       base: base as 'new_project_or_unsaved' | 'project_revision',
       permission_result: permissionResult as 'not_required' | 'allowed' | 'ask' | 'denied',

@@ -745,6 +745,13 @@ function runContextSnapshotBody(
         : item.context.route === 'clarify'
           ? 'Builder kept this as a clarification step.'
           : 'Builder kept this as chat.';
+  const downgrade = item.context.downgrade_reason === 'missing_prior_build_context'
+    ? 'It did not have enough confirmed direction to start changing files.'
+    : item.context.downgrade_reason === 'workspace_required'
+      ? 'Builder needed a project folder before it could change files.'
+      : item.context.downgrade_reason === 'ambiguous_build_intent'
+        ? 'Builder kept this as discussion because the change intent was not clear enough.'
+        : '';
   const brief = item.context.brief === 'available'
     ? 'The current brief was attached.'
     : 'No current brief was attached.';
@@ -758,7 +765,9 @@ function runContextSnapshotBody(
       : item.context.permission_result === 'denied'
         ? 'Write access was not allowed.'
         : 'No write access was needed.';
-  return `${intent} ${brief} ${base} ${permission} No terminal commands or network access were used.`;
+  return [intent, downgrade, brief, base, permission, 'No terminal commands or network access were used.']
+    .filter(Boolean)
+    .join(' ');
 }
 
 function activityBody(item: BuilderConversationItem): string {

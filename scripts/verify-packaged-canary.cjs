@@ -555,6 +555,8 @@ const TASK_STREAM_RUN_CONTEXT_KEYS = Object.freeze([
   'recorded_state',
   'route',
   'dispatch',
+  'downgraded_from',
+  'downgrade_reason',
   'brief',
   'base',
   'permission_result',
@@ -3365,12 +3367,16 @@ function sanitizeTaskStreamRunContextSnapshot(source, sequence) {
   const context = exactDataObject(source.context, TASK_STREAM_RUN_CONTEXT_KEYS);
   const route = context.route.value;
   const dispatch = context.dispatch.value;
+  const downgradedFrom = context.downgraded_from.value;
+  const downgradeReason = context.downgrade_reason.value;
   const brief = context.brief.value;
   const base = context.base.value;
   const permissionResult = context.permission_result.value;
   if (
     !['answer', 'clarify', 'update_brief', 'plan', 'build'].includes(route)
     || !['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked'].includes(dispatch)
+    || (downgradedFrom !== null && !['answer', 'clarify', 'update_brief', 'plan', 'build'].includes(downgradedFrom))
+    || (downgradeReason !== null && !['ambiguous_build_intent', 'missing_prior_build_context', 'workspace_required'].includes(downgradeReason))
     || !['available', 'not_available'].includes(brief)
     || !['new_project_or_unsaved', 'project_revision'].includes(base)
     || !['not_required', 'allowed', 'ask', 'denied'].includes(permissionResult)
@@ -3388,6 +3394,8 @@ function sanitizeTaskStreamRunContextSnapshot(source, sequence) {
       recorded_state: 'recorded',
       route,
       dispatch,
+      downgraded_from: downgradedFrom,
+      downgrade_reason: downgradeReason,
       brief,
       base,
       permission_result: permissionResult,

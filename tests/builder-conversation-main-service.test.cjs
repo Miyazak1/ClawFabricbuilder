@@ -545,6 +545,8 @@ test('records a digest-bound run context snapshot before progress or tools', () 
         recorded_state: 'recorded',
         route: 'build',
         dispatch: 'build',
+        downgraded_from: null,
+        downgrade_reason: null,
         brief: 'not_available',
         base: 'new_project_or_unsaved',
         permission_result: 'allowed',

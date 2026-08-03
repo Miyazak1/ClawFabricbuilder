@@ -34,6 +34,18 @@ type MutableConversationItem = {
   message_kind?: string;
   mode?: string | null;
   task?: { task_id: string; title: string } | null;
+  context?: {
+    recorded_state: string;
+    route: string;
+    dispatch: string;
+    downgraded_from: string | null;
+    downgrade_reason: string | null;
+    brief: string;
+    base: string;
+    permission_result: string;
+    command_execution: string;
+    network_access: string;
+  };
   brief?: {
     status: string;
     summary: string;
@@ -213,6 +225,70 @@ function rejectedCandidateWire(): MutableWire {
     saved_revision: null,
   });
   return wire;
+}
+
+function routeDowngradeWire(): MutableWire {
+  const turnId = id('turn', 31);
+  const runId = id('run', 32);
+  return {
+    stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1000,
+      head_sequence: 3,
+      recorded_active_turn_id: turnId,
+      window: {
+        first_sequence: 1,
+        last_sequence: 3,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: turnId,
+          message: {
+            message_id: id('message', 33),
+            text: '那就写',
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: turnId,
+          run_id: runId,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_context_snapshot_recorded',
+          sequence: 3,
+          turn_id: turnId,
+          run_id: runId,
+          task_id: null,
+          context: {
+            recorded_state: 'recorded',
+            route: 'clarify',
+            dispatch: 'reply',
+            downgraded_from: 'build',
+            downgrade_reason: 'missing_prior_build_context',
+            brief: 'not_available',
+            base: 'new_project_or_unsaved',
+            permission_result: 'not_required',
+            command_execution: 'not_included',
+            network_access: 'not_included',
+          },
+        },
+      ],
+    },
+    authority: authority(),
+  };
 }
 
 function taskBriefWire(): MutableWire {
@@ -661,6 +737,45 @@ describe('Builder conversation snapshot', () => {
     expect(serialized).not.toMatch(
       /"running"|live_run|saved|save_admission|git_|receipt|digest|provider|credential|secret|source_tree/iu,
     );
+  });
+
+  it('accepts safe route downgrade facts without exposing route authority', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(routeDowngradeWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[2]).toEqual({
+      item_kind: 'run_context_snapshot_recorded',
+      sequence: 3,
+      turn_id: id('turn', 31),
+      run_id: id('run', 32),
+      task_id: null,
+      context: {
+        recorded_state: 'recorded',
+        route: 'clarify',
+        dispatch: 'reply',
+        downgraded_from: 'build',
+        downgrade_reason: 'missing_prior_build_context',
+        brief: 'not_available',
+        base: 'new_project_or_unsaved',
+        permission_result: 'not_required',
+        command_execution: 'not_included',
+        network_access: 'not_included',
+      },
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /route_decision|builder-route-decision|required_permissions|confidence|provider|credential|source_tree|revision_receipt|commit_oid/iu,
+    );
+  });
+
+  it('rejects forged route downgrade facts in run context snapshots', () => {
+    const invalidReason = routeDowngradeWire();
+    invalidReason.conversation.items[2]!.context!.downgrade_reason = 'provider_failure';
+    const leakedContext = routeDowngradeWire();
+    (leakedContext.conversation.items[2]!.context as Record<string, unknown>).provider = 'private-marker';
+
+    expectUnavailable(invalidReason);
+    expectUnavailable(leakedContext);
   });
 
   it('accepts fixed run progress facts without exposing provider or source evidence', () => {

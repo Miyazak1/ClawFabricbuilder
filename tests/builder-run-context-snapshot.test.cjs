@@ -72,6 +72,8 @@ test('creates a digest-bound run context snapshot without private source authori
     route: 'build',
     dispatch: 'build',
     matched_signals: ['clear_build'],
+    downgraded_from: null,
+    downgrade_reason: null,
   });
   assert.deepEqual(snapshot.permissions, {
     required_permissions: ['write_project'],
@@ -89,6 +91,30 @@ test('creates a digest-bound run context snapshot without private source authori
     JSON.stringify(snapshot),
     /credential|provider|source_tree|prompt|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
   );
+});
+
+test('keeps safe route downgrade facts in the digest-bound snapshot', () => {
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    route_decision: routeDecision({
+      route: 'clarify',
+      dispatch: 'reply',
+      matched_signals: ['clear_build'],
+      downgraded_from: 'build',
+      downgrade_reason: 'missing_prior_build_context',
+      required_permissions: [],
+      permission_result: 'not_required',
+    }),
+  }));
+
+  assert.deepEqual(snapshot.route_decision, {
+    decision_id: ROUTE_DECISION_ID,
+    route: 'clarify',
+    dispatch: 'reply',
+    matched_signals: ['clear_build'],
+    downgraded_from: 'build',
+    downgrade_reason: 'missing_prior_build_context',
+  });
+  assert.doesNotMatch(JSON.stringify(snapshot.route_decision), /required_permissions|permission_result|confidence|decided_at_ms/iu);
 });
 
 test('binds snapshot id and digest to the canonical body', () => {
@@ -111,6 +137,12 @@ test('rejects private route signals, extra fields, and mismatched identity', () 
   assert.throws(
     () => createBuilderRunContextSnapshot(snapshotInput({
       route_decision: routeDecision({ matched_signals: ['provider:deepseek'] }),
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      route_decision: routeDecision({ downgrade_reason: 'private_marker' }),
     })),
     BuilderRunContextSnapshotError,
   );

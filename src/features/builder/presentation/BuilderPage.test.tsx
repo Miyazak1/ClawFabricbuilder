@@ -628,6 +628,15 @@ async function toolActivity(
   },
   options: Readonly<{
     action?: 'filesystem.read' | 'project.read';
+    context?: Readonly<Partial<{
+      route: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
+      dispatch: 'reply' | 'brief_update' | 'plan' | 'build' | 'ask_workspace' | 'ask_permission' | 'blocked';
+      downgraded_from: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build' | null;
+      downgrade_reason: 'ambiguous_build_intent' | 'missing_prior_build_context' | 'workspace_required' | null;
+      brief: 'available' | 'not_available';
+      base: 'new_project_or_unsaved' | 'project_revision';
+      permission_result: 'not_required' | 'allowed' | 'ask' | 'denied';
+    }>>;
     resourceKind?: 'filesystem' | 'project';
     toolLabel?: string;
   }> = {},
@@ -684,11 +693,14 @@ async function toolActivity(
             recorded_state: 'recorded',
             route: 'build',
             dispatch: 'build',
+            downgraded_from: null,
+            downgrade_reason: null,
             brief: 'available',
             base: 'project_revision',
             permission_result: 'allowed',
             command_execution: 'not_included',
             network_access: 'not_included',
+            ...options.context,
           },
         },
         {
@@ -3256,6 +3268,41 @@ describe('BuilderPage v2', () => {
     );
     expect(container.querySelector('[data-builder-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
       .toBe(chatMain);
+  });
+
+  it('explains safe route downgrades only inside work logs', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity(undefined, {
+      context: {
+        route: 'clarify',
+        dispatch: 'reply',
+        downgraded_from: 'build',
+        downgrade_reason: 'missing_prior_build_context',
+        brief: 'not_available',
+        base: 'new_project_or_unsaved',
+        permission_result: 'not_required',
+      },
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const chatMain = container.querySelector('[data-builder-chat-main="true"]');
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="logs"]');
+
+    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
+    expect(chatMain?.textContent).not.toContain('not have enough confirmed direction');
+    expect(logs?.textContent).toContain('Builder kept this as a clarification step.');
+    expect(logs?.textContent).toContain('It did not have enough confirmed direction to start changing files.');
+    expect(logs?.textContent).not.toMatch(
+      /downgrade_reason|downgraded_from|builder-route-decision|required_permissions|confidence|provider|credential|source_tree|receipt/iu,
+    );
   });
 
   it('shows the current direction on demand from task brief facts without exposing internal memory', async () => {
