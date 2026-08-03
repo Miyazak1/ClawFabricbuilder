@@ -4902,6 +4902,57 @@ async function hasVisiblePreviewSurface(page) {
   }
 }
 
+const PREVIEW_SURFACE_DIAGNOSTIC_SELECTORS = Object.freeze({
+  artifact_sidebar: SELECTORS.artifactSidebar,
+  artifact_tab_preview: SELECTORS.artifactTabPreview,
+  preview_open_artifact: SELECTORS.previewOpenArtifact,
+  preview_surface: SELECTORS.preview,
+  preview_unavailable: SELECTORS.previewUnavailable,
+  result_flow: SELECTORS.resultFlow,
+  workspace_control_preview: SELECTORS.workspaceControlPreview,
+  workspace_menu_button: SELECTORS.workspaceMenuButton,
+});
+
+function boundedSelectorCount(value) {
+  if (!Number.isSafeInteger(value) || value < 0) return 0;
+  return Math.min(value, 99);
+}
+
+async function previewSurfaceSelectorDiagnostic(page, selector) {
+  const locator = page.locator(selector);
+  let count = 0;
+  try {
+    count = boundedSelectorCount(await locator.count());
+  } catch {
+    count = 0;
+  }
+  let visible = false;
+  if (count > 0) {
+    try {
+      await locator.waitFor({ state: 'visible', timeout: 250 });
+      visible = true;
+    } catch {
+      visible = false;
+    }
+  }
+  return Object.freeze({ count, visible });
+}
+
+async function collectPreviewSurfaceDiagnostic(page) {
+  const selectors = {};
+  for (const [name, selector] of Object.entries(PREVIEW_SURFACE_DIAGNOSTIC_SELECTORS)) {
+    selectors[name] = await previewSurfaceSelectorDiagnostic(page, selector);
+  }
+  return Object.freeze({
+    diagnostic_version: 'builder-canary-preview-surface-diagnostic.v1',
+    selectors: Object.freeze(selectors),
+  });
+}
+
+async function failPreviewSurface(page) {
+  failWithDiagnostic('canary_preview_surface_failed', await collectPreviewSurfaceDiagnostic(page));
+}
+
 async function openPreviewSurfaceViaUi(page) {
   if (await hasVisiblePreviewSurface(page)) return;
   const attempts = [
@@ -4936,7 +4987,7 @@ async function capturePreviewEvidence(page, gate) {
       try {
         await unavailable.waitFor({ state: 'visible' });
       } catch {
-        fail('canary_preview_surface_failed');
+        await failPreviewSurface(page);
       }
       const unavailableText = await unavailable.textContent();
       if (
@@ -4964,7 +5015,7 @@ async function capturePreviewEvidence(page, gate) {
     try {
       await section.waitFor({ state: 'visible' });
     } catch {
-      fail('canary_preview_surface_failed');
+      await failPreviewSurface(page);
     }
     const limitation = page.locator(SELECTORS.previewLimitation);
     try {

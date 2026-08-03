@@ -3921,7 +3921,11 @@ test('reports fixed preview substages without exposing preview text', async () =
     capturePreviewEvidence(missingSurface, gate),
     (error) => error.code === 'canary_preview_surface_failed'
       && error.stage === 'preview_surface'
-      && !String(error.message).includes('secret-marker'),
+      && error.diagnostic?.diagnostic_version === 'builder-canary-preview-surface-diagnostic.v1'
+      && error.diagnostic.selectors.preview_surface.visible === false
+      && error.diagnostic.selectors.preview_unavailable.count === 0
+      && !String(error.message).includes('secret-marker')
+      && !JSON.stringify(error.diagnostic).includes('secret-marker'),
   );
 
   const runtimeText = new FakePage();
