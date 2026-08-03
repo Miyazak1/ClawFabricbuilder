@@ -377,6 +377,30 @@ Preview requirements:
 - 3D/WebGL/long-page previews must not be constrained by chat card height;
 - closing the drawer/fullscreen returns the user to the same chat context.
 
+### Local Document And File Artifacts
+
+Creating a local Markdown document is not ordinary chat and it is not Terminal.
+It is a selected-project-bound file artifact write. It should arrive after the
+chat/build/plan flow, route evidence, provider/package stability, and the
+baseline Artifact Workspace are stable enough for ordinary use.
+
+First version:
+
+- user asks for a `.md` document, notes file, or other simple text artifact;
+- Builder requires a selected project/source folder and current-project write
+  permission before preparing file changes;
+- paths must stay inside the selected project root;
+- file names are normalized and dangerous overwrite cases require explicit
+  review;
+- the assistant creates a reviewable candidate diff and optional rendered text
+  preview;
+- only `Review` / `Save version` writes and records the accepted version.
+
+This should happen before general Terminal, arbitrary shell commands, network
+access, publishing, or persistent Agent autonomy. It is the first low-risk
+multi-artifact file-writing capability, not a shortcut around permission or
+review.
+
 ### Permission Approval Roadmap
 
 Permission approval is an early product foundation, not a late social or Agent

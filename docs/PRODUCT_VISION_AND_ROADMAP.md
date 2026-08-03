@@ -218,6 +218,15 @@ project boundary: chat and planning are read-only, build requires explicit
 execution intent plus current-project write permission, and command/network/
 external-directory access remains denied until later gates.
 
+After that minimum project-bound permission exists, Builder can add a first
+local document/file artifact writer. A request such as creating a Markdown
+document should be treated as a selected-project-bound artifact write: it may
+create or modify `.md` files only inside the chosen project folder, first as a
+reviewable candidate diff/preview, then as a saved version after explicit user
+acceptance. This capability should land before Terminal or arbitrary command
+execution because it exercises file authority with lower runtime risk, but it
+must not bypass project selection, write approval, review, or version facts.
+
 ### Stage 3 - Persistent AI Agents
 
 User experience:
