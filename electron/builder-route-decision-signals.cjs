@@ -11,6 +11,7 @@ const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
   'explicit_brief',
   'explicit_plan',
   'exploratory_work',
+  'goal_mode_request',
   'read_only',
   'vague_change',
   'work_discussion',

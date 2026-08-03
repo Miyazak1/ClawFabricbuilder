@@ -157,6 +157,13 @@ const EXPLICIT_BRIEF_INTENT_PATTERNS = Object.freeze([
   /^(?:save|remember|record|keep)\s+(?:this|that|the current).*(?:brief|goal|requirement|direction|plan|context)?/u,
   /^(?:use|treat)\s+this\s+as\s+(?:the\s+)?(?:brief|current brief|goal|plan|requirements)\b/u,
 ]);
+const GOAL_MODE_INTENT_PATTERNS = Object.freeze([
+  /(?:目标模式|goal\s*mode|persistent\s+goal|持续目标|长期目标)/u,
+  /(?:设定|设置|创建|建立|给你|交给你).{0,24}(?:目标|goal).{0,48}(?:持续|一直|自动|连续|自己|直到|完成为止|做完|阻塞|blocked|done)/u,
+  /(?:持续|一直|连续|自动|自己).{0,32}(?:工作|推进|执行|修改|实现|验证|修复).{0,48}(?:直到|到)(?:真正)?(?:完成|做好|做完|done|blocked|阻塞)/u,
+  /(?:keep|continue)\s+(?:working|going|iterating|building|fixing|verifying)\b.{0,80}\b(?:until|till)\b.{0,40}\b(?:done|complete|completed|blocked)\b/u,
+  /\b(?:set|create|start|give\s+you)\s+(?:a\s+)?goal\b.{0,80}\b(?:until|done|complete|completed|blocked)\b/u,
+]);
 const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:(?:你能|可以|能不能)?(?:帮我|请|麻烦)?\s*)?(?:优化|调整|修改|改进|完善|美化|重构)(?:一下|下|点|一点|看看)?[?？。.!！]*$/u,
   /^(?:能不能|可以不可以|可不可以)(?:更|再)?好看(?:一点|点)?[?？。.!！]*$/u,
@@ -223,6 +230,7 @@ function shouldSubmitAsExplanation(
   const hasExplanationIntent =
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
+  if (matchesAny(GOAL_MODE_INTENT_PATTERNS, text)) return true;
   if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return true;
   if (matchesAny(EXPLICIT_BRIEF_INTENT_PATTERNS, text)) return true;
   if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) return true;
@@ -282,6 +290,14 @@ function explicitPlanSubmitFallbackDecisionHint() {
   });
 }
 
+function goalModeSubmitFallbackDecisionHint() {
+  return routeDecisionHint({
+    route: 'clarify',
+    confidence: 'high',
+    matchedSignals: ['goal_mode_request'],
+  });
+}
+
 function planRouteDecisionHint() {
   return routeDecisionHint({
     route: 'plan',
@@ -312,6 +328,7 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
     ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
     || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
   if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['read_only']);
+  if (matchesAny(GOAL_MODE_INTENT_PATTERNS, text)) return goalModeSubmitFallbackDecisionHint();
   if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return explicitPlanSubmitFallbackDecisionHint();
   if (matchesAny(EXPLICIT_BRIEF_INTENT_PATTERNS, text)) {
     return routeDecisionHint({

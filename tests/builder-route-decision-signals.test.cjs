@@ -20,6 +20,7 @@ test('defines the fixed public route-decision signal vocabulary', () => {
     'explicit_brief',
     'explicit_plan',
     'exploratory_work',
+    'goal_mode_request',
     'read_only',
     'vague_change',
     'work_discussion',
