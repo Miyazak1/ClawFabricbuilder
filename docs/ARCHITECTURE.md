@@ -461,7 +461,18 @@ allowed Tool Permission Admission. It still does not dispatch or execute the
 tool, read source, store raw output, grant permission, mutate Git, create a
 Project Revision, expose IPC/preload, or show visible Agents UI. Actual Agent
 execution, model/tool dispatch, and further step-runner orchestration remain
-separate later gates. The current Agent Private Source Context service connects
+separate later gates. The current Agent Tool Call Record store persists those
+pre-dispatch records as restart-replayable SQLite facts keyed by tool call id,
+supervised action admission id, record digest, and a store-entry digest that
+binds the external owner/admission fact to the Tool Call Record digest. It
+exposes owner-scoped reads by tool call id and admission id plus Task/Run
+listings, verifies canonical record JSON, schema fingerprint, runtime pragmas,
+and row/entry consistency, and reports only
+`main_owned_agent_tool_call_record_store` evidence. It is not yet wired into
+the Tool Call Record service and still dispatches no provider/model/tool, reads
+or writes no source, stores no raw output, grants no permission, mutates no Git
+or Project Revision, creates no Review or Artifact, and exposes no IPC/preload
+or visible Agents UI. The current Agent Private Source Context service connects
 a persisted `read_private_source` supervised action admission to the existing
 main-only Source Context Collector: it reads the admission by owner,
 verifies Task/Run admission listings, accepts only
