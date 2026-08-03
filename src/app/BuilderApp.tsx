@@ -760,6 +760,10 @@ function appendLiveOutputText(current: string, delta: string): string | null {
   return next;
 }
 
+function liveOutputProjectId(value: BuilderLiveOutputSnapshot | null): string | null {
+  return value?.project_id ?? null;
+}
+
 function hasRecordedSuccessfulAnswerAfterHead(
   snapshot: BuilderConversationControllerSnapshot | null,
   instruction: string,
@@ -1677,13 +1681,17 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         publishRouteDecision(decision);
       }
       setIdea('');
+      liveOutputRef.current = null;
       setLiveOutput(null);
       const shouldSubmitToConversationWorkPath = decision.dispatch === 'build';
       const result = shouldSubmitToConversationWorkPath
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
       if (workspaceEpochRef.current !== commandEpoch) return;
-      const terminalConversation = await readActivityAfterTerminal(result, commandEpoch);
+      const answerTerminalProjectId = shouldSubmitToConversationWorkPath
+        ? null
+        : liveOutputProjectId(liveOutputRef.current) ?? conversationSnapshotRef.current.project_id;
+      const terminalConversation = await readActivityAfterTerminal(result, commandEpoch, answerTerminalProjectId);
       const recordedAnswerSuccess = !shouldSubmitToConversationWorkPath
         && result.status === 'answer_failed'
         && hasRecordedSuccessfulAnswerAfterHead(
