@@ -323,7 +323,16 @@ or replays a completed lease release for the reviewed result, and verifies the
 assignment no longer has an active lease at the close time. It still creates no
 generic Review row, Artifact, source materialization, check run, Git fact,
 Project Revision, provider/tool dispatch, permission grant, Assignment status
-change, IPC/preload command, or visible Agents UI. The current Agent Delegation
+change, IPC/preload command, or visible Agents UI. The current Agent Project
+Work Result review assignment close service is only a main-only composition
+gate over the Assignment store, Project Work Result review store, and Agent
+Supervision Lease store: it reads the store-backed owner review, requires the
+reviewed lease to already have a completed release, verifies no active
+assignment lease remains at the close time, records or replays the Assignment's
+`completed` status, and verifies assignment/task listing. It still creates no
+Goal status, generic Review row, Artifact, source materialization, check run,
+Git fact, Project Revision, provider/tool dispatch, permission grant,
+IPC/preload command, or visible Agents UI. The current Agent Delegation
 contract is only a pure main-side evidence contract: it binds an active parent
 assignment and lease to a target Agent version, child Task/Run identity,
 permission and budget intersection, cancellation propagation, and review-return

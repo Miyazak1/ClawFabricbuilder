@@ -976,6 +976,17 @@ Current checkpoint:
   creates no generic Review row, Artifact, source materialization, check run,
   Git fact, Project Revision, provider/tool dispatch, permission grant,
   Assignment status change, IPC/preload path, or visible Agents UI.
+- the current Agent project work result review assignment close service
+  composes the Assignment store, Project Work Result review store, and Agent
+  Supervision Lease store as a main-only assignment-close gate. It accepts only
+  an owner id, work result review id, completed Assignment status input, and
+  close time; reads the store-backed owner review decision; requires the
+  reviewed supervision lease to have a completed release; verifies no active
+  assignment lease remains at the close time; records or replays the
+  Assignment's `completed` status; and verifies assignment/task listing. It
+  creates no Goal status, generic Review row, Artifact, source materialization,
+  check run, Git fact, Project Revision, provider/tool dispatch, permission
+  grant, IPC/preload path, or visible Agents UI.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
