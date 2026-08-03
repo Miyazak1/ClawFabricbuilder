@@ -235,7 +235,11 @@ ordered assignment status records in main-owned SQLite. The current Agent
 Supervision Lease store is only an internal supervision evidence authority: it
 persists one active-assignment lease/release chain in main-owned SQLite and
 enforces one unreleased and unexpired lease per assignment with monotonic lease
-epochs; it is not a Run executor. These Agent authorities expose no Agents UI,
+epochs; it is not a Run executor. The current Agent Delegation contract is only
+a pure main-side evidence contract: it binds an active parent assignment and
+lease to a target Agent version, child Task/Run identity, permission and budget
+intersection, cancellation propagation, and review-return boundary, but creates
+no child assignment or execution. These Agent authorities expose no Agents UI,
 IPC/preload command, permission grant, provider/tool dispatch, source read, Git
 mutation, Review, Revision, or Artifact authority.
 

@@ -851,6 +851,19 @@ Evidence requirements:
   never direct mutation;
 - no server, Space, or public identity is implied by local delegation.
 
+Current checkpoint:
+
+- the current Agent Delegation contract adds a pure main-side receipt for
+  scoped Agent-to-Agent delegation. It binds the active parent assignment,
+  parent assignment status, parent supervision lease, target Agent definition
+  and version, parent/child Conversation/Task/Run identity, the owner, project,
+  permission intersection, child budget intersection, cancellation propagation,
+  and review-before-parent-materialization result boundary. It creates no child
+  assignment store row, opens no IPC/preload path, shows no Agents UI, grants no
+  permission, dispatches no provider/model or tool, reads no credentials or
+  source, writes no files, runs no process or tests, mutates no Git or Project
+  Revision facts, and creates no Review/Artifact authority.
+
 ### Track B - People and Spaces
 
 #### Gate B1 - Identity, Contacts, and Conversation
