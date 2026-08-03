@@ -42,6 +42,10 @@ const {
   createBuilderAgentSupervisedActionAdmissionStore,
 } = require('../electron/builder-agent-supervised-action-admission-store.cjs');
 const {
+  BUILDER_AGENT_TOOL_CALL_RECORD_STORE_VERSION,
+  createBuilderAgentToolCallRecordStore,
+} = require('../electron/builder-agent-tool-call-record-store.cjs');
+const {
   createBuilderToolPermissionAdmission,
 } = require('../electron/builder-tool-permission-admission.cjs');
 const {
@@ -78,10 +82,30 @@ function temporaryRoot(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-function openStore(root) {
+function removeRoot(root) {
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+function openAdmissionStore(root) {
   return createBuilderAgentSupervisedActionAdmissionStore(
     path.join(root, 'action-admissions.sqlite'),
   );
+}
+
+function openToolCallRecordStore(root) {
+  return createBuilderAgentToolCallRecordStore(
+    path.join(root, 'tool-call-records.sqlite'),
+  );
+}
+
+function openService(root) {
+  const admissionStore = openAdmissionStore(root);
+  const toolCallRecordStore = openToolCallRecordStore(root);
+  const service = createBuilderAgentToolCallRecordService({
+    supervised_action_admission_store: admissionStore,
+    tool_call_record_store: toolCallRecordStore,
+  });
+  return { admissionStore, service, toolCallRecordStore };
 }
 
 function requestId(index = 1) {
@@ -235,15 +259,13 @@ function fixture(action = 'call_tool', index = 1) {
 
 function serviceFor(t) {
   const root = temporaryRoot('clawfabric-builder-agent-tool-call-record-service-');
-  const store = openStore(root);
-  const service = createBuilderAgentToolCallRecordService({
-    supervised_action_admission_store: store,
-  });
+  const { admissionStore, service, toolCallRecordStore } = openService(root);
   t.after(() => {
-    store.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    admissionStore.close();
+    toolCallRecordStore.close();
+    removeRoot(root);
   });
-  return { service, store };
+  return { admissionStore, service, toolCallRecordStore };
 }
 
 function seedAdmission(store, admission) {
@@ -321,9 +343,9 @@ function assertServiceError(error, code = 'builder_agent_tool_call_record_servic
 }
 
 test('creates an Agent tool call record only after a store-backed call-tool action admission', async (t) => {
-  const { service, store } = serviceFor(t);
+  const { admissionStore, service } = serviceFor(t);
   const { admission } = fixture('call_tool', 1);
-  seedAdmission(store, admission);
+  seedAdmission(admissionStore, admission);
 
   const result = service.create_agent_tool_call_record(await request(admission));
   assert.equal(result.result_version, BUILDER_AGENT_TOOL_CALL_RECORD_SERVICE_RESULT_VERSION);
@@ -345,8 +367,15 @@ test('creates an Agent tool call record only after a store-backed call-tool acti
   assert.equal(result.tool_call_record.lifecycle.dispatch_admission, 'not_started');
   assert.equal(result.tool_call_record.lifecycle.execution_admission, 'not_performed');
   assert.equal(result.tool_call_record.authority.tool_dispatch, 'not_performed');
+  assert.equal(result.tool_call_record_store_write.operation, 'agent_tool_call_record_recorded');
+  assert.equal(result.tool_call_record_read.status, 'ready');
+  assert.equal(result.admission_tool_call_record_read.status, 'ready');
+  assert.equal(result.task_tool_call_records.agent_tool_call_records.length, 1);
+  assert.equal(result.run_tool_call_records.agent_tool_call_records.length, 1);
+  assert.equal(result.operations.tool_call_record_store, 'agent_tool_call_record_recorded');
   assert.equal(result.evidence.service_authority, 'main_owned_agent_tool_call_record_service');
   assert.equal(result.evidence.supervised_action_admission_store_authority, 'main_owned_agent_supervised_action_admission_store');
+  assert.equal(result.evidence.tool_call_record_store_authority, 'main_owned_agent_tool_call_record_store');
   assert.equal(result.evidence.tool_call_record_authority, 'main_tool_call_record_contract_v1');
   assert.equal(result.evidence.provider_dispatch, false);
   assert.equal(result.evidence.tool_dispatch, false);
@@ -356,24 +385,52 @@ test('creates an Agent tool call record only after a store-backed call-tool acti
 
   const replay = service.create_agent_tool_call_record(await request(admission));
   assert.deepEqual(replay.tool_call_record, result.tool_call_record);
+  assert.equal(replay.operations.tool_call_record_store, 'agent_tool_call_record_replayed');
+});
+
+test('recovers Agent tool call record service state across restart through store replay', async (t) => {
+  const root = temporaryRoot('clawfabric-builder-agent-tool-call-record-service-restart-');
+  const first = openService(root);
+  let restarted = null;
+  t.after(() => {
+    for (const stores of [first, restarted]) {
+      try { stores?.admissionStore?.close(); } catch { /* best-effort cleanup */ }
+      try { stores?.toolCallRecordStore?.close(); } catch { /* best-effort cleanup */ }
+    }
+    removeRoot(root);
+  });
+  const { admission } = fixture('call_tool', 2);
+  seedAdmission(first.admissionStore, admission);
+  const admitted = first.service.create_agent_tool_call_record(await request(admission));
+  first.admissionStore.close();
+  first.toolCallRecordStore.close();
+
+  restarted = openService(root);
+  const replay = restarted.service.create_agent_tool_call_record(await request(admission));
+  assert.deepEqual(replay.tool_call_record, admitted.tool_call_record);
+  assert.equal(replay.operations.tool_call_record_store, 'agent_tool_call_record_replayed');
+  assert.equal(replay.tool_call_record_read.status, 'ready');
+  assert.equal(replay.admission_tool_call_record_read.status, 'ready');
+  assert.equal(replay.task_tool_call_records.status, 'ready');
+  assert.equal(replay.run_tool_call_records.status, 'ready');
 });
 
 test('fails closed without a call-tool admission or when action, actor, or timing drifts', async (t) => {
-  const { service, store } = serviceFor(t);
-  const { admission } = fixture('call_tool', 2);
+  const { admissionStore, service } = serviceFor(t);
+  const { admission } = fixture('call_tool', 3);
   await assert.rejects(
     async () => service.create_agent_tool_call_record(await request(admission)),
     (error) => assertServiceError(error, 'builder_agent_tool_call_record_service_conflict'),
   );
 
-  const finish = fixture('finish_for_review', 3).admission;
-  seedAdmission(store, finish);
+  const finish = fixture('finish_for_review', 4).admission;
+  seedAdmission(admissionStore, finish);
   await assert.rejects(
     async () => service.create_agent_tool_call_record(await request(finish)),
     (error) => assertServiceError(error),
   );
 
-  seedAdmission(store, admission);
+  seedAdmission(admissionStore, admission);
   await assert.rejects(
     async () => service.create_agent_tool_call_record(await request(admission, {
       permission_admission: { actor_id: USER_ID },
@@ -395,14 +452,24 @@ test('fails closed without a call-tool admission or when action, actor, or timin
 });
 
 test('rejects malformed stores and hostile requests without leaking private material', async (t) => {
-  const { service, store } = serviceFor(t);
-  const { admission } = fixture('call_tool', 4);
-  seedAdmission(store, admission);
+  const { admissionStore, service, toolCallRecordStore } = serviceFor(t);
+  const { admission } = fixture('call_tool', 5);
+  seedAdmission(admissionStore, admission);
 
   assert.throws(
     () => createBuilderAgentToolCallRecordService({
       supervised_action_admission_store: {
         store_version: BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
+      },
+      tool_call_record_store: toolCallRecordStore,
+    }),
+    (error) => assertServiceError(error),
+  );
+  assert.throws(
+    () => createBuilderAgentToolCallRecordService({
+      supervised_action_admission_store: admissionStore,
+      tool_call_record_store: {
+        store_version: BUILDER_AGENT_TOOL_CALL_RECORD_STORE_VERSION,
       },
     }),
     (error) => assertServiceError(error),

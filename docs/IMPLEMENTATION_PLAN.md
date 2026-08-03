@@ -1333,28 +1333,23 @@ Current checkpoint:
   `next_gate=tool_call_record_required_later`, and creates a deterministic
   pre-dispatch Tool Call Record from a main-issued Tool Session Policy plus an
   allowed Tool Permission Admission for the same Agent, Project, Conversation,
-  Task, and Run. It still opens no IPC/preload path, shows no Agents UI,
-  dispatches no provider/model or tool, executes no tool, reads no source,
-  grants no permission, stores no raw output or raw context, mutates no Git or
-  Project Revision facts, and creates no generic Review row or Artifact
-  authority. Actual step running, tool dispatch/execution, tool result
-  recording, private source context collection, and materialization remain
-  separate later gates.
-- the current Agent Tool Call Record store checkpoint persists those
-  pre-dispatch Tool Call Records as restart-replayable SQLite facts without
-  connecting them to service dispatch yet. The store verifies the existing Tool
-  Call Record contract, records the external owner and supervised action
-  admission id beside the record, adds a store-entry digest binding those
-  external facts to the record digest, enforces one row per tool call id,
-  supervised action admission id, record digest, and entry digest, exposes
-  owner-scoped reads by tool call id and admission id plus Task/Run listings,
-  and verifies canonical record JSON, schema fingerprint, runtime pragmas, and
-  row/entry consistency. It still opens no IPC/preload path, shows no Agents
-  UI, dispatches no provider/model or tool, executes no tool, reads or writes
-  no source, grants no permission, stores no raw output or raw context, mutates
-  no Git or Project Revision facts, and creates no generic Review row or
-  Artifact authority. Service integration, actual dispatch/execution, result
-  recording, private source collection, and materialization remain later gates.
+  Task, and Run. The current Agent Tool Call Record store checkpoint persists
+  those pre-dispatch Tool Call Records as restart-replayable SQLite facts. The
+  store verifies the existing Tool Call Record contract, records the external
+  owner and supervised action admission id beside the record, adds a
+  store-entry digest binding those external facts to the record digest, enforces
+  one row per tool call id, supervised action admission id, record digest, and
+  entry digest, exposes owner-scoped reads by tool call id and admission id plus
+  Task/Run listings, and verifies canonical record JSON, schema fingerprint,
+  runtime pragmas, and row/entry consistency. The service now records or
+  replays the generated record through that store and verifies read-by-tool-call,
+  read-by-admission, Task listing, and Run listing before returning. It still
+  opens no IPC/preload path, shows no Agents UI, dispatches no provider/model or
+  tool, executes no tool, reads or writes no source, grants no permission,
+  stores no raw output or raw context, mutates no Git or Project Revision facts,
+  and creates no generic Review row or Artifact authority. Actual step running,
+  tool dispatch/execution, tool result recording, private source context
+  collection, and materialization remain separate later gates.
 - the current Agent Private Source Context service checkpoint connects the
   `read_private_source` supervised action admission to the existing main-only
   Source Context Collector. The service accepts an owner id, supervised action

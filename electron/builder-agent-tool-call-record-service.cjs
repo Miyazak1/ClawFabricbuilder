@@ -3,6 +3,10 @@
 const { types: utilTypes } = require('node:util');
 
 const {
+  BUILDER_AGENT_TOOL_CALL_RECORD_STORE_VERSION,
+  BuilderAgentToolCallRecordStoreError,
+} = require('./builder-agent-tool-call-record-store.cjs');
+const {
   BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
   BuilderAgentSupervisedActionAdmissionStoreError,
 } = require('./builder-agent-supervised-action-admission-store.cjs');
@@ -20,7 +24,10 @@ const OWNER_ID_PATTERN = new RegExp(`^builder-user:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const STEP_ID_PATTERN = new RegExp(`^builder-run-step:${UUID_SOURCE}$`, 'u');
 const ADMISSION_ID_PATTERN = /^builder-agent-supervised-action-admission:[0-9a-f]{64}$/u;
-const SERVICE_KEYS = Object.freeze(['supervised_action_admission_store']);
+const SERVICE_KEYS = Object.freeze([
+  'supervised_action_admission_store',
+  'tool_call_record_store',
+]);
 const RECORD_TOOL_CALL_KEYS = Object.freeze([
   'owner_id',
   'supervised_action_admission_id',
@@ -158,6 +165,17 @@ function safeStores(rawStores) {
       BUILDER_AGENT_SUPERVISED_ACTION_ADMISSION_STORE_VERSION,
       ['read_admission', 'list_task_admissions', 'list_run_admissions'],
     ),
+    tool_call_record_store: safeStore(
+      valueAt(rawStores, 'tool_call_record_store'),
+      BUILDER_AGENT_TOOL_CALL_RECORD_STORE_VERSION,
+      [
+        'record_tool_call',
+        'read_tool_call',
+        'read_tool_call_for_admission',
+        'list_task_tool_calls',
+        'list_run_tool_calls',
+      ],
+    ),
   });
 }
 
@@ -170,7 +188,10 @@ function normalizeOperationError(error) {
       'builder_agent_tool_call_record_service_invalid',
     );
   }
-  if (error instanceof BuilderAgentSupervisedActionAdmissionStoreError) {
+  if (
+    error instanceof BuilderAgentSupervisedActionAdmissionStoreError
+    || error instanceof BuilderAgentToolCallRecordStoreError
+  ) {
     if (/_conflict$/u.test(error.code)) {
       return new BuilderAgentToolCallRecordServiceError(
         'builder_agent_tool_call_record_service_conflict',
@@ -195,6 +216,7 @@ function serviceEvidence() {
     service_authority: 'main_owned_agent_tool_call_record_service',
     supervised_action_admission_store_authority: 'main_owned_agent_supervised_action_admission_store',
     supervised_action_admission_authority: 'main_agent_supervised_action_admission_contract_v1',
+    tool_call_record_store_authority: 'main_owned_agent_tool_call_record_store',
     tool_call_record_authority: 'main_tool_call_record_contract_v1',
     tool_session_policy_authority: 'main_tool_session_policy_contract_v1',
     permission_admission_authority: 'main_permission_decision_before_tool_dispatch_v1',
@@ -215,7 +237,7 @@ function serviceEvidence() {
     review_authority: false,
     artifact_authority: false,
     raw_output_storage: 'not_present',
-    recovery_model: 'deterministic_record_from_store_backed_action_admission',
+    recovery_model: 'idempotent_tool_call_record_store_replay',
   });
 }
 
@@ -224,6 +246,15 @@ function admissionFact(admissionRead) {
   const entry = admissionRead.supervised_action_admission;
   if (!entry || !entry.admission) fail('builder_agent_tool_call_record_service_invalid');
   return entry.admission;
+}
+
+function toolCallRecordFact(toolCallRecordRead) {
+  if (toolCallRecordRead.status !== 'ready') {
+    fail('builder_agent_tool_call_record_service_conflict');
+  }
+  const entry = toolCallRecordRead.agent_tool_call_record;
+  if (!entry || !entry.tool_call_record) fail('builder_agent_tool_call_record_service_invalid');
+  return entry.tool_call_record;
 }
 
 function requireCallToolAdmission(stores, ownerId, admissionId) {
@@ -301,6 +332,44 @@ function createAgentToolCallRecord(stores, rawRequest) {
     requested_at_ms: requestedAtMs,
   });
   verifyRecordAgainstAdmission(record, admission);
+  const recordWrite = stores.tool_call_record_store.record_tool_call({
+    owner_id: admission.owner_id,
+    supervised_action_admission_id: admissionId,
+    tool_call_record: record,
+  });
+  const recordRead = stores.tool_call_record_store.read_tool_call({
+    tool_call_id: record.tool_call_id,
+    owner_id: admission.owner_id,
+  });
+  const admissionRecordRead = stores.tool_call_record_store.read_tool_call_for_admission({
+    supervised_action_admission_id: admissionId,
+    owner_id: admission.owner_id,
+  });
+  const taskRecords = stores.tool_call_record_store.list_task_tool_calls({
+    owner_id: admission.owner_id,
+    project_id: admission.project_id,
+    task_id: admission.task_id,
+  });
+  const runRecords = stores.tool_call_record_store.list_run_tool_calls({
+    owner_id: admission.owner_id,
+    project_id: admission.project_id,
+    task_id: admission.task_id,
+    run_id: admission.run_id,
+  });
+  const storedRecord = toolCallRecordFact(recordRead);
+  const admissionStoredRecord = toolCallRecordFact(admissionRecordRead);
+  if (
+    storedRecord.record_digest !== record.record_digest
+    || admissionStoredRecord.record_digest !== record.record_digest
+    || taskRecords.status !== 'ready'
+    || !taskRecords.agent_tool_call_records.some(
+      (entry) => entry.tool_call_record.record_digest === record.record_digest,
+    )
+    || runRecords.status !== 'ready'
+    || !runRecords.agent_tool_call_records.some(
+      (entry) => entry.tool_call_record.record_digest === record.record_digest,
+    )
+  ) fail('builder_agent_tool_call_record_service_invalid');
   return freezeDeep({
     result_version: BUILDER_AGENT_TOOL_CALL_RECORD_SERVICE_RESULT_VERSION,
     service_version: BUILDER_AGENT_TOOL_CALL_RECORD_SERVICE_VERSION,
@@ -312,7 +381,15 @@ function createAgentToolCallRecord(stores, rawRequest) {
     supervised_action_admission_read: admissionEvidence.admission_read,
     action_task_admissions: admissionEvidence.task_admissions,
     action_run_admissions: admissionEvidence.run_admissions,
-    tool_call_record: record,
+    tool_call_record: storedRecord,
+    tool_call_record_store_write: recordWrite,
+    tool_call_record_read: recordRead,
+    admission_tool_call_record_read: admissionRecordRead,
+    task_tool_call_records: taskRecords,
+    run_tool_call_records: runRecords,
+    operations: freezeDeep({
+      tool_call_record_store: recordWrite.operation,
+    }),
     evidence: serviceEvidence(),
   });
 }
