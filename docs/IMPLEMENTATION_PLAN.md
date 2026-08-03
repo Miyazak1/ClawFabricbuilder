@@ -809,6 +809,16 @@ Current checkpoint:
   provider/model or tool, grants no permissions, reads no credentials or source,
   writes no files, mutates no Git or Project Revision facts, and creates no
   Review/Artifact authority.
+- the current Agent Goal-to-Assignment admission store persists those admission
+  receipts in a strict main-only SQLite store with restart restore, idempotent
+  replay, owner-scoped reads, read-by-Assignment lookup, task-scoped listing,
+  one admission per Assignment candidate, schema fingerprint verification, and
+  fixed redacted failures. It stores only canonical Goal, Goal status,
+  Assignment, and admission receipts; opens no IPC/preload path; shows no Goal
+  UI; records no Assignment row; starts no Run or execution; dispatches no
+  provider/model or tool; grants no permissions; reads no credentials or
+  source; writes no files; mutates no Git or Project Revision facts; and
+  creates no Review/Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save
