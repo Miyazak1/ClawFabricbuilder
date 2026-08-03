@@ -54,6 +54,28 @@ Say what you want
 The user should not need to understand compilers, schemas, adapters, receipts,
 or sandbox protocols to complete this loop.
 
+## Roadmap Operating Principle
+
+Real-time user feedback is product evidence, not an automatic implementation
+order. Each feedback item must be classified before it enters a code slice:
+
+- current-stage blocker for the ordinary user loop;
+- long-term architecture capability that needs roadmap placement first;
+- interaction or visual polish that should wait for the relevant UI slice;
+- future-stage request that should not displace the current Builder path;
+- product-direction conflict that needs redesign instead of a local patch.
+
+Only feedback that fits the current stage and active slice should be implemented
+immediately. Feedback that supports the long-term direction but is not yet
+admissible should update the roadmap or architecture docs. Feedback that
+conflicts with the long-term product model should not receive a compatibility
+patch; the product principle must be resolved first.
+
+The current chat-first routing boundary is an example of a current-stage
+blocker, not a cosmetic fix: selecting a folder enables work, but exploratory
+chat and plan discussion must remain read-only until the user gives clear
+execution intent.
+
 ## Current Architecture Direction: Git-Backed Builder
 
 As of repository HEAD `a7e0fc2` on 2026-07-22, the standalone desktop Builder

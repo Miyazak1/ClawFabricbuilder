@@ -58,6 +58,27 @@ The user should not need to choose Chat or Build for every message. Explicit
 Plan may remain a visible command because planning is a deliberate work mode and
 is useful as a user-controlled checkpoint.
 
+## Feedback Admission Rule
+
+Composer feedback must be evaluated against the long-term routing model before
+it becomes code. The question is not "which keyword failed today?" but whether
+the feedback exposes one of these categories:
+
+- a current chat-first or permission-boundary blocker;
+- a missing route-state fact such as Task, Brief, Plan, Permission, Run, or
+  Artifact evidence;
+- a UI clarity issue that belongs in the conversation or artifact workspace
+  slice;
+- a future agent/tool/runtime capability that needs a separate gate;
+- a product-model conflict that should be redesigned instead of patched.
+
+Only current-stage routing blockers should be fixed in the active router slice.
+Useful future feedback should update this document or the frontend roadmap
+without pulling unfinished capabilities into the MVP. This is why
+`workspace selected + exploratory plan discussion` must stay read-only now: it
+is not a one-off phrase fix, it protects the core rule that workspace selection
+enables work but never implies work intent.
+
 ## Routing Pipeline
 
 Every submitted composer message follows this deterministic pipeline:

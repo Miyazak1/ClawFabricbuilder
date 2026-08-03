@@ -123,6 +123,26 @@ the app may perform the requested action. These must remain independent so that
 chat, plan, build, save, file read, command run, network, publish, and external
 access can each have appropriate approval boundaries.
 
+### Feedback Enters Through Roadmap Triage
+
+User feedback should first be classified, then implemented. A screenshot or
+live complaint can reveal a current-stage blocker, a long-term architecture
+need, a UI polish task, a future-stage feature, or a conflict with the intended
+product model. The classification decides the next step:
+
+- current-stage blockers can enter the active slice;
+- long-term needs update architecture or roadmap docs before implementation;
+- polish waits for the relevant frontend modernization slice;
+- future-stage features stay visible without taking over the current milestone;
+- conflicting requests trigger product redesign, not a quick compatibility
+  patch.
+
+This keeps ClawFabric responsive without becoming a pile of local fixes. For
+example, keeping exploratory workspace turns in chat is part of the chat-first
+router and permission-boundary architecture, so it belongs in the current
+Builder path. A terminal, autonomous agent goal loop, or full runtime preview
+may be important, but those must enter through their own gates and slices.
+
 ## Target Information Architecture
 
 The desktop should converge on this shell:
