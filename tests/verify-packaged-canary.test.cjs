@@ -193,6 +193,26 @@ class FakeLocator {
       this.page.changesPanelVisible = true;
       this.page.changesDisclosureOpen = true;
     }
+    if (
+      this.selector === SELECTORS.artifactTabPreview
+      || this.selector === SELECTORS.previewOpenArtifact
+      || this.selector === SELECTORS.workspaceControlPreview
+    ) {
+      this.page.previewVisible = true;
+      this.page.versionHistoryVisible = false;
+      this.page.workspaceMenuVisible = false;
+    }
+    if (
+      this.selector === SELECTORS.artifactTabVersions
+      || this.selector === SELECTORS.workspaceControlVersions
+    ) {
+      this.page.versionHistoryVisible = true;
+      this.page.previewVisible = false;
+      this.page.workspaceMenuVisible = false;
+    }
+    if (this.selector === SELECTORS.workspaceMenuButton) {
+      this.page.workspaceMenuVisible = true;
+    }
     if (this.selector === SELECTORS.changesSummaryToggle) {
       this.page.changesDisclosureOpen = false;
     }
@@ -235,7 +255,7 @@ class FakeLocator {
       locator: (selector) => ({
         innerText: async () => {
           this.page.events.push(['frameInnerText', selector]);
-          return 'Focus timer preview';
+          return this.page.previewFrameBodyTextOverride ?? 'Focus timer preview';
         },
       }),
     };
@@ -348,7 +368,7 @@ class FakeLocator {
 
   async screenshot() {
     if (!this.page.artifactsAllowed) throw new Error('artifact before password cleared');
-    return pngFixture();
+    return this.page.screenshotBufferOverride ?? pngFixture();
   }
 
   async count() {
@@ -390,6 +410,10 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.historyPreview) {
       this.page.assertSelectorVisibility(this.selector, this.page.historyViewingRevision !== null, state);
+      return;
+    }
+    if (this.selector === SELECTORS.versionHistory) {
+      this.page.assertSelectorVisibility(this.selector, this.page.versionHistoryVisible, state);
       return;
     }
     if (this.selector === SELECTORS.liveOutput) {
@@ -627,6 +651,8 @@ class FakePage {
     this.previewRuntimeBlocked = false;
     this.previewUnavailable = false;
     this.previewUnavailableTextOverride = null;
+    this.versionHistoryVisible = true;
+    this.previewFrameBodyTextOverride = null;
     this.projectStatus = 'ready';
     this.questionAnswerFailedNoticeVisible = false;
     this.questionTurns = 0;
@@ -635,6 +661,7 @@ class FakePage {
     this.requirePlanSourceReadApproval = false;
     this.requireCurrentProjectWriteApproval = false;
     this.reviewTextOverride = null;
+    this.screenshotBufferOverride = null;
     this.previewLimitationTextOverride = null;
     this.reviewLayoutBoxes = new Map([
       [SELECTORS.chatScroll, { x: 300, y: 44, width: 620, height: 620 }],
@@ -741,6 +768,10 @@ class FakePage {
 
   locator(selector) {
     return new FakeLocator(this, selector);
+  }
+
+  async waitForTimeout(ms) {
+    this.events.push(['waitForTimeout', ms]);
   }
 
   on(event, listener) {
@@ -1754,6 +1785,17 @@ function pngFixture() {
   return PNG.sync.write(png);
 }
 
+function blankPngFixture() {
+  const png = new PNG({ width: 5, height: 5 });
+  for (let offset = 0; offset < png.data.length; offset += 4) {
+    png.data[offset] = 255;
+    png.data[offset + 1] = 255;
+    png.data[offset + 2] = 255;
+    png.data[offset + 3] = 255;
+  }
+  return PNG.sync.write(png);
+}
+
 function fakeStat(dev, ino, {
   directory = true,
   mtimeMs = 1,
@@ -2362,12 +2404,50 @@ test('rejects draft artifact preview rendered inside the chat area', async () =>
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_artifact_layout_failed',
+    (error) => error.code === 'canary_review_diff_artifact_result_geometry_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
     && event[1] === SELECTORS.reviewOpenChanges
   )), false);
+});
+
+test('rejects draft artifact summaries that are too narrow or before review actions', async () => {
+  const narrow = new FakePage();
+  narrow.unsavedDraftVisible = true;
+  narrow.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 372, width: 320, height: 72 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(narrow),
+    (error) => error.code === 'canary_review_diff_artifact_summary_width_failed'
+      && error.stage === 'review_diff_artifact_summary_width',
+  );
+
+  const beforeReview = new FakePage();
+  beforeReview.unsavedDraftVisible = true;
+  beforeReview.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 188, width: 596, height: 72 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(beforeReview),
+    (error) => error.code === 'canary_review_diff_artifact_summary_order_failed'
+      && error.stage === 'review_diff_artifact_summary_order',
+  );
+
+  const horizontal = new FakePage();
+  horizontal.unsavedDraftVisible = true;
+  horizontal.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 260, y: 372, width: 596, height: 72 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(horizontal),
+    (error) => error.code === 'canary_review_diff_artifact_summary_horizontal_failed'
+      && error.stage === 'review_diff_artifact_summary_horizontal',
+  );
+
+  const vertical = new FakePage();
+  vertical.unsavedDraftVisible = true;
+  vertical.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 616, width: 596, height: 72 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(vertical),
+    (error) => error.code === 'canary_review_diff_artifact_summary_vertical_failed'
+      && error.stage === 'review_diff_artifact_summary_vertical',
+  );
 });
 
 test('rejects draft changes panels that overlap the review checkpoint', async () => {
@@ -2393,7 +2473,7 @@ test('rejects draft artifact sidebar without a draggable resize handle', async (
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_artifact_layout_failed',
+    (error) => error.code === 'canary_review_diff_artifact_resize_geometry_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2884,6 +2964,7 @@ test('inspects saved history without mutating the current revision or task strea
   const updatedRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
   const updatedTaskStream = assertTaskStreamCandidateFacts(updatedEvidence, updatedRevision, 2, 1);
   const updatedPreview = await capturePreviewEvidence(page, gate);
+  page.versionHistoryVisible = false;
 
   const history = await inspectHistoryVersionViaUi(
     page,
@@ -2905,6 +2986,10 @@ test('inspects saved history without mutating the current revision or task strea
   });
   assert.equal(page.historyViewingRevision, null);
   assert.equal(page.versionLabel, 'Version 2');
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.artifactTabVersions
+  )), true);
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
     && event[1] === '[data-builder-view-version="Version 1"]'
@@ -3265,7 +3350,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       stage: 'update_save_confirmation',
     },
     {
-      code: 'canary_preview_failed',
+      code: 'canary_preview_frame_contract_failed',
       run: async () => {
         const page = new FakePage();
         page.failPreviewAttributes = true;
@@ -3273,7 +3358,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         gate.allow();
         await capturePreviewEvidence(page, gate);
       },
-      stage: 'preview',
+      stage: 'preview_frame_contract',
     },
     {
       code: 'canary_read_evidence_failed',
@@ -3664,7 +3749,105 @@ test('captures chat-flow preview evidence without relying on the retired preview
   page.previewLimitationTextOverride = 'Static preview only';
   await assert.rejects(
     capturePreviewEvidence(page, gate),
-    (error) => error.code === 'canary_preview_failed',
+    (error) => error.code === 'canary_preview_limitation_text_failed'
+      && error.stage === 'preview_limitation_text',
+  );
+});
+
+test('opens preview through public artifact workspace controls before capture', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+  page.previewVisible = false;
+  page.failClicks.add(SELECTORS.artifactTabPreview);
+  page.failClicks.add(SELECTORS.previewOpenArtifact);
+
+  const evidence = await capturePreviewEvidence(page, gate);
+
+  assert.equal(evidence.preview_mode, 'static_frame');
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
+    [
+      SELECTORS.artifactTabPreview,
+      SELECTORS.previewOpenArtifact,
+      SELECTORS.workspaceMenuButton,
+      SELECTORS.workspaceControlPreview,
+    ],
+  );
+});
+
+test('reports fixed preview substages without exposing preview text', async () => {
+  const gate = createArtifactGate();
+  gate.allow();
+
+  const missingSurface = new FakePage();
+  missingSurface.artifactsAllowed = true;
+  missingSurface.failWaitFor.add(SELECTORS.preview);
+  await assert.rejects(
+    capturePreviewEvidence(missingSurface, gate),
+    (error) => error.code === 'canary_preview_surface_failed'
+      && error.stage === 'preview_surface'
+      && !String(error.message).includes('secret-marker'),
+  );
+
+  const runtimeText = new FakePage();
+  runtimeText.artifactsAllowed = true;
+  runtimeText.previewRuntimeBlocked = true;
+  runtimeText.previewLimitationTextOverride = 'Preview unavailable here secret-marker';
+  await assert.rejects(
+    capturePreviewEvidence(runtimeText, gate),
+    (error) => error.code === 'canary_preview_runtime_text_failed'
+      && error.stage === 'preview_runtime_text'
+      && !String(error.message).includes('secret-marker'),
+  );
+
+  const frameContract = new FakePage();
+  frameContract.artifactsAllowed = true;
+  frameContract.failPreviewAttributes = true;
+  await assert.rejects(
+    capturePreviewEvidence(frameContract, gate),
+    (error) => error.code === 'canary_preview_frame_contract_failed'
+      && error.stage === 'preview_frame_contract',
+  );
+
+  const emptyFrame = new FakePage();
+  emptyFrame.artifactsAllowed = true;
+  emptyFrame.previewFrameBodyTextOverride = '   ';
+  await assert.rejects(
+    capturePreviewEvidence(emptyFrame, gate),
+    (error) => error.code === 'canary_preview_frame_body_failed'
+      && error.stage === 'preview_frame_body',
+  );
+
+  const blankPreview = new FakePage();
+  blankPreview.artifactsAllowed = true;
+  blankPreview.screenshotBufferOverride = blankPngFixture();
+  await assert.rejects(
+    capturePreviewEvidence(blankPreview, gate),
+    (error) => error.code === 'canary_preview_pixels_failed'
+      && error.stage === 'preview_pixels',
+  );
+
+  const unavailableText = new FakePage();
+  unavailableText.artifactsAllowed = true;
+  unavailableText.previewUnavailable = true;
+  unavailableText.previewUnavailableTextOverride = 'Preview unavailable secret-marker';
+  await assert.rejects(
+    capturePreviewEvidence(unavailableText, gate),
+    (error) => error.code === 'canary_preview_unavailable_text_failed'
+      && error.stage === 'preview_unavailable_text'
+      && !String(error.message).includes('secret-marker'),
+  );
+
+  const unavailablePixels = new FakePage();
+  unavailablePixels.artifactsAllowed = true;
+  unavailablePixels.previewUnavailable = true;
+  unavailablePixels.screenshotBufferOverride = blankPngFixture();
+  await assert.rejects(
+    capturePreviewEvidence(unavailablePixels, gate),
+    (error) => error.code === 'canary_preview_unavailable_pixels_failed'
+      && error.stage === 'preview_unavailable_pixels',
   );
 });
 
@@ -3710,10 +3893,6 @@ test('captures preview-unavailable evidence as a terminal explained preview stat
   assert.equal(evidence.frame_body_nonempty, false);
   assert.equal(evidence.static_preview_limitation_visible, true);
   assert.equal(evidence.runtime_preview_limit_explained, true);
-  assert.equal(
-    page.events.some((event) => event[0] === 'waitFor' && event[1] === SELECTORS.preview),
-    false,
-  );
   assert.equal(
     page.events.some((event) => event[0] === 'waitFor' && event[1] === SELECTORS.previewFrame),
     false,

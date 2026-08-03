@@ -348,26 +348,41 @@ function isNearChatBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_FOLLOW_BOTTOM_THRESHOLD_PX;
 }
 
-function scrollElementToChatStart(
+function usableRect(box: DOMRect): boolean {
+  return Number.isFinite(box.top)
+    && Number.isFinite(box.bottom)
+    && Number.isFinite(box.height)
+    && box.height > 0;
+}
+
+function scrollElementRangeIntoChatView(
   scroll: HTMLElement | null,
-  target: HTMLElement,
+  startTarget: HTMLElement,
+  endTarget: HTMLElement = startTarget,
 ): void {
   if (scroll !== null) {
     const scrollBox = scroll.getBoundingClientRect();
-    const targetBox = target.getBoundingClientRect();
+    const startBox = startTarget.getBoundingClientRect();
+    const rawEndBox = endTarget.getBoundingClientRect();
+    const endBox = usableRect(rawEndBox) ? rawEndBox : startBox;
     if (
       Number.isFinite(scrollBox.top)
+      && Number.isFinite(scrollBox.bottom)
       && Number.isFinite(scrollBox.height)
-      && Number.isFinite(targetBox.top)
-      && Number.isFinite(targetBox.height)
       && scrollBox.height > 0
-      && targetBox.height > 0
+      && usableRect(startBox)
     ) {
-      scroll.scrollTop += targetBox.top - scrollBox.top - 12;
+      let delta = startBox.top - scrollBox.top - 12;
+      const bottomAfterStartScroll = endBox.bottom - delta;
+      const bottomLimit = scrollBox.bottom - 12;
+      if (bottomAfterStartScroll > bottomLimit) {
+        delta += bottomAfterStartScroll - bottomLimit;
+      }
+      scroll.scrollTop += delta;
       return;
     }
   }
-  target.scrollIntoView?.({ block: 'start' });
+  startTarget.scrollIntoView?.({ block: 'start' });
 }
 
 function planReviewKey(turnId: string, runId: string): string {
@@ -2039,20 +2054,38 @@ export function BuilderPage({
     if (!hasUnsavedDraft) return;
     shouldFollowChatRef.current = false;
     let cancelled = false;
+    const frameHandles: number[] = [];
+    const timeoutHandles: number[] = [];
     const scrollDraftReviewIntoView = () => {
       if (cancelled) return;
       const landingTarget = draftReviewRef.current
         ?? draftLandingRef.current
         ?? (showResultFlow ? resultFlowRef.current : null);
       if (landingTarget !== null) {
-        scrollElementToChatStart(chatScrollRef.current, landingTarget);
+        scrollElementRangeIntoChatView(
+          chatScrollRef.current,
+          landingTarget,
+          draftLandingRef.current ?? landingTarget,
+        );
       }
     };
+    const scheduleFrame = (callback: () => void): void => {
+      frameHandles.push(window.requestAnimationFrame(callback));
+    };
+    const scheduleTimeout = (delayMs: number): void => {
+      timeoutHandles.push(window.setTimeout(scrollDraftReviewIntoView, delayMs));
+    };
     scrollDraftReviewIntoView();
-    const frame = window.requestAnimationFrame(scrollDraftReviewIntoView);
+    scheduleFrame(() => {
+      scrollDraftReviewIntoView();
+      scheduleFrame(scrollDraftReviewIntoView);
+    });
+    scheduleTimeout(120);
+    scheduleTimeout(320);
     return () => {
       cancelled = true;
-      window.cancelAnimationFrame(frame);
+      for (const frameHandle of frameHandles) window.cancelAnimationFrame(frameHandle);
+      for (const timeoutHandle of timeoutHandles) window.clearTimeout(timeoutHandle);
     };
   }, [
     draft?.draft_id,

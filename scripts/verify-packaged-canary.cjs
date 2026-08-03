@@ -53,6 +53,7 @@ const SELECTORS = Object.freeze({
   artifactSummary: '[data-builder-artifact-summary="true"]',
   artifactTabChanges: '[data-builder-artifact-tab="changes"]',
   artifactTabPreview: '[data-builder-artifact-tab="preview"]',
+  artifactTabVersions: '[data-builder-artifact-tab="versions"]',
   composerAddMenuButton: '[data-builder-composer-add-menu-button="true"]',
   composerAddPlanMode: '[data-builder-composer-add-plan-mode="true"]',
   baseUrl: '#builder-provider-base-url',
@@ -88,6 +89,9 @@ const SELECTORS = Object.freeze({
   versionSavedActivity: '[data-builder-activity-card="Version saved"]',
   versionHistory: '[data-builder-version-history="true"]',
   workspaceChip: '[data-builder-workspace-chip="true"]',
+  workspaceControlPreview: '[data-builder-workspace-control-tab="preview"]',
+  workspaceControlVersions: '[data-builder-workspace-control-tab="versions"]',
+  workspaceMenuButton: '[data-builder-workspace-menu-button="true"]',
   workspaceNewProject: '[data-builder-workspace-new-project="true"]',
   workspacePicker: '[data-builder-workspace-picker="true"]',
   maxTokens: '#builder-provider-max-tokens',
@@ -98,6 +102,7 @@ const SELECTORS = Object.freeze({
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
   previewLimitation: '[data-builder-preview-limitation="true"]',
+  previewOpenArtifact: '[data-builder-open-artifact-preview="true"]',
   previewRuntimeBlocked: '[data-builder-preview-runtime-blocked="true"]',
   previewUnavailable: '[data-builder-preview-unavailable="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
@@ -181,7 +186,18 @@ const ERROR_MESSAGES = Object.freeze({
   canary_save_activity_failed: 'Packaged canary saved activity evidence failed.',
   canary_review_diff_failed: 'Packaged canary review diff evidence failed.',
   canary_review_diff_activity_failed: 'Packaged canary review diff activity layout failed.',
+  canary_review_diff_artifact_chat_geometry_failed: 'Packaged canary review artifact chat geometry failed.',
   canary_review_diff_artifact_layout_failed: 'Packaged canary review diff artifact layout failed.',
+  canary_review_diff_artifact_overlap_failed: 'Packaged canary review artifact overlap failed.',
+  canary_review_diff_artifact_resize_geometry_failed: 'Packaged canary review artifact resize geometry failed.',
+  canary_review_diff_artifact_result_geometry_failed: 'Packaged canary review artifact result geometry failed.',
+  canary_review_diff_artifact_review_bounds_failed: 'Packaged canary review artifact review bounds failed.',
+  canary_review_diff_artifact_sidebar_geometry_failed: 'Packaged canary review artifact sidebar geometry failed.',
+  canary_review_diff_artifact_summary_geometry_failed: 'Packaged canary review artifact summary geometry failed.',
+  canary_review_diff_artifact_summary_horizontal_failed: 'Packaged canary review artifact summary horizontal bounds failed.',
+  canary_review_diff_artifact_summary_order_failed: 'Packaged canary review artifact summary order failed.',
+  canary_review_diff_artifact_summary_vertical_failed: 'Packaged canary review artifact summary vertical bounds failed.',
+  canary_review_diff_artifact_summary_width_failed: 'Packaged canary review artifact summary width failed.',
   canary_review_diff_box_failed: 'Packaged canary review diff geometry evidence failed.',
   canary_review_diff_checkpoint_action_geometry_failed: 'Packaged canary review checkpoint action geometry failed.',
   canary_review_diff_checkpoint_action_overlap_failed: 'Packaged canary review checkpoint actions overlapped.',
@@ -199,6 +215,15 @@ const ERROR_MESSAGES = Object.freeze({
   canary_history_current_failed: 'Packaged canary history changed current evidence.',
   canary_history_return_failed: 'Packaged canary could not return to the current version.',
   canary_preview_failed: 'Packaged canary preview evidence failed.',
+  canary_preview_frame_body_failed: 'Packaged canary preview frame body evidence failed.',
+  canary_preview_frame_contract_failed: 'Packaged canary preview frame contract failed.',
+  canary_preview_limitation_failed: 'Packaged canary preview limitation evidence failed.',
+  canary_preview_limitation_text_failed: 'Packaged canary preview limitation text failed.',
+  canary_preview_pixels_failed: 'Packaged canary preview pixel evidence failed.',
+  canary_preview_runtime_text_failed: 'Packaged canary runtime preview explanation failed.',
+  canary_preview_surface_failed: 'Packaged canary preview surface did not appear.',
+  canary_preview_unavailable_pixels_failed: 'Packaged canary unavailable preview pixel evidence failed.',
+  canary_preview_unavailable_text_failed: 'Packaged canary unavailable preview explanation failed.',
   canary_version_failed: 'Packaged canary revision version evidence failed.',
   canary_read_evidence_failed: 'Packaged canary read evidence failed.',
   canary_read_evidence_initial_current_failed: 'Packaged canary initial current evidence failed.',
@@ -268,7 +293,18 @@ const ERROR_STAGES = Object.freeze({
   canary_save_activity_failed: 'save_activity',
   canary_review_diff_failed: 'review_diff',
   canary_review_diff_activity_failed: 'review_diff_activity',
+  canary_review_diff_artifact_chat_geometry_failed: 'review_diff_artifact_chat_geometry',
   canary_review_diff_artifact_layout_failed: 'review_diff_artifact_layout',
+  canary_review_diff_artifact_overlap_failed: 'review_diff_artifact_overlap',
+  canary_review_diff_artifact_resize_geometry_failed: 'review_diff_artifact_resize_geometry',
+  canary_review_diff_artifact_result_geometry_failed: 'review_diff_artifact_result_geometry',
+  canary_review_diff_artifact_review_bounds_failed: 'review_diff_artifact_review_bounds',
+  canary_review_diff_artifact_sidebar_geometry_failed: 'review_diff_artifact_sidebar_geometry',
+  canary_review_diff_artifact_summary_geometry_failed: 'review_diff_artifact_summary_geometry',
+  canary_review_diff_artifact_summary_horizontal_failed: 'review_diff_artifact_summary_horizontal',
+  canary_review_diff_artifact_summary_order_failed: 'review_diff_artifact_summary_order',
+  canary_review_diff_artifact_summary_vertical_failed: 'review_diff_artifact_summary_vertical',
+  canary_review_diff_artifact_summary_width_failed: 'review_diff_artifact_summary_width',
   canary_review_diff_box_failed: 'review_diff_geometry',
   canary_review_diff_checkpoint_action_geometry_failed: 'review_diff_checkpoint_action_geometry',
   canary_review_diff_checkpoint_action_overlap_failed: 'review_diff_checkpoint_action_overlap',
@@ -286,6 +322,15 @@ const ERROR_STAGES = Object.freeze({
   canary_history_current_failed: 'history_current',
   canary_history_return_failed: 'history_return',
   canary_preview_failed: 'preview',
+  canary_preview_frame_body_failed: 'preview_frame_body',
+  canary_preview_frame_contract_failed: 'preview_frame_contract',
+  canary_preview_limitation_failed: 'preview_limitation',
+  canary_preview_limitation_text_failed: 'preview_limitation_text',
+  canary_preview_pixels_failed: 'preview_pixels',
+  canary_preview_runtime_text_failed: 'preview_runtime_text',
+  canary_preview_surface_failed: 'preview_surface',
+  canary_preview_unavailable_pixels_failed: 'preview_unavailable_pixels',
+  canary_preview_unavailable_text_failed: 'preview_unavailable_text',
   canary_version_failed: 'version',
   canary_read_evidence_failed: 'read_evidence',
   canary_read_evidence_initial_current_failed: 'read_evidence_initial_current',
@@ -309,6 +354,17 @@ const ERROR_STAGES = Object.freeze({
   canary_evidence_failed: 'evidence',
   canary_cleanup_failed: 'cleanup',
 });
+const PREVIEW_FAILURE_CODES = Object.freeze(new Set([
+  'canary_preview_frame_body_failed',
+  'canary_preview_frame_contract_failed',
+  'canary_preview_limitation_failed',
+  'canary_preview_limitation_text_failed',
+  'canary_preview_pixels_failed',
+  'canary_preview_runtime_text_failed',
+  'canary_preview_surface_failed',
+  'canary_preview_unavailable_pixels_failed',
+  'canary_preview_unavailable_text_failed',
+]));
 const BRIDGE_CONTRACT_KEYS = Object.freeze([
   'bridge_version',
   'legacy_namespaces_absent',
@@ -2054,36 +2110,90 @@ async function assertDraftReviewLayoutViaUi(page) {
 }
 
 async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
-  const code = 'canary_review_diff_artifact_layout_failed';
-  const scroll = await boundedBox(page.locator(SELECTORS.chatScroll), code);
-  const summary = await boundedBox(page.locator(SELECTORS.artifactSummary), code);
-  const sidebar = await boundedBox(page.locator(SELECTORS.artifactSidebar), code);
-  const resize = await boundedBox(page.locator(SELECTORS.artifactResizeHandle), code);
-  const result = await boundedBox(page.locator(SELECTORS.resultFlow), code);
-  const save = await boundedBox(page.locator(SELECTORS.saveVersion), code);
+  let lastFailureCode = 'canary_review_diff_artifact_layout_failed';
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const scroll = await boundedBox(page.locator(SELECTORS.chatScroll), 'canary_review_diff_artifact_chat_geometry_failed');
+    const summary = await boundedBox(
+      page.locator(SELECTORS.artifactSummary),
+      'canary_review_diff_artifact_summary_geometry_failed',
+    );
+    const sidebar = await boundedBox(
+      page.locator(SELECTORS.artifactSidebar),
+      'canary_review_diff_artifact_sidebar_geometry_failed',
+    );
+    const resize = await boundedBox(
+      page.locator(SELECTORS.artifactResizeHandle),
+      'canary_review_diff_artifact_resize_geometry_failed',
+    );
+    const result = await boundedBox(
+      page.locator(SELECTORS.resultFlow),
+      'canary_review_diff_artifact_result_geometry_failed',
+    );
+    const save = await boundedBox(
+      page.locator(SELECTORS.saveVersion),
+      'canary_review_diff_artifact_review_bounds_failed',
+    );
+    const failureCode = draftArtifactPreviewLayoutFailureCode({
+      result,
+      resize,
+      review,
+      save,
+      scroll,
+      sidebar,
+      summary,
+    });
+    if (failureCode === null) return Object.freeze({ result, sidebar, summary });
+    lastFailureCode = failureCode;
+    if (failureCode !== 'canary_review_diff_artifact_summary_vertical_failed') fail(failureCode);
+    if (typeof page.waitForTimeout !== 'function') break;
+    await page.waitForTimeout(100);
+  }
+  fail(lastFailureCode);
+}
+
+function draftArtifactPreviewLayoutFailureCode({
+  result,
+  resize,
+  review,
+  save,
+  scroll,
+  sidebar,
+  summary,
+}) {
+  if (scroll.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX || scroll.height < 360) {
+    return 'canary_review_diff_artifact_chat_geometry_failed';
+  }
+  if (summary.width < 360) return 'canary_review_diff_artifact_summary_width_failed';
+  if (summary.x < scroll.x || boxRight(summary) > boxRight(scroll)) {
+    return 'canary_review_diff_artifact_summary_horizontal_failed';
+  }
+  if (summary.y < scroll.y || boxBottom(summary) > boxBottom(scroll)) {
+    return 'canary_review_diff_artifact_summary_vertical_failed';
+  }
+  if (summary.y < boxBottom(review) - 1) return 'canary_review_diff_artifact_summary_order_failed';
+  if (sidebar.width < 340 || boxRight(scroll) > sidebar.x + 1) {
+    return 'canary_review_diff_artifact_sidebar_geometry_failed';
+  }
   if (
-    scroll.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX
-    || scroll.height < 360
-    || summary.width < 360
-    || sidebar.width < 340
-    || result.width < 320
-    || resize.width < 6
+    resize.width < 6
     || resize.height < 320
-    || !boxContains(scroll, review)
-    || !boxContains(scroll, summary)
-    || !boxContains(scroll, save)
-    || !boxContains(sidebar, result)
     || resize.x > sidebar.x + 2
     || boxRight(resize) < sidebar.x - 1
     || resize.y > sidebar.y + 1
     || boxBottom(resize) < boxBottom(sidebar) - 1
-    || boxRight(scroll) > sidebar.x + 1
-    || summary.y < boxBottom(review) - 1
+  ) return 'canary_review_diff_artifact_resize_geometry_failed';
+  if (
+    result.width < 320
+    || !boxContains(sidebar, result)
     || boxContains(scroll, result)
-    || boxesOverlap(review, result)
-    || boxesOverlap(summary, result)
-  ) fail(code);
-  return Object.freeze({ result, sidebar, summary });
+  ) return 'canary_review_diff_artifact_result_geometry_failed';
+  if (!boxContains(scroll, review) || !boxContains(scroll, save)) {
+    return 'canary_review_diff_artifact_review_bounds_failed';
+  }
+  if (boxesOverlap(review, result) || boxesOverlap(summary, result)) {
+    return 'canary_review_diff_artifact_overlap_failed';
+  }
+  return null;
 }
 
 async function assertChangesPanelLayoutViaUi(page, review, artifact) {
@@ -2505,6 +2615,36 @@ async function assertVisibleVersion(page, revisionNumber) {
   }
 }
 
+async function hasVisibleVersionHistory(page) {
+  try {
+    await page.locator(SELECTORS.versionHistory).waitFor({ state: 'visible', timeout: 750 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function openVersionHistoryViaUi(page) {
+  if (await hasVisibleVersionHistory(page)) return;
+  const attempts = [
+    async () => {
+      await page.locator(SELECTORS.artifactTabVersions).click({ timeout: 1000 });
+    },
+    async () => {
+      await page.locator(SELECTORS.workspaceMenuButton).click({ timeout: 1000 });
+      await page.locator(SELECTORS.workspaceControlVersions).click({ timeout: 3000 });
+    },
+  ];
+  for (const attempt of attempts) {
+    try {
+      await attempt();
+      if (await hasVisibleVersionHistory(page)) return;
+    } catch {
+      // Try the next public history entry point before reporting navigation failure.
+    }
+  }
+}
+
 async function captureSavedActivityEvidence(page, revisionNumber) {
   try {
     const expectedBody = `This draft was saved as Version ${revisionNumber}.`;
@@ -2541,6 +2681,7 @@ async function inspectHistoryVersionViaUi(
   const historicalVersion = historicalRevision.revision_number;
   const currentVersion = currentRevision.revision_number;
   try {
+    await openVersionHistoryViaUi(page);
     await page.locator(SELECTORS.versionHistory).waitFor({ state: 'visible' });
     await page.locator(`[data-builder-version-card="Version ${currentVersion}"]`)
       .waitFor({ state: 'visible' });
@@ -4541,13 +4682,66 @@ function summarizePng(buffer, pngModule = PNG) {
   });
 }
 
+function summarizePreviewPng(buffer, code) {
+  try {
+    return summarizePng(buffer);
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) fail(code);
+    throw error;
+  }
+}
+
+async function hasVisiblePreviewSurface(page) {
+  try {
+    await page.locator(SELECTORS.preview).waitFor({ state: 'visible', timeout: 750 });
+    return true;
+  } catch {
+    // The preview may be hidden behind the artifact workspace until the canary opens it.
+  }
+  try {
+    await page.locator(SELECTORS.previewUnavailable).waitFor({ state: 'visible', timeout: 750 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function openPreviewSurfaceViaUi(page) {
+  if (await hasVisiblePreviewSurface(page)) return;
+  const attempts = [
+    async () => {
+      await page.locator(SELECTORS.artifactTabPreview).click({ timeout: 1000 });
+    },
+    async () => {
+      await page.locator(SELECTORS.previewOpenArtifact).click({ timeout: 1000 });
+    },
+    async () => {
+      await page.locator(SELECTORS.workspaceMenuButton).click({ timeout: 1000 });
+      await page.locator(SELECTORS.workspaceControlPreview).click({ timeout: 3000 });
+    },
+  ];
+  for (const attempt of attempts) {
+    try {
+      await attempt();
+      if (await hasVisiblePreviewSurface(page)) return;
+    } catch {
+      // Try the next public preview entry point before reporting the fixed preview surface failure.
+    }
+  }
+}
+
 async function capturePreviewEvidence(page, gate) {
   try {
     gate.assertAllowed();
+    await openPreviewSurfaceViaUi(page);
     const unavailable = page.locator(SELECTORS.previewUnavailable);
     const unavailableCount = await unavailable.count();
     if (unavailableCount > 0) {
-      await unavailable.waitFor({ state: 'visible' });
+      try {
+        await unavailable.waitFor({ state: 'visible' });
+      } catch {
+        fail('canary_preview_surface_failed');
+      }
       const unavailableText = await unavailable.textContent();
       if (
         typeof unavailableText !== 'string'
@@ -4557,10 +4751,10 @@ async function capturePreviewEvidence(page, gate) {
         || !unavailableText.includes('Review')
         || !/(?:3D|WebGL|JavaScript modules|canvas|backend|live preview)/iu.test(unavailableText)
         || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(unavailableText)
-      ) fail('canary_preview_failed');
+      ) fail('canary_preview_unavailable_text_failed');
       const screenshot = await unavailable.screenshot();
       return Object.freeze({
-        ...summarizePng(screenshot),
+        ...summarizePreviewPng(screenshot, 'canary_preview_unavailable_pixels_failed'),
         frame_body_nonempty: false,
         preview_mode: 'preview_unavailable',
         runtime_preview_limit_explained: true,
@@ -4571,9 +4765,17 @@ async function capturePreviewEvidence(page, gate) {
       });
     }
     const section = page.locator(SELECTORS.preview);
-    await section.waitFor({ state: 'visible' });
+    try {
+      await section.waitFor({ state: 'visible' });
+    } catch {
+      fail('canary_preview_surface_failed');
+    }
     const limitation = page.locator(SELECTORS.previewLimitation);
-    await limitation.waitFor({ state: 'visible' });
+    try {
+      await limitation.waitFor({ state: 'visible' });
+    } catch {
+      fail('canary_preview_limitation_failed');
+    }
     const limitationText = await limitation.textContent();
     const runtimeBlocked = await page.locator(SELECTORS.previewRuntimeBlocked).count();
     if (runtimeBlocked > 0) {
@@ -4585,10 +4787,10 @@ async function capturePreviewEvidence(page, gate) {
         || !limitationText.includes('Review Changes or Source before saving')
         || !/(?:3D|WebGL|JavaScript modules|canvas|live preview)/iu.test(limitationText)
         || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
-      ) fail('canary_preview_failed');
+      ) fail('canary_preview_runtime_text_failed');
       const screenshot = await section.screenshot();
       return Object.freeze({
-        ...summarizePng(screenshot),
+        ...summarizePreviewPng(screenshot, 'canary_preview_pixels_failed'),
         frame_body_nonempty: false,
         preview_mode: 'runtime_unavailable',
         runtime_preview_limit_explained: true,
@@ -4607,9 +4809,13 @@ async function capturePreviewEvidence(page, gate) {
       || !limitationText.includes('live preview support')
       || limitationText.includes('Preview may look blank')
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
-    ) fail('canary_preview_failed');
+    ) fail('canary_preview_limitation_text_failed');
     const frame = page.locator(SELECTORS.previewFrame);
-    await frame.waitFor({ state: 'visible' });
+    try {
+      await frame.waitFor({ state: 'visible' });
+    } catch {
+      fail('canary_preview_frame_contract_failed');
+    }
     const sandbox = await frame.getAttribute('sandbox');
     const srcdoc = await frame.getAttribute('srcdoc');
     if (
@@ -4617,13 +4823,13 @@ async function capturePreviewEvidence(page, gate) {
       || typeof srcdoc !== 'string'
       || !/Content-Security-Policy/iu.test(srcdoc)
       || !/script-src 'none'/iu.test(srcdoc)
-    ) fail('canary_preview_failed');
+    ) fail('canary_preview_frame_contract_failed');
     const body = frame.contentFrame().locator('body');
     const bodyText = await body.innerText();
-    if (typeof bodyText !== 'string' || bodyText.trim().length === 0) fail('canary_preview_failed');
+    if (typeof bodyText !== 'string' || bodyText.trim().length === 0) fail('canary_preview_frame_body_failed');
     const screenshot = await frame.screenshot();
     return Object.freeze({
-      ...summarizePng(screenshot),
+      ...summarizePreviewPng(screenshot, 'canary_preview_pixels_failed'),
       frame_body_nonempty: true,
       preview_mode: 'static_frame',
       sandbox: 'empty',
@@ -4635,6 +4841,7 @@ async function capturePreviewEvidence(page, gate) {
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError
       && error.code === 'canary_secret_source_invalid') throw error;
+    if (error instanceof BuilderPackagedCanaryError && PREVIEW_FAILURE_CODES.has(error.code)) throw error;
     fail('canary_preview_failed');
   }
 }
@@ -4938,12 +5145,6 @@ async function runPackagedCanary(rawInput, options = {}) {
       await assertVisibleVersion(restartedPage, 2);
     } catch {
       await failRestartVersion(restartedPage);
-    }
-    try {
-      await restartedPage.locator(SELECTORS.preview).waitFor({ state: 'visible' });
-    } catch (error) {
-      if (error instanceof BuilderPackagedCanaryError) throw error;
-      fail('canary_restart_preview_failed');
     }
     const restartProject = projectFromReadEvidence(restartEvidence, 2);
     const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 1);

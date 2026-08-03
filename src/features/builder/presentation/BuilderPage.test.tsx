@@ -2777,6 +2777,70 @@ describe('BuilderPage v2', () => {
     }
   });
 
+  it('keeps the draft result summary inside the chat scroll viewport with the review', async () => {
+    const { saved } = await snapshots();
+    const draftReady = await changedDraftSnapshot();
+    const activity = await candidateActivity();
+    const { restore } = installScrollIntoViewSpy();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    let setSnapshot!: (value: typeof saved) => void;
+
+    function rect(top: number, height: number): DOMRect {
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 860,
+        top,
+        width: 860,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    }
+
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+      this: HTMLElement,
+    ) {
+      if (this.matches('[data-builder-chat-scroll="true"]')) return rect(100, 500);
+      if (this.matches('[data-builder-review-checkpoint="true"]')) return rect(120, 130);
+      if (this.matches('[data-builder-draft-landing="true"]')) return rect(120, 480);
+      return originalRect.call(this);
+    });
+
+    function DraftLandingBuilderPage() {
+      const [snapshot, updateSnapshot] = useState(saved);
+      setSnapshot = updateSnapshot;
+      return (
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          snapshot={snapshot}
+        />
+      );
+    }
+
+    try {
+      const container = render(<DraftLandingBuilderPage />);
+      const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+      expect(scroll).not.toBeNull();
+      setScrollMetrics(scroll!, { clientHeight: 500, scrollHeight: 1200, scrollTop: 220 });
+
+      act(() => setSnapshot(draftReady));
+
+      expect(scroll?.scrollTop).toBe(232);
+      expect(requestFrame).toHaveBeenCalledOnce();
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      vi.restoreAllMocks();
+      restore();
+    }
+  });
+
   it('renders questions and AI answers as chat messages while keeping run events as status', async () => {
     const { saved } = await snapshots();
     const activity = await answerActivity();
