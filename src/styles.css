@@ -2532,6 +2532,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-composer-textarea.cf-builder-input {
   border: 0;
   border-radius: 0;
+  background: transparent;
   box-shadow: none;
 }
 

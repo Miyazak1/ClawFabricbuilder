@@ -432,6 +432,18 @@ describe('Builder desktop layout styles', () => {
     expect(reviewLink).toContain('color: var(--cf-primary-text);');
   });
 
+  it('keeps the composer textarea from covering the shell rounded corners', () => {
+    const source = styles();
+    const shell = styleBlock(source, '.cf-builder-composer-shell');
+    const textarea = styleBlock(source, '.cf-builder-composer-textarea.cf-builder-input');
+
+    expect(shell).toContain('border-radius: 8px;');
+    expect(shell).toContain('background: var(--cf-surface);');
+    expect(textarea).toContain('border: 0;');
+    expect(textarea).toContain('border-radius: 0;');
+    expect(textarea).toContain('background: transparent;');
+  });
+
   it('keeps the composer workspace chip tall enough for its two-line label', () => {
     const source = styles();
     const workspaceChip = styleBlock(source, '.cf-builder-workspace-chip');
