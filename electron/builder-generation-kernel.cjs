@@ -141,6 +141,8 @@ const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'operation must be upsert or delete. For delete, content must be null. For upsert, content is the complete file content.',
   'Use ordinary relative project paths. Do not include absolute paths or local machine paths.',
   'You may generate general source code in any language when it fits the request, including imports, process APIs, networking code, tests, or configuration files.',
+  'A project change may also be a local document or text artifact. If the user asks for Markdown, README, notes, a .md file, or a text document, create or update that project file directly with a relative path such as README.md, notes.md, or docs/name.md.',
+  'For Markdown or text artifact requests, return the complete document content in the file operation. Do not wrap the document in HTML, JavaScript, or a web page unless the user explicitly asks for a website.',
   'Do not claim the code was executed, previewed, saved, committed, or reviewed.',
   'Do not add fields for host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',

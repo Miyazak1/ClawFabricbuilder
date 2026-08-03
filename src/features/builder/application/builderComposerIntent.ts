@@ -122,6 +122,11 @@ const EXPLORATORY_WORK_PATTERNS = Object.freeze([
   /^(?:i|we)\s+(?:am|are|'m|'re)\s+(?:thinking|considering|planning)\s+(?:about\s+)?(?:building|creating|making|implementing|designing)\b/u,
 ]);
 
+const LOCAL_FILE_ARTIFACT_PATTERNS = Object.freeze([
+  /(?:创建|新建|生成|写|编写|保存|添加|新增).{0,40}(?:\.md\b|markdown|md\s*(?:文档|文件)|readme|说明文档|文档|文件|笔记|notes?)/u,
+  /(?:create|write|generate|add|save).{0,48}(?:\.md\b|markdown|readme|notes?\s+file|document|text\s+file)/u,
+]);
+
 const CONTEXTUAL_BUILD_PATTERNS = Object.freeze([
   /^(?:就这样(?:写|做|改|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)|开始(?:写|做|改|实现|执行)|可以开始了)[。.!！]*$/u,
   /^(?:(?:好|好的|可以|行|嗯)[，,\s]*)?(?:(?:就)?(?:照|按)(?:这个|刚才(?:说的|聊的|讨论的|确认的)?|上面(?:说的)?|前面(?:说的)?|我们刚才(?:说的|聊的|讨论的|确认的)?)(?:方案|计划)?(?:写|做|改|实现|执行|来)|(?:开始|执行)(?:吧|了)?|可以开始(?:了|吧)?)[。.!！]*$/u,
@@ -304,6 +309,12 @@ export function decideBuilderComposerIntent(
       downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
       downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
       matchedSignals: ['contextual_build_phrase'],
+    });
+  }
+  if (LOCAL_FILE_ARTIFACT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('build', context, {
+      confidence: 'high',
+      matchedSignals: ['local_file_artifact'],
     });
   }
   if (EXPLORATORY_WORK_PATTERNS.some((pattern) => pattern.test(normalized))) {

@@ -2179,6 +2179,31 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('routes local Markdown artifact requests to project-bound draft generation', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '新建一个 README.md，写项目说明');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '新建一个 README.md，写项目说明' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('local_file_artifact');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
   it('asks for current-project write approval before a selected workspace build can start', async () => {
     const {
       approveCurrentProjectWrite,

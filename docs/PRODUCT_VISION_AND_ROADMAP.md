@@ -227,6 +227,11 @@ acceptance. This capability should land before Terminal or arbitrary command
 execution because it exercises file authority with lower runtime risk, but it
 must not bypass project selection, write approval, review, or version facts.
 
+Current checkpoint: Markdown/text artifact requests now enter the same
+selected-project build admission and unsaved candidate review path as code
+changes. The implementation treats Markdown, README, notes, `.md`, and plain
+text documents as project files, not Terminal commands or hidden writes.
+
 ### Stage 3 - Persistent AI Agents
 
 User experience:

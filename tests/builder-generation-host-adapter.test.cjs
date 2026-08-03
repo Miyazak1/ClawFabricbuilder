@@ -530,6 +530,76 @@ test('generates an unsaved code-change candidate from verified base context', as
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
 });
 
+test('generates an unsaved Markdown file candidate through the normal review path', async () => {
+  let transportInput;
+  const rawRequest = request({
+    instruction: 'Create a Markdown notes file for the launch checklist.',
+    existingProjectId: PROJECT_ID,
+  });
+  const base = sourceTree([{ path: 'README.md', content: '# Existing\n' }]);
+  const baseRevision = {
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
+  };
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildGenerationContext: (raw) => contextFor(raw, {
+      base_source_tree: base,
+      base_revision_evidence: {
+        evidence_version: 'builder-project-base-revision-evidence.v2',
+        project_id: PROJECT_ID,
+        revision_receipt_digest: baseRevision.revision_receipt_digest,
+        commit_oid: baseRevision.commit_oid,
+        source_tree_digest: base.source_tree_digest,
+        verification_admission: 'git_sqlite_read_authority_verified',
+      },
+      conversation_events: events({
+        requestDigest: raw.request_digest,
+        baseRevision,
+      }),
+    }),
+    transport: async (...args) => {
+      transportInput = args;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Launch checklist notes',
+          summary: 'Adds a Markdown launch checklist for local review.',
+          operations: [
+            {
+              operation: 'upsert',
+              path: 'docs/launch-checklist.md',
+              content: '# Launch checklist\n\n- Confirm project settings.\n- Review the draft before saving.\n',
+            },
+          ],
+        })),
+      };
+    },
+  }));
+  const result = await adapter.generate(rawRequest);
+  const userPrompt = JSON.parse(transportInput[0].messages[1].content);
+
+  assert.equal(result.title, 'Launch checklist notes');
+  assert.equal(result.candidate.authority.revision_admission, 'not_created');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.match(transportInput[0].messages[0].content, /Markdown, README, notes, a \.md file, or a text document/iu);
+  assert.match(userPrompt.instruction, /Markdown notes file/u);
+  assert.deepEqual(
+    result.candidate.operations.map(({ operation, path, content }) => ({ operation, path, content })),
+    [
+      {
+        operation: 'upsert',
+        path: 'docs/launch-checklist.md',
+        content: '# Launch checklist\n\n- Confirm project settings.\n- Review the draft before saving.\n',
+      },
+    ],
+  );
+  assert.equal(
+    result.candidate.resulting_source_tree.files.find((file) => file.path === 'docs/launch-checklist.md').content,
+    '# Launch checklist\n\n- Confirm project settings.\n- Review the draft before saving.\n',
+  );
+  assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model|credential/iu);
+});
+
 test('does not infer contextual build admission from transcript-only proposals', async () => {
   const rawRequest = request({ instruction: '好，开始吧' });
   let transportInput;

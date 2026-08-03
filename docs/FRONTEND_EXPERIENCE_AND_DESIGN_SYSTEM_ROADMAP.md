@@ -411,6 +411,17 @@ access, publishing, or persistent Agent autonomy. It is the first low-risk
 multi-artifact file-writing capability, not a shortcut around permission or
 review.
 
+Current checkpoint:
+
+- Markdown/text artifact wording is routed as a selected-project-bound build
+  intent, so it enters the same workspace and current-project write admission as
+  code changes;
+- the generation prompt now treats Markdown, README, notes, `.md`, and plain
+  text documents as direct project file artifacts instead of forcing every
+  request into a web page scaffold;
+- resulting files are still ordinary unsaved source-tree candidates and must be
+  reviewed and explicitly saved before becoming a Project Revision.
+
 ### Permission Approval Roadmap
 
 Permission approval is an early product foundation, not a late social or Agent

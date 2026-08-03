@@ -645,6 +645,8 @@ test('builds a deterministic operations prompt without exposing host identities'
     format: 'json_object_only',
   });
   assert.match(first.system_instruction, /You may generate general source code in any language/iu);
+  assert.match(first.system_instruction, /Markdown, README, notes, a \.md file, or a text document/iu);
+  assert.match(first.system_instruction, /Do not wrap the document in HTML, JavaScript, or a web page/iu);
   assert.doesNotMatch(first.system_instruction, /builder_conversation_explanation|question\/explanation request/iu);
   assert.match(first.system_instruction, /imports, process APIs, networking code/iu);
   assert.doesNotMatch(first.system_instruction, /index\.html.*styles\.css.*app\.js/iu);
@@ -1178,6 +1180,63 @@ test('projects provider operations into a host-owned unsaved code-change candida
   assert.equal(result.admissions.save, 'not_performed');
   assert.equal(result.admissions.conversation, 'candidate_local_not_recorded');
   assert.ok(result.candidate.resulting_source_tree.files.some((file) => file.path === 'src/app.js'));
+});
+
+test('projects Markdown document requests into reviewable local file candidates', () => {
+  const rawRequest = request({
+    instruction: 'Create a Markdown notes file for the launch checklist.',
+    existingProjectId: PROJECT_ID,
+  });
+  const base = sourceTree([{ path: 'README.md', content: '# Existing project\n' }]);
+  const result = projectBuilderGenerationResult({
+    request: rawRequest,
+    base_revision_evidence: baseEvidence(base),
+    base_source_tree: base,
+    conversation_events: conversationEvents({
+      requestDigest: rawRequest.request_digest,
+      baseRevision: {
+        revision_receipt_digest: REVISION_RECEIPT_DIGEST,
+        commit_oid: COMMIT_OID,
+      },
+    }),
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174003',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174006',
+    generated_text: generatedText({
+      title: 'Launch checklist notes',
+      summary: 'Adds a Markdown launch checklist for local review.',
+      operations: [
+        {
+          operation: 'upsert',
+          path: 'docs/launch-checklist.md',
+          content: '# Launch checklist\n\n- Confirm project settings.\n- Review the draft before saving.\n',
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.result_kind, 'candidate');
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.equal(result.candidate.authority.revision_admission, 'not_created');
+  assert.deepEqual(
+    result.candidate.operations.map(({ operation, path, content }) => ({ operation, path, content })),
+    [
+      {
+        operation: 'upsert',
+        path: 'docs/launch-checklist.md',
+        content: '# Launch checklist\n\n- Confirm project settings.\n- Review the draft before saving.\n',
+      },
+    ],
+  );
+  assert.equal(
+    result.candidate.resulting_source_tree.files.find((file) => file.path === 'docs/launch-checklist.md').content,
+    '# Launch checklist\n\n- Confirm project settings.\n- Review the draft before saving.\n',
+  );
+  assert.equal(
+    result.candidate.resulting_source_tree.files.find((file) => file.path === 'README.md').content,
+    '# Existing project\n',
+  );
+  assert.doesNotMatch(JSON.stringify(result), /credential|provider/iu);
 });
 
 test('squashes draft continuation output back onto the current product base', () => {

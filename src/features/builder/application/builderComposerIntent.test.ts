@@ -153,6 +153,9 @@ describe('routeBuilderComposerIntent', () => {
     'Build a compact local project dashboard.',
     'Add a pause button.',
     'Fix the preview layout.',
+    '新建一个 README.md，写项目说明',
+    '创建一个 md 文档保存到本地，内容是会议纪要',
+    'Write a Markdown notes file for this project.',
   ])('routes %s to build when the edit intent is clear', (instruction) => {
     expect(routeBuilderComposerIntent(instruction)).toBe('build');
   });
@@ -339,6 +342,42 @@ describe('routeBuilderComposerIntent', () => {
       requiredPermissions: ['write_project'],
       permissionResult: 'ask',
       dispatch: 'ask_permission',
+    });
+  });
+
+  it('routes local Markdown artifact writes through project-bound build admission', () => {
+    expect(decideBuilderComposerIntent('新建一个 README.md，写项目说明')).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['local_file_artifact'],
+      downgradeReason: 'workspace_required',
+      requiredPermissions: ['write_project'],
+      permissionResult: 'ask',
+      dispatch: 'ask_workspace',
+    });
+    expect(decideBuilderComposerIntent('创建一个 md 文档保存到本地，内容是会议纪要', {
+      hasWorkspace: true,
+      hasWritePermission: false,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['local_file_artifact'],
+      downgradeReason: null,
+      requiredPermissions: ['write_project'],
+      permissionResult: 'ask',
+      dispatch: 'ask_permission',
+    });
+    expect(decideBuilderComposerIntent('Write a Markdown notes file for this project.', {
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['local_file_artifact'],
+      downgradeReason: null,
+      requiredPermissions: ['write_project'],
+      permissionResult: 'allowed',
+      dispatch: 'build',
     });
   });
 
