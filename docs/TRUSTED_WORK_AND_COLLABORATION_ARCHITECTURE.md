@@ -49,9 +49,11 @@ lease. It also has a pure main-side Agent Project Work Result review decision
 contract and main-only store that record owner approval, rejection, or
 acknowledgement of one recorded project work result without creating a generic
 Review row, Artifact, source materialization, check run, or Project Revision.
-These Goal, Assignment, materialization, supervision, budget, result, and
-result-review facts currently start no run or execution. It also has a pure
-main-side Agent
+It also has a main-only Project Work Result review service that records or
+replays those owner decisions only after reading the store-backed project work
+result and verifying review reads/listing. These Goal, Assignment,
+materialization, supervision, budget, result, and result-review facts currently
+start no run or execution. It also has a pure main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and
 review-return evidence, plus a main-only Agent Delegation receipt store for
 restart-safe parent/child Task lookup. It now has a pure main-side Agent

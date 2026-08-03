@@ -308,7 +308,14 @@ without materialization. They persist restart-safe owner-scoped decision
 receipts with task lookup and one review per work result, but still create no
 generic Review row, Artifact, source materialization, check run, Git fact,
 Project Revision, provider/tool dispatch, permission grant, IPC/preload command,
-or visible Agents UI. The current Agent Delegation contract is only
+or visible Agents UI. The current Agent Project Work Result review service is
+only a main-only composition gate over the Project Work store and Project Work
+Result review store: it reads the store-backed work result by owner and result
+id, verifies task-scoped result listing, records or replays the owner decision
+receipt, and verifies read-by-review, read-by-result, and task review listing.
+It still creates no generic Review row, Artifact, source materialization, check
+run, Git fact, Project Revision, provider/tool dispatch, permission grant,
+IPC/preload command, or visible Agents UI. The current Agent Delegation contract is only
 a pure main-side evidence contract: it binds an active parent assignment and
 lease to a target Agent version, child Task/Run identity, permission and budget
 intersection, cancellation propagation, and review-return boundary, but creates

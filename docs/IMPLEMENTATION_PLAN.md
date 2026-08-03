@@ -957,6 +957,15 @@ Current checkpoint:
   result/review receipts; it creates no generic Review row, Artifact, source
   materialization, check run, Git fact, Project Revision, provider/tool
   dispatch, permission grant, IPC/preload path, or visible Agents UI.
+- the current Agent project work result review service composes the Project
+  Work Result store and Project Work Result review store as a main-only
+  owner-decision gate. It accepts only an owner id, work result id, review
+  input, and decision time; reads the store-backed project work result; verifies
+  task-scoped result listing; creates and records or replays the owner decision
+  receipt; and verifies read-by-review, read-by-result, and task-scoped review
+  listing. It creates no generic Review row, Artifact, source materialization,
+  check run, Git fact, Project Revision, provider/tool dispatch, permission
+  grant, IPC/preload path, or visible Agents UI.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
