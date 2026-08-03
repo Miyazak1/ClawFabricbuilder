@@ -2103,6 +2103,47 @@ installer evidence, or a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Project Work Result Service Package Check
+
+This addendum records the package checkpoint after adding a main-only Agent
+Project Work Result service. It extends local Agent post-work result evidence
+only; it does not enable visible Agents UI, autonomous Agent execution,
+model/tool dispatch, source reads or writes, terminal tools, network access,
+publication, installer evidence, or a real saved-profile DeepSeek canary pass.
+
+- The project work result service composes the active Agent Supervision Lease
+  store, Budget Audit store, and Project Work store. It creates a project-edit
+  or project-test work result only when the supplied active Assignment status,
+  supervision lease, allowed `finish_for_review` budget audit, and observed
+  time match a currently active store-backed lease, then records or replays the
+  result and verifies it through read-by-result and task-scoped listing.
+- The service keeps post-work result receipts separate from review and
+  materialization. It creates no Review, Artifact, Project Revision, candidate
+  materialization, source write, Git mutation, provider/model dispatch, tool
+  call, permission grant, IPC surface, or visible Agents UI.
+- Focused validation passed through
+  `node --test tests\builder-agent-project-work-result-service.test.cjs`; the
+  command reported 5 passing Node tests.
+- Adjacent Agent validation passed through
+  `node --test tests\builder-agent-project-work-result-service.test.cjs tests\builder-agent-project-work-contract.test.cjs tests\builder-agent-project-work-store.test.cjs tests\builder-agent-budget-audit-service.test.cjs tests\builder-agent-budget-audit-contract.test.cjs tests\builder-agent-budget-audit-store.test.cjs tests\builder-agent-assignment-supervision-service.test.cjs tests\builder-agent-supervision-lease-contract.test.cjs tests\builder-agent-supervision-lease-store.test.cjs tests\builder-agent-assignment-contract.test.cjs tests\builder-agent-assignment-store.test.cjs tests\builder-agent-delegation-result.test.cjs tests\builder-agent-delegation-result-store.test.cjs`;
+  the command reported 55 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 782 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 775 ASAR
+  entries. The refreshed executable timestamp was `2026/8/4 00:33:42` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, and
+  `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

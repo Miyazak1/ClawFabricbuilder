@@ -270,13 +270,17 @@ supervision lease only after lease-window preflight, still without starting
 execution. Builder also has a main-only Budget Audit service that records or
 replays allowed or denied pre-action budget facts only when the matching active
 lease is store-backed at the observed time, still without performing the
-requested next action. They record and restore bounded objectives with
+requested next action. Builder also has a main-only Project Work Result service
+that records or replays fixed project-edit or project-test result receipts only
+after an allowed `finish_for_review` budget audit for the same active lease,
+still without creating Review, Artifact, source materialization, or Project
+Revision authority. They record and restore bounded objectives with
 `continuous_until_done_or_blocked` semantics, owner-reviewed completion,
 ordered owner status decisions, and an active-Goal bridge into a future
 owner-supervised Assignment candidate. The materialization receipt, store, and
-supervision and budget services still do not start a Run, dispatch a model or
-tool, write source files, save a Project Revision, create a Review/Artifact, or
-expose a visible Goal UI.
+supervision, budget, and result services still do not start a Run, dispatch a
+model or tool, write source files, save a Project Revision, create a
+Review/Artifact, or expose a visible Goal UI.
 
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,

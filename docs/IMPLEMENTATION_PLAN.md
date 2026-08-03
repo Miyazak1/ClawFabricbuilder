@@ -928,6 +928,17 @@ Current checkpoint:
   permissions, reads no credentials or source, writes no files, runs no process
   or tests, mutates no Git or Project Revision facts, and creates no Review or
   Artifact authority.
+- the current Agent project work result service composes the active supervision
+  lease read, allowed Budget Audit read, and Project Work Result store as a
+  main-only owner-review result gate. It creates project-edit or project-test
+  result receipts only when a store-backed budget audit for the same active
+  lease allowed `finish_for_review` before the result time, records or replays
+  that fixed-summary result, and verifies it through read-by-result and
+  task-scoped listing. It opens no IPC/preload path, shows no Agents UI,
+  dispatches no provider/model or tool, grants no permissions, reads no
+  credentials or source, writes no files, runs no process or tests, mutates no
+  Git or Project Revision facts, creates no generic Review row, and creates no
+  Artifact or materialized source authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 

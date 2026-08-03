@@ -293,7 +293,14 @@ the lease store at the observed time, and still dispatches no next action. It
 starts no Run or execution, dispatches no provider/tool, grants no permission,
 reads or writes no source, mutates no Git or Project Revision, creates no
 Review or Artifact, and exposes no IPC/preload or visible Agents UI. The
-current Agent Delegation contract is only
+current Agent Project Work Result service is only a main-only composition gate
+over the active supervision lease read, allowed Budget Audit read, and Project
+Work Result store: it records or replays fixed project-edit or project-test
+result receipts for later owner review only after an allowed
+`finish_for_review` budget audit for the same active lease. It still creates no
+generic Review row, Artifact, source materialization, check run, Git fact,
+Project Revision, provider/tool dispatch, permission grant, IPC/preload
+command, or visible Agents UI. The current Agent Delegation contract is only
 a pure main-side evidence contract: it binds an active parent assignment and
 lease to a target Agent version, child Task/Run identity, permission and budget
 intersection, cancellation propagation, and review-return boundary, but creates
