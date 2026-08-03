@@ -200,6 +200,9 @@ Rules:
 - Every important Agent response or Run should record the context snapshot used.
 - The snapshot stores references and digest, not necessarily a full duplicate
   of every source fact.
+- For current Builder builds, the durable run context snapshot may include the
+  current user message id and the latest task capsule source message id, but not
+  the raw brief text, transcript copy, prompt, provider material, or source tree.
 - This enables debugging: "why did the Agent think that?"
 
 ### Delegation
@@ -384,6 +387,8 @@ Exit criteria:
 
 - every build Run can explain included task, project revision, messages, and
   permissions;
+- current Builder run snapshots bind task capsule source messages by id without
+  exposing brief text through renderer projections;
 - tests prove unrelated task messages are excluded.
 
 ### Slice C - Agent Profile Store

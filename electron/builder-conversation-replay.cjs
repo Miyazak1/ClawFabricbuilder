@@ -205,7 +205,8 @@ function applyRunContextSnapshotRecorded(state, payload) {
     || snapshot.turn_id !== turn.turn_id
     || snapshot.run_id !== run.run_id
     || snapshot.task_id !== (turn.task === null ? null : turn.task.task_id)
-    || snapshot.included_message_ids.length !== 1
+    || snapshot.included_message_ids.length < 1
+    || snapshot.included_message_ids.length > 2
     || snapshot.included_message_ids[0] !== turn.messages[0].message_id
     || snapshot.route_decision.decision_id !== turn.route_decision.decision_id
     || snapshot.route_decision.route !== turn.route_decision.route
@@ -215,9 +216,13 @@ function applyRunContextSnapshotRecorded(state, payload) {
     if (
       state.latestTaskCapsule === null
       || snapshot.brief_reference.task_id !== state.latestTaskCapsule.task_id
+      || snapshot.brief_reference.source_message_id !== state.latestTaskCapsule.source_message_id
       || snapshot.brief_reference.last_route_decision_id
         !== state.latestTaskCapsule.last_route_decision_id
+      || !snapshot.included_message_ids.includes(state.latestTaskCapsule.source_message_id)
     ) fail();
+  } else if (snapshot.included_message_ids.length !== 1) {
+    fail();
   }
   run.context_snapshot = { ...snapshot };
 }
@@ -494,6 +499,7 @@ function applyTaskBriefUpdated(state, payload) {
   ) fail();
   state.taskIds.add(payload.task_capsule.task_id);
   state.latestTaskCapsule = {
+    source_message_id: payload.message_id,
     ...payload.task_capsule,
     current_brief: { ...payload.task_capsule.current_brief },
   };

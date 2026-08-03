@@ -16,7 +16,9 @@ const TURN_ID = `builder-turn:${UUID}`;
 const TASK_ID = `builder-task:${UUID}`;
 const RUN_ID = `builder-run:${UUID}`;
 const MESSAGE_ID = `builder-message:${UUID}`;
+const BRIEF_MESSAGE_ID = 'builder-message:22222222-2222-4222-8222-222222222222';
 const ROUTE_DECISION_ID = `builder-route-decision:${UUID}`;
+const BRIEF_ROUTE_DECISION_ID = 'builder-route-decision:22222222-2222-4222-8222-222222222222';
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: `sha256:${'a'.repeat(64)}`,
   commit_oid: 'b'.repeat(40),
@@ -55,6 +57,16 @@ function snapshotInput(overrides = {}) {
     base_revision: BASE_REVISION,
     created_at_ms: 10,
     ...overrides,
+  };
+}
+
+function latestTaskCapsule() {
+  return {
+    message_id: BRIEF_MESSAGE_ID,
+    task_capsule: {
+      task_id: TASK_ID,
+      last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
+    },
   };
 }
 
@@ -117,6 +129,32 @@ test('keeps safe route downgrade facts in the digest-bound snapshot', () => {
   assert.doesNotMatch(JSON.stringify(snapshot.route_decision), /required_permissions|permission_result|confidence|decided_at_ms/iu);
 });
 
+test('binds a task capsule source message without including brief text', () => {
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    latest_task_capsule: latestTaskCapsule(),
+  }));
+
+  assert.deepEqual(snapshot.included_message_ids, [MESSAGE_ID, BRIEF_MESSAGE_ID]);
+  assert.deepEqual(snapshot.brief_reference, {
+    status: 'task_capsule_update',
+    task_id: TASK_ID,
+    source_message_id: BRIEF_MESSAGE_ID,
+    last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
+    contextual_build_ready: true,
+  });
+  assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot), {
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    run_id: RUN_ID,
+    task_id: TASK_ID,
+  }), snapshot);
+  assert.doesNotMatch(
+    JSON.stringify(snapshot),
+    /assistant_proposal|latest_user_goal|current_brief|credential|provider|source_tree|prompt/iu,
+  );
+});
+
 test('binds snapshot id and digest to the canonical body', () => {
   const snapshot = structuredClone(createBuilderRunContextSnapshot(snapshotInput()));
   snapshot.route_decision.dispatch = 'blocked';
@@ -150,6 +188,13 @@ test('rejects private route signals, extra fields, and mismatched identity', () 
     () => createBuilderRunContextSnapshot({
       ...snapshotInput(),
       provider_secret: 'private',
+    }),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot({
+      ...createBuilderRunContextSnapshot(snapshotInput({ latest_task_capsule: latestTaskCapsule() })),
+      included_message_ids: [MESSAGE_ID],
     }),
     BuilderRunContextSnapshotError,
   );

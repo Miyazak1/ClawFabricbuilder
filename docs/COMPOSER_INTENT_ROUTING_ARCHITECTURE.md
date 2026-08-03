@@ -593,6 +593,9 @@ facts, raw prompts, and Project Revision evidence remain hidden. The desktop
 Work logs now show a user-facing "Why this ran" explanation derived only from
 that public projection, including route purpose, brief availability, project
 base, write permission result, and the absence of terminal/network access.
+When a build uses the current task capsule, the snapshot binds the current user
+message plus the task capsule source message id, while still excluding the brief
+text and all source/provider/private route material from renderer projections.
 
 ### Slice 6 - Agent-Ready Routing
 

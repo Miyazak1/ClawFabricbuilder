@@ -877,7 +877,10 @@ function createBuilderConversationMainService(rawOptions) {
     let capsule = null;
     for (const event of events) {
       if (event.event_type === 'task_brief_updated') {
-        capsule = event.payload.task_capsule;
+        capsule = {
+          message_id: event.payload.message_id,
+          task_capsule: event.payload.task_capsule,
+        };
       }
     }
     return capsule;

@@ -52,6 +52,7 @@ const ROUTE_DECISION_KEYS = Object.freeze([
 const BRIEF_REFERENCE_KEYS = Object.freeze([
   'status',
   'task_id',
+  'source_message_id',
   'last_route_decision_id',
   'contextual_build_ready',
 ]);
@@ -163,13 +164,22 @@ function denseMessageIds(value) {
     !Array.isArray(value)
     || utilTypes.isProxy(value)
     || Object.getPrototypeOf(value) !== Array.prototype
-    || value.length !== 1
+    || value.length < 1
+    || value.length > 4
   ) fail();
   const keys = Reflect.ownKeys(value);
-  if (keys.length !== 2 || keys.some((key) => typeof key === 'symbol' || !['0', 'length'].includes(key))) fail();
-  const descriptor = Object.getOwnPropertyDescriptor(value, '0');
-  if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
-  return [safePattern(descriptor.value, MESSAGE_ID_PATTERN)];
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
+  const messageIds = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const messageId = safePattern(descriptor.value, MESSAGE_ID_PATTERN);
+    if (seen.has(messageId)) fail();
+    seen.add(messageId);
+    messageIds.push(messageId);
+  }
+  return messageIds;
 }
 
 function denseSignals(value) {
@@ -233,6 +243,7 @@ function sanitizeBriefReference(value) {
   const source = exactObject(value, BRIEF_REFERENCE_KEYS);
   const status = safeEnum(valueAt(source, 'status'), ['not_available', 'task_capsule_update']);
   const taskId = nullable(valueAt(source, 'task_id'), (item) => safePattern(item, TASK_ID_PATTERN));
+  const sourceMessageId = nullable(valueAt(source, 'source_message_id'), (item) => safePattern(item, MESSAGE_ID_PATTERN));
   const lastRouteDecisionId = nullable(
     valueAt(source, 'last_route_decision_id'),
     (item) => safePattern(item, ROUTE_DECISION_ID_PATTERN),
@@ -240,11 +251,22 @@ function sanitizeBriefReference(value) {
   const contextualBuildReady = valueAt(source, 'contextual_build_ready');
   if (typeof contextualBuildReady !== 'boolean') fail();
   if (status === 'not_available') {
-    if (taskId !== null || lastRouteDecisionId !== null || contextualBuildReady !== false) fail();
-  } else if (taskId === null || lastRouteDecisionId === null || contextualBuildReady !== true) fail();
+    if (
+      taskId !== null
+      || sourceMessageId !== null
+      || lastRouteDecisionId !== null
+      || contextualBuildReady !== false
+    ) fail();
+  } else if (
+    taskId === null
+    || sourceMessageId === null
+    || lastRouteDecisionId === null
+    || contextualBuildReady !== true
+  ) fail();
   return {
     status,
     task_id: taskId,
+    source_message_id: sourceMessageId,
     last_route_decision_id: lastRouteDecisionId,
     contextual_build_ready: contextualBuildReady,
   };
@@ -283,6 +305,12 @@ function snapshotBodyFrom(value) {
   const conversationId = safePattern(valueAt(source, 'conversation_id'), CONVERSATION_ID_PATTERN);
   if (conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) fail();
   const taskId = nullable(valueAt(source, 'task_id'), (item) => safePattern(item, TASK_ID_PATTERN));
+  const includedMessageIds = denseMessageIds(valueAt(source, 'included_message_ids'));
+  const briefReference = sanitizeBriefReference(valueAt(source, 'brief_reference'));
+  if (
+    briefReference.status === 'task_capsule_update'
+    && !includedMessageIds.includes(briefReference.source_message_id)
+  ) fail();
   return {
     snapshot_version: valueAt(source, 'snapshot_version') === SNAPSHOT_VERSION ? SNAPSHOT_VERSION : fail(),
     project_id: projectId,
@@ -290,9 +318,9 @@ function snapshotBodyFrom(value) {
     turn_id: safePattern(valueAt(source, 'turn_id'), TURN_ID_PATTERN),
     run_id: safePattern(valueAt(source, 'run_id'), RUN_ID_PATTERN),
     task_id: taskId,
-    included_message_ids: denseMessageIds(valueAt(source, 'included_message_ids')),
+    included_message_ids: includedMessageIds,
     route_decision: sanitizeRouteDecision(valueAt(source, 'route_decision')),
-    brief_reference: sanitizeBriefReference(valueAt(source, 'brief_reference')),
+    brief_reference: briefReference,
     base_revision: sanitizeBaseRevision(valueAt(source, 'base_revision')),
     permissions: sanitizePermissions(valueAt(source, 'permissions')),
     capabilities: sanitizeCapabilities(valueAt(source, 'capabilities')),
@@ -382,7 +410,14 @@ function createBuilderRunContextSnapshot(input) {
     downgraded_from: valueAt(routeDecisionSource, 'downgraded_from'),
     downgrade_reason: valueAt(routeDecisionSource, 'downgrade_reason'),
   });
-  const taskCapsule = valueAt(source, 'latest_task_capsule');
+  const taskCapsuleReference = valueAt(source, 'latest_task_capsule');
+  const taskCapsule = taskCapsuleReference === null ? null : valueAt(taskCapsuleReference, 'task_capsule');
+  const sourceMessageId = taskCapsuleReference === null
+    ? null
+    : safePattern(valueAt(taskCapsuleReference, 'message_id'), MESSAGE_ID_PATTERN);
+  const messageId = safePattern(valueAt(source, 'message_id'), MESSAGE_ID_PATTERN);
+  const includedMessageIds = [messageId];
+  if (sourceMessageId !== null && sourceMessageId !== messageId) includedMessageIds.push(sourceMessageId);
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
     project_id: valueAt(source, 'project_id'),
@@ -390,16 +425,18 @@ function createBuilderRunContextSnapshot(input) {
     turn_id: valueAt(source, 'turn_id'),
     run_id: valueAt(source, 'run_id'),
     task_id: valueAt(source, 'task_id'),
-    included_message_ids: [valueAt(source, 'message_id')],
+    included_message_ids: includedMessageIds,
     route_decision: routeDecision,
     brief_reference: taskCapsule === null ? {
       status: 'not_available',
       task_id: null,
+      source_message_id: null,
       last_route_decision_id: null,
       contextual_build_ready: false,
     } : {
       status: 'task_capsule_update',
       task_id: valueAt(taskCapsule, 'task_id'),
+      source_message_id: sourceMessageId,
       last_route_decision_id: valueAt(taskCapsule, 'last_route_decision_id'),
       contextual_build_ready: true,
     },

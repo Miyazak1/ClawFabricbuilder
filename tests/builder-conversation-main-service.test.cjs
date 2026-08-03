@@ -968,6 +968,76 @@ test('records update-brief turns as durable task capsule context without creatin
   }
 });
 
+test('records task capsule source message ids in run context snapshots', () => {
+  const item = fixture();
+  try {
+    const prior = item.service.begin_question({
+      project_id: PROJECT_ID,
+      question: '我想先聊一下这个作品集首页怎么做。',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'update_brief',
+        confidence: 'medium',
+        matched_signals: ['exploratory_work'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'brief_update',
+      },
+    });
+    const terminal = item.service.complete_explanation({
+      context: prior,
+      assistant_text: '可以先做一个带星空 hero、项目卡片和联系入口的单页作品集。',
+    });
+    const briefEvent = terminal.events.at(-2);
+    assert.equal(briefEvent.event_type, 'task_brief_updated');
+
+    const work = item.service.begin_work({
+      project_id: PROJECT_ID,
+      instruction: '按刚才方案做',
+      request_digest: REQUEST_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'build',
+        confidence: 'high',
+        matched_signals: ['contextual_build_phrase'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: ['write_project'],
+        permission_result: 'allowed',
+        dispatch: 'build',
+      },
+    });
+    const snapshotted = item.service.record_run_context_snapshot({ context: work });
+    const snapshot = snapshotted.events.at(-1).payload.snapshot;
+
+    assert.deepEqual(snapshot.included_message_ids, [
+      work.ids.message_id,
+      briefEvent.payload.message_id,
+    ]);
+    assert.equal(snapshot.brief_reference.status, 'task_capsule_update');
+    assert.equal(snapshot.brief_reference.task_id, briefEvent.payload.task_capsule.task_id);
+    assert.equal(snapshot.brief_reference.source_message_id, briefEvent.payload.message_id);
+    assert.equal(
+      snapshot.brief_reference.last_route_decision_id,
+      briefEvent.payload.task_capsule.last_route_decision_id,
+    );
+    const replay = replayBuilderConversation(snapshotted.events);
+    assert.deepEqual(
+      replay.turns.at(-1).runs[0].context_snapshot.included_message_ids,
+      [work.ids.message_id, briefEvent.payload.message_id],
+    );
+    assert.doesNotMatch(
+      JSON.stringify(item.service.read_stream({ project_id: PROJECT_ID })),
+      /source_message_id|included_message_ids|snapshot_id|context_digest|assistant_proposal|latest_user_goal/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
 test('records a proposed plan from a run-bound plan record after successful tool context', async () => {
   const item = fixture();
   let restartedDatabase = null;

@@ -528,9 +528,10 @@ Evidence requirements:
   `builder-run-context-snapshot.v1` Conversation fact immediately after a Run
   starts and before provider progress, tool facts, interruption, cancellation, or
   terminal outcome. The fact is main-only, digest-bound, replay-validated, and
-  stores only the public route shape, included current message id, task-brief
-  reference, base-revision reference, permission result, and unavailable
-  command/network capabilities. The renderer receives only a compact
+  stores only the public route shape, included current message id, optional task
+  capsule source message id, task-brief reference, base-revision reference,
+  permission result, and unavailable command/network capabilities. The renderer
+  receives only a compact
   `run_context_snapshot_recorded` Task Stream projection and never sees the
   snapshot id, context digest, route decision id, provider, credential, source
   tree, Git receipt, Save authority, raw prompt, or Project Revision evidence.
