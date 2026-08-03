@@ -916,8 +916,18 @@ Current checkpoint:
   Conversation/Task/Run identity, owner, project, fixed result summary, and
   owner decision. It creates no generic Review row, Artifact, child assignment,
   provider/tool dispatch, permission grant, source materialization, Git
-  mutation, Project Revision, or parent Task mutation authority. Persisting that
-  review receipt remains the next independent store gate.
+  mutation, Project Revision, or parent Task mutation authority.
+- the current Agent Delegation result review store persists those owner decision
+  receipts in a strict main-only SQLite store with restart restore, idempotent
+  replay, owner-scoped reads, parent-task and child-task review listing,
+  read-by-admission lookup, one review per admitted child result, schema
+  fingerprint verification, and fixed redacted failures. It stores only indexed
+  identity plus canonical Delegation/result/admission/review receipts; opens no
+  IPC/preload path; shows no Agents UI; grants no permission; dispatches no
+  provider/model or tool; reads no credentials or source; writes no files; runs
+  no process or tests; mutates no Git or Project Revision facts; and creates no
+  generic Review row, Artifact, or parent materialization authority. Real
+  parent materialization remains a separate gate.
 
 ### Track B - People and Spaces
 

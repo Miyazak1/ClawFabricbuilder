@@ -42,12 +42,13 @@ admission store for restart-safe parent/child admission lookup. It also has a
 pure main-side Delegation result review decision contract that records owner
 approval, rejection, or acknowledgement of an admitted child result without
 creating a generic Review row, Artifact, parent mutation, or materialized source
-change. The Agent stores and Delegation contracts are not visible activation:
-they create no provider/tool dispatch, permission grant, child assignment
-execution, Revision, Artifact, or parent materialization authority. The lease
-and Delegation stores are local evidence only, not Agent execution or Run
-dispatch. The remaining authorities are roadmap contracts and must be introduced
-through independent implementation gates.
+change, plus a main-only Delegation result review store for restart-safe parent/
+child review lookup. The Agent stores and Delegation contracts are not visible
+activation: they create no provider/tool dispatch, permission grant, child
+assignment execution, Revision, Artifact, generic Review row, or parent
+materialization authority. The lease and Delegation stores are local evidence
+only, not Agent execution or Run dispatch. The remaining authorities are roadmap
+contracts and must be introduced through independent implementation gates.
 
 ## Actor Model
 
