@@ -197,8 +197,10 @@ async function setup(options: Readonly<{
   briefUpdateActivity?: boolean;
   contextualBuildActivity?: boolean;
   deferredAnswer?: boolean;
+  deferAnswerAfterFirst?: boolean;
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
+  failAnswerAfterFirst?: boolean;
   failGenerate?: boolean;
   failApprovedPlanGenerateOnce?: boolean;
   failPlanReview?: boolean;
@@ -246,6 +248,7 @@ async function setup(options: Readonly<{
   let latestDraft = await createGenerationDraft();
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveAnswer: (() => Promise<void>) | null = null;
+  let answerAttempts = 0;
   let resolveGenerate: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
   let approvedPlanGenerateAttempts = 0;
@@ -315,10 +318,21 @@ async function setup(options: Readonly<{
     };
   });
   const answer = vi.fn(async (request: unknown) => {
+    answerAttempts += 1;
     const instruction = (request as { instruction: string }).instruction;
     latestAnswerInstruction = instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
-    if (options.deferredAnswer === true) {
+    if (options.failAnswerAfterFirst === true && answerAttempts > 1) {
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_structured_response_invalid',
+          retryable: true,
+        },
+      };
+    }
+    if (options.deferredAnswer === true || (options.deferAnswerAfterFirst === true && answerAttempts > 1)) {
       return new Promise<unknown>((resolve) => {
         resolveAnswer = async () => {
           resolve({
@@ -1206,6 +1220,72 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
         .toContain('Source folder: focus-timer');
     });
+  });
+
+  it('keeps prior read-only chat visible while the next answer is running without a source folder', async () => {
+    const { answer, container, readTaskStream, resolveAnswer } = await setup({
+      answerActivity: true,
+      deferAnswerAfterFirst: true,
+    });
+
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(container.textContent).toContain('This answer does not change files.');
+    });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+
+    setComposerInstruction(container, '你是什么大模型');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[data-builder-conversation-notice="answering"]')?.textContent)
+        .toContain('Answering');
+    });
+    expect(container.querySelector('[data-builder-conversation-workspace="true"]')).not.toBeNull();
+    expect(container.textContent).toContain('This answer does not change files.');
+    expect(container.textContent).not.toContain('Activity is unavailable');
+
+    await resolveAnswer();
+  });
+
+  it('keeps prior read-only chat visible when the next answer fails without a source folder', async () => {
+    const { answer, container, generate, readTaskStream, saveDraft, submit } = await setup({
+      answerActivity: true,
+      failAnswerAfterFirst: true,
+    });
+
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(container.textContent).toContain('This answer does not change files.');
+    });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+
+    setComposerInstruction(container, '你是什么大模型');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('The answer could not be prepared. Try again.');
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-conversation-workspace="true"]')).not.toBeNull();
+    expect(container.textContent).toContain('This answer does not change files.');
+    expect(container.textContent).not.toContain('Activity is unavailable');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
   it('continues a gated build turn after the user binds a source folder', async () => {

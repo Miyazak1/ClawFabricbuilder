@@ -804,6 +804,7 @@ export function createBuilderProjectController(
       ?? current.answer?.project_id
       ?? null;
     const workspaceProjectId = retainedDraft?.project_id ?? retained?.target.project_id ?? current.workingProjectId;
+    const retainedAnswer = current.answer;
     retryableGeneration = null;
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
@@ -813,7 +814,7 @@ export function createBuilderProjectController(
         retainedDraft,
         retainedPreview,
         null,
-        null,
+        retainedAnswer,
         null,
         false,
         unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
@@ -865,7 +866,7 @@ export function createBuilderProjectController(
           retainedDraft,
           retainedPreview,
           sanitizeTrustedBuilderGenerationDiagnostic(error),
-          null,
+          retainedAnswer,
           null,
           false,
           unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),

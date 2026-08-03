@@ -328,6 +328,9 @@ Current Builder checkpoint:
 
 - build-side generation is admitted through a main-owned `project.edit` check
   for the selected project;
+- read-only chat keeps a stable logical Project/Conversation identity before a
+  source folder is selected, and answering or failed-answer states must retain
+  the prior visible conversation instead of resetting the chat flow;
 - the composer can ask for current-project write approval before dispatching a
   build request;
 - renderer-visible approval records expose only scope/status/result, not grant

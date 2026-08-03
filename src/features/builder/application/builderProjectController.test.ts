@@ -646,6 +646,72 @@ describe('Builder project controller v2', () => {
     expect(second.draft).toBeNull();
   });
 
+  it('keeps the logical chat project visible while a later read-only answer is running', async () => {
+    let answerAttempts = 0;
+    let resolveSecondAnswer!: (value: unknown) => void;
+    const secondAnswer = new Promise<unknown>((resolve) => {
+      resolveSecondAnswer = resolve;
+    });
+    const { answer, controller } = setup({
+      answer: async (request) => {
+        answerAttempts += 1;
+        if (answerAttempts === 1) return createGenerationAnswer(request);
+        return secondAnswer;
+      },
+    });
+    const first = await controller.answer('hi');
+    expect(first.answer?.project_id).toBe(PROJECT_ID);
+
+    const running = controller.answer('What did I just ask?');
+    for (let attempt = 0; attempt < 20 && answer.mock.calls.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const inFlight = controller.getSnapshot();
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer.mock.calls[1][0]).toMatchObject({
+      instruction: 'What did I just ask?',
+      existing_project_id: PROJECT_ID,
+    });
+    expect(inFlight.status).toBe('answering');
+    expect(inFlight.answer?.project_id).toBe(PROJECT_ID);
+    expect(inFlight.workingProjectId).toBeNull();
+    expect(inFlight.savedProject).toBeNull();
+    expect(inFlight.draft).toBeNull();
+
+    resolveSecondAnswer(await createGenerationAnswer(answer.mock.calls[1][0]));
+    const result = await running;
+    expect(result.status).toBe('new');
+    expect(result.answer?.project_id).toBe(PROJECT_ID);
+  });
+
+  it('keeps prior read-only chat identity visible when a later answer fails', async () => {
+    let answerAttempts = 0;
+    const { answer, controller } = setup({
+      answer: async (request) => {
+        answerAttempts += 1;
+        if (answerAttempts === 1) return createGenerationAnswer(request);
+        throw new BuilderGenerationDiagnosticError('builder_generation_provider_http_error');
+      },
+    });
+    const first = await controller.answer('hi');
+    expect(first.answer?.project_id).toBe(PROJECT_ID);
+
+    const failed = await controller.answer('What model are you?');
+
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer.mock.calls[1][0]).toMatchObject({
+      instruction: 'What model are you?',
+      existing_project_id: PROJECT_ID,
+    });
+    expect(failed.status).toBe('answer_failed');
+    expect(failed.error).toBe('builder_generation_provider_http_error');
+    expect(failed.answer?.project_id).toBe(PROJECT_ID);
+    expect(failed.workingProjectId).toBeNull();
+    expect(failed.savedProject).toBeNull();
+    expect(failed.draft).toBeNull();
+  });
+
   it('binds a selected source folder to the answered logical project instead of forking it', async () => {
     const { controller, createLocalProject } = setup({
       createLocalProject: async (request) => createLocalProjectSelection({
