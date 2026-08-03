@@ -1121,6 +1121,18 @@ Current checkpoint:
   materialization, source materialization, check run, Project Revision, Git
   mutation, provider/model dispatch, tool call, permission grant, IPC/preload
   command, or visible Agents UI.
+- the current Agent Delegation result parent materialization eligibility
+  contract adds a pure main-side receipt over an approved owner review decision.
+  It accepts only a proposed child result review that was approved for the later
+  parent materialization gate, binds the Delegation/result/admission/review
+  chain, parent/child Conversation/Task/Run identity, owner, project, fixed
+  result summary, and eligibility timestamp, and records only that the reviewed
+  child result is eligible for a future parent materialization gate. It rejects
+  rejected reviews and blocked/failed acknowledgements, creates no store/service
+  row, generic Review row, Artifact, child Assignment, child Run, parent
+  materialization, source materialization, check run, Project Revision, Git
+  mutation, provider/model dispatch, tool call, permission grant, IPC/preload
+  command, or visible Agents UI.
 
 ### Track B - People and Spaces
 

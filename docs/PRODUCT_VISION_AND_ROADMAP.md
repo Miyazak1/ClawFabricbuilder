@@ -307,11 +307,13 @@ admission service can record or replay a local admission receipt only after
 reading a store-backed Delegation result and verifying parent/child Task result
 and admission listings. The Delegation result review service can record or
 replay an owner decision receipt only after reading a store-backed admitted child
-result and verifying parent/child Task admission and review listings. This is
-still local evidence only: it creates no child Assignment or Run, dispatches no
-model or tool, grants no permission, writes no source files, saves no Project
-Revision, creates no Review/Artifact, performs no parent materialization, and
-exposes no visible Agents UI.
+result and verifying parent/child Task admission and review listings. The
+Delegation result parent materialization eligibility contract can record only
+that an approved proposed child result is eligible for a later parent
+materialization gate. This is still local evidence only: it creates no child
+Assignment or Run, dispatches no model or tool, grants no permission, writes no
+source files, saves no Project Revision, creates no Review/Artifact, performs no
+parent materialization, and exposes no visible Agents UI.
 
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,

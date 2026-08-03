@@ -85,12 +85,15 @@ change, plus a main-only Delegation result review store for restart-safe parent/
 child review lookup, plus a main-only Delegation result review service that
 records or replays owner review decision receipts only after reading a
 store-backed admitted child result and verifying parent/child Task admission and
-review listings. The Agent stores and Delegation contracts are not visible
-activation: they create no provider/tool dispatch, permission grant, child
-assignment execution, Revision, Artifact, generic Review row, or parent
-materialization authority. The lease and Delegation stores are local evidence
-only, not Agent execution or Run dispatch. The remaining authorities are roadmap
-contracts and must be introduced through independent implementation gates.
+review listings, plus a pure main-side Delegation result parent materialization
+eligibility contract that records only that an approved proposed child result is
+eligible for a later parent materialization gate. The Agent stores and
+Delegation contracts are not visible activation: they create no provider/tool
+dispatch, permission grant, child assignment execution, Revision, Artifact,
+generic Review row, or parent materialization authority. The lease and
+Delegation stores are local evidence only, not Agent execution or Run dispatch.
+The remaining authorities are roadmap contracts and must be introduced through
+independent implementation gates.
 
 ## Actor Model
 

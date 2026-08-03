@@ -396,9 +396,15 @@ parent/child Task review listings plus read-by-review and read-by-admission. It
 still creates no generic Review row, Artifact, child Assignment, child Run,
 parent materialization, source materialization, Project Revision,
 provider/tool dispatch, permission grant, IPC/preload command, or visible Agents
-UI. These Agent authorities expose no Agents UI, IPC/preload command, permission
-grant, provider/tool dispatch, source read, Git mutation, Review, Revision, or
-Artifact authority.
+UI. The current Agent Delegation result parent materialization eligibility
+contract is only a pure receipt over an approved proposed child-result review:
+it records that the reviewed child result is eligible for a later parent
+materialization gate while still creating no store/service row, generic Review
+row, Artifact, child Assignment, child Run, parent mutation, source
+materialization, Project Revision, provider/tool dispatch, permission grant,
+IPC/preload command, or visible Agents UI. These Agent authorities expose no
+Agents UI, IPC/preload command, permission grant, provider/tool dispatch, source
+read, Git mutation, Review, Revision, or Artifact authority.
 
 ## Project Storage Model
 
