@@ -67,6 +67,14 @@ function changeInput(container: HTMLElement, selector: string, value: string): v
   });
 }
 
+function expectSinglePrimaryAction(container: HTMLElement): HTMLButtonElement {
+  const actions = container.querySelectorAll<HTMLButtonElement>(
+    '.cf-builder-composer-actions [data-builder-composer-primary-action="true"]',
+  );
+  expect(actions).toHaveLength(1);
+  return actions[0]!;
+}
+
 function savedProject(): BuilderProjectCatalogItem {
   return Object.freeze({
     commit_oid: OID,
@@ -148,6 +156,80 @@ describe('BuilderComposer', () => {
 
     changeInput(container, '#builder-idea', 'What does this project do?');
     expect(onInstructionChange).toHaveBeenCalledWith('What does this project do?');
+  });
+
+  it('keeps one primary composer action across idle and busy states', () => {
+    const idleEmpty = render(
+      <BuilderComposer
+        {...props({
+          canSubmitComposer: false,
+          instruction: '',
+        })}
+      />,
+    );
+
+    const idleEmptyAction = expectSinglePrimaryAction(idleEmpty);
+    expect(idleEmptyAction.getAttribute('data-builder-submit-turn')).toBe('true');
+    expect(idleEmptyAction.getAttribute('aria-label')).toBe('Send');
+    expect(idleEmptyAction.disabled).toBe(true);
+    expect(idleEmpty.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+
+    const busyEmpty = render(
+      <BuilderComposer
+        {...props({
+          busy: true,
+          canAddContext: true,
+          canCancel: true,
+          canSubmitComposer: false,
+          instruction: '',
+          status: 'answering',
+        })}
+      />,
+    );
+
+    const busyEmptyAction = expectSinglePrimaryAction(busyEmpty);
+    expect(busyEmptyAction.getAttribute('data-builder-cancel-work')).toBe('true');
+    expect(busyEmptyAction.getAttribute('aria-label')).toBe('Stop');
+    expect(busyEmpty.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
+
+    const busyWithInput = render(
+      <BuilderComposer
+        {...props({
+          busy: true,
+          canAddContext: true,
+          canCancel: true,
+          canSubmitComposer: true,
+          instruction: 'Also make the header smaller.',
+          status: 'generating',
+        })}
+      />,
+    );
+
+    const busyWithInputAction = expectSinglePrimaryAction(busyWithInput);
+    expect(busyWithInputAction.getAttribute('data-builder-submit-turn')).toBe('true');
+    expect(busyWithInputAction.getAttribute('aria-label')).toBe('Add context');
+    expect(busyWithInput.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+
+    const busyLocked = render(
+      <BuilderComposer
+        {...props({
+          busy: true,
+          canAddContext: false,
+          canCancel: false,
+          canEditInstruction: false,
+          canSubmitComposer: false,
+          instruction: '',
+          status: 'saving',
+        })}
+      />,
+    );
+
+    const busyLockedAction = expectSinglePrimaryAction(busyLocked);
+    expect(busyLockedAction.getAttribute('data-builder-busy-work')).toBe('true');
+    expect(busyLockedAction.getAttribute('aria-label')).toBe('Saving...');
+    expect(busyLockedAction.disabled).toBe(true);
+    expect(busyLocked.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
+    expect(busyLocked.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
   });
 
   it('keeps the composer focused after clicking send so follow-up typing can continue', async () => {

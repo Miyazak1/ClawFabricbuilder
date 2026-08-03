@@ -2081,7 +2081,8 @@ describe('BuilderPage v2', () => {
     expect(textarea?.disabled).toBe(false);
     expect(textarea?.readOnly).toBe(false);
     expect(textarea?.getAttribute('aria-keyshortcuts')).toBe('Enter');
-    expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-composer-primary-action="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
     expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
       .toBe('Add context');

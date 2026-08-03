@@ -3279,8 +3279,9 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-work-status="true"]')).not.toBeNull();
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
-      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
-        .toBe('Add context');
+      expect(container.querySelector('[data-builder-cancel-work="true"]')?.getAttribute('aria-label'))
+        .toBe('Stop');
+      expect(container.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     await act(async () => {
@@ -3292,6 +3293,11 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, 'Make it blue.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
+        .toBe('Add context');
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
     });
     click(container, '[data-builder-submit-turn="true"]');
 
@@ -3343,8 +3349,9 @@ describe('BuilderApp v2', () => {
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
-      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
-        .toBe('Add context');
+      expect(container.querySelector('[data-builder-cancel-work="true"]')?.getAttribute('aria-label'))
+        .toBe('Stop');
+      expect(container.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
     });
 
     const change = 'Change the main heading to My Notes.';
@@ -3353,6 +3360,11 @@ describe('BuilderApp v2', () => {
         ?.call(textarea, change);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
+        .toBe('Add context');
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
     });
     click(container, '[data-builder-submit-turn="true"]');
 

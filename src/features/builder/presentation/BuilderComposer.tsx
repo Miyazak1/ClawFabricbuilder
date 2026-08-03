@@ -204,6 +204,10 @@ export function BuilderComposer({
     if (busy) return 'Working on your request...';
     return 'Ask a question, or describe what to build or change...';
   })();
+  const hasInstruction = instruction.trim().length > 0;
+  const showSubmitAction = !busy || (canAddContext && hasInstruction);
+  const showCancelAction = !showSubmitAction && canCancel;
+  const showBusyAction = busy && !showSubmitAction && !showCancelAction;
 
   useEffect(() => {
     if (!restoreComposerFocusAfterSubmitRef.current) return;
@@ -579,22 +583,11 @@ export function BuilderComposer({
             ) : null}
           </div>
           <div className="cf-builder-composer-actions">
-            {canCancel ? (
-              <button
-                aria-label="Stop"
-                className="cf-builder-secondary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center"
-                data-builder-cancel-work="true"
-                onClick={onCancel}
-                title="Stop"
-                type="button"
-              >
-                <StopCircle aria-hidden="true" className="size-4" />
-              </button>
-            ) : null}
-            {busy && !canAddContext ? null : (
+            {showSubmitAction ? (
               <button
                 aria-label={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+                data-builder-composer-primary-action="true"
                 data-builder-submit-turn="true"
                 disabled={!canSubmitComposer}
                 onClick={() => {
@@ -607,7 +600,33 @@ export function BuilderComposer({
               >
                 <ArrowUp aria-hidden="true" className="size-4" />
               </button>
-            )}
+            ) : null}
+            {showCancelAction ? (
+              <button
+                aria-label="Stop"
+                className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+                data-builder-cancel-work="true"
+                data-builder-composer-primary-action="true"
+                onClick={onCancel}
+                title="Stop"
+                type="button"
+              >
+                <StopCircle aria-hidden="true" className="size-4" />
+              </button>
+            ) : null}
+            {showBusyAction ? (
+              <button
+                aria-label={busyLabel(status)}
+                className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+                data-builder-busy-work="true"
+                data-builder-composer-primary-action="true"
+                disabled
+                title={busyLabel(status)}
+                type="button"
+              >
+                <StopCircle aria-hidden="true" className="size-4" />
+              </button>
+            ) : null}
           </div>
         </footer>
         {hasUnsavedDraft ? (
