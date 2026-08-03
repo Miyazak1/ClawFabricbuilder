@@ -330,6 +330,17 @@ function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | nu
   });
 }
 
+function latestTaskBriefItem(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): Extract<BuilderConversationItem, { item_kind: 'task_brief_updated' }> | null {
+  const items = activityItems(snapshot);
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.item_kind === 'task_brief_updated') return item;
+  }
+  return null;
+}
+
 function isNearChatBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_FOLLOW_BOTTOM_THRESHOLD_PX;
 }
@@ -538,7 +549,7 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
-  if (item.item_kind === 'task_brief_updated') return 'Brief updated';
+  if (item.item_kind === 'task_brief_updated') return 'Direction updated';
   if (item.item_kind === 'tool_call_requested') return toolRequestTitle(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultTitle(item);
   if (item.item_kind === 'candidate_reviewed') {
@@ -1342,6 +1353,7 @@ function BuilderArtifactLogsPanel({
   snapshot: BuilderConversationControllerSnapshot | null;
 }>) {
   const entries = artifactLogEntries(snapshot);
+  const latestBrief = latestTaskBriefItem(snapshot);
   const showLiveOutput = shouldShowLiveOutput(liveOutput, entries);
   return (
     <section
@@ -1353,6 +1365,22 @@ function BuilderArtifactLogsPanel({
         <h4>Work logs</h4>
         <p>Readable steps from the current conversation.</p>
       </div>
+      {latestBrief !== null ? (
+        <section
+          aria-label="Current direction"
+          className="cf-builder-current-direction"
+          data-builder-current-direction="true"
+        >
+          <div>
+            <p className="cf-builder-current-direction-kicker">Current direction</p>
+            <h4>Ready for later build</h4>
+          </div>
+          <p data-builder-current-direction-summary="true">{latestBrief.brief.summary}</p>
+          <p className="cf-builder-current-direction-note">
+            Used only after you ask Builder to start building from this direction.
+          </p>
+        </section>
+      ) : null}
       {entries.length === 0 && !showLiveOutput ? (
         <div className="cf-builder-empty cf-builder-artifact-logs-empty flex min-h-24 items-center justify-center border border-dashed px-3 text-center text-sm">
           Work details will appear here when the assistant reads, plans, or prepares changes.

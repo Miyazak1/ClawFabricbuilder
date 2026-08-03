@@ -443,7 +443,10 @@ turns through the answer path; generation main performs its own read-only route
 classification and the conversation main service records `task_brief_updated` /
 `builder-task-capsule.v1` without draft, Save, command, or source-write
 authority. Later build route evidence can then bind to the visible task id
-derived from the sanitized task stream.
+derived from the sanitized task stream. The desktop can inspect the latest
+sanitized brief on demand through Artifact Logs as `Current direction`, but this
+surface exposes no task id, route decision id, provider, credential, source,
+Git, receipt, or correction authority.
 
 ## Test Matrix
 

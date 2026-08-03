@@ -140,6 +140,7 @@ describe('Builder desktop layout styles', () => {
     const artifactLogsIntro = styleBlock(source, '.cf-builder-artifact-logs-intro');
     const artifactLogsList = styleBlock(source, '.cf-builder-artifact-logs-list');
     const artifactLogsContent = styleBlock(source, '.cf-builder-artifact-logs .cf-builder-activity-content');
+    const currentDirection = styleBlock(source, '.cf-builder-current-direction');
     const summaryRowOverride = styleBlock(source, '.cf-builder-panel-toolbar.cf-builder-changes-summary-row');
     const changesBody = styleBlock(source, '.cf-builder-changes-body');
     const changesList = styleBlock(source, '.cf-builder-changes-list');
@@ -175,9 +176,13 @@ describe('Builder desktop layout styles', () => {
     expect(changesPanel).not.toContain('border-radius: 8px;');
     expect(changesPanel).not.toContain('box-shadow: var(--cf-shadow-sm);');
     expect(artifactLogs).toContain('height: 100%;');
-    expect(artifactLogs).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(artifactLogs).toContain('grid-template-rows: auto auto minmax(0, 1fr);');
     expect(artifactLogs).toContain('overflow: hidden;');
     expect(artifactLogsIntro).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(currentDirection).toContain('border-top: 1px solid var(--cf-border);');
+    expect(currentDirection).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(currentDirection).not.toContain('border-radius');
+    expect(currentDirection).not.toContain('box-shadow');
     expect(artifactLogsList).toContain('overflow: auto;');
     expect(artifactLogsContent).toContain('max-width: 100%;');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');

@@ -671,7 +671,11 @@ Current checkpoint:
   current composer text into an explicit user-visible "save this direction"
   message that renderer and main both classify as `update_brief`;
 - provider, credential, source tree, Git, digest, and receipt details remain
-  hidden from all default composer memory surfaces.
+  hidden from all default composer memory surfaces;
+- the Artifact Logs surface can show a read-only `Current direction` summary
+  derived from the latest sanitized task-brief projection. This is on-demand
+  inspection only: it is not default composer chrome, not correction authority,
+  not a second memory database, and not a Goal-mode commitment.
 
 Goal mode remains a separate future agent workflow. A Goal is not a plan,
 working brief, title, or one-shot build request: it means the agent accepts a

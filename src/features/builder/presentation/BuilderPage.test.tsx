@@ -424,6 +424,47 @@ async function answerActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function briefActivity() {
+  const wire = createAnswerTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 5,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 5,
+      },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        wire.conversation.items[2],
+        {
+          item_kind: 'task_brief_updated',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task: {
+            task_id: TASK_ID,
+            title: 'Current project brief',
+          },
+          brief: {
+            status: 'ready',
+            summary: 'Use a starfield hero, compact project cards, and a calm tool-like layout.',
+            contextual_build_ready: true,
+          },
+          recorded_state: 'updated',
+        },
+        {
+          ...wire.conversation.items[3],
+          sequence: 5,
+        },
+      ],
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function progressActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createProgressTaskStreamWire()));
   return controller.load(PROJECT_ID);
@@ -3034,6 +3075,39 @@ describe('BuilderPage v2', () => {
     );
     expect(container.querySelector('[data-builder-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
       .toBe(chatMain);
+  });
+
+  it('shows the current direction on demand from task brief facts without exposing internal memory', async () => {
+    const { saved } = await snapshots();
+    const activity = await briefActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const chatMain = container.querySelector('[data-builder-chat-main="true"]');
+    expect(container.querySelector('[data-builder-current-direction="true"]')).toBeNull();
+    expect(chatMain?.textContent).not.toContain('Current direction');
+
+    click(container, '[data-builder-workspace-control-tab="logs"]');
+
+    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
+    const currentDirection = container.querySelector('[data-builder-current-direction="true"]');
+    expect(currentDirection).not.toBeNull();
+    expect(currentDirection?.closest('[data-builder-artifact-logs="true"]')).toBe(logs);
+    expect(currentDirection?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(currentDirection?.textContent).toContain('Current direction');
+    expect(currentDirection?.textContent).toContain('Ready for later build');
+    expect(currentDirection?.textContent).toContain('Use a starfield hero, compact project cards');
+    expect(currentDirection?.textContent).toContain('Used only after you ask Builder to start building');
+    expect(logs?.textContent).toContain('Direction updated');
+    expect(currentDirection?.textContent).not.toMatch(
+      /Current project brief|builder-task:|builder-run:|builder-message:|builder-route-decision|working_brief|sha256:|provider|credential|source_tree|receipt/iu,
+    );
   });
 
   it('shows completed project file reads as ordinary assistant work status', async () => {
