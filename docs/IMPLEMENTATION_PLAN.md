@@ -1269,7 +1269,7 @@ Current checkpoint:
   creates no tool call, reads no source, records no Project Work Result, grants
   no permission, stores no raw context, mutates no Git or Project Revision
   facts, and creates no Review or Artifact authority. Actual supervised Agent
-  execution, tool-call creation, private source context collection, and
+  execution, tool dispatch/execution, private source context collection, and
   result-for-review creation remain later checkpoints.
 - the current Agent Supervised Action Admission service checkpoint composes the
   store-backed Task Context Snapshot store and Supervised Action Admission
@@ -1282,8 +1282,23 @@ Current checkpoint:
   tool, creates no tool call, reads no source, records no Project Work Result,
   grants no permission, stores no raw context, mutates no Git or Project
   Revision facts, and creates no Review or Artifact authority. Actual
-  supervised Agent execution, tool-call creation, private source context
+  supervised Agent execution, tool dispatch/execution, private source context
   collection, and result-for-review creation remain later checkpoints.
+- the current Agent Tool Call Record service checkpoint connects the
+  `call_tool` supervised action admission to the existing main-only Tool Call
+  Record contract. The service accepts a supervised action admission id, reads
+  that admission from the admission store, verifies Task/Run admission listings,
+  requires `requested_next_action=call_tool` and
+  `next_gate=tool_call_record_required_later`, and creates a deterministic
+  pre-dispatch Tool Call Record from a main-issued Tool Session Policy plus an
+  allowed Tool Permission Admission for the same Agent, Project, Conversation,
+  Task, and Run. It still opens no IPC/preload path, shows no Agents UI,
+  dispatches no provider/model or tool, executes no tool, reads no source,
+  grants no permission, stores no raw output or raw context, mutates no Git or
+  Project Revision facts, and creates no generic Review row or Artifact
+  authority. Actual step running, tool dispatch/execution, tool result
+  recording, private source context collection, and materialization remain
+  separate later gates.
 - the current Agent Project Work Result service admission checkpoint connects
   the `finish_for_review` supervised action admission to the existing Project
   Work Result service. The result service now accepts a supervised action

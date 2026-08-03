@@ -3249,6 +3249,64 @@ evidence, or a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Tool Call Record Service Package Check
+
+This addendum records the package checkpoint after connecting the
+`call_tool` supervised action admission to a main-only Agent Tool Call Record
+service. The service creates only a deterministic pre-dispatch Tool Call Record
+from a store-backed `call_tool` supervised action admission, a main-issued Tool
+Session Policy, and an allowed Tool Permission Admission for the same Agent,
+Project, Conversation, Task, and Run. The checkpoint does not enable visible
+Agents UI, autonomous Agent execution, provider/model dispatch, tool dispatch,
+tool execution, command execution, source reads or writes, generic Review row
+creation, Artifact creation, source materialization, check runs, Project
+Revision creation, Git mutation, permission grants, IPC/preload commands,
+installer evidence, or a real saved-profile DeepSeek canary pass.
+
+- The service accepts only owner id, supervised action admission id, Turn id,
+  Step id, Tool Session Policy receipt, Tool Permission Admission receipt, and
+  request time. It reads the admission from the main-owned admission store,
+  verifies Task and Run admission listings, requires
+  `requested_next_action=call_tool` and
+  `next_gate=tool_call_record_required_later`, and then creates a Tool Call
+  Record through the existing `main_tool_call_record_contract_v1` contract.
+- The service evidence records
+  `main_owned_agent_tool_call_record_service`,
+  `main_owned_agent_supervised_action_admission_store`,
+  `main_agent_supervised_action_admission_contract_v1`,
+  `main_tool_call_record_contract_v1`,
+  `main_tool_session_policy_contract_v1`, and
+  `main_permission_decision_before_tool_dispatch_v1` authority while preserving
+  fixed no-authority fields for renderer, IPC, provider/model dispatch, tool
+  dispatch, execution, permission grants, credential storage, source
+  access/read/write, process run, network access, Revision, Review, Artifact,
+  and raw output storage.
+- Focused validation passed through
+  `node --test tests\builder-agent-tool-call-record-service.test.cjs`; the
+  command reported 4 passing Node tests.
+- Adjacent Agent/tool validation passed through Supervised Action Admission
+  contract/store, Agent Task Context Snapshot contract, Tool Call Record
+  contract, Tool Session Policy contract, Tool Permission Admission contract,
+  and Agent Tool Call Record service tests; the command reported 38 passing
+  Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 894 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 798 ASAR
+  entries. The refreshed executable timestamp was 2026-08-04 05:45:19 local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

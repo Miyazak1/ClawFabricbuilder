@@ -434,11 +434,19 @@ returning a ready result. This chain stores refs, counts, budget facts, fixed
 lifecycle/authority codes, and digests; it carries no raw
 transcript, prompt, source content, provider/model envelope, tool output,
 permission grant, Review row, Artifact payload, Git fact, Project Revision,
-IPC/preload command, or visible Agents UI authority. Actual Agent execution,
-tool-call creation, source-context collection, and result-for-review recording
-remain separate later gates. These Agent authorities expose no Agents UI,
-IPC/preload command, permission grant, provider/tool dispatch, source read, Git
-mutation, Review, Revision, or Artifact authority.
+IPC/preload command, or visible Agents UI authority. The current Agent Tool Call
+Record service connects a persisted `call_tool` supervised action admission to
+the existing main-only Tool Call Record contract: it reads the admission by
+owner, verifies Task/Run admission listings, accepts only
+`next_gate=tool_call_record_required_later`, and creates a deterministic
+pre-dispatch tool-call record from a main-issued Tool Session Policy plus an
+allowed Tool Permission Admission. It still does not dispatch or execute the
+tool, read source, store raw output, grant permission, mutate Git, create a
+Project Revision, expose IPC/preload, or show visible Agents UI. Actual Agent
+execution, tool dispatch/execution, source-context collection, and further
+step-runner orchestration remain separate later gates. These Agent authorities
+expose no Agents UI, IPC/preload command, permission grant, provider/tool
+dispatch, source read, Git mutation, Review, Revision, or Artifact authority.
 
 ## Project Storage Model
 
