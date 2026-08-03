@@ -33,12 +33,14 @@ Delegation contract for scoped parent/child Agent, Task, permission, budget, and
 review-return evidence, plus a main-only Agent Delegation receipt store for
 restart-safe parent/child Task lookup. It now has a pure main-side Agent
 Delegation result-return contract that can bind a child Task result summary back
-to parent review without raw output or materialization. The Agent stores and
-Delegation contracts are not visible activation: they create no provider/tool
-dispatch, permission grant, child assignment execution, Review, Revision, or
-Artifact authority. The lease and Delegation stores are local evidence only, not
-Agent execution or Run dispatch. The remaining authorities are roadmap contracts
-and must be introduced through independent implementation gates.
+to parent review without raw output or materialization, plus a main-only
+Delegation result store for restart-safe parent/child result lookup. The Agent
+stores and Delegation contracts are not visible activation: they create no
+provider/tool dispatch, permission grant, child assignment execution, Review,
+Revision, or Artifact authority. The lease and Delegation stores are local
+evidence only, not Agent execution or Run dispatch. The remaining authorities
+are roadmap contracts and must be introduced through independent implementation
+gates.
 
 ## Actor Model
 

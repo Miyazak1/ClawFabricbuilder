@@ -878,8 +878,17 @@ Current checkpoint:
   identity, owner, project, result status, fixed display summary, and
   no-direct-parent-mutation materialization boundary. It carries no raw child
   output, patch, source tree, provider output, credential, permission grant,
-  child assignment, Review, Artifact, Git, or Project Revision authority. A
-  durable result store and Review/Contribution admission remain separate gates.
+  child assignment, Review, Artifact, Git, or Project Revision authority.
+- the current Agent Delegation result store persists those return receipts in a
+  strict main-only SQLite store with restart restore, idempotent replay,
+  owner-scoped reads, parent-task and child-task result listing, one result per
+  Delegation receipt, schema fingerprint verification, and fixed redacted
+  failures. It stores only indexed identity plus canonical Delegation/result
+  receipts; opens no IPC/preload path; shows no Agents UI; grants no
+  permission; dispatches no provider/model or tool; reads no credentials or
+  source; writes no files; runs no process or tests; mutates no Git or Project
+  Revision facts; and creates no Review/Artifact authority. Review/Contribution
+  admission remains a separate gate.
 
 ### Track B - People and Spaces
 
