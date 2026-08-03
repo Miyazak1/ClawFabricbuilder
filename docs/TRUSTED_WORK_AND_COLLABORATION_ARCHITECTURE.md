@@ -37,12 +37,14 @@ to parent review without raw output or materialization, plus a main-only
 Delegation result store for restart-safe parent/child result lookup. It also has
 a pure main-side local Contribution-like admission contract that can admit a
 recorded child result to the parent review boundary without creating a Review,
-Artifact, or parent materialization. The Agent stores and Delegation contracts
-are not visible activation: they create no provider/tool dispatch, permission
-grant, child assignment execution, Review, Revision, or Artifact authority. The
-lease and Delegation stores are local evidence only, not Agent execution or Run
-dispatch. The remaining authorities are roadmap contracts and must be
-introduced through independent implementation gates.
+Artifact, or parent materialization, plus a main-only Delegation result
+admission store for restart-safe parent/child admission lookup. The Agent stores
+and Delegation contracts are not visible activation: they create no
+provider/tool dispatch, permission grant, child assignment execution, Review,
+Revision, or Artifact authority. The lease and Delegation stores are local
+evidence only, not Agent execution or Run dispatch. The remaining authorities
+are roadmap contracts and must be introduced through independent implementation
+gates.
 
 ## Actor Model
 
