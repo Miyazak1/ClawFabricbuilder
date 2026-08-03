@@ -29,9 +29,10 @@ The current implementation has a real local Project Revision authority, a
 main-only local Agent Definition/Version/lifecycle record store, a main-only
 pure Agent Goal contract for bounded continuous objectives that must continue
 until done or blocked, a main-only local Agent Goal/status record store for
-restart-safe owner/task lookup, a main-only local Agent Assignment/status record
-store, and a main-only local Agent Supervision Lease/release record store. These
-Goal facts currently create no assignment or run. It also has a pure main-side Agent
+restart-safe owner/task lookup, a pure main-side Agent Goal-to-Assignment
+admission contract, a main-only local Agent Assignment/status record store, and
+a main-only local Agent Supervision Lease/release record store. These Goal
+facts and admission receipts currently create no assignment row or run. It also has a pure main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and
 review-return evidence, plus a main-only Agent Delegation receipt store for
 restart-safe parent/child Task lookup. It now has a pure main-side Agent

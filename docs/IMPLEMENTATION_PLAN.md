@@ -799,6 +799,16 @@ Current checkpoint:
   Run, dispatches no provider/model or tool, grants no permissions, reads no
   credentials or source, writes no files, mutates no Git or Project Revision
   facts, and creates no Review/Artifact authority.
+- the current Agent Goal-to-Assignment admission contract adds a pure main-side
+  receipt that can bind one active Goal status to one owner-supervised
+  Assignment candidate. It requires the Assignment objective to match the Goal
+  objective, narrows Assignment budgets under the Goal budget, preserves Project/
+  Conversation/Task/Run identity, and records that Assignment storage is still
+  required before execution. It opens no IPC/preload path, shows no Goal UI,
+  persists no rows, creates no Assignment or Run by itself, dispatches no
+  provider/model or tool, grants no permissions, reads no credentials or source,
+  writes no files, mutates no Git or Project Revision facts, and creates no
+  Review/Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save

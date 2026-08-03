@@ -238,10 +238,15 @@ Agent Goal store is only an internal continuous-objective/status fact
 authority: it persists bounded Goal records and ordered Goal status decisions in
 main-owned SQLite for restart-safe owner/task lookup while still creating no
 Assignment, Run, provider/tool dispatch, permission grant, source read/write,
-Git fact, Project Revision, Review, or Artifact. The current Agent Assignment
-store is only an internal owner-supervised assignment/status fact authority: it
-persists one Agent version binding to a Project/Conversation/Task/Run and
-ordered assignment status records in main-owned SQLite. The current
+Git fact, Project Revision, Review, or Artifact. The current Agent
+Goal-to-Assignment admission contract is only a pure main-side bridge receipt:
+it proves one active Goal status may constrain one owner-supervised Assignment
+candidate by objective, identity, and narrowed budget while still creating no
+Assignment row, Run, execution, provider/tool dispatch, permission grant, source
+access, Git fact, Project Revision, Review, or Artifact. The current Agent
+Assignment store is only an internal owner-supervised assignment/status fact
+authority: it persists one Agent version binding to a Project/Conversation/Task/
+Run and ordered assignment status records in main-owned SQLite. The current
 Agent Supervision Lease store is only an internal supervision evidence authority: it
 persists one active-assignment lease/release chain in main-owned SQLite and
 enforces one unreleased and unexpired lease per assignment with monotonic lease
