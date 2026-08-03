@@ -819,6 +819,16 @@ Current checkpoint:
   provider/model or tool; grants no permissions; reads no credentials or
   source; writes no files; mutates no Git or Project Revision facts; and
   creates no Review/Artifact authority.
+- the current Agent Goal-to-Assignment materialization contract adds a pure
+  main-side receipt that proves an admitted Assignment candidate has been
+  recorded in the Agent Assignment store with exactly its initial `queued`
+  owner-supervised status. It binds the Goal admission receipt to Assignment
+  store read evidence and fails closed if the assignment is absent, already
+  progressed, not store-backed, owner-mismatched, or timestamp-mismatched. It
+  opens no IPC/preload path, shows no Goal UI, starts no Run or execution,
+  dispatches no provider/model or tool, grants no permissions, reads no
+  credentials or source, writes no files, mutates no Git or Project Revision
+  facts, and creates no Review/Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save

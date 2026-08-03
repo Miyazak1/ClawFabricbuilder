@@ -249,7 +249,13 @@ authority: it persists the Goal, active Goal status, Assignment candidate, and
 admission receipt in main-owned SQLite for restart-safe owner/task and
 read-by-Assignment lookup while still recording no Assignment row, starting no
 Run or execution, and creating no provider/tool, permission, source, Git,
-Project Revision, Review, or Artifact authority. The current Agent Assignment
+Project Revision, Review, or Artifact authority. The current Agent
+Goal-to-Assignment materialization contract is only a pure main-side receipt
+that an admitted Assignment has been recorded in the Assignment store with its
+initial `queued` status. It binds the admission receipt to the Assignment store
+read evidence and still starts no Run, dispatches no provider/tool, grants no
+permission, reads or writes no source, mutates no Git or Project Revision, and
+creates no Review or Artifact authority. The current Agent Assignment
 store is only an internal owner-supervised assignment/status fact authority: it
 persists one Agent version binding to a Project/Conversation/Task/Run and
 ordered assignment status records in main-owned SQLite. The current
