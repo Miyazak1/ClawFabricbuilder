@@ -28,6 +28,7 @@ import {
   PanelRightOpen,
   Play,
   RefreshCw,
+  ShieldCheck,
   StopCircle,
   UserRound,
   X,
@@ -177,7 +178,7 @@ const ARTIFACT_MAX_WIDTH_PX = 760;
 const ARTIFACT_MIN_CHAT_WIDTH_PX = 360;
 const ARTIFACT_KEYBOARD_STEP_PX = 24;
 const ARTIFACT_KEYBOARD_LARGE_STEP_PX = 80;
-type BuilderArtifactTab = 'changes' | 'logs' | 'preview' | 'source' | 'versions';
+type BuilderArtifactTab = 'changes' | 'logs' | 'permissions' | 'preview' | 'source' | 'versions';
 
 function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
   if (!Number.isFinite(value)) return ARTIFACT_DEFAULT_WIDTH_PX;
@@ -1430,6 +1431,7 @@ function artifactTabLabel(tab: BuilderArtifactTab): string {
   if (tab === 'changes') return 'Changes';
   if (tab === 'source') return 'Source';
   if (tab === 'logs') return 'Logs';
+  if (tab === 'permissions') return 'Permissions';
   return 'Versions';
 }
 
@@ -1438,7 +1440,96 @@ function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
   if (tab === 'changes') return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
   if (tab === 'source') return <FileCode2 aria-hidden="true" className="size-3.5" />;
   if (tab === 'logs') return <ListChecks aria-hidden="true" className="size-3.5" />;
+  if (tab === 'permissions') return <ShieldCheck aria-hidden="true" className="size-3.5" />;
   return <History aria-hidden="true" className="size-3.5" />;
+}
+
+function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
+  if (mode === 'read_only_chat') return 'Read-only chat';
+  if (mode === 'allow_current_project') return 'Allow current project';
+  return 'Ask before write';
+}
+
+function permissionWriteStatus(
+  mode: BuilderComposerApprovalMode,
+  prompt: BuilderCurrentProjectWriteApprovalPrompt | null,
+): string {
+  if (mode === 'read_only_chat') return 'Read-only chat is active. Builder will not change files from composer turns.';
+  if (prompt?.state === 'pending') return 'Waiting for you to allow current project changes.';
+  if (prompt?.state === 'approving') return 'Recording current project write approval.';
+  if (prompt?.state === 'failed') return 'Write approval was not recorded. Try again before building.';
+  if (mode === 'allow_current_project') return 'Current project changes are allowed for this selected project.';
+  return 'Builder will ask before preparing a draft that changes files.';
+}
+
+function permissionReadStatus(prompt: BuilderPlanSourceReadApprovalPrompt | null): string {
+  if (prompt?.state === 'pending') return 'Waiting for you to allow project reading for the plan.';
+  if (prompt?.state === 'approving') return 'Recording project read approval for the plan.';
+  if (prompt?.state === 'failed') return 'Project read approval was not recorded. Try again before planning with source.';
+  return 'Chat stays read-only unless a plan or tool path asks for project context.';
+}
+
+function BuilderArtifactPermissionsPanel({
+  approvalMode,
+  currentProjectWriteApproval,
+  hasSavedProject,
+  hasUnsavedDraft,
+  planSourceReadApproval,
+  workingProject,
+}: Readonly<{
+  approvalMode: BuilderComposerApprovalMode;
+  currentProjectWriteApproval: BuilderCurrentProjectWriteApprovalPrompt | null;
+  hasSavedProject: boolean;
+  hasUnsavedDraft: boolean;
+  planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
+  workingProject: BuilderProjectControllerSnapshot['workingProject'];
+}>) {
+  const projectLabel = workingProject?.title
+    ?? (hasSavedProject ? 'Saved project' : hasUnsavedDraft ? 'Unsaved draft project' : 'No project selected');
+  const sourceFolderLabel = workingProject?.source_folders.map((folder) => folder.name).join(', ')
+    || (hasSavedProject || hasUnsavedDraft ? 'Current project folder' : 'Choose a project before building');
+  return (
+    <section
+      aria-label="Permissions"
+      className="cf-builder-artifact-permissions"
+      data-builder-artifact-permissions="true"
+    >
+      <div className="cf-builder-artifact-permissions-intro">
+        <h4>Permissions</h4>
+        <p>What Builder can do with the current project.</p>
+      </div>
+      <dl className="cf-builder-permission-list" data-builder-permission-list="true">
+        <div className="cf-builder-permission-row" data-builder-permission-row="workspace">
+          <dt>Project boundary</dt>
+          <dd>
+            <strong>{projectLabel}</strong>
+            <span>{sourceFolderLabel}</span>
+          </dd>
+        </div>
+        <div className="cf-builder-permission-row" data-builder-permission-row="approval-mode">
+          <dt>Approval mode</dt>
+          <dd>
+            <strong>{approvalModeLabel(approvalMode)}</strong>
+            <span>{permissionWriteStatus(approvalMode, currentProjectWriteApproval)}</span>
+          </dd>
+        </div>
+        <div className="cf-builder-permission-row" data-builder-permission-row="read-project">
+          <dt>Project reading</dt>
+          <dd>
+            <strong>Project context</strong>
+            <span>{permissionReadStatus(planSourceReadApproval)}</span>
+          </dd>
+        </div>
+        <div className="cf-builder-permission-row" data-builder-permission-row="future-tools">
+          <dt>Tools</dt>
+          <dd>
+            <strong>Not enabled</strong>
+            <span>Terminal, network, external folders, publish, and delegation are separate future approvals.</span>
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
 }
 
 function BuilderArtifactLogsPanel({
@@ -1582,8 +1673,10 @@ function BuilderArtifactSummary({
 
 function BuilderArtifactSidebar({
   activeTab,
+  approvalMode,
   changes,
   changesOpen,
+  currentProjectWriteApproval,
   files,
   hasSavedProject,
   hasUnsavedDraft,
@@ -1599,6 +1692,7 @@ function BuilderArtifactSidebar({
   onSelectFile,
   onSelectTab,
   onSourceOpenChange,
+  planSourceReadApproval,
   preview,
   previewPanelRef,
   sidebarRef,
@@ -1609,11 +1703,14 @@ function BuilderArtifactSidebar({
   tabs,
   width,
   widthMaximum,
+  workingProject,
   history,
 }: Readonly<{
   activeTab: BuilderArtifactTab;
+  approvalMode: BuilderComposerApprovalMode;
   changes: BuilderSourceTreeChanges;
   changesOpen: boolean;
+  currentProjectWriteApproval: BuilderCurrentProjectWriteApprovalPrompt | null;
   files: readonly BuilderProjectSourceFile[];
   hasSavedProject: boolean;
   hasUnsavedDraft: boolean;
@@ -1630,6 +1727,7 @@ function BuilderArtifactSidebar({
   onSelectFile?: (file: BuilderFileName) => void;
   onSelectTab: (tab: BuilderArtifactTab) => void;
   onSourceOpenChange: (open: boolean) => void;
+  planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
   preview: BuilderProjectControllerSnapshot['preview'];
   previewPanelRef?: Ref<HTMLElement>;
   sidebarRef?: Ref<HTMLElement>;
@@ -1640,6 +1738,7 @@ function BuilderArtifactSidebar({
   tabs: readonly BuilderArtifactTab[];
   width: number;
   widthMaximum: number;
+  workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
   return (
     <aside
@@ -1741,6 +1840,16 @@ function BuilderArtifactSidebar({
             hasUnsavedDraft={hasUnsavedDraft}
             liveOutput={liveOutput}
             snapshot={snapshot}
+          />
+        ) : null}
+        {activeTab === 'permissions' ? (
+          <BuilderArtifactPermissionsPanel
+            approvalMode={approvalMode}
+            currentProjectWriteApproval={currentProjectWriteApproval}
+            hasSavedProject={hasSavedProject}
+            hasUnsavedDraft={hasUnsavedDraft}
+            planSourceReadApproval={planSourceReadApproval}
+            workingProject={workingProject}
           />
         ) : null}
       </div>
@@ -1852,6 +1961,11 @@ export function BuilderPage({
   const visibleLiveOutput = liveOutput;
   const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
   const showLogsPanel = artifactLogEntries(activity).length > 0 || visibleLiveOutput !== null;
+  const showPermissionsPanel = saved !== null
+    || workingProject !== null
+    || hasUnsavedDraft
+    || planSourceReadApproval !== null
+    || currentProjectWriteApproval !== null;
   const planReviewTarget = pendingPlanReviewTarget(activity);
   const planReviewBusy = planReviewTarget !== null
     && planReviewInFlight !== null
@@ -1962,6 +2076,7 @@ export function BuilderPage({
     showResultFlow ? 'result' : 'no-result',
     showVersionHistoryPanel ? 'versions' : 'no-versions',
     showLogsPanel ? 'logs' : 'no-logs',
+    showPermissionsPanel ? 'permissions' : 'no-permissions',
   ].join('|');
   const artifactPanelIdentity = [
     draft?.draft_id ?? 'no-draft',
@@ -1972,6 +2087,7 @@ export function BuilderPage({
     showResultFlow ? 'result' : 'no-result',
     showVersionHistoryPanel ? 'versions' : 'no-versions',
     showLogsPanel ? 'logs' : 'no-logs',
+    showPermissionsPanel ? 'permissions' : 'no-permissions',
   ].join('|');
   const artifactTabs = useMemo(() => {
     const tabs: BuilderArtifactTab[] = [];
@@ -1980,8 +2096,9 @@ export function BuilderPage({
     if (sourceFile !== null) tabs.push('source');
     if (showVersionHistoryPanel) tabs.push('versions');
     if (showLogsPanel) tabs.push('logs');
+    if (showPermissionsPanel) tabs.push('permissions');
     return tabs;
-  }, [hasUnsavedDraft, showLogsPanel, showResultFlow, showVersionHistoryPanel, sourceFile]);
+  }, [hasUnsavedDraft, showLogsPanel, showPermissionsPanel, showResultFlow, showVersionHistoryPanel, sourceFile]);
   const hasArtifactControls = artifactTabs.length > 0;
   const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && sourceFile !== null
     ? 'source'
@@ -1997,6 +2114,8 @@ export function BuilderPage({
             ? 'source'
             : hasUnsavedDraft
               ? 'changes'
+              : showPermissionsPanel
+                ? 'permissions'
               : null;
   const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
     active: BuilderArtifactTab | null;
@@ -2815,8 +2934,10 @@ export function BuilderPage({
   const artifactSidebar = showArtifactSidebar && activeArtifactTab !== null ? (
     <BuilderArtifactSidebar
       activeTab={activeArtifactTab}
+      approvalMode={approvalMode}
       changes={changes}
       changesOpen={activeArtifactTab === 'changes' || changesPanelOpen}
+      currentProjectWriteApproval={currentProjectWriteApproval}
       files={files}
       hasSavedProject={saved !== null}
       hasUnsavedDraft={hasUnsavedDraft}
@@ -2833,6 +2954,7 @@ export function BuilderPage({
       onSelectFile={onSelectFile}
       onSelectTab={openArtifactTab}
       onSourceOpenChange={setSourceDisclosureOpen}
+      planSourceReadApproval={planSourceReadApproval}
       preview={preview}
       previewPanelRef={resultFlowRef}
       sidebarRef={artifactSidebarRef}
@@ -2843,6 +2965,7 @@ export function BuilderPage({
       tabs={artifactTabs}
       width={artifactWidth}
       widthMaximum={artifactWidthMaximum}
+      workingProject={workingProject}
     />
   ) : null;
   const expandedPreviewOverlay = previewExpandedVisible ? (

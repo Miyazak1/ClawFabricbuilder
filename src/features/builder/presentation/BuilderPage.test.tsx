@@ -2461,12 +2461,14 @@ describe('BuilderPage v2', () => {
     expect(workspaceMenu).not.toBeNull();
     expect(workspaceMenu?.textContent).toContain('Preview');
     expect(workspaceMenu?.textContent).toContain('Changes');
+    expect(workspaceMenu?.textContent).toContain('Permissions');
     expect(workspaceMenu?.textContent).not.toContain('Terminal');
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-pressed'))
       .toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-checked'))
       .toBe('true');
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="permissions"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="source"]')).toBeNull();
     click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-workspace-menu="true"]')).toBeNull();
@@ -2645,6 +2647,46 @@ describe('BuilderPage v2', () => {
     expect(onOpenProjectLocation).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
+    );
+  });
+
+  it('opens a read-only permissions artifact tab without exposing authority internals', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        approvalMode="ask_before_write"
+        conversationSnapshot={activity}
+        currentProjectWriteApproval={null}
+        instruction="Add a timer."
+        planSourceReadApproval={null}
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="permissions"]');
+
+    const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
+    const permissionsPanel = container.querySelector('[data-builder-artifact-permissions="true"]');
+    expect(sidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('permissions');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
+      .toContain('Permissions');
+    expect(container.querySelector('[data-builder-artifact-tab="permissions"]')?.getAttribute('aria-selected'))
+      .toBe('true');
+    expect(permissionsPanel).not.toBeNull();
+    expect(permissionsPanel?.textContent).toContain('Project boundary');
+    expect(permissionsPanel?.textContent).toContain('Saved project');
+    expect(permissionsPanel?.textContent).toContain('Ask before write');
+    expect(permissionsPanel?.textContent).toContain('Builder will ask before preparing a draft that changes files.');
+    expect(permissionsPanel?.textContent).toContain('Project context');
+    expect(permissionsPanel?.textContent)
+      .toContain('Chat stays read-only unless a plan or tool path asks for project context.');
+    expect(permissionsPanel?.textContent)
+      .toContain('Terminal, network, external folders, publish, and delegation are separate future approvals.');
+    expect(permissionsPanel?.textContent).not.toMatch(
+      /builder-project:|main_selected_project|approval_scope|authority|receipt|digest|credential|provider/iu,
     );
   });
 

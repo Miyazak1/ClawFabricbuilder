@@ -2020,6 +2020,97 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   align-self: start;
 }
 
+.cf-builder-artifact-permissions {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+  color: var(--cf-text-soft);
+}
+
+.cf-builder-artifact-permissions-intro {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border-bottom: 1px solid var(--cf-border);
+  padding-bottom: 10px;
+}
+
+.cf-builder-artifact-permissions-intro h4,
+.cf-builder-artifact-permissions-intro p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cf-builder-artifact-permissions-intro h4 {
+  color: var(--cf-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.cf-builder-artifact-permissions-intro p {
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cf-builder-permission-list {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  min-width: 0;
+  gap: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.cf-builder-permission-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  border-bottom: 1px solid var(--cf-border);
+  padding: 10px 0;
+}
+
+.cf-builder-permission-row dt,
+.cf-builder-permission-row dd,
+.cf-builder-permission-row strong,
+.cf-builder-permission-row span {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cf-builder-permission-row dt {
+  color: var(--cf-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.cf-builder-permission-row dd {
+  display: grid;
+  gap: 3px;
+}
+
+.cf-builder-permission-row strong {
+  color: var(--cf-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.cf-builder-permission-row span {
+  color: var(--cf-text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .cf-builder-current-direction {
   display: grid;
   min-width: 0;

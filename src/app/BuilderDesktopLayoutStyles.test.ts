@@ -140,6 +140,10 @@ describe('Builder desktop layout styles', () => {
     const artifactLogsIntro = styleBlock(source, '.cf-builder-artifact-logs-intro');
     const artifactLogsList = styleBlock(source, '.cf-builder-artifact-logs-list');
     const artifactLogsContent = styleBlock(source, '.cf-builder-artifact-logs .cf-builder-activity-content');
+    const permissions = styleBlock(source, '.cf-builder-artifact-permissions');
+    const permissionsIntro = styleBlock(source, '.cf-builder-artifact-permissions-intro');
+    const permissionsList = styleBlock(source, '.cf-builder-permission-list');
+    const permissionsRow = styleBlock(source, '.cf-builder-permission-row');
     const currentDirection = styleBlock(source, '.cf-builder-current-direction');
     const summaryRowOverride = styleBlock(source, '.cf-builder-panel-toolbar.cf-builder-changes-summary-row');
     const changesBody = styleBlock(source, '.cf-builder-changes-body');
@@ -179,6 +183,14 @@ describe('Builder desktop layout styles', () => {
     expect(artifactLogs).toContain('grid-template-rows: auto auto minmax(0, 1fr);');
     expect(artifactLogs).toContain('overflow: hidden;');
     expect(artifactLogsIntro).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(permissions).toContain('height: 100%;');
+    expect(permissions).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(permissions).toContain('overflow: hidden;');
+    expect(permissionsIntro).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(permissionsList).toContain('overflow: auto;');
+    expect(permissionsRow).toContain('grid-template-columns: 112px minmax(0, 1fr);');
+    expect(permissionsRow).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(permissionsRow).not.toContain('border-radius');
     expect(currentDirection).toContain('border-top: 1px solid var(--cf-border);');
     expect(currentDirection).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(currentDirection).not.toContain('border-radius');
