@@ -544,9 +544,13 @@ Evidence requirements:
   credentials, route-decision ids, receipts, or other internal evidence cannot
   become durable route signal facts or provider prompt context. Existing public
   routing meaning such as `read_only`, `clear_build`, `exploratory_work`,
-  `contextual_build`, and `current_artifact_defect` remains available for tests,
-  debugging, task capsules, and later "why this built" diagnostics without
-  becoming provider, Git, source, Save, IPC, or permission authority;
+  `contextual_build`, `current_artifact_defect`, `composer_mode_plan`, and
+  `goal_mode_request` remains available for tests, debugging, task capsules,
+  and later "why this built" diagnostics without becoming provider, Git,
+  source, Save, IPC, or permission authority. The current parity guard also
+  scans renderer and main classifier source for hard-coded route signals and
+  fails if any classifier signal is not in that public vocabulary, so UI modes
+  and main fallback evidence cannot silently drift apart;
 - the current composer contextual-execution checkpoint aligns renderer routing
   with that plan-state contract. Contextual phrases such as "do it",
   "好，开始吧", "就照这个来", or "按刚才说的做" may enter build only when

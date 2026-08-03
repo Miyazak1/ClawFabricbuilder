@@ -439,6 +439,15 @@ fresh main-owned decision after the source folder is bound. The renderer preview
 is only UI state and cannot become task, permission, provider, Git, source, or
 Save authority.
 
+Current signal parity checkpoint: renderer and main classifiers must not invent
+private `matchedSignals` strings. The fixed public vocabulary includes ordinary
+chat/build/brief/plan signals plus UI-mode signals such as
+`composer_mode_plan` and future-mode boundary signals such as
+`goal_mode_request`. Node contract tests scan both classifier surfaces for
+hard-coded route signals and fail if any signal is missing from the public
+vocabulary. Adding a route signal is therefore a route-contract change, not a
+local UI string tweak.
+
 Current Task Capsule checkpoint: `update_brief` stays read-only. Selecting a
 workspace does not turn exploratory product discussion into work admission, and
 must not request current-project write permission. The renderer dispatches these
