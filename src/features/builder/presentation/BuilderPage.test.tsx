@@ -1860,7 +1860,8 @@ describe('BuilderPage v2', () => {
     expect(composer?.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
     expect(composer?.querySelector('[data-builder-ask-question="true"]')).toBeNull();
     expect(composer?.querySelector('[data-builder-make-draft="true"]')).toBeNull();
-    expect(composer?.textContent).toContain('Making your draft');
+    expect(composer?.querySelector('[data-builder-cancel-work="true"]')?.getAttribute('title'))
+      .toBe('Stop');
     click(container, '[data-builder-cancel-work="true"]');
     expect(onCancel).toHaveBeenCalledOnce();
 
@@ -1927,7 +1928,8 @@ describe('BuilderPage v2', () => {
     expect(answeringComposer?.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
     expect(answeringComposer?.querySelector('[data-builder-ask-question="true"]')).toBeNull();
     expect(answeringComposer?.querySelector('[data-builder-make-draft="true"]')).toBeNull();
-    expect(answeringComposer?.textContent).toContain('Answering');
+    expect(answeringComposer?.querySelector('[data-builder-cancel-work="true"]')?.getAttribute('title'))
+      .toBe('Stop');
     click(answering, '[data-builder-cancel-work="true"]');
     expect(onCancelAnswer).toHaveBeenCalledOnce();
 
@@ -2087,7 +2089,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
       .toBe('Add context');
     expect(container.querySelector('[data-builder-composer="true"]')?.textContent)
-      .toContain('Add context');
+      .not.toContain('Add context');
 
     const event = keyDown(container, '#builder-idea', { key: 'Enter' });
     expect(event.defaultPrevented).toBe(true);
@@ -2165,7 +2167,8 @@ describe('BuilderPage v2', () => {
     expect(notice?.textContent).toContain('Restoring draft for review...');
     expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
     expect(notice?.closest('[data-builder-composer="true"]')).toBeNull();
-    expect(composer?.textContent).toContain('Restoring draft');
+    expect(composer?.querySelector('[data-builder-busy-work="true"]')?.getAttribute('title'))
+      .toBe('Restoring draft...');
     expect(composer?.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
@@ -2194,7 +2197,8 @@ describe('BuilderPage v2', () => {
       .toContain('Unsaved draft');
     expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
       .toContain('Version 1');
-    expect(container.textContent).toContain('Continue this draft');
+    expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
+      .toContain('Keep revising here');
     expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
     const completion = container.querySelector('[data-builder-completion-summary="true"]');
     expect(completion?.getAttribute('data-builder-completion-result')).toBe('candidate');
@@ -3601,7 +3605,7 @@ describe('BuilderPage v2', () => {
     );
     expect(inspectedContainer.querySelector('[data-builder-history-preview="true"]')?.textContent)
       .toContain('Viewing Version 1');
-    expect(inspectedContainer.textContent).toContain('Viewing a saved version');
+    expect(inspectedContainer.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     expect(inspectedContainer.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBe(true);
     expect(inspected.preview?.src_doc).toContain('<main>Earlier</main>');

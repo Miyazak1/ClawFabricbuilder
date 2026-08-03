@@ -319,7 +319,7 @@ describe('BuilderComposer', () => {
     expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('Dashboard v2');
   });
 
-  it('shows ready-to-build only for confirmed conversation context', () => {
+  it('keeps passive composer status out of the default toolbar', () => {
     const ready = render(
       <BuilderComposer
         {...props({
@@ -329,8 +329,10 @@ describe('BuilderComposer', () => {
       />,
     );
 
-    expect(ready.querySelector('[data-builder-composer-status="true"]')?.textContent)
-      .toBe('Ready to build');
+    expect(ready.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    expect(ready.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
+    expect(ready.querySelector('[data-builder-workspace-chip="true"]')).not.toBeNull();
+    expect(ready.querySelector('[data-builder-submit-turn="true"]')).not.toBeNull();
 
     const draft = render(
       <BuilderComposer
@@ -342,8 +344,8 @@ describe('BuilderComposer', () => {
       />,
     );
 
-    expect(draft.querySelector('[data-builder-composer-status="true"]')?.textContent)
-      .toBe('Continue this draft');
+    expect(draft.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    expect(draft.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
   });
 
   it('uses the add menu for Plan mode without adding another send command', () => {
@@ -417,11 +419,12 @@ describe('BuilderComposer', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
-      .toContain('Ask before write');
+    expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
 
     click(container, '[data-builder-composer-add-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-approval-mode-option="ask_before_write"]')
+      ?.getAttribute('aria-checked')).toBe('true');
     click(container, '[data-builder-composer-approval-mode-option="read_only_chat"]');
 
     expect(onSelectApprovalMode).toHaveBeenCalledExactlyOnceWith('read_only_chat');

@@ -101,12 +101,6 @@ function sourceFolderBoundaryLabel(folderName: string | undefined): string {
   return `Source folder: ${folderName ?? 'selected folder'}`;
 }
 
-function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
-  if (mode === 'read_only_chat') return 'Read-only chat';
-  if (mode === 'allow_current_project') return 'Allow current project';
-  return 'Ask before write';
-}
-
 export function BuilderComposer({
   activeAnswerBuildBlocked = false,
   approvalMode = 'ask_before_write',
@@ -120,7 +114,6 @@ export function BuilderComposer({
   catalogBusy,
   catalogProjects,
   catalogWorkspaceProjects,
-  composerContextStatus = null,
   composerMode = null,
   composerRouteDecision = null,
   hasUnsavedDraft,
@@ -138,7 +131,6 @@ export function BuilderComposer({
   onSubmitInstruction,
   savedProject,
   status,
-  viewingHistory,
   workingProject,
   workspaceNewProjectRequest = 0,
   workspacePickerRequest = 0,
@@ -186,17 +178,6 @@ export function BuilderComposer({
     : workingProject !== null
       ? sourceFolderBoundaryLabel(workingProject.source_folders[0]?.name)
       : 'Chat only until you choose a folder';
-  const composerStatusLabel = (() => {
-    if (canAddContext) return 'Add context';
-    if (status === 'submitting') return 'Working';
-    if (status === 'generating') return 'Making your draft';
-    if (status === 'answering') return 'Answering';
-    if (status === 'restoring') return 'Restoring draft';
-    if (viewingHistory) return 'Viewing a saved version';
-    if (hasUnsavedDraft) return 'Continue this draft';
-    if (composerContextStatus === 'ready_to_build') return 'Ready to build';
-    return null;
-  })();
   const composerRouteEvidence = routeDecisionEvidence(composerRouteDecision);
   const composerPlaceholder = (() => {
     if (hasUnsavedDraft) return 'Ask about this draft, or describe the next change...';
@@ -550,20 +531,6 @@ export function BuilderComposer({
               </span>
               <ChevronDown aria-hidden="true" className="size-3.5" />
             </button>
-            {composerStatusLabel === null ? null : (
-              <span className="cf-builder-status-pill" data-builder-composer-status="true">
-                {composerStatusLabel}
-              </span>
-            )}
-            <span
-              className="cf-builder-approval-mode-chip"
-              data-builder-approval-mode={approvalMode}
-              data-builder-approval-mode-chip="true"
-              title={approvalModeLabel(approvalMode)}
-            >
-              <ShieldCheck aria-hidden="true" className="size-3.5" />
-              {approvalModeLabel(approvalMode)}
-            </span>
             {composerMode === 'plan' ? (
               <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip="plan">
                 <ListChecks aria-hidden="true" className="size-3.5" />

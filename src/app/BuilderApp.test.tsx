@@ -2227,8 +2227,7 @@ describe('BuilderApp v2', () => {
       expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
-      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
-        .toContain('Allow current project');
+      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
     expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledTimes(2);
@@ -2293,10 +2292,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-composer-add-menu-button="true"]');
     click(container, '[data-builder-composer-approval-mode-option="read_only_chat"]');
 
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
-        .toContain('Read-only chat');
-    });
+    expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
 
     setComposerInstruction(container, 'Make a timer.');
     await waitForComposerSubmitReady(container);
@@ -2338,8 +2334,7 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')?.textContent)
-        .toContain('Allow current project');
+      expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
     });
 
     setComposerInstruction(container, 'Make a timer.');
@@ -2587,8 +2582,7 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toBe('Ready to build');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.textContent).not.toMatch(/working_brief|recent_chat_proposal|builder-conversation/iu);
 
@@ -2646,8 +2640,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toBe('Ready to build');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
@@ -2676,8 +2669,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toBe('Ready to build');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
@@ -2836,8 +2828,7 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toBe('Ready to build');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -3408,8 +3399,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toBe('Ready to build');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
