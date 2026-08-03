@@ -1079,6 +1079,17 @@ Current checkpoint:
   no process or tests; mutates no Git or Project Revision facts; and creates no
   Review/Artifact authority. Real Review/Artifact materialization remains a
   separate gate.
+- the current Agent Delegation result admission service composes the Delegation
+  result store and Delegation result admission store as a main-only local
+  admission gate. It accepts only an owner id, Delegation result id, admission
+  input, and admission time; reads the store-backed Delegation result; verifies
+  parent-task and child-task result listings; records or replays the local
+  admission receipt; and verifies read-by-admission, read-by-result,
+  parent-task admission listing, and child-task admission listing. It creates no
+  generic Review row, Artifact, child Assignment, child Run, parent
+  materialization, source materialization, check run, Project Revision, Git
+  mutation, provider/model dispatch, tool call, permission grant, IPC/preload
+  command, or visible Agents UI.
 - the current Agent Delegation result review contract adds a pure main-side
   owner decision receipt over an admitted child result. It can approve a
   proposed child result for a later parent materialization gate, reject it, or

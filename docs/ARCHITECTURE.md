@@ -366,11 +366,19 @@ admission contract is only a local Contribution-like receipt: it can admit a
 recorded delegated result to the parent review boundary while still creating no
 Review row, Artifact, child assignment, source materialization, parent mutation,
 Git fact, or Project Revision. The current Agent Delegation result admission
-store persists those
-local admission receipts in main-owned SQLite with parent/child Task admission
-listing, read-by-result lookup, and one admission per Delegation result, but
-still creates no Review, Artifact, or parent materialization. The current Agent
-Delegation result review decision contract is only a pure owner decision receipt
+store persists those local admission receipts in main-owned SQLite with
+parent/child Task admission listing, read-by-result lookup, and one admission
+per Delegation result, but still creates no Review, Artifact, or parent
+materialization. The current Agent Delegation result admission service is only a
+main-only composition gate over the Delegation result store and Delegation
+result admission store: it reads the store-backed Delegation result receipt,
+verifies parent/child Task result listings, records or replays the local
+admission receipt, and verifies parent/child Task admission listings plus
+read-by-admission and read-by-result. It still creates no generic Review row,
+Artifact, child Assignment, child Run, parent materialization, source
+materialization, Project Revision, provider/tool dispatch, permission grant,
+IPC/preload command, or visible Agents UI. The current Agent Delegation result
+review decision contract is only a pure owner decision receipt
 over an admitted child result: it can approve a proposed child result for later
 parent materialization, reject it, or acknowledge a blocked/failed child result
 without materialization. The current Agent Delegation result review store

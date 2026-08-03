@@ -74,8 +74,11 @@ parent/child Task Delegation and result listings. It also has a pure main-side
 local Contribution-like admission contract that can admit a recorded child
 result to the parent review boundary without creating a Review, Artifact, or
 parent materialization, plus a main-only Delegation result admission store for
-restart-safe parent/child admission lookup. It also has a
-pure main-side Delegation result review decision contract that records owner
+restart-safe parent/child admission lookup, plus a main-only Delegation result
+admission service that records or replays local admission receipts only after
+reading a store-backed Delegation result receipt and verifying parent/child
+Task result and admission listings. It also has a pure main-side Delegation
+result review decision contract that records owner
 approval, rejection, or acknowledgement of an admitted child result without
 creating a generic Review row, Artifact, parent mutation, or materialized source
 change, plus a main-only Delegation result review store for restart-safe parent/

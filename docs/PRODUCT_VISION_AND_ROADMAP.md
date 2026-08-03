@@ -295,16 +295,20 @@ tool, write source files, save a Project Revision, create a Review/Artifact,
 or expose a visible Goal UI.
 
 Current Agent-to-Agent checkpoint: Builder has pure main-side Delegation
-contract/store facts, a main-only Delegation service, and a main-only Delegation
-result service. The Delegation service can record or replay a scoped Delegation
-only after reading a store-backed active parent Assignment, active parent
-supervision lease, and active target Agent/current version. The Delegation
-result service can record or replay a child result-return receipt only after
-reading that store-backed Delegation receipt and verifying parent/child Task
-Delegation and result listings. This is still local evidence only: it creates no
-child Assignment or Run, dispatches no model or tool, grants no permission,
-writes no source files, saves no Project Revision, creates no Review/Artifact,
-performs no parent materialization, and exposes no visible Agents UI.
+contract/store facts, a main-only Delegation service, a main-only Delegation
+result service, and a main-only Delegation result admission service. The
+Delegation service can record or replay a scoped Delegation only after reading a
+store-backed active parent Assignment, active parent supervision lease, and
+active target Agent/current version. The Delegation result service can record or
+replay a child result-return receipt only after reading that store-backed
+Delegation receipt and verifying parent/child Task Delegation and result
+listings. The Delegation result admission service can record or replay a local
+admission receipt only after reading a store-backed Delegation result and
+verifying parent/child Task result and admission listings. This is still local
+evidence only: it creates no child Assignment or Run, dispatches no model or
+tool, grants no permission, writes no source files, saves no Project Revision,
+creates no Review/Artifact, performs no parent materialization, and exposes no
+visible Agents UI.
 
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,
