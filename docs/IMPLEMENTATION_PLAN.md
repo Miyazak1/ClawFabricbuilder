@@ -1156,6 +1156,18 @@ Current checkpoint:
   Artifact, parent materialization, source materialization, check run, Project
   Revision, Git mutation, provider/model dispatch, tool call, permission grant,
   IPC/preload command, or visible Agents UI.
+- the current Agent Delegation result parent materialization contract adds a
+  pure main-side receipt over one eligibility receipt. It binds the
+  Delegation/result/admission/review/eligibility chain, parent/child
+  Conversation/Task/Run identity, owner, project, fixed result summary, and a
+  parent task context receipt status. It records only that the approved child
+  result has been materialized as a parent task context receipt for later
+  owner-supervised use; it creates no generic Review row, Artifact, child
+  Assignment, child Run, source materialization, check run, Project Revision,
+  Git mutation, provider/model dispatch, tool call, permission grant,
+  IPC/preload command, or visible Agents UI. Store-backed parent context
+  materialization and any future user-visible Agent context projection remain
+  separate later gates.
 
 ### Track B - People and Spaces
 
