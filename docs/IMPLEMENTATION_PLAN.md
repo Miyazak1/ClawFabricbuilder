@@ -1268,6 +1268,19 @@ Current checkpoint:
   facts, and creates no Review or Artifact authority. Actual supervised Agent
   execution, tool-call creation, private source context collection, and
   result-for-review creation remain later checkpoints.
+- the current Agent Supervised Action Admission service checkpoint composes the
+  store-backed Task Context Snapshot store and Supervised Action Admission
+  store. It admits a requested next action only after reading the snapshot from
+  the snapshot store, verifying owner/Task/Run listings, creating the admission
+  receipt, recording it in the admission store, and reading it back by admission
+  id, snapshot id, Task, and Run. It reports only
+  `main_owned_agent_supervised_action_admission_service` evidence and still
+  opens no IPC/preload path, shows no Agents UI, dispatches no provider/model or
+  tool, creates no tool call, reads no source, records no Project Work Result,
+  grants no permission, stores no raw context, mutates no Git or Project
+  Revision facts, and creates no Review or Artifact authority. Actual
+  supervised Agent execution, tool-call creation, private source context
+  collection, and result-for-review creation remain later checkpoints.
 
 ### Track B - People and Spaces
 

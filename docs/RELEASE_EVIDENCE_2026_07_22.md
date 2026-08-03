@@ -3141,6 +3141,60 @@ commands, installer evidence, or a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Supervised Action Admission Service Package Check
+
+This addendum records the package checkpoint after adding the pure main-side
+Supervised Action Admission service. The service composes the store-backed Task
+Context Snapshot store and Supervised Action Admission store: it reads a Task
+Context Snapshot from storage, verifies Task and Run snapshot listings, creates
+one supervised action admission receipt, records it in the admission store, and
+verifies admission replay by admission id, snapshot id, Task, and Run. It does
+not enable visible Agents UI, autonomous Agent execution, provider/model
+dispatch, tool calls, command execution, source reads or writes, generic Review
+row creation, Artifact creation, source materialization, check runs, Project
+Revision creation, Git mutation, permission grants, IPC/preload commands,
+installer evidence, or a real saved-profile DeepSeek canary pass.
+
+- The service accepts only store-backed Task Context Snapshot identity and
+  request metadata: owner id, snapshot id, action request id, requested next
+  action, run status, interrupt/cancel flags, and admission time. It does not
+  accept raw prompt, raw transcript, current brief text, child output, patch,
+  source tree, file content, provider/model envelope, credential, permission
+  grant, tool call, tool result, generic Review row, Artifact payload, source
+  materialization, check run output, Git mutation, Project Revision row,
+  IPC/preload path, visible Agents UI authority, or next-action dispatch
+  authority.
+- The service records only
+  `main_owned_agent_supervised_action_admission_service` authority. Its evidence
+  reports fixed no-authority fields for renderer, IPC, provider/model dispatch,
+  tool dispatch, next-action dispatch, permission grants, credential storage,
+  source access/read/write, process run, network access, Revision, Review,
+  Artifact, and raw context storage.
+- Focused validation passed through
+  `node --test tests\builder-agent-supervised-action-admission-service.test.cjs`;
+  the command reported 5 passing Node tests.
+- Adjacent Agent admission validation passed through Assignment, Supervision
+  Lease, Budget Audit, Agent Task Context Snapshot contract/store/service,
+  Supervised Action Admission contract/store/service tests; the command
+  reported 42 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 890 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 797 ASAR
+  entries. The refreshed executable timestamp was 2026-08-04 05:22:13 local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

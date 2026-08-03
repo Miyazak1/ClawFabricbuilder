@@ -418,16 +418,18 @@ creating no generic Review row, Artifact, parent mutation, source
 materialization, Git fact, Project Revision, provider/tool dispatch, permission
 grant, or parent materialization. The current Agent parent task context
 projection, Task Context Snapshot contract, Snapshot store, Snapshot service,
-Supervised Action Admission contract, and Supervised Action Admission store
-together form only a bounded
+Supervised Action Admission contract, Supervised Action Admission store, and
+Supervised Action Admission service together form only a bounded
 pre-dispatch context chain: reviewed child-result materialization receipts can
 be projected into parent Task refs, an active lease plus allowed Budget Audit can
 produce one digest-bound Task Context Snapshot receipt, that receipt can be
 persisted and replayed, a main-only supervised action admission can bind it to
 the next required gate (`start_step`, `call_tool`, `read_private_source`, or
 `finish_for_review`), and that admission can be persisted and replayed by
-snapshot, Task, or Run identity. This chain stores refs, counts, budget facts,
-fixed lifecycle/authority codes, and digests; it carries no raw
+snapshot, Task, or Run identity. The service records an admission only from a
+store-backed Task Context Snapshot and verifies admission-store replay before
+returning a ready result. This chain stores refs, counts, budget facts, fixed
+lifecycle/authority codes, and digests; it carries no raw
 transcript, prompt, source content, provider/model envelope, tool output,
 permission grant, Review row, Artifact payload, Git fact, Project Revision,
 IPC/preload command, or visible Agents UI authority. Actual Agent execution,
