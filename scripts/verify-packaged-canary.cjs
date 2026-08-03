@@ -2066,7 +2066,6 @@ function draftReviewLayoutFailureCode({
   summary,
   title,
 }) {
-  const code = 'canary_review_diff_checkpoint_layout_failed';
   const reviewChildren = [copy, title, summary, note, actionGroup, ...actions];
   if (review.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX) return 'canary_review_diff_checkpoint_width_failed';
   if (review.height < 96 || review.height > 280) return 'canary_review_diff_checkpoint_height_failed';

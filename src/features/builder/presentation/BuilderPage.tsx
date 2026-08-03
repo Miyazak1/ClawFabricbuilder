@@ -302,12 +302,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
   return entries.filter((entry) => !entry.hidden);
 }
 
-function isArtifactLogEntry(entry: ActivityEntry): boolean {
-  if (entry.entry_kind === 'work_status') return true;
-  const { item } = entry;
-  return isArtifactLogItem(item);
-}
-
 function isArtifactLogItem(item: BuilderConversationItem): boolean {
   if (
     item.item_kind === 'run_control_requested'
