@@ -262,8 +262,16 @@ Assignment store read receipt, and materialization receipt in main-owned SQLite
 for restart-safe owner/task, read-by-Assignment, and read-by-admission lookup
 while still starting no Run or execution and creating no provider/tool,
 permission, source, Git, Project Revision, Review, Artifact, IPC/preload, or
-visible Goal authority. The current Agent Assignment store is only an internal
-owner-supervised assignment/status fact authority: it
+visible Goal authority. The current Agent Goal-to-Assignment materialization
+service is only a main-only composition gate over the admission, Assignment,
+and materialization stores: it records or replays the admission, records or
+replays the Assignment and its initial `queued` status, reads that store-backed
+queued Assignment fact, creates and records the materialization receipt, and
+recovers through idempotent store replay after restart. It still starts no Run
+or execution, dispatches no provider/tool, grants no permission, reads or
+writes no source, mutates no Git or Project Revision, creates no Review or
+Artifact, and exposes no IPC/preload or visible Goal UI. The current Agent
+Assignment store is only an internal owner-supervised assignment/status fact authority: it
 persists one Agent version binding to a Project/Conversation/Task/Run and
 ordered assignment status records in main-owned SQLite. The current
 Agent Supervision Lease store is only an internal supervision evidence authority: it

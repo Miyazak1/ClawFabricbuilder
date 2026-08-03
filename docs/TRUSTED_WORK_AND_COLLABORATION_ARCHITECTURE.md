@@ -34,6 +34,8 @@ admission contract, a main-only local Goal-to-Assignment admission receipt
 store, a pure main-side Goal-to-Assignment materialization receipt contract that
 can prove an admitted Assignment is recorded as queued, a main-only local
 Goal-to-Assignment materialization receipt store for restart-safe lookup, a
+main-only Goal-to-Assignment materialization service that composes the
+admission, Assignment, and materialization stores through idempotent replay, a
 main-only local Agent Assignment/status record store, and a main-only local
 Agent Supervision Lease/release record store. These Goal facts and
 materialization receipts currently

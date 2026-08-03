@@ -840,6 +840,15 @@ Current checkpoint:
   models, or tools; grants no permissions; reads no credentials or source;
   writes no files; mutates no Git or Project Revision facts; and creates no
   Review or Artifact authority.
+- the current Agent Goal-to-Assignment materialization service composes the
+  admission store, Assignment store, and materialization store as a main-only
+  gate. It records or replays the active-Goal admission, records or replays the
+  Assignment and its initial `queued` status, re-reads the store-backed queued
+  Assignment, creates the materialization receipt, and records or replays that
+  receipt for restart recovery. It opens no IPC/preload path, shows no Goal UI,
+  starts no Run or execution, dispatches no providers, models, or tools, grants
+  no permissions, reads no credentials or source, writes no files, mutates no
+  Git or Project Revision facts, and creates no Review or Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save
