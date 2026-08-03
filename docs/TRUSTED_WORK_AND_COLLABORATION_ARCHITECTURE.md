@@ -27,6 +27,8 @@ facts, but may not replace or mutate them implicitly.
 
 The current implementation has a real local Project Revision authority, a
 main-only local Agent Definition/Version/lifecycle record store, a main-only
+pure Agent Goal contract for bounded continuous objectives that must continue
+until done or blocked but currently creates no assignment or run, a main-only
 local Agent Assignment/status record store, and a main-only local Agent
 Supervision Lease/release record store. It also has a pure main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and

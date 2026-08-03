@@ -1730,6 +1730,48 @@ permission, publication, or persistent Agent autonomy.
   still be proven by an explicit `verify:packaged-canary:deepseek -- --execute`
   run before claiming full real-provider desktop readiness for this checkpoint.
 
+## 2026-08-03 Agent Goal Contract Package Check
+
+This addendum records the package checkpoint after adding a pure main-side Agent
+Goal contract. It extends local Agent fact-contract and package evidence only;
+it does not enable visible Goal mode, Agent
+assignment execution, background work, model/tool dispatch, source writes,
+terminal tools, network access, publication, installer evidence, or a real
+saved-profile DeepSeek canary pass.
+
+- The Agent Goal contract records a bounded objective with
+  `continuous_until_done_or_blocked` execution semantics, owner-reviewed
+  completion, explicit permission-required boundary, owner supervision, and
+  bounded steps/runs/tool/runtime/private-source budget. It creates no Agent
+  Assignment, Run, provider/model dispatch, permission grant, source read/write,
+  Git fact, Project Revision, Review, Artifact, or visible Goal UI.
+- The Goal status record supports owner decisions such as active, paused,
+  blocked, completed, and cancelled. A completed or blocked status is still only
+  a status fact: it does not materialize source, create an Artifact, or save a
+  Project Revision.
+- Focused validation passed through
+  `node --test tests\builder-agent-goal-contract.test.cjs`; the suite reported
+  5 passing Node tests.
+- Adjacent Agent validation passed through
+  `node --test tests\builder-agent-goal-contract.test.cjs tests\builder-agent-definition-contract.test.cjs tests\builder-agent-assignment-contract.test.cjs tests\builder-agent-assignment-store.test.cjs tests\builder-agent-supervision-lease-contract.test.cjs tests\builder-agent-budget-audit-contract.test.cjs`;
+  the command reported 26 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 739 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 766 ASAR
+  entries. The refreshed executable timestamp was `2026/8/3 22:24:20` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, and
+  `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

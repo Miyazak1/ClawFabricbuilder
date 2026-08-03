@@ -779,6 +779,16 @@ Current checkpoint:
   Revision facts, grants no permissions, and creates no Review/Artifact
   authority. A visible Agent or Agent assignment must build on this store
   instead of introducing an incompatible identity shape.
+- the current Agent Goal contract adds pure main-side records for a bounded
+  continuous objective. It binds one Agent version, owner, Project/
+  Conversation/Task identity, explicit permission-required boundary, owner
+  supervision, `continuous_until_done_or_blocked` execution semantics,
+  owner-review-required completion, bounded steps/runs/tool/runtime/private-
+  source budget, and owner-made Goal status decisions such as active, blocked,
+  completed, paused, or cancelled. It exposes no IPC/preload, persists no rows,
+  creates no Agent assignment or Run, dispatches no providers or tools, grants
+  no permissions, reads no credentials or source, writes no files, mutates no
+  Git or Project Revision facts, and creates no Review/Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save

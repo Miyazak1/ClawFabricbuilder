@@ -256,6 +256,12 @@ Required gates:
 An Agent is not a hidden prompt preset. It is a governed actor with identity,
 scope, permissions, work history, and reviewable results.
 
+Current checkpoint: Builder now has a pure main-side Agent Goal contract for
+the durable Goal identity part of this stage. It records a bounded objective
+with `continuous_until_done_or_blocked` semantics and owner-reviewed completion,
+but it does not yet create an Agent assignment, start a Run, dispatch a model or
+tool, write source files, save a Project Revision, or expose a visible Goal UI.
+
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,
 decisions, permissions, run evidence, artifacts, and child delegations are

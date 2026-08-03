@@ -228,11 +228,16 @@ Identity/Contact/Conversation, and Publication authorities must be added
 independently and must not be inferred from chat, community, model identity,
 renderer state, or Git metadata alone. The current Agent Definition store is
 only an internal identity/version/lifecycle fact authority: it persists
-owner-bound Agent records in main-owned SQLite. The current Agent Assignment
-store is only an internal owner-supervised assignment/status fact authority: it
-persists one Agent version binding to a Project/Conversation/Task/Run and
-ordered assignment status records in main-owned SQLite. The current Agent
-Supervision Lease store is only an internal supervision evidence authority: it
+owner-bound Agent records in main-owned SQLite. The current Agent Goal contract
+is only a pure main-side continuous-objective receipt: it binds one Agent
+version, owner, Project/Conversation/Task, explicit permission boundary,
+bounded budget, and the `continuous_until_done_or_blocked` / owner-review
+completion contract without creating an Assignment, Run, provider/tool dispatch,
+source read/write, Git fact, Project Revision, Review, or Artifact. The current
+Agent Assignment store is only an internal owner-supervised assignment/status
+fact authority: it persists one Agent version binding to a Project/Conversation/
+Task/Run and ordered assignment status records in main-owned SQLite. The current
+Agent Supervision Lease store is only an internal supervision evidence authority: it
 persists one active-assignment lease/release chain in main-owned SQLite and
 enforces one unreleased and unexpired lease per assignment with monotonic lease
 epochs; it is not a Run executor. The current Agent Delegation contract is only
