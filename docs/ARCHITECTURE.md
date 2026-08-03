@@ -354,11 +354,19 @@ parent review without raw output, Review creation, or parent materialization.
 The current Agent Delegation result store persists those return receipts in
 main-owned SQLite with parent/child Task result listing and one result per
 Delegation receipt, but still creates no Review, Artifact, or parent
-materialization. The current Agent Delegation result admission contract is only
-a local Contribution-like receipt: it can admit a recorded delegated result to
-the parent review boundary while still creating no Review row, Artifact, child
-assignment, source materialization, parent mutation, Git fact, or Project
-Revision. The current Agent Delegation result admission store persists those
+materialization. The current Agent Delegation result service is only a main-only
+composition gate over the Delegation store and Delegation result store: it reads
+the store-backed Delegation receipt, verifies parent/child Task Delegation
+listings, records or replays the child result-return receipt, and verifies
+parent/child Task result listings. It still creates no child Assignment, child
+Run, parent materialization, generic Review row, Artifact, source
+materialization, Project Revision, provider/tool dispatch, permission grant,
+IPC/preload command, or visible Agents UI. The current Agent Delegation result
+admission contract is only a local Contribution-like receipt: it can admit a
+recorded delegated result to the parent review boundary while still creating no
+Review row, Artifact, child assignment, source materialization, parent mutation,
+Git fact, or Project Revision. The current Agent Delegation result admission
+store persists those
 local admission receipts in main-owned SQLite with parent/child Task admission
 listing, read-by-result lookup, and one admission per Delegation result, but
 still creates no Review, Artifact, or parent materialization. The current Agent

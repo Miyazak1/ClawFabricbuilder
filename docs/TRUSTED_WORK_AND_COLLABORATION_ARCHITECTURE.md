@@ -67,11 +67,14 @@ only after reading store-backed active parent Assignment, active parent lease,
 and active target Agent facts. It now has a pure main-side Agent
 Delegation result-return contract that can bind a child Task result summary back
 to parent review without raw output or materialization, plus a main-only
-Delegation result store for restart-safe parent/child result lookup. It also has
-a pure main-side local Contribution-like admission contract that can admit a
-recorded child result to the parent review boundary without creating a Review,
-Artifact, or parent materialization, plus a main-only Delegation result
-admission store for restart-safe parent/child admission lookup. It also has a
+Delegation result store for restart-safe parent/child result lookup, plus a
+main-only Delegation result service that records or replays child result-return
+receipts only after reading a store-backed Delegation receipt and verifying
+parent/child Task Delegation and result listings. It also has a pure main-side
+local Contribution-like admission contract that can admit a recorded child
+result to the parent review boundary without creating a Review, Artifact, or
+parent materialization, plus a main-only Delegation result admission store for
+restart-safe parent/child admission lookup. It also has a
 pure main-side Delegation result review decision contract that records owner
 approval, rejection, or acknowledgement of an admitted child result without
 creating a generic Review row, Artifact, parent mutation, or materialized source

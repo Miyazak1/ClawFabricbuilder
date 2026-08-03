@@ -1050,6 +1050,16 @@ Current checkpoint:
   permission; dispatches no provider/model or tool; reads no credentials or
   source; writes no files; runs no process or tests; mutates no Git or Project
   Revision facts; and creates no Review/Artifact authority.
+- the current Agent Delegation result service composes the Delegation store and
+  Delegation result store as a main-only result-return gate. It accepts only an
+  owner id, Delegation id, result input, and observation time; reads the
+  store-backed Delegation receipt; verifies parent-task and child-task
+  Delegation listings; records or replays the child result-return receipt; and
+  verifies read-by-result plus parent-task and child-task result listings. It
+  creates no child Assignment, child Run, parent materialization, generic
+  Review row, Artifact, source materialization, check run, Project Revision, Git
+  mutation, provider/model dispatch, tool call, permission grant, IPC/preload
+  command, or visible Agents UI.
 - the current Agent Delegation result admission contract adds the local
   Contribution-like admission receipt for a returned child result. It binds the
   Delegation result receipt, parent/child Conversation/Task/Run identity,
