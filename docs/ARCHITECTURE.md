@@ -234,9 +234,14 @@ version, owner, Project/Conversation/Task, explicit permission boundary,
 bounded budget, and the `continuous_until_done_or_blocked` / owner-review
 completion contract without creating an Assignment, Run, provider/tool dispatch,
 source read/write, Git fact, Project Revision, Review, or Artifact. The current
-Agent Assignment store is only an internal owner-supervised assignment/status
-fact authority: it persists one Agent version binding to a Project/Conversation/
-Task/Run and ordered assignment status records in main-owned SQLite. The current
+Agent Goal store is only an internal continuous-objective/status fact
+authority: it persists bounded Goal records and ordered Goal status decisions in
+main-owned SQLite for restart-safe owner/task lookup while still creating no
+Assignment, Run, provider/tool dispatch, permission grant, source read/write,
+Git fact, Project Revision, Review, or Artifact. The current Agent Assignment
+store is only an internal owner-supervised assignment/status fact authority: it
+persists one Agent version binding to a Project/Conversation/Task/Run and
+ordered assignment status records in main-owned SQLite. The current
 Agent Supervision Lease store is only an internal supervision evidence authority: it
 persists one active-assignment lease/release chain in main-owned SQLite and
 enforces one unreleased and unexpired lease per assignment with monotonic lease

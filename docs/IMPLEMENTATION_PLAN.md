@@ -789,6 +789,16 @@ Current checkpoint:
   creates no Agent assignment or Run, dispatches no providers or tools, grants
   no permissions, reads no credentials or source, writes no files, mutates no
   Git or Project Revision facts, and creates no Review/Artifact authority.
+- the current Agent Goal store persists those Goal and status records in a
+  strict main-only SQLite store with restart restore, idempotent replay,
+  owner-scoped reads, task-scoped listing, one Goal per owner/Project/Task/
+  Agent identity, ordered proposed/active/paused/blocked/completed/cancelled
+  status transitions, terminal finality after completion or cancellation,
+  schema fingerprint verification, and fixed redacted failures. It opens no
+  IPC/preload path, shows no visible Goal UI, creates no Agent assignment or
+  Run, dispatches no provider/model or tool, grants no permissions, reads no
+  credentials or source, writes no files, mutates no Git or Project Revision
+  facts, and creates no Review/Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save
