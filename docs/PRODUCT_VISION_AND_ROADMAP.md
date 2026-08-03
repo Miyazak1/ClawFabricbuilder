@@ -279,13 +279,16 @@ contract and store that can record owner approval, rejection, or acknowledgement
 of one recorded Agent work result without making that result a generic Review,
 Artifact, source change, check run, or Project Revision; and a main-only review
 service that records those decisions only after reading the store-backed work
-result. They record and restore bounded objectives with
+result. Builder also has a main-only review release service that closes the
+active supervision lease after a store-backed owner review decision, without
+changing Assignment or Goal status and without materializing source. They
+record and restore bounded objectives with
 `continuous_until_done_or_blocked` semantics, owner-reviewed completion,
 ordered owner status decisions, and an active-Goal bridge into a future
 owner-supervised Assignment candidate. The materialization receipt, store,
-supervision, budget, result, and result-review facts still do not start a Run,
-dispatch a model or tool, write source files, save a Project Revision, create a
-Review/Artifact, or expose a visible Goal UI.
+supervision, budget, result, result-review, and review-release facts still do
+not start a Run, dispatch a model or tool, write source files, save a Project
+Revision, create a Review/Artifact, or expose a visible Goal UI.
 
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,

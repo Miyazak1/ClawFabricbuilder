@@ -51,11 +51,13 @@ acknowledgement of one recorded project work result without creating a generic
 Review row, Artifact, source materialization, check run, or Project Revision.
 It also has a main-only Project Work Result review service that records or
 replays those owner decisions only after reading the store-backed project work
-result and verifying review reads/listing. These Goal, Assignment,
-materialization, supervision, budget, result, and result-review facts currently
-start no run or execution. It also has a pure main-side Agent
-Delegation contract for scoped parent/child Agent, Task, permission, budget, and
-review-return evidence, plus a main-only Agent Delegation receipt store for
+result and verifying review reads/listing, plus a main-only Project Work Result
+review release service that records or replays a completed supervision lease
+release only after reading the store-backed owner review decision. These Goal,
+Assignment, materialization, supervision, budget, result, result-review, and
+review-release facts currently start no run or execution. It also has a pure
+main-side Agent Delegation contract for scoped parent/child Agent, Task,
+permission, budget, and review-return evidence, plus a main-only Agent Delegation receipt store for
 restart-safe parent/child Task lookup. It now has a pure main-side Agent
 Delegation result-return contract that can bind a child Task result summary back
 to parent review without raw output or materialization, plus a main-only

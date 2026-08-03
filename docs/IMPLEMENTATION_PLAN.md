@@ -966,6 +966,16 @@ Current checkpoint:
   listing. It creates no generic Review row, Artifact, source materialization,
   check run, Git fact, Project Revision, provider/tool dispatch, permission
   grant, IPC/preload path, or visible Agents UI.
+- the current Agent project work result review release service composes the
+  Project Work Result review store and Agent Supervision Lease store as a
+  main-only lease-close gate. It accepts only an owner id, work result review
+  id, and close time; reads the store-backed owner review decision; verifies
+  task-scoped review listing; records or replays a completed supervision lease
+  release for the reviewed result; and verifies the lease read and assignment
+  lease projection no longer expose an active lease at the close time. It
+  creates no generic Review row, Artifact, source materialization, check run,
+  Git fact, Project Revision, provider/tool dispatch, permission grant,
+  Assignment status change, IPC/preload path, or visible Agents UI.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
