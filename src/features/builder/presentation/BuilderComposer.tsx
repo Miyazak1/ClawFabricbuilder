@@ -297,6 +297,39 @@ export function BuilderComposer({
     workspacePickerRequest,
   ]);
 
+  useEffect(() => {
+    if (!addMenuOpen && !approvalMenuOpen && !workspacePickerOpen) return undefined;
+    function closeFloatingPanelsWithEscape(event: globalThis.KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (addMenuOpen) setAddMenuOpen(false);
+      if (approvalMenuOpen) setApprovalMenuOpen(false);
+      if (workspacePickerOpen) {
+        onDismissWorkspacePicker?.();
+        if (workspacePickerBuildPrompt) setWorkspacePickerDismissedBuildPrompt(true);
+        setWorkspacePickerState((picker) => ({
+          ...picker,
+          buildPrompt: false,
+          createRequest: workspaceNewProjectRequest,
+          creating: false,
+          open: false,
+          request: workspacePickerRequest,
+        }));
+      }
+      textareaRef.current?.focus({ preventScroll: true });
+    }
+    document.addEventListener('keydown', closeFloatingPanelsWithEscape);
+    return () => document.removeEventListener('keydown', closeFloatingPanelsWithEscape);
+  }, [
+    addMenuOpen,
+    approvalMenuOpen,
+    onDismissWorkspacePicker,
+    workspaceNewProjectRequest,
+    workspacePickerBuildPrompt,
+    workspacePickerOpen,
+    workspacePickerRequest,
+  ]);
+
   function toggleWorkspacePicker(): void {
     if (busy && !canAddContext) return;
     if (workspacePickerOpen) {

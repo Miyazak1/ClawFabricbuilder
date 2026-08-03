@@ -52,6 +52,12 @@ function keyDown(container: HTMLElement, selector: string, init: KeyboardEventIn
   return event;
 }
 
+function documentKeyDown(init: KeyboardEventInit): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+  act(() => document.dispatchEvent(event));
+  return event;
+}
+
 function changeInput(container: HTMLElement, selector: string, value: string): void {
   const input = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
   expect(input).not.toBeNull();
@@ -511,6 +517,46 @@ describe('BuilderComposer', () => {
       document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
     });
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+  });
+
+  it('closes composer popovers with Escape and returns focus to the composer', () => {
+    const onDismissWorkspacePicker = vi.fn();
+    const container = render(
+      <BuilderComposer
+        {...props({
+          catalogProjects: Object.freeze([savedProject()]),
+          catalogWorkspaceProjects: Object.freeze([boundWorkspace()]),
+          onDismissWorkspacePicker,
+          onOpenProject: vi.fn(),
+          workspacePickerRequest: 1,
+        })}
+      />,
+    );
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    expect(textarea).not.toBeNull();
+
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).not.toBeNull();
+    const workspaceEscape = documentKeyDown({ key: 'Escape' });
+    expect(workspaceEscape.defaultPrevented).toBe(true);
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')?.textContent)
+      .toContain("Choose a project folder when you're ready to build.");
+    expect(onDismissWorkspacePicker).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(textarea);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).not.toBeNull();
+    const addMenuEscape = documentKeyDown({ key: 'Escape' });
+    expect(addMenuEscape.defaultPrevented).toBe(true);
+    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
+    expect(document.activeElement).toBe(textarea);
+
+    click(container, '[data-builder-composer-approval-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-approval-menu="true"]')).not.toBeNull();
+    const approvalMenuEscape = documentKeyDown({ key: 'Escape' });
+    expect(approvalMenuEscape.defaultPrevented).toBe(true);
+    expect(container.querySelector('[data-builder-composer-approval-menu="true"]')).toBeNull();
+    expect(document.activeElement).toBe(textarea);
   });
 
   it('keeps allow-current-project disabled until a project is selected', () => {

@@ -2643,6 +2643,44 @@ DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Composer Escape Floating Panels Package Check
+
+This addendum records the package checkpoint after adding keyboard Escape
+close behavior for the Builder composer floating panels. It improves only the
+renderer interaction for the composer add menu, approval menu, and workspace
+picker; it does not change route classification, approval authority,
+workspace binding, task stream facts, main IPC, provider dispatch, Git/SQLite
+authority, generation lifecycle, packaging policy, installer evidence, or real
+saved-profile DeepSeek canary coverage.
+
+- The composer now closes its add menu, approval menu, and workspace picker
+  when Escape is pressed, and returns focus to the composer textarea without
+  scrolling the page. Dismissing a build-triggered workspace picker through
+  Escape uses the same public dismissal note as the pointer-dismiss path.
+- Focused validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderComposer.test.tsx --runInBand`;
+  the command reported 16 passing frontend tests.
+- Adjacent renderer validation passed through
+  `npm.cmd exec vitest run src\features\builder\presentation\BuilderComposer.test.tsx src\features\builder\presentation\BuilderPage.test.tsx src\app\BuilderApp.test.tsx src\app\BuilderDesktopLayoutStyles.test.ts --runInBand`;
+  the command reported 179 passing frontend tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 841 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 787 ASAR
+  entries. The refreshed executable timestamp was `2026/8/4 03:21:52` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
