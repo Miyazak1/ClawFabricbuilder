@@ -1075,7 +1075,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       const visibleProjectId = visibleConversationProjectId(currentSnapshot);
       if (!currentSnapshot.busy) return;
       if (visibleProjectId !== null && visibleProjectId !== event.project_id) return;
-      setLiveOutput(Object.freeze({
+      const nextLiveOutput = Object.freeze({
         state: 'streaming',
         request_id: event.request_id,
         project_id: event.project_id,
@@ -1084,25 +1084,34 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         waiting_text: approvedPlanWaitingProjectRef.current === event.project_id
           ? APPROVED_PLAN_WAITING_TEXT
           : undefined,
-      }));
+      });
+      liveOutputRef.current = nextLiveOutput;
+      setLiveOutput(nextLiveOutput);
     }) ?? (() => undefined)
   ), [ports.generator]);
 
   useEffect(() => (
     ports.generator.subscribeOutput?.((event) => {
       setLiveOutput((current) => {
-        if (
-          current === null
-          || current.request_id !== event.request_id
-          || current.project_id !== event.project_id
-        ) return current;
-        const text = appendLiveOutputText(current.text, event.display_delta_text);
+        const active = current !== null
+          && current.request_id === event.request_id
+          && current.project_id === event.project_id
+          ? current
+          : liveOutputRef.current !== null
+            && liveOutputRef.current.request_id === event.request_id
+            && liveOutputRef.current.project_id === event.project_id
+            ? liveOutputRef.current
+            : null;
+        if (active === null) return current;
+        const text = appendLiveOutputText(active.text, event.display_delta_text);
         if (text === null) return current;
-        return Object.freeze({
-          ...current,
+        const nextLiveOutput = Object.freeze({
+          ...active,
           text,
-          chunk_count: current.chunk_count + 1,
+          chunk_count: active.chunk_count + 1,
         });
+        liveOutputRef.current = nextLiveOutput;
+        return nextLiveOutput;
       });
     }) ?? (() => undefined)
   ), [ports.generator]);

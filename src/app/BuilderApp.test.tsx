@@ -967,6 +967,17 @@ async function setup(options: Readonly<{
       });
       return listenerCount;
     },
+    emitGenerationStartedWithoutAct(requestId: string, projectId = PROJECT_ID) {
+      const listenerCount = generationStartedListeners.size;
+      for (const listener of [...generationStartedListeners]) {
+        listener({
+          event_version: 'builder-generation-started.v1',
+          request_id: requestId,
+          project_id: projectId,
+        });
+      }
+      return listenerCount;
+    },
     emitGenerationOutput(requestId: string, text: string, projectId = PROJECT_ID) {
       const listenerCount = generationOutputListeners.size;
       act(() => {
@@ -1404,6 +1415,53 @@ describe('BuilderApp v2', () => {
       expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
       expect(container.textContent).toContain('我是DeepSeek最新版本模型，由深度求索公司创造。');
     });
+    expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
+    expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('uses the started project id before live output state commits for a first recorded answer failure', async () => {
+    const {
+      answer,
+      container,
+      emitGenerationStartedWithoutAct,
+      generate,
+      readTaskStream,
+      resolveAnswer,
+      saveDraft,
+      submit,
+    } = await setup({
+      deferredFailedFirstAnswer: true,
+      failFirstAnswer: true,
+      recordedFirstAnswerAfterFailedPublicResult: true,
+    });
+
+    const question = '你是什么大模型';
+    setComposerInstruction(container, question);
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+    });
+    const request = await createBuilderGenerationRequest(question, null);
+
+    await act(async () => {
+      expect(emitGenerationStartedWithoutAct(request.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+      await resolveAnswer();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.textContent).toContain('我是DeepSeek最新版本模型，由深度求索公司创造。');
+    });
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
     expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
