@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import routeDecisionCases from '../../../test/builderRouteDecisionCases.json';
 import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
@@ -276,6 +277,22 @@ describe('routeBuilderComposerIntent', () => {
       permissionResult: 'not_required',
       dispatch: 'reply',
     });
+  });
+
+  it.each(routeDecisionCases.cases)('matches the shared route fixture: $name', (routeCase) => {
+    expect(routeDecisionCases.caseVersion).toBe('builder-route-decision-cases.v1');
+
+    const decision = decideBuilderComposerIntent(routeCase.instruction, routeCase.context);
+
+    expect(decision).toMatchObject({
+      route: routeCase.renderer.route,
+      dispatch: routeCase.renderer.dispatch,
+      matchedSignals: routeCase.renderer.matchedSignals,
+      requiredPermissions: routeCase.renderer.requiredPermissions,
+      permissionResult: routeCase.renderer.permissionResult,
+    });
+    expect(decision.downgradedFrom).toBe(routeCase.renderer.downgradedFrom ?? null);
+    expect(decision.downgradeReason).toBe(routeCase.renderer.downgradeReason ?? null);
   });
 
   it('creates inspectable route decision evidence without changing route classification', () => {

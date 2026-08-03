@@ -1,0 +1,241 @@
+{
+  "caseVersion": "builder-route-decision-cases.v1",
+  "cases": [
+    {
+      "name": "greeting stays read-only chat",
+      "instruction": "hi",
+      "context": {
+        "hasPriorBuildContext": true,
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "answer",
+        "dispatch": "reply",
+        "matchedSignals": ["read_only"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "answer",
+        "dispatch": "reply",
+        "matchedSignals": ["read_only"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "status question stays read-only chat",
+      "instruction": "你现在在做什么？",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "answer",
+        "dispatch": "reply",
+        "matchedSignals": ["read_only"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "answer",
+        "dispatch": "reply",
+        "matchedSignals": ["read_only"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "exploratory discussion clarifies without writing",
+      "instruction": "我想先聊一下这个页面怎么做",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["work_discussion"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["work_discussion"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "exploratory creation updates brief without writing",
+      "instruction": "我想做一个登录页",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "update_brief",
+        "dispatch": "brief_update",
+        "matchedSignals": ["exploratory_work"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "update_brief",
+        "dispatch": "brief_update",
+        "matchedSignals": ["exploratory_work"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "explicit brief updates working direction without writing",
+      "instruction": "保存这个方向，后面按这个来：目标用户是小团队",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "update_brief",
+        "dispatch": "brief_update",
+        "matchedSignals": ["explicit_brief"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "update_brief",
+        "dispatch": "brief_update",
+        "matchedSignals": ["explicit_brief"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "plan request is explicit plan in renderer and read-only fallback in submit",
+      "instruction": "帮我先做下方案",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "future goal request remains read-only clarification",
+      "instruction": "进入目标模式，一直帮我改到完成为止",
+      "context": {
+        "hasPriorBuildContext": true,
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["goal_mode_request"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["goal_mode_request"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "clear build request writes only after workspace permission",
+      "instruction": "创建登录页",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "build",
+        "dispatch": "build",
+        "matchedSignals": ["clear_build"],
+        "requiredPermissions": ["write_project"],
+        "permissionResult": "allowed"
+      },
+      "mainSubmit": {
+        "route": "build",
+        "dispatch": "build",
+        "matchedSignals": ["clear_build"],
+        "requiredPermissions": ["write_project"],
+        "permissionResult": "allowed",
+        "resultKind": "candidate"
+      }
+    },
+    {
+      "name": "local Markdown artifact writes through build admission",
+      "instruction": "新建一个 README.md，写项目说明",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "build",
+        "dispatch": "build",
+        "matchedSignals": ["local_file_artifact"],
+        "requiredPermissions": ["write_project"],
+        "permissionResult": "allowed"
+      },
+      "mainSubmit": {
+        "route": "build",
+        "dispatch": "build",
+        "matchedSignals": ["local_file_artifact"],
+        "requiredPermissions": ["write_project"],
+        "permissionResult": "allowed",
+        "resultKind": "candidate"
+      }
+    },
+    {
+      "name": "current artifact defect needs prior build context",
+      "instruction": "这里字都重叠了",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["current_artifact_defect"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "missing_prior_build_context"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["current_artifact_defect"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "missing_prior_build_context",
+        "resultKind": "explanation"
+      }
+    }
+  ]
+}

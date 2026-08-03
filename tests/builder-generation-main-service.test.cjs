@@ -68,6 +68,10 @@ const APPROVED_PLAN_TURN_ID = `builder-turn:${UUIDS[2]}`;
 const APPROVED_PLAN_TASK_ID = `builder-task:${UUIDS[3]}`;
 const APPROVED_PLAN_RUN_ID = `builder-run:${UUIDS[4]}`;
 const PRIVATE_MARKER = 'private-main-service-marker';
+const ROUTE_DECISION_CASES = JSON.parse(fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'test', 'builderRouteDecisionCases.json'),
+  'utf8',
+));
 
 function canonicalJson(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
@@ -2450,6 +2454,79 @@ test('rejects plan proposal cross-route concurrency before creating a second tur
   assert.equal(lifecycle.calls.cancel.length, 1);
   assert.equal(lifecycle.calls.failure.length, 1);
   assert.equal(lifecycle.calls.failure[0].context.cancel_requested, true);
+});
+
+test('keeps main submit fallback aligned with shared route-decision cases', async () => {
+  assert.equal(ROUTE_DECISION_CASES.caseVersion, 'builder-route-decision-cases.v1');
+
+  for (const routeCase of ROUTE_DECISION_CASES.cases) {
+    const sourceTree = createBuilderProjectSourceTree({
+      files: [{ path: 'src/app.js', content: 'export const ready = true;\n' }],
+    });
+    const lifecycle = conversationService();
+    const git = gitAuthority();
+    const service = createBuilderGenerationMainService({
+      ...repositories({
+        conversationService: lifecycle,
+        gitAuthority: git,
+        projectReadAuthority: {
+          load_current() {
+            return readResult(sourceTree);
+          },
+        },
+      }),
+      transport: async (input) => {
+        const systemPrompt = input.messages[0].content;
+        return {
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: systemPrompt.includes('builder_conversation_explanation')
+            ? JSON.stringify(providerExplanation({
+              title: 'Route fixture answer',
+              summary: 'A bounded route fixture answer.',
+              explanation: 'This fixture answer does not change files.',
+            }))
+            : JSON.stringify(providerOutput({
+              title: 'Route fixture candidate',
+              summary: 'A bounded route fixture candidate.',
+              operations: [
+                { operation: 'upsert', path: 'src/app.js', content: 'export const ready = false;\n' },
+              ],
+            })),
+        };
+      },
+    });
+
+    const result = await service.submit(request({
+      instruction: routeCase.instruction,
+      existingProjectId: PROJECT_ID,
+    }));
+    const routeDecision = routeCase.mainSubmit.resultKind === 'candidate'
+      ? lifecycle.calls.begin[0]?.route_decision_hint
+      : lifecycle.calls.question[0]?.route_decision_hint;
+
+    assert.ok(routeDecision, routeCase.name);
+    assert.equal(routeDecision.route, routeCase.mainSubmit.route, routeCase.name);
+    assert.equal(routeDecision.dispatch, routeCase.mainSubmit.dispatch, routeCase.name);
+    assert.deepEqual(routeDecision.matched_signals, routeCase.mainSubmit.matchedSignals, routeCase.name);
+    assert.deepEqual(routeDecision.required_permissions, routeCase.mainSubmit.requiredPermissions, routeCase.name);
+    assert.equal(routeDecision.permission_result, routeCase.mainSubmit.permissionResult, routeCase.name);
+    assert.equal(routeDecision.downgraded_from ?? null, routeCase.mainSubmit.downgradedFrom ?? null, routeCase.name);
+    assert.equal(routeDecision.downgrade_reason ?? null, routeCase.mainSubmit.downgradeReason ?? null, routeCase.name);
+
+    if (routeCase.mainSubmit.resultKind === 'candidate') {
+      assert.equal(result.version, 'builder-generation-result.v2', routeCase.name);
+      assert.equal(result.admissions.draft, 'candidate_not_saved', routeCase.name);
+      assert.equal(lifecycle.calls.begin.length, 1, routeCase.name);
+      assert.equal(lifecycle.calls.question.length, 0, routeCase.name);
+      assert.equal(git.receipts.length, 1, routeCase.name);
+    } else {
+      assert.equal(result.result_kind, 'explanation', routeCase.name);
+      assert.equal(result.admissions.draft, 'not_created', routeCase.name);
+      assert.equal(lifecycle.calls.begin.length, 0, routeCase.name);
+      assert.equal(lifecycle.calls.question.length, 1, routeCase.name);
+      assert.equal(git.receipts.length, 0, routeCase.name);
+    }
+  }
 });
 
 test('submits one composer turn through main-owned work or explanation routing', async () => {
