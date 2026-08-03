@@ -45,8 +45,13 @@ pre-action budget audit facts only for a currently active store-backed lease.
 It also has a main-only Agent Project Work Result service that records or
 replays fixed project-edit or project-test result receipts for later owner
 review only after an allowed finish-for-review budget audit for the same active
-lease. These Goal, Assignment, materialization, supervision, budget, and result
-facts currently start no run or execution. It also has a pure main-side Agent
+lease. It also has a pure main-side Agent Project Work Result review decision
+contract and main-only store that record owner approval, rejection, or
+acknowledgement of one recorded project work result without creating a generic
+Review row, Artifact, source materialization, check run, or Project Revision.
+These Goal, Assignment, materialization, supervision, budget, result, and
+result-review facts currently start no run or execution. It also has a pure
+main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and
 review-return evidence, plus a main-only Agent Delegation receipt store for
 restart-safe parent/child Task lookup. It now has a pure main-side Agent

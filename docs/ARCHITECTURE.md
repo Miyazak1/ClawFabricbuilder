@@ -300,7 +300,15 @@ result receipts for later owner review only after an allowed
 `finish_for_review` budget audit for the same active lease. It still creates no
 generic Review row, Artifact, source materialization, check run, Git fact,
 Project Revision, provider/tool dispatch, permission grant, IPC/preload
-command, or visible Agents UI. The current Agent Delegation contract is only
+command, or visible Agents UI. The current Agent Project Work Result review
+contract and store are only a main-owned owner decision boundary over one
+recorded project work result: they can approve a proposed result for a later
+project materialization gate, reject it, or acknowledge a blocked/failed result
+without materialization. They persist restart-safe owner-scoped decision
+receipts with task lookup and one review per work result, but still create no
+generic Review row, Artifact, source materialization, check run, Git fact,
+Project Revision, provider/tool dispatch, permission grant, IPC/preload command,
+or visible Agents UI. The current Agent Delegation contract is only
 a pure main-side evidence contract: it binds an active parent assignment and
 lease to a target Agent version, child Task/Run identity, permission and budget
 intersection, cancellation propagation, and review-return boundary, but creates

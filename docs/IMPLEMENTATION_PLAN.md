@@ -939,6 +939,24 @@ Current checkpoint:
   credentials or source, writes no files, runs no process or tests, mutates no
   Git or Project Revision facts, creates no generic Review row, and creates no
   Artifact or materialized source authority.
+- the current Agent project work result review contract adds a pure main-side
+  owner decision receipt over one recorded project work result. It can approve
+  a proposed project-edit or project-test result for a later materialization
+  gate, reject it, or acknowledge a blocked/failed result without
+  materialization. It binds the decision to the Agent version, Assignment,
+  active status, supervision lease, result receipt, Project/Conversation/Task/
+  Run identity, owner, decision time, fixed result summary, and fixed decision
+  summary; it creates no generic Review row, Artifact, source materialization,
+  check run, Git fact, Project Revision, provider/tool dispatch, permission
+  grant, IPC/preload path, or visible Agents UI.
+- the current Agent project work result review store persists those owner
+  decision receipts in a strict main-only SQLite store with restart restore,
+  idempotent replay, owner-scoped reads, read-by-result lookup, task-scoped
+  review listing, one review per work result, schema fingerprint verification,
+  and fixed redacted failures. It stores only indexed identity plus canonical
+  result/review receipts; it creates no generic Review row, Artifact, source
+  materialization, check run, Git fact, Project Revision, provider/tool
+  dispatch, permission grant, IPC/preload path, or visible Agents UI.
 
 #### Gate A2 - Agent-to-Agent Delegation
 
