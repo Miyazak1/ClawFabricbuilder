@@ -1225,9 +1225,22 @@ Current checkpoint:
   receipts; it opens no IPC/preload path, shows no Agents UI, dispatches no
   provider/model or tool, grants no permissions, reads no credentials or
   source, writes no files, runs no process or tests, mutates no Git or Project
-  Revision facts, and creates no Review or Artifact authority. A service gate
-  that composes this store before actual supervised Agent execution remains a
-  later checkpoint.
+  Revision facts, and creates no Review or Artifact authority. Composing this
+  store before actual supervised Agent execution remains a separate service
+  checkpoint.
+- the current Agent Task Context Snapshot service checkpoint composes the
+  active supervision lease store, Budget Audit store, context snapshot contract,
+  and context snapshot store as a main-only pre-dispatch context gate. It reads
+  the store-backed active lease, requires a same-lease allowed Budget Audit for
+  the requested next action, creates the bounded context snapshot receipt,
+  records or replays that receipt, and verifies read-by-snapshot,
+  read-by-Budget-Audit, task-scoped listing, and run-scoped listing. It still
+  performs no requested next action, opens no IPC/preload path, shows no Agents
+  UI, dispatches no provider/model or tool, grants no permissions, reads no
+  credentials or source, writes no files, runs no process or tests, mutates no
+  Git or Project Revision facts, stores no raw context, and creates no Review
+  or Artifact authority. Actual supervised Agent execution after this receipt
+  remains a later checkpoint.
 
 ### Track B - People and Spaces
 
