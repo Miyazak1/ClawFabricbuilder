@@ -434,10 +434,15 @@ returning a ready result. This chain stores refs, counts, budget facts, fixed
 lifecycle/authority codes, and digests; it carries no raw transcript, prompt,
 source content, provider/model envelope, tool output, permission grant, Review
 row, Artifact payload, Git fact, Project Revision, IPC/preload command, or
-visible Agents UI authority. The current Agent Step Start service connects a
-persisted `start_step` supervised action admission to a deterministic main-only
-step-start receipt: it reads the admission and the referenced Budget Audit from
-their stores, verifies Task/Run and lease audit listings, accepts only
+visible Agents UI authority. The current Agent Step Start receipt contract is a
+separate deterministic main-only contract: it binds a `start_step` supervised
+action admission, the referenced allowed Budget Audit, the Run step id, step
+index, and start time into one digest while preserving fixed no-execution,
+no-provider, no-tool-dispatch, no-source, no-IPC, no-Revision, no-Review, and
+no-Artifact authority. The current Agent Step Start service connects a
+persisted `start_step` supervised action admission to that contract: it reads
+the admission and the referenced Budget Audit from their stores, verifies
+Task/Run and lease audit listings, accepts only
 `next_gate=agent_step_runner_required_later`, requires the requested step index
 to be exactly the budget's prior step count plus one, and still starts no
 provider/model/tool execution. The current Agent Tool Call Record service

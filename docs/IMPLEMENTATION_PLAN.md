@@ -1285,11 +1285,23 @@ Current checkpoint:
   Revision facts, and creates no Review or Artifact authority. Actual
   supervised Agent execution, tool dispatch/execution, private source context
   collection, and result-for-review creation remain later checkpoints.
+- the current Agent Step Start receipt contract checkpoint extracts the
+  deterministic step-start receipt into a reusable main-only contract. It binds
+  a `start_step` supervised action admission, the referenced allowed Budget
+  Audit, Run step id, step index, and started time; requires
+  `requested_next_action=start_step`,
+  `next_gate=agent_step_runner_required_later`, the Budget Audit's prior
+  `step_count + 1`, and fixed no-execution authority; and produces a
+  digest-bound receipt that can later be persisted and replayed by a store. It
+  opens no IPC/preload path, shows no Agents UI, dispatches no provider/model or
+  tool, executes no step, grants no permission, reads or writes no source, runs
+  no process, stores no raw context, mutates no Git or Project Revision facts,
+  and creates no generic Review row or Artifact authority.
 - the current Agent Step Start service checkpoint connects the `start_step`
-  supervised action admission to a deterministic main-only step-start receipt.
-  The service accepts owner id, supervised action admission id, run step id,
-  step index, and started time; reads the admission from the admission store;
-  verifies Task/Run admission listings; requires
+  supervised action admission to that receipt contract. The service accepts
+  owner id, supervised action admission id, run step id, step index, and
+  started time; reads the admission from the admission store; verifies Task/Run
+  admission listings; requires
   `requested_next_action=start_step` and
   `next_gate=agent_step_runner_required_later`; reads the referenced Budget
   Audit from the budget audit store; verifies lease audit listings; and

@@ -41,6 +41,12 @@ const {
   createBuilderAgentSupervisedActionAdmissionStore,
 } = require('../electron/builder-agent-supervised-action-admission-store.cjs');
 const {
+  BUILDER_AGENT_STEP_START_CONTRACT_VERSION,
+  BuilderAgentStepStartContractError,
+  createBuilderAgentStepStartReceipt,
+  sanitizeBuilderAgentStepStartReceipt,
+} = require('../electron/builder-agent-step-start-contract.cjs');
+const {
   BUILDER_AGENT_STEP_START_SERVICE_RESULT_VERSION,
   BUILDER_AGENT_STEP_START_SERVICE_VERSION,
   BuilderAgentStepStartServiceError,
@@ -274,6 +280,117 @@ function assertServiceError(error, code = 'builder_agent_step_start_service_inva
   return true;
 }
 
+function assertContractError(error) {
+  assert.equal(error instanceof BuilderAgentStepStartContractError, true);
+  assert.equal(error.code, 'builder_agent_step_start_contract_invalid');
+  assert.doesNotMatch(
+    `${error.message}\n${error.stack}`,
+    /private|credential|api\.deepseek|secret-value|source text|project:\/|permission_id|raw output|stdout|stderr/iu,
+  );
+  return true;
+}
+
+test('creates and sanitizes a reusable deterministic Agent step-start receipt contract', () => {
+  const records = fixture('start_step', 1);
+  const receipt = createBuilderAgentStepStartReceipt({
+    supervised_action_admission: records.admission,
+    budget_audit: records.budgetAudit,
+    step_id: STEP_ID,
+    step_index: 1,
+    started_at_ms: records.admission.admitted_at_ms + 1,
+  });
+
+  assert.equal(BUILDER_AGENT_STEP_START_CONTRACT_VERSION, 'builder-agent-step-start-contract.v1');
+  assert.equal(receipt.receipt_version, 'builder-agent-step-start-receipt.v1');
+  assert.equal(receipt.receipt_kind, 'builder_agent_step_start_receipt');
+  assert.equal(receipt.supervised_action_admission_id, records.admission.admission_id);
+  assert.equal(receipt.budget_audit_id, records.budgetAudit.budget_audit_id);
+  assert.equal(receipt.step_index, 1);
+  assert.equal(receipt.budget_step_count_before, 0);
+  assert.equal(receipt.lifecycle.step_execution, 'not_started');
+  assert.equal(receipt.authority.step_start_authority, 'main_agent_step_start_receipt_contract_v1');
+  assert.match(receipt.step_start_receipt_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(sanitizeBuilderAgentStepStartReceipt(receipt), receipt);
+
+  const replay = createBuilderAgentStepStartReceipt({
+    supervised_action_admission: records.admission,
+    budget_audit: records.budgetAudit,
+    step_id: STEP_ID,
+    step_index: 1,
+    started_at_ms: records.admission.admitted_at_ms + 1,
+  });
+  assert.equal(replay.step_start_receipt_digest, receipt.step_start_receipt_digest);
+});
+
+test('step-start receipt contract rejects action, budget, timing, and digest drift', () => {
+  const records = fixture('start_step', 2);
+  const wrongAction = fixture('call_tool', 3);
+  assert.throws(
+    () => createBuilderAgentStepStartReceipt({
+      supervised_action_admission: wrongAction.admission,
+      budget_audit: wrongAction.budgetAudit,
+      step_id: STEP_ID,
+      step_index: wrongAction.budgetAudit.budget_usage.step_count + 1,
+      started_at_ms: wrongAction.admission.admitted_at_ms + 1,
+    }),
+    assertContractError,
+  );
+  assert.throws(
+    () => createBuilderAgentStepStartReceipt({
+      supervised_action_admission: records.admission,
+      budget_audit: records.budgetAudit,
+      step_id: STEP_ID,
+      step_index: records.budgetAudit.budget_usage.step_count,
+      started_at_ms: records.admission.admitted_at_ms + 1,
+    }),
+    assertContractError,
+  );
+  assert.throws(
+    () => createBuilderAgentStepStartReceipt({
+      supervised_action_admission: records.admission,
+      budget_audit: {
+        ...records.budgetAudit,
+        outcome: {
+          ...records.budgetAudit.outcome,
+          display_summary: 'Forged.',
+        },
+      },
+      step_id: STEP_ID,
+      step_index: records.budgetAudit.budget_usage.step_count + 1,
+      started_at_ms: records.admission.admitted_at_ms + 1,
+    }),
+    assertContractError,
+  );
+  assert.throws(
+    () => createBuilderAgentStepStartReceipt({
+      supervised_action_admission: records.admission,
+      budget_audit: {
+        ...records.budgetAudit,
+        project_id: 'builder-project:not-a-uuid',
+      },
+      step_id: STEP_ID,
+      step_index: records.budgetAudit.budget_usage.step_count + 1,
+      started_at_ms: records.admission.admitted_at_ms + 1,
+    }),
+    assertContractError,
+  );
+
+  const receipt = createBuilderAgentStepStartReceipt({
+    supervised_action_admission: records.admission,
+    budget_audit: records.budgetAudit,
+    step_id: STEP_ID,
+    step_index: records.budgetAudit.budget_usage.step_count + 1,
+    started_at_ms: records.admission.admitted_at_ms + 1,
+  });
+  assert.throws(
+    () => sanitizeBuilderAgentStepStartReceipt({
+      ...receipt,
+      step_index: receipt.step_index + 1,
+    }),
+    assertContractError,
+  );
+});
+
 test('admits a deterministic Agent step start only after start-step admission and budget audit', (t) => {
   const stores = serviceFor(t);
   const records = fixture('start_step', 1);
@@ -408,7 +525,8 @@ test('source boundary remains a main-only step-start admission gate without exec
   );
 
   assert.match(source, /builder-agent-step-start-service\.v1/u);
-  assert.match(source, /builder-agent-step-start-receipt\.v1/u);
+  assert.match(source, /createBuilderAgentStepStartReceipt/u);
+  assert.match(source, /sanitizeBuilderAgentStepStartReceipt/u);
   assert.match(source, /main_owned_agent_step_start_service/u);
   assert.match(source, /main_agent_step_start_receipt_contract_v1/u);
   assert.match(source, /main_owned_agent_budget_audit_store/u);
@@ -421,5 +539,24 @@ test('source boundary remains a main-only step-start admission gate without exec
   assert.doesNotMatch(
     source,
     /require\(['"](?:electron|node:fs|fs|node:http|node:https|http|https|node:child_process|child_process)['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|fetch\s*\(|https?:|Authorization|Bearer|execFile|spawn\s*\(|writeFile|readFile|createReadStream|eval\s*\(|new Function|shell:\s*true|record_grant|record_revocation|provider_secret|credential_secret|commit_oid|tree_oid|stdout|stderr|file_content|source_tree|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+  );
+});
+
+test('step-start receipt contract remains pure main-side evidence without stores or execution', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'electron', 'builder-agent-step-start-contract.cjs'),
+    'utf8',
+  );
+
+  assert.match(source, /builder-agent-step-start-contract\.v1/u);
+  assert.match(source, /builder-agent-step-start-receipt\.v1/u);
+  assert.match(source, /main_agent_step_start_receipt_contract_v1/u);
+  assert.match(source, /sanitizeBuilderAgentSupervisedActionAdmission/u);
+  assert.match(source, /step_execution: 'not_started'/u);
+  assert.match(source, /provider_dispatch: false/u);
+  assert.match(source, /tool_dispatch: false/u);
+  assert.doesNotMatch(
+    source,
+    /require\(['"](?:electron|node:fs|fs|node:sqlite|node:http|node:https|http|https|node:child_process|child_process)['"]\)|DatabaseSync|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git|fetch\s*\(|https?:|Authorization|Bearer|execFile|spawn\s*\(|writeFile|readFile|createReadStream|eval\s*\(|new Function|shell:\s*true|record_grant|record_revocation|provider_secret|credential_secret|commit_oid|tree_oid|stdout|stderr|file_content|source_tree|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
   );
 });
