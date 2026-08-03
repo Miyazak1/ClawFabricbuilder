@@ -443,10 +443,20 @@ pre-dispatch tool-call record from a main-issued Tool Session Policy plus an
 allowed Tool Permission Admission. It still does not dispatch or execute the
 tool, read source, store raw output, grant permission, mutate Git, create a
 Project Revision, expose IPC/preload, or show visible Agents UI. Actual Agent
-execution, tool dispatch/execution, source-context collection, and further
-step-runner orchestration remain separate later gates. These Agent authorities
-expose no Agents UI, IPC/preload command, permission grant, provider/tool
-dispatch, source read, Git mutation, Review, Revision, or Artifact authority.
+execution, tool dispatch/execution, and further step-runner orchestration
+remain separate later gates. The current Agent Private Source Context service
+connects a persisted `read_private_source` supervised action admission to the
+existing main-only Source Context Collector: it reads the admission by owner,
+verifies Task/Run admission listings, accepts only
+`next_gate=source_context_collector_required_later`, verifies the supplied
+trusted Conversation work Run context against the admitted Project,
+Conversation, Task, and Run, and then returns the collector's private bounded
+source-context result only to the main caller. It still exposes no IPC/preload
+command, visible Agents UI, provider/model dispatch, source write, Git
+mutation, Project Revision, generic Review row, or Artifact authority. These
+Agent authorities expose no Agents UI, IPC/preload command, permission grant,
+provider/model dispatch, arbitrary tool execution, source write, Git mutation,
+Review, Revision, or Artifact authority.
 
 ## Project Storage Model
 

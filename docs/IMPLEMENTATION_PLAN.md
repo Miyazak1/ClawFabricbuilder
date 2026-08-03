@@ -1252,8 +1252,9 @@ Current checkpoint:
   Audit/Agent/Project/Conversation/Task/Run identity, bounded context counts,
   token budget, fixed lifecycle, and fixed authority; and routes the action only
   to the next required gate (`start_step` -> later Agent step runner,
-  `call_tool` -> later tool-call record, `read_private_source` -> later source
-  context collector, `finish_for_review` -> later Project Work Result service).
+  `call_tool` -> later Tool Call Record service, `read_private_source` ->
+  later Agent Private Source Context service, `finish_for_review` -> later
+  Project Work Result service).
   It opens no IPC/preload path, shows no Agents UI, dispatches no provider/model
   or tool, creates no tool call, reads no source, records no result, grants no
   permission, stores no raw context, mutates no Git or Project Revision facts,
@@ -1299,6 +1300,22 @@ Current checkpoint:
   authority. Actual step running, tool dispatch/execution, tool result
   recording, private source context collection, and materialization remain
   separate later gates.
+- the current Agent Private Source Context service checkpoint connects the
+  `read_private_source` supervised action admission to the existing main-only
+  Source Context Collector. The service accepts an owner id, supervised action
+  admission id, trusted Conversation work Run context, and bounded project
+  resource ids; reads the admission from the admission store; verifies Task/Run
+  admission listings; requires `requested_next_action=read_private_source` and
+  `next_gate=source_context_collector_required_later`; cross-checks the
+  supplied work Run context against the admitted Project, Conversation, Task,
+  and Run; and then invokes the collector. The returned private source context
+  remains main-only and not durable public UI state, while Conversation receives
+  only the collector's already-sanitized tool request and fixed result facts.
+  It still opens no IPC/preload path, shows no Agents UI, dispatches no
+  provider/model, grants no permission, writes no source, runs no process,
+  mutates no Git or Project Revision facts, and creates no generic Review row
+  or Artifact authority. Actual Agent step running, arbitrary tool dispatch,
+  materialization, and user-visible Agents workflow remain separate later gates.
 - the current Agent Project Work Result service admission checkpoint connects
   the `finish_for_review` supervised action admission to the existing Project
   Work Result service. The result service now accepts a supervised action
