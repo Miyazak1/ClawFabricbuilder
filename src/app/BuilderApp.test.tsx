@@ -198,6 +198,7 @@ async function setup(options: Readonly<{
   briefUpdateActivity?: boolean;
   contextualBuildActivity?: boolean;
   deferredAnswer?: boolean;
+  deferredFailedAnswerAfterFirst?: boolean;
   deferAnswerAfterFirst?: boolean;
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
@@ -325,6 +326,20 @@ async function setup(options: Readonly<{
     latestAnswerInstruction = instruction;
     const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
     if (options.failAnswerAfterFirst === true && answerAttempts > 1) {
+      if (options.deferredFailedAnswerAfterFirst === true) {
+        return new Promise<unknown>((resolve) => {
+          resolveAnswer = async () => {
+            resolve({
+              version: 'builder-generation-ipc-result.v1',
+              ok: false,
+              error: {
+                code: 'builder_generation_structured_response_invalid',
+                retryable: true,
+              },
+            });
+          };
+        });
+      }
       return {
         version: 'builder-generation-ipc-result.v1',
         ok: false,
@@ -1330,6 +1345,67 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
     expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('does not keep provisional live answer text as a durable answer after terminal failure', async () => {
+    const {
+      answer,
+      container,
+      emitGenerationOutput,
+      emitGenerationStarted,
+      generate,
+      resolveAnswer,
+      saveDraft,
+      submit,
+    } = await setup({
+      answerActivity: true,
+      deferredFailedAnswerAfterFirst: true,
+      failAnswerAfterFirst: true,
+    });
+
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(container.textContent).toContain('This answer does not change files.');
+    });
+
+    const question = '你是什么大模型';
+    setComposerInstruction(container, question);
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledTimes(2);
+    });
+    const request = await createBuilderGenerationRequest(question, PROJECT_ID);
+    expect(emitGenerationStarted(request.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    expect(emitGenerationOutput(request.request_digest, '我是 DeepSeek 模型。', PROJECT_ID)).toBeGreaterThan(0);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain('我是 DeepSeek 模型。');
+    });
+
+    await act(async () => {
+      await resolveAnswer();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')?.textContent)
+        .toContain('The answer could not be prepared. Try again.');
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+    });
+    expect(container.textContent).toContain('This answer does not change files.');
+    expect(container.textContent).not.toContain('我是 DeepSeek 模型。');
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
