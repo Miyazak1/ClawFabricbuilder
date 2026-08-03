@@ -1800,10 +1800,6 @@ async function collectPlanTaskStreamDiagnostic(page, projectId) {
   }
 }
 
-async function diagnosePlanTaskStream(page, projectId) {
-  return planStreamFailureCode(await collectPlanTaskStreamDiagnostic(page, projectId));
-}
-
 async function failPlanAlert(page, projectId = null) {
   const diagnostic = await collectPlanTaskStreamDiagnostic(page, projectId);
   const streamCode = planStreamFailureCode(diagnostic);
