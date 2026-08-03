@@ -2825,6 +2825,57 @@ saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Parent Task Context Projection Package Check
+
+This addendum records the package checkpoint after adding the strict main-side
+Agent parent task context projection from reviewed delegated child result
+materialization receipts. It derives bounded child-result reference facts for
+future TaskContextSnapshot assembly; it does not enable visible Agents UI,
+autonomous child Agent execution, generic Review row creation, Artifact
+creation, source materialization, check runs, Project Revision creation, Git
+mutation, provider/model dispatch, tool calls, permission grants,
+IPC/preload commands, installer evidence, or a real saved-profile DeepSeek
+canary pass.
+
+- The projection verifies the
+  Delegation/result/admission/review/eligibility/materialization chain and the
+  parent Task identity before deriving parent-context refs. It emits only fixed
+  materialization, eligibility, review, admission, result, delegation,
+  child-conversation, child-task, child-run, Agent, status, summary-code,
+  decision, and materialization-time fields. It sorts and deduplicates refs,
+  caps input materializations at 128, includes at most 32 refs, records
+  truncation explicitly, and binds the projection id to a canonical digest.
+- The projection carries only
+  `main_agent_parent_task_context_projection_v1` evidence authority over
+  `local_parent_task_context_projection_only`. It carries no raw child output,
+  patch, source tree, display summary text, provider/model envelope,
+  credential, permission grant, generic Review row, Artifact id, Project
+  Revision fact, Git fact, IPC/preload path, or visible Agents UI authority.
+- Focused validation passed through
+  `node --test tests\builder-agent-parent-task-context-projection.test.cjs`;
+  the command reported 5 passing Node tests.
+- Adjacent Agent Delegation A2 validation passed through the Delegation,
+  result, admission, review, eligibility, materialization, parent
+  materialization stores/services, and parent task context projection Node
+  contract set; the command reported 34 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 860 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 791 ASAR
+  entries. The refreshed executable timestamp was `2026/8/4 04:14:43` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

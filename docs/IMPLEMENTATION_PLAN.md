@@ -1191,6 +1191,17 @@ Current checkpoint:
   row, Artifact, child Assignment, child Run, source materialization, check run,
   Project Revision, Git mutation, provider/model dispatch, tool call,
   permission grant, IPC/preload command, or visible Agents UI.
+- the current Agent parent task context projection checkpoint derives a
+  digest-bound main-side context projection from reviewed child result
+  materialization receipts. It accepts parent Task identity plus materialized
+  child result receipts, verifies each Delegation/result/admission/review/
+  eligibility/materialization chain, emits only fixed child-result reference
+  ids, task/run ids, Agent ids, summary codes, decision/status codes, and
+  materialization times, and truncates the projection to a bounded window for
+  future TaskContextSnapshot assembly. It records no raw child output, patch,
+  source tree, display summary text, provider/model facts, permission grant,
+  generic Review row, Artifact, source materialization, check run, Git fact,
+  Project Revision, IPC/preload path, or visible Agents UI.
 
 ### Track B - People and Spaces
 
