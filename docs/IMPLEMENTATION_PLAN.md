@@ -829,6 +829,17 @@ Current checkpoint:
   dispatches no provider/model or tool, grants no permissions, reads no
   credentials or source, writes no files, mutates no Git or Project Revision
   facts, and creates no Review/Artifact authority.
+- the current Agent Goal-to-Assignment materialization store persists those
+  materialization receipts in a strict main-only SQLite store with restart
+  restore, idempotent replay, owner-scoped reads, read-by-Assignment lookup,
+  read-by-admission lookup, task-scoped listing, one materialization per
+  admission and Assignment, schema fingerprint verification, and fixed
+  redacted failures. It stores only canonical Goal, Goal status, admission,
+  Assignment store read, and materialization receipts; opens no IPC/preload
+  path; shows no Goal UI; starts no Run or execution; dispatches no providers,
+  models, or tools; grants no permissions; reads no credentials or source;
+  writes no files; mutates no Git or Project Revision facts; and creates no
+  Review or Artifact authority.
 - the current Agent assignment contract adds pure main-side records for binding
   one owner-approved Agent version to one Project/Conversation/Task/Run with an
   explicit permission-required boundary, owner supervision, review-before-save

@@ -258,14 +258,16 @@ scope, permissions, work history, and reviewable results.
 
 Current checkpoint: Builder now has a pure main-side Agent Goal contract, a
 main-only Agent Goal store, a pure Goal-to-Assignment admission receipt, a
-main-only admission store, and a pure materialization receipt that can prove an
+main-only admission store, a pure materialization receipt that can prove an
 admitted Assignment is recorded in the Assignment store with its initial
-`queued` status. They record and restore bounded objectives with
-`continuous_until_done_or_blocked` semantics, owner-reviewed completion,
-ordered owner status decisions, and an active-Goal bridge into a future
-owner-supervised Assignment candidate. The materialization receipt still does
-not start a Run, dispatch a model or tool, write source files, save a Project
-Revision, create a Review/Artifact, or expose a visible Goal UI.
+`queued` status, and a main-only materialization receipt store for restart-safe
+owner/task, read-by-Assignment, and read-by-admission lookup. They record and
+restore bounded objectives with `continuous_until_done_or_blocked` semantics,
+owner-reviewed completion, ordered owner status decisions, and an active-Goal
+bridge into a future owner-supervised Assignment candidate. The materialization
+receipt and store still do not start a Run, dispatch a model or tool, write
+source files, save a Project Revision, create a Review/Artifact, or expose a
+visible Goal UI.
 
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,

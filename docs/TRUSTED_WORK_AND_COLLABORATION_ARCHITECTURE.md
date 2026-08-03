@@ -32,9 +32,11 @@ until done or blocked, a main-only local Agent Goal/status record store for
 restart-safe owner/task lookup, a pure main-side Agent Goal-to-Assignment
 admission contract, a main-only local Goal-to-Assignment admission receipt
 store, a pure main-side Goal-to-Assignment materialization receipt contract that
-can prove an admitted Assignment is recorded as queued, a main-only local Agent
-Assignment/status record store, and a main-only local Agent Supervision Lease/
-release record store. These Goal facts and materialization receipts currently
+can prove an admitted Assignment is recorded as queued, a main-only local
+Goal-to-Assignment materialization receipt store for restart-safe lookup, a
+main-only local Agent Assignment/status record store, and a main-only local
+Agent Supervision Lease/release record store. These Goal facts and
+materialization receipts currently
 start no run or execution. It also has a pure main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and
 review-return evidence, plus a main-only Agent Delegation receipt store for
