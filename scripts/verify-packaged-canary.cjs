@@ -77,6 +77,7 @@ const SELECTORS = Object.freeze({
   planProposed: '[data-builder-activity-card="Plan proposed"]',
   planReviewActions: '[data-builder-plan-review-actions="true"]',
   planSourceReadApproval: '[data-builder-plan-source-read-approval="true"]',
+  questionAnswerFailedNotice: '[data-builder-conversation-notice="answer_failed"]',
   questionAnswer: '[data-builder-activity-card="Assistant"]',
   toolActivityRequested: '[data-builder-tool-activity="requested"]',
   toolActivitySucceeded: '[data-builder-tool-activity="succeeded"]',
@@ -2130,6 +2131,17 @@ async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE
   });
 }
 
+async function assertNoQuestionAnswerFailureNotice(page) {
+  try {
+    if (await page.locator(SELECTORS.questionAnswerFailedNotice).isVisible()) {
+      fail('canary_question_failed');
+    }
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_question_failed');
+  }
+}
+
 async function askProjectQuestionViaUi(
   page,
   currentProject,
@@ -2146,6 +2158,7 @@ async function askProjectQuestionViaUi(
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
     if (outcome !== 'answer') fail('canary_question_failed');
+    await assertNoQuestionAnswerFailureNotice(page);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_question_failed');
@@ -2155,6 +2168,7 @@ async function askProjectQuestionViaUi(
     const evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
     assertExactRevision(evidence, currentProject);
     return Object.freeze({
+      answer_failure_notice_absent: true,
       saved_revision_unchanged: true,
       task_stream: assertTaskStreamExplanationFacts(
         evidence,

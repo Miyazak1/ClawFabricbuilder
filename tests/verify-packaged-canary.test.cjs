@@ -287,6 +287,9 @@ class FakeLocator {
 
   async isVisible() {
     this.page.events.push(['isVisible', this.selector]);
+    if (this.selector === SELECTORS.questionAnswerFailedNotice) {
+      return this.page.questionAnswerFailedNoticeVisible;
+    }
     if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
     if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
@@ -413,6 +416,10 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.currentProjectWriteApproval) {
       this.page.assertSelectorVisibility(this.selector, this.page.currentProjectWriteApprovalVisible, state);
+      return;
+    }
+    if (this.selector === SELECTORS.questionAnswerFailedNotice) {
+      this.page.assertSelectorVisibility(this.selector, this.page.questionAnswerFailedNoticeVisible, state);
       return;
     }
     if (this.selector === SELECTORS.planApproved) {
@@ -618,6 +625,7 @@ class FakePage {
     this.previewUnavailable = false;
     this.previewUnavailableTextOverride = null;
     this.projectStatus = 'ready';
+    this.questionAnswerFailedNoticeVisible = false;
     this.questionTurns = 0;
     this.newProjectPanelVisible = false;
     this.retryDraftVisible = false;
@@ -2383,6 +2391,7 @@ test('answers a saved-project question without creating a draft or revision', as
   assert.equal(page.candidateTurns, 1);
   assert.equal(page.questionTurns, 1);
   assert.deepEqual(answer, {
+    answer_failure_notice_absent: true,
     saved_revision_unchanged: true,
     task_stream: {
       answer_count: 1,
@@ -2410,6 +2419,37 @@ test('answers a saved-project question without creating a draft or revision', as
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
     ['New project', 'Send', 'Send'],
   );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'isVisible'
+    && event[1] === SELECTORS.questionAnswerFailedNotice
+  )), true);
+});
+
+test('rejects a saved-project question when answer_failed remains visible after the answer', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  page.questionAnswerFailedNoticeVisible = true;
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+    1,
+    0,
+  ).current.product_revision_receipt;
+
+  await assert.rejects(
+    askProjectQuestionViaUi(page, firstRevision),
+    (error) => error.code === 'canary_question_failed'
+      && error.stage === 'question',
+  );
+  assert.equal(page.questionTurns, 1);
+  assert.equal(page.events.some((event) => (
+    event[0] === 'isVisible'
+    && event[1] === SELECTORS.questionAnswerFailedNotice
+  )), true);
 });
 
 test('rejects explanations that are not bound to a taskless question turn', () => {
@@ -3650,6 +3690,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   });
   assert.deepEqual(result.question, {
     after_initial_save: {
+      answer_failure_notice_absent: true,
       saved_revision_unchanged: true,
       task_stream: {
         answer_count: 1,
