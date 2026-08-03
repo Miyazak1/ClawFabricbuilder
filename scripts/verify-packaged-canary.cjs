@@ -74,6 +74,8 @@ const SELECTORS = Object.freeze({
   idea: '#builder-idea',
   liveOutput: '[data-builder-live-output="true"]',
   newProjectPanel: '[data-builder-new-project-panel="true"]',
+  cancelWork: '[data-builder-cancel-work="true"]',
+  composer: '[data-builder-composer="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
   approveCurrentProjectWrite: '[data-builder-approve-current-project-write="true"]',
   approvePlanSourceRead: '[data-builder-approve-plan-source-read="true"]',
@@ -84,6 +86,7 @@ const SELECTORS = Object.freeze({
   planSourceReadApproval: '[data-builder-plan-source-read-approval="true"]',
   questionAnswerFailedNotice: '[data-builder-conversation-notice="answer_failed"]',
   questionAnswer: '[data-builder-activity-card="Assistant"]',
+  submitTurn: '[data-builder-submit-turn="true"]',
   toolActivityRequested: '[data-builder-tool-activity="requested"]',
   toolActivitySucceeded: '[data-builder-tool-activity="succeeded"]',
   userMessage: '[data-builder-activity-card="You"]',
@@ -726,18 +729,23 @@ const SAVED_ACTIVITY_INTERNAL_EVIDENCE_PATTERN = /builder-(?:generation-draft|gi
 const REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN = /builder-(?:code-change-candidate|conversation|generation-draft|git-request|message|project|review|run|task|turn):|sha256:|commit_oid|tree_oid|receipt|provider|credential|source_tree|review_id|reviewer_id|reviewed_at_ms/iu;
 
 class BuilderPackagedCanaryError extends Error {
-  constructor(code = 'canary_evidence_failed') {
+  constructor(code = 'canary_evidence_failed', diagnostic = null) {
     const selected = Object.hasOwn(ERROR_MESSAGES, code) ? code : 'canary_evidence_failed';
     super(ERROR_MESSAGES[selected]);
     this.name = 'BuilderPackagedCanaryError';
     this.code = selected;
     this.stage = ERROR_STAGES[selected];
+    if (diagnostic !== null) this.diagnostic = diagnostic;
     this.stack = `${this.name}: ${this.message}`;
   }
 }
 
 function fail(code) {
   throw new BuilderPackagedCanaryError(code);
+}
+
+function failWithDiagnostic(code, diagnostic) {
+  throw new BuilderPackagedCanaryError(code, diagnostic);
 }
 
 function fixedError(source, fallback = 'canary_evidence_failed') {
@@ -1730,7 +1738,7 @@ function planStreamFailureCode(value) {
   }
 }
 
-async function diagnosePlanTaskStream(page, projectId) {
+async function collectPlanTaskStreamDiagnostic(page, projectId) {
   if (projectId === null) return null;
   try {
     const summary = await page.evaluate(async (sourceProjectId) => {
@@ -1768,16 +1776,49 @@ async function diagnosePlanTaskStream(page, projectId) {
         tool_failed_count: toolFailedCount,
       };
     }, projectId);
-    return planStreamFailureCode(summary);
+    if (
+      summary === null
+      || typeof summary !== 'object'
+      || utilTypes.isProxy(summary)
+      || summary.diagnostic !== 'stream_summary'
+    ) return null;
+    return Object.freeze({
+      diagnostic: 'stream_summary',
+      failed_run: summary.failed_run === true,
+      tool_requested_count: Number.isSafeInteger(summary.tool_requested_count)
+        ? summary.tool_requested_count
+        : null,
+      tool_succeeded_count: Number.isSafeInteger(summary.tool_succeeded_count)
+        ? summary.tool_succeeded_count
+        : null,
+      tool_failed_count: Number.isSafeInteger(summary.tool_failed_count)
+        ? summary.tool_failed_count
+        : null,
+    });
   } catch {
     return null;
   }
 }
 
-async function diagnosePlanAlert(page, projectId = null) {
-  const streamCode = await diagnosePlanTaskStream(page, projectId);
-  if (streamCode !== null) return streamCode;
-  return 'canary_plan_alert_failed';
+async function diagnosePlanTaskStream(page, projectId) {
+  return planStreamFailureCode(await collectPlanTaskStreamDiagnostic(page, projectId));
+}
+
+async function failPlanAlert(page, projectId = null) {
+  const diagnostic = await collectPlanTaskStreamDiagnostic(page, projectId);
+  const streamCode = planStreamFailureCode(diagnostic);
+  failWithDiagnostic(
+    streamCode ?? 'canary_plan_alert_failed',
+    diagnostic ?? Object.freeze({ diagnostic: 'stream_unavailable' }),
+  );
+}
+
+async function currentProjectStatus(page) {
+  try {
+    return await page.locator(SELECTORS.projectPage).getAttribute('data-builder-project-status');
+  } catch {
+    return null;
+  }
 }
 
 async function waitForPlanProposalVisible(page, projectId = null) {
@@ -1789,7 +1830,8 @@ async function waitForPlanProposalVisible(page, projectId = null) {
     .then(() => 'failed', () => 'failure_timeout');
   const outcome = await Promise.race([plan, failed]);
   if (outcome === 'plan') return;
-  if (outcome === 'failed') fail(await diagnosePlanAlert(page, projectId));
+  if (outcome === 'failed') await failPlanAlert(page, projectId);
+  if (await currentProjectStatus(page) === 'submit_failed') await failPlanAlert(page, projectId);
   fail('canary_plan_failed');
 }
 
@@ -2373,6 +2415,84 @@ async function assertNoQuestionAnswerFailureNotice(page) {
   }
 }
 
+async function optionalLocatorCount(page, selector) {
+  try {
+    return await page.locator(selector).count();
+  } catch {
+    return null;
+  }
+}
+
+async function optionalLocatorVisible(page, selector) {
+  try {
+    return await page.locator(selector).isVisible();
+  } catch {
+    return null;
+  }
+}
+
+async function optionalLocatorAttribute(page, selector, attribute) {
+  try {
+    const value = await page.locator(selector).getAttribute(attribute);
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function optionalInputValue(page, selector) {
+  try {
+    const value = await page.locator(selector).inputValue();
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeDiagnosticText(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\s+/gu, ' ').trim();
+  if (normalized.length === 0) return '';
+  if (REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(normalized)) return '[redacted-internal-evidence]';
+  return normalized.length > 240 ? `${normalized.slice(0, 240)}...` : normalized;
+}
+
+async function optionalLocatorText(page, selector) {
+  try {
+    return safeDiagnosticText(await page.locator(selector).textContent());
+  } catch {
+    return null;
+  }
+}
+
+async function collectQuestionFailureDiagnostic(page, outcome, expectedVisibleAnswers) {
+  return Object.freeze({
+    outcome: typeof outcome === 'string' ? outcome : 'exception',
+    expected_visible_answers: expectedVisibleAnswers,
+    visible_answer_count: await optionalLocatorCount(page, SELECTORS.questionAnswer),
+    answer_failed_notice_visible: await optionalLocatorVisible(page, SELECTORS.questionAnswerFailedNotice),
+    project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    composer_route: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route'),
+    composer_dispatch: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-dispatch'),
+    submit_visible: await optionalLocatorVisible(page, SELECTORS.submitTurn),
+    cancel_visible: await optionalLocatorVisible(page, SELECTORS.cancelWork),
+    workspace_picker_visible: await optionalLocatorVisible(page, SELECTORS.workspacePicker),
+    unsaved_draft_visible: await optionalLocatorVisible(page, SELECTORS.unsavedDraft),
+    save_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+    live_output_visible: await optionalLocatorVisible(page, SELECTORS.liveOutput),
+    live_output_text: await optionalLocatorText(page, SELECTORS.liveOutput),
+    latest_answer_text: await optionalLocatorText(page, SELECTORS.questionAnswer),
+    composer_text: safeDiagnosticText(await optionalInputValue(page, SELECTORS.idea)),
+  });
+}
+
+async function failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers) {
+  failWithDiagnostic(
+    'canary_question_failed',
+    await collectQuestionFailureDiagnostic(page, outcome, expectedVisibleAnswers),
+  );
+}
+
 async function waitForVisibleQuestionAnswers(page, expectedVisibleAnswers) {
   try {
     await page.locator(SELECTORS.questionAnswer).waitFor({
@@ -2406,16 +2526,21 @@ async function askInitialChatQuestionViaUi(
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
-    if (outcome !== 'answer') fail('canary_question_failed');
+    if (outcome !== 'answer') await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
     await assertNoQuestionAnswerFailureNotice(page);
     const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
-    if (visibleAnswerCount < expectedVisibleAnswers) fail('canary_question_failed');
+    if (visibleAnswerCount < expectedVisibleAnswers) {
+      await failQuestionWithDiagnostic(page, 'answer_count_short', expectedVisibleAnswers);
+    }
     await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
     await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
   } catch (error) {
-    if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_question_failed');
+    if (error instanceof BuilderPackagedCanaryError) {
+      if (error.code !== 'canary_question_failed' || error.diagnostic !== undefined) throw error;
+      await failQuestionWithDiagnostic(page, 'question_failed', expectedVisibleAnswers);
+    }
+    await failQuestionWithDiagnostic(page, 'exception', expectedVisibleAnswers);
   }
   try {
     const evidence = await readSanitizedBridgeEvidence(page);
@@ -2456,13 +2581,18 @@ async function askProjectQuestionViaUi(
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
-    if (outcome !== 'answer') fail('canary_question_failed');
+    if (outcome !== 'answer') await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
     await assertNoQuestionAnswerFailureNotice(page);
     const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
-    if (visibleAnswerCount < expectedVisibleAnswers) fail('canary_question_failed');
+    if (visibleAnswerCount < expectedVisibleAnswers) {
+      await failQuestionWithDiagnostic(page, 'answer_count_short', expectedVisibleAnswers);
+    }
   } catch (error) {
-    if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_question_failed');
+    if (error instanceof BuilderPackagedCanaryError) {
+      if (error.code !== 'canary_question_failed' || error.diagnostic !== undefined) throw error;
+      await failQuestionWithDiagnostic(page, 'question_failed', expectedVisibleAnswers);
+    }
+    await failQuestionWithDiagnostic(page, 'exception', expectedVisibleAnswers);
   }
   try {
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });

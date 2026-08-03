@@ -2716,7 +2716,9 @@ test('rejects an initial no-folder chat question when answer_failed remains visi
   await assert.rejects(
     askInitialChatQuestionViaUi(page),
     (error) => error.code === 'canary_question_failed'
-      && error.stage === 'question',
+      && error.stage === 'question'
+      && error.diagnostic?.answer_failed_notice_visible === true
+      && error.diagnostic?.expected_visible_answers === 1,
   );
   assert.equal(page.questionTurns, 1);
   assert.equal(page.candidateTurns, 0);
@@ -2743,7 +2745,9 @@ test('rejects a saved-project question when answer_failed remains visible after 
   await assert.rejects(
     askProjectQuestionViaUi(page, firstRevision),
     (error) => error.code === 'canary_question_failed'
-      && error.stage === 'question',
+      && error.stage === 'question'
+      && error.diagnostic?.answer_failed_notice_visible === true
+      && error.diagnostic?.expected_visible_answers === 1,
   );
   assert.equal(page.questionTurns, 1);
   assert.equal(page.events.some((event) => (
@@ -2925,6 +2929,37 @@ test('proposes and approves a saved-project plan before creating a draft', async
     SELECTORS.composerAddMenuButton,
     SELECTORS.composerAddPlanMode,
   ]);
+});
+
+test('reports safe plan stream diagnostics when context was read before plan failure', async (t) => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const page = new FakePage();
+  installBridge(page);
+  page.approvedPlanReviews = 1;
+  page.projectStatus = 'submit_failed';
+  page.evaluate = async () => ({
+    diagnostic: 'stream_summary',
+    failed_run: true,
+    tool_requested_count: 1,
+    tool_succeeded_count: 1,
+    tool_failed_count: 0,
+  });
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  const currentRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+
+  await assert.rejects(
+    proposePlanViaUi(page, currentRevision, 'Add a completed summary.', 2, 1, 1),
+    (error) => error.code === 'canary_plan_after_context_failed'
+      && error.stage === 'plan_after_context'
+      && error.diagnostic?.diagnostic === 'stream_summary'
+      && error.diagnostic?.failed_run === true
+      && error.diagnostic?.tool_requested_count === 1
+      && error.diagnostic?.tool_succeeded_count === 1
+      && error.diagnostic?.tool_failed_count === 0
+      && error.message === 'Packaged canary plan failed after reading project context.'
+      && error.stack === `BuilderPackagedCanaryError: ${error.message}`,
+  );
 });
 
 test('keeps an update candidate pending before the explicit Version 2 save', async (t) => {
