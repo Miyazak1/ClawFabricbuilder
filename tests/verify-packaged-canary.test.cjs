@@ -10,6 +10,7 @@ const { PNG } = require('pngjs');
 
 const {
   BuilderPackagedCanaryError,
+  CANARY_INITIAL_CHAT_QUESTION,
   CANARY_INPUT_VERSION,
   CANARY_QUESTION,
   CANARY_RESULT_VERSION,
@@ -28,6 +29,7 @@ const {
   approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   approvePlanViaUi,
+  askInitialChatQuestionViaUi,
   askProjectQuestionViaUi,
   captureSavedActivityEvidence,
   capturePreviewEvidence,
@@ -506,6 +508,7 @@ class FakeRole {
       this.page.workspaceBound = false;
       this.page.workspacePickerVisible = false;
       this.page.newProjectPanelVisible = false;
+      this.page.resetNewProjectConversation();
     }
     if (this.name === 'Send') {
       const instruction = this.page.values.get(SELECTORS.idea) ?? '';
@@ -675,6 +678,11 @@ class FakePage {
       this.unsavedDraftVisible = false;
       this.liveOutputVisible = false;
       return revision;
+    };
+    this.resetNewProjectConversation = () => {
+      this.questionTurns = 0;
+      this.planTurns = 0;
+      this.approvedPlanReviews = 0;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
       this.liveOutputVisible = true;
@@ -1630,6 +1638,14 @@ function fakeElectron(page) {
         durableStore.questionTurns += 1;
         activePage.questionTurns = durableStore.questionTurns;
       };
+      activePage.resetNewProjectConversation = () => {
+        durableStore.questionTurns = 0;
+        durableStore.planTurns = 0;
+        durableStore.approvedPlanReviews = 0;
+        activePage.questionTurns = 0;
+        activePage.planTurns = 0;
+        activePage.approvedPlanReviews = 0;
+      };
       activePage.recordPlanAttempt = () => {
         durableStore.planTurns += 1;
         activePage.planTurns = durableStore.planTurns;
@@ -2423,6 +2439,58 @@ test('answers a saved-project question without creating a draft or revision', as
     event[0] === 'isVisible'
     && event[1] === SELECTORS.questionAnswerFailedNotice
   )), true);
+});
+
+test('answers an initial no-folder chat question without opening workspace or draft UI', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  const answer = await askInitialChatQuestionViaUi(page);
+
+  assert.deepEqual(answer, {
+    answer_failure_notice_absent: true,
+    catalog_remained_empty: true,
+    no_draft_created: true,
+    no_workspace_required: true,
+    ui_answer_observed: true,
+  });
+  assert.equal(page.questionTurns, 1);
+  assert.equal(page.candidateTurns, 0);
+  assert.equal(page.savedRevision, 0);
+  assert.equal(page.workspacePickerVisible, false);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['Send'],
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.workspacePicker
+    && event[2] === 'hidden'
+  )), true);
+  assert.equal(page.events.some((event) => (
+    event[0] === 'isVisible'
+    && event[1] === SELECTORS.questionAnswerFailedNotice
+  )), true);
+});
+
+test('rejects an initial no-folder chat question when answer_failed remains visible', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  page.questionAnswerFailedNoticeVisible = true;
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await assert.rejects(
+    askInitialChatQuestionViaUi(page),
+    (error) => error.code === 'canary_question_failed'
+      && error.stage === 'question',
+  );
+  assert.equal(page.questionTurns, 1);
+  assert.equal(page.candidateTurns, 0);
+  assert.equal(page.savedRevision, 0);
+  assert.equal(page.workspacePickerVisible, false);
+  assert.equal(page.unsavedDraftVisible, false);
 });
 
 test('rejects a saved-project question when answer_failed remains visible after the answer', async (t) => {
@@ -3689,6 +3757,13 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     },
   });
   assert.deepEqual(result.question, {
+    initial_chat: {
+      answer_failure_notice_absent: true,
+      catalog_remained_empty: true,
+      no_draft_created: true,
+      no_workspace_required: true,
+      ui_answer_observed: true,
+    },
     after_initial_save: {
       answer_failure_notice_absent: true,
       saved_revision_unchanged: true,
@@ -3847,6 +3922,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.equal(JSON.stringify(result).includes(parsed.provider.model), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.base_url), false);
   assert.equal(JSON.stringify(result).includes(parsed.executable_path), false);
+  assert.equal(JSON.stringify(result).includes(CANARY_INITIAL_CHAT_QUESTION), false);
   assert.equal(JSON.stringify(result).includes(CANARY_QUESTION), false);
   const resultPacket = JSON.stringify(result);
   for (const forbidden of [
@@ -3862,6 +3938,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.deepEqual(Object.keys(result.input).sort(), [
     'credential_source',
     'idea_digest',
+    'initial_chat_question_digest',
     'question_digest',
     'restart_continuation_instruction_digest',
     'schema_version',
@@ -3967,6 +4044,7 @@ test('copies only saved provider profile files and runs without provider input o
   assert.deepEqual(result.input, {
     credential_source: 'saved_profile',
     idea_digest: result.input.idea_digest,
+    initial_chat_question_digest: result.input.initial_chat_question_digest,
     question_digest: result.input.question_digest,
     restart_continuation_instruction_digest: result.input.restart_continuation_instruction_digest,
     schema_version: CANARY_INPUT_VERSION,
@@ -4004,6 +4082,8 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.plan.restart_continuation.plan_review_actions_visible, true);
   assert.equal(result.plan.restart_continuation.tool_activity_visible, true);
   assert.equal(result.plan.restart_continuation.task_stream.plan_ready_count, 1);
+  assert.equal(result.question.initial_chat.no_draft_created, true);
+  assert.equal(result.question.initial_chat.no_workspace_required, true);
   assert.equal(result.question.after_initial_save.saved_revision_unchanged, true);
   assert.equal(result.question.after_initial_save.ui_answer_observed, true);
   assert.equal(result.task_stream.question_did_not_advance_candidate_count, true);
@@ -4029,6 +4109,7 @@ test('copies only saved provider profile files and runs without provider input o
     .filter((event) => event[0] === 'roleClick')
     .map((event) => event[2]);
   assert.deepEqual(roleClicks, [
+    'Send',
     'New project',
     'Send',
     'Send',
@@ -4630,7 +4711,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
-  assert.match(source, /builder-packaged-canary-result\.v17/u);
+  assert.match(source, new RegExp(CANARY_RESULT_VERSION.replaceAll('.', String.raw`\.`), 'u'));
   assert.match(source, /run_progress_recorded/u);
   assert.match(source, /tool_call_requested/u);
   assert.match(source, /tool_call_result_recorded/u);

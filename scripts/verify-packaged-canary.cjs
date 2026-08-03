@@ -9,7 +9,8 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v17';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v18';
+const CANARY_INITIAL_CHAT_QUESTION = 'What can you help me with before I choose a project folder?';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
 const CANARY_RESTART_CONTINUATION_INSTRUCTION = 'Plan a compact completed-state summary below the timer before changing files.';
@@ -827,6 +828,7 @@ function redactInput(input) {
   return Object.freeze({
     credential_source: credentialSource,
     idea_digest: digestText(input.idea),
+    initial_chat_question_digest: digestText(CANARY_INITIAL_CHAT_QUESTION),
     question_digest: digestText(CANARY_QUESTION),
     restart_continuation_instruction_digest: digestText(CANARY_RESTART_CONTINUATION_INSTRUCTION),
     schema_version: input.schema_version,
@@ -2140,6 +2142,47 @@ async function assertNoQuestionAnswerFailureNotice(page) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_question_failed');
   }
+}
+
+async function askInitialChatQuestionViaUi(page, question = CANARY_INITIAL_CHAT_QUESTION) {
+  try {
+    await page.locator(SELECTORS.idea).fill(question);
+    await clickByRole(page, 'button', 'Send');
+    const answer = page.locator(SELECTORS.questionAnswer).waitFor({ state: 'visible' })
+      .then(() => 'answer', () => 'answer_timeout');
+    const alert = page.getByRole('alert').waitFor({ state: 'visible' })
+      .then(() => 'alert', () => 'alert_unavailable');
+    const outcome = await Promise.race([answer, alert]);
+    if (outcome !== 'answer') fail('canary_question_failed');
+    await assertNoQuestionAnswerFailureNotice(page);
+    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_question_failed');
+  }
+  try {
+    const evidence = await readSanitizedBridgeEvidence(page);
+    if (
+      evidence.catalog.projects.length !== 0
+      || evidence.current !== null
+      || evidence.task_stream !== null
+    ) fail('canary_question_evidence_failed');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) {
+      if (error.code === 'canary_question_evidence_failed') throw error;
+      fail('canary_question_evidence_failed');
+    }
+    fail('canary_question_evidence_failed');
+  }
+  return Object.freeze({
+    answer_failure_notice_absent: true,
+    catalog_remained_empty: true,
+    no_draft_created: true,
+    no_workspace_required: true,
+    ui_answer_observed: true,
+  });
 }
 
 async function askProjectQuestionViaUi(
@@ -4564,6 +4607,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       await readSanitizedBridgeEvidence(page);
       gate.allow();
     }
+    const initialChat = await askInitialChatQuestionViaUi(page);
     const initialDraft = await generateProjectViaUi(page, input.idea);
     const initialSavedActivity = await captureSavedActivityEvidence(page, 1);
     const initialEvidence = await readSanitizedBridgeEvidence(page);
@@ -4762,6 +4806,7 @@ async function runPackagedCanary(rawInput, options = {}) {
         restart_continuation: restartContinuationPlan,
       }),
       question: Object.freeze({
+        initial_chat: initialChat,
         after_initial_save: question,
       }),
       preview: Object.freeze({
@@ -4908,6 +4953,7 @@ async function main() {
 module.exports = {
   BuilderPackagedCanaryError,
   CANARY_INPUT_VERSION,
+  CANARY_INITIAL_CHAT_QUESTION,
   CANARY_QUESTION,
   CANARY_RESULT_VERSION,
   PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY,
@@ -4927,6 +4973,7 @@ module.exports = {
   approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   approvePlanViaUi,
+  askInitialChatQuestionViaUi,
   askProjectQuestionViaUi,
   captureGuardedUserDataRoot,
   capturePreviewEvidence,
