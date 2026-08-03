@@ -1366,6 +1366,18 @@ Current checkpoint:
   mutates no Git or Project Revision facts, and creates no generic Review row
   or Artifact authority. Actual Agent step running, arbitrary tool dispatch,
   materialization, and user-visible Agents workflow remain separate later gates.
+- the current Agent Private Source Context record checkpoint adds a pure
+  main-side digest-only receipt for one `read_private_source` supervised action
+  admission plus one Source Context Collector result. It revalidates the
+  bounded private source files through the source-tree sanitizer, but the record
+  shape keeps only resource/content digests, file and byte counts, read
+  statuses, tool-call ids, context/head/request binding, lifecycle, authority,
+  and a canonical record digest. It stores no raw file paths or file content,
+  source-context result body, provider/model envelope, credential, Git fact,
+  Project Revision, generic Review row, Artifact payload, IPC/preload command,
+  or visible Agents UI authority. Persisting/replaying these receipts through a
+  store and connecting the Private Source Context service to that store remain
+  separate later checkpoints.
 - the current Agent Project Work Result service admission checkpoint connects
   the `finish_for_review` supervised action admission to the existing Project
   Work Result service. The result service now accepts a supervised action

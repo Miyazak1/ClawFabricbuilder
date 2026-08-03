@@ -481,7 +481,16 @@ command, visible Agents UI, provider/model dispatch, source write, Git
 mutation, Project Revision, generic Review row, or Artifact authority. These
 Agent authorities expose no Agents UI, IPC/preload command, permission grant,
 provider/model dispatch, arbitrary tool execution, source write, Git mutation,
-Review, Revision, or Artifact authority.
+Review, Revision, or Artifact authority. The current Agent Private Source
+Context record contract can now turn a `read_private_source` supervised action
+admission and one collector result into a deterministic digest-only receipt. It
+revalidates the bounded source tree, keeps only resource/content digests, file
+counts, byte counts, context/head/request binding, lifecycle, and authority, and
+rejects raw file paths or content in the persisted shape. It is still a pure
+main-only contract with no store/service replay, no IPC/preload command, no
+visible Agents UI, no provider/model/tool dispatch, no permission grant, no
+source write, no Git/Project Revision mutation, no Review row, and no Artifact
+authority.
 
 ## Project Storage Model
 
