@@ -47,6 +47,9 @@ import {
   createBuilderDesktopPlanReviewPort,
 } from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
 import {
+  type BuilderConversationControllerSnapshot,
+} from '../features/builder/application/builderConversationController';
+import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
   isBuilderComposerContextualBuildIntent,
@@ -757,6 +760,42 @@ function appendLiveOutputText(current: string, delta: string): string | null {
   return next;
 }
 
+function hasRecordedSuccessfulAnswerAfterHead(
+  snapshot: BuilderConversationControllerSnapshot | null,
+  instruction: string,
+  afterHeadSequence: number,
+): boolean {
+  const stream = snapshot?.conversation ?? null;
+  if (stream === null || stream.state !== 'ready') return false;
+  const expectedInstruction = instruction.trim();
+  if (expectedInstruction.length === 0) return false;
+  const items = stream.conversation.items;
+  let matchedTurnId: string | null = null;
+  let matchedUserSequence = 0;
+  for (const item of items) {
+    if (
+      item.item_kind === 'user_message'
+      && item.sequence > afterHeadSequence
+      && item.message_kind === 'submitted'
+      && item.mode === 'question'
+      && item.message.text.trim() === expectedInstruction
+    ) {
+      matchedTurnId = item.turn_id;
+      matchedUserSequence = item.sequence;
+    }
+  }
+  if (matchedTurnId === null) return false;
+  return items.some((item) => (
+    item.item_kind === 'run_completed'
+    && item.sequence > matchedUserSequence
+    && item.turn_id === matchedTurnId
+    && item.terminal_status === 'succeeded'
+    && item.result_kind === 'explanation'
+    && item.assistant_message !== null
+    && item.assistant_message.text.trim().length > 0
+  ));
+}
+
 function planReviewInFlightKey(value: BuilderPlanReviewInFlight): string {
   return [
     value.project_id,
@@ -783,6 +822,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [queuedActiveAnswerBuild, setQueuedActiveAnswerBuild] =
     useState<QueuedActiveAnswerBuild | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
+  const [answerFailureRecordedSuccess, setAnswerFailureRecordedSuccess] = useState(false);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -1078,6 +1118,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
     setApprovedPlanContinuationFailure(null);
+    setAnswerFailureRecordedSuccess(false);
     setPlanSourceReadApproval(null);
     setCurrentProjectWriteApproval(null);
     setCurrentProjectWriteApprovalStatus(null);
@@ -1137,14 +1178,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     result: BuilderVisibleProjectSnapshot,
     commandEpoch: number,
     fallbackProjectId: string | null = null,
-  ) => {
-    if (workspaceEpochRef.current !== commandEpoch) return;
+  ): Promise<BuilderConversationControllerSnapshot | null> => {
+    if (workspaceEpochRef.current !== commandEpoch) return null;
     const conversationProjectId = visibleConversationProjectId(result) ?? fallbackProjectId;
-    if (conversationProjectId === null) return;
+    if (conversationProjectId === null) return null;
     if (conversation.snapshot.project_id === conversationProjectId) {
-      await conversation.refresh().catch(() => undefined);
+      return await conversation.refresh().catch(() => null);
     } else {
-      await conversation.load(conversationProjectId).catch(() => undefined);
+      return await conversation.load(conversationProjectId).catch(() => null);
     }
   }, [conversation]);
 
@@ -1467,6 +1508,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   ) => {
     if (submitInFlightRef.current || submittedIdea.trim().length === 0) return;
     publishQueuedActiveAnswerBuild(null);
+    setAnswerFailureRecordedSuccess(false);
     let decision = decideBuilderComposerIntent(
       submittedIdea,
       composerIntentContext(
@@ -1485,6 +1527,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       conversationSnapshotRef.current,
       projectSnapshotRef.current,
     );
+    const answerStartHeadSequence = conversationSnapshotRef.current.conversation?.state === 'ready'
+      ? conversationSnapshotRef.current.conversation.conversation.head_sequence
+      : 0;
     const routeTaskId = routeWorkingBrief !== null
       && decision.route === 'build'
       ? routeWorkingBrief.taskId
@@ -1638,8 +1683,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         ? await project.submit(submittedIdea)
         : await project.answer(submittedIdea);
       if (workspaceEpochRef.current !== commandEpoch) return;
-      if (!shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
-      await readActivityAfterTerminal(result, commandEpoch);
+      const terminalConversation = await readActivityAfterTerminal(result, commandEpoch);
+      const recordedAnswerSuccess = !shouldSubmitToConversationWorkPath
+        && result.status === 'answer_failed'
+        && hasRecordedSuccessfulAnswerAfterHead(
+          terminalConversation,
+          submittedIdea,
+          answerStartHeadSequence,
+        );
+      setAnswerFailureRecordedSuccess(recordedAnswerSuccess);
+      if (!recordedAnswerSuccess && !shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
       setLiveOutput(null);
     } finally {
       if (workspaceEpochRef.current === commandEpoch) {
@@ -2140,6 +2193,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
                 && project.snapshot.busy
                 && project.snapshot.status === 'answering'}
               activeFile={activeFile}
+              answerFailureRecordedSuccess={answerFailureRecordedSuccess}
               approvalMode={visibleApprovalMode}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               composerContextStatus={composerContextStatus}

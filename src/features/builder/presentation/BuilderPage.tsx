@@ -119,6 +119,7 @@ export type BuilderPageProps = {
   composerMode?: BuilderComposerMode | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
+  answerFailureRecordedSuccess?: boolean;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
   planReviewInFlight?: BuilderPlanReviewInFlight | null;
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
@@ -1690,6 +1691,7 @@ export function BuilderPage({
   snapshot,
   activeFile,
   approvedPlanContinuationFailure = null,
+  answerFailureRecordedSuccess = false,
   liveOutput = null,
   planReviewFailure = null,
   planReviewInFlight = null,
@@ -1740,6 +1742,7 @@ export function BuilderPage({
     && !viewingHistory
     && (!busy || canAddContext);
   const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
+  const showFailedNotice = failed && !(status === 'answer_failed' && answerFailureRecordedSuccess);
   const canRetryGenerate = typeof onRetryGenerate === 'function'
     && (status === 'generation_failed' || status === 'submit_failed')
     && current?.retryableGeneration === true
@@ -2343,7 +2346,7 @@ export function BuilderPage({
         </p>
       );
     }
-    if (failed) {
+    if (showFailedNotice) {
       return (
         <div
           className="cf-builder-alert cf-builder-alert-danger cf-builder-chat-notice flex flex-col gap-2 text-sm"

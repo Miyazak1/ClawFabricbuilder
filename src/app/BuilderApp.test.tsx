@@ -28,6 +28,7 @@ import {
   createSaveResult,
   createSourceTree,
   createTaskStreamWire,
+  createTwoAnswerTaskStreamWire,
   digest,
 } from '../test/builderV2Fixtures';
 import { createBuilderGenerationRequest } from '../features/builder/application/builderGeneration';
@@ -201,6 +202,7 @@ async function setup(options: Readonly<{
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
   failAnswerAfterFirst?: boolean;
+  recordedAnswerAfterFailedPublicResult?: boolean;
   failGenerate?: boolean;
   failApprovedPlanGenerateOnce?: boolean;
   failPlanReview?: boolean;
@@ -669,6 +671,15 @@ async function setup(options: Readonly<{
                   .test(latestAnswerInstruction))
             )
               ? createContextualBuildTaskStreamWire()
+            : options.recordedAnswerAfterFailedPublicResult === true
+              && options.failAnswerAfterFirst === true
+              && answerAttempts > 1
+              && latestAnswerInstruction !== null
+              ? createTwoAnswerTaskStreamWire({
+                firstQuestionText: 'hi',
+                secondAnswerText: '我是由深度求索（DeepSeek）公司创造的 DeepSeek 模型。',
+                secondQuestionText: latestAnswerInstruction,
+              })
             : options.answerActivity === true
               ? createAnswerTaskStreamWire()
               : options.readOnlyPageQuestionActivity === true
@@ -875,6 +886,9 @@ async function setup(options: Readonly<{
     generate,
     generateApprovedPlan,
     resolveAnswer: async () => {
+      for (let attempt = 0; resolveAnswer === null && attempt < 20; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      }
       if (resolveAnswer === null) throw new Error('answer was not deferred');
       await resolveAnswer();
     },
@@ -1284,6 +1298,41 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-conversation-workspace="true"]')).not.toBeNull();
     expect(container.textContent).toContain('This answer does not change files.');
     expect(container.textContent).not.toContain('Activity is unavailable');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('does not show answer failed notice when the same answer was recorded in the chat stream', async () => {
+    const { answer, container, generate, saveDraft, submit } = await setup({
+      answerActivity: true,
+      failAnswerAfterFirst: true,
+      recordedAnswerAfterFailedPublicResult: true,
+    });
+
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(container.textContent).toContain('This answer does not change files.');
+    });
+
+    setComposerInstruction(container, '你是什么大模型');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('我是由深度求索（DeepSeek）公司创造的 DeepSeek 模型。');
+    });
+    expect(container.textContent).toContain('This answer does not change files.');
+    expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
+    expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });

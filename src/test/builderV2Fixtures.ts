@@ -682,8 +682,13 @@ export function createPlanReviewTaskStreamWire(decision: 'approved' | 'rejected'
   };
 }
 
-export function createAnswerTaskStreamWire() {
+export function createAnswerTaskStreamWire(options: Readonly<{
+  answerText?: string;
+  questionText?: string;
+}> = {}) {
   const wire = createTaskStreamWire();
+  const questionText = options.questionText ?? 'What does this project do?';
+  const answerText = options.answerText ?? 'This answer does not change files.';
   return {
     ...wire,
     conversation: {
@@ -695,7 +700,7 @@ export function createAnswerTaskStreamWire() {
           turn_id: TURN_ID,
           message: {
             message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
-            text: 'What does this project do?',
+            text: questionText,
           },
           message_kind: 'submitted',
           mode: 'question',
@@ -721,7 +726,7 @@ export function createAnswerTaskStreamWire() {
           failure_phase: 'not_applicable',
           assistant_message: {
             message_id: ASSISTANT_MESSAGE_ID,
-            text: 'This answer does not change files.',
+            text: answerText,
           },
           candidate: null,
         },
@@ -733,6 +738,125 @@ export function createAnswerTaskStreamWire() {
           outcome: 'answered',
         },
       ],
+    },
+  };
+}
+
+export function createTwoAnswerTaskStreamWire(options: Readonly<{
+  firstAnswerText?: string;
+  firstQuestionText?: string;
+  secondAnswerText: string;
+  secondQuestionText: string;
+}>) {
+  const firstQuestionText = options.firstQuestionText ?? 'hi';
+  const firstAnswerText = options.firstAnswerText ?? 'This answer does not change files.';
+  return {
+    stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1234,
+      head_sequence: 8,
+      recorded_active_turn_id: null,
+      window: {
+        first_sequence: 1,
+        last_sequence: 8,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174000',
+            text: firstQuestionText,
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          failure_phase: 'not_applicable',
+          assistant_message: {
+            message_id: ASSISTANT_MESSAGE_ID,
+            text: firstAnswerText,
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          outcome: 'answered',
+        },
+        {
+          item_kind: 'user_message',
+          sequence: 5,
+          turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174001',
+            text: options.secondQuestionText,
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 6,
+          turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+          run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174001',
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 7,
+          turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+          run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174001',
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          failure_phase: 'not_applicable',
+          assistant_message: {
+            message_id: 'builder-message:223e4567-e89b-42d3-a456-426614174001',
+            text: options.secondAnswerText,
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 8,
+          turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+          run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174001',
+          outcome: 'answered',
+        },
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
     },
   };
 }

@@ -2721,6 +2721,7 @@ function createBuilderGenerationMainService(rawOptions) {
       const context = valueAt(internal, 'context');
       const conversationContext = latestConversationContext(context, explanationContexts.get(context));
       if (conversationContext === undefined) fail();
+      const publicResult = publicExplanationResult(internal, request);
       Reflect.apply(
         completeConversationExplanation,
         options.conversationService,
@@ -2729,7 +2730,7 @@ function createBuilderGenerationMainService(rawOptions) {
           assistant_text: internal.explanation,
         }],
       );
-      return publicExplanationResult(internal, request);
+      return publicResult;
     }).catch((error) => {
       recordFailure(key, error);
       throw error;
