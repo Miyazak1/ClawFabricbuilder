@@ -1312,6 +1312,18 @@ Current checkpoint:
   Git or Project Revision facts, and creates no generic Review row or Artifact
   authority. Actual step execution, model/tool dispatch, and result recording
   remain later gates.
+- the current Agent Step Start store checkpoint persists those digest-bound
+  step-start receipts as restart-replayable SQLite facts. The store verifies
+  the Step Start receipt contract, enforces one start per Run step id and
+  supervised action admission, exposes owner-scoped reads by step id and
+  admission id, lists starts by Task or Run, verifies canonical receipt JSON,
+  schema fingerprint, runtime pragmas, and row/receipt consistency, and reports
+  only `main_owned_agent_step_start_store` evidence. It still opens no
+  IPC/preload path, shows no Agents UI, dispatches no provider/model or tool,
+  executes no step, grants no permission, reads or writes no source, runs no
+  process, stores no raw context, mutates no Git or Project Revision facts, and
+  creates no generic Review row or Artifact authority. Actual step runner
+  orchestration and execution remain later checkpoints.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads
