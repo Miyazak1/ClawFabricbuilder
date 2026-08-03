@@ -917,6 +917,17 @@ Current checkpoint:
   path; shows no Agents UI; dispatches no provider/model or tool; reads no
   credentials or source; writes no files; runs no process or tests; mutates no
   Git or Project Revision facts; and creates no Review/Artifact authority.
+- the current Agent budget audit service composes the active supervision lease
+  read and Budget Audit store as a main-only pre-action evidence gate. It
+  creates an allowed or denied budget audit only when the supplied active
+  Assignment status, supervision lease, and requested usage/outcome contract
+  match a currently active store-backed lease at the observed time, records or
+  replays that audit, and verifies it through read-by-audit and lease-scoped
+  listing. It opens no IPC/preload path, shows no Agents UI, dispatches no
+  provider/model or tool, performs no requested next action, grants no
+  permissions, reads no credentials or source, writes no files, runs no process
+  or tests, mutates no Git or Project Revision facts, and creates no Review or
+  Artifact authority.
 
 #### Gate A2 - Agent-to-Agent Delegation
 

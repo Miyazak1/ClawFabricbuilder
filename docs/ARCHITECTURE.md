@@ -285,7 +285,15 @@ Artifact, and exposes no IPC/preload or visible Agents UI. The current
 Agent Supervision Lease store is only an internal supervision evidence authority: it
 persists one active-assignment lease/release chain in main-owned SQLite and
 enforces one unreleased and unexpired lease per assignment with monotonic lease
-epochs; it is not a Run executor. The current Agent Delegation contract is only
+epochs; it is not a Run executor. The current Agent Budget Audit service is
+only a main-only composition gate over the active supervision lease read and
+Budget Audit store: it records or replays allowed or denied budget audit facts
+for a requested next Agent action, requires the matching lease to be active in
+the lease store at the observed time, and still dispatches no next action. It
+starts no Run or execution, dispatches no provider/tool, grants no permission,
+reads or writes no source, mutates no Git or Project Revision, creates no
+Review or Artifact, and exposes no IPC/preload or visible Agents UI. The
+current Agent Delegation contract is only
 a pure main-side evidence contract: it binds an active parent assignment and
 lease to a target Agent version, child Task/Run identity, permission and budget
 intersection, cancellation propagation, and review-return boundary, but creates
