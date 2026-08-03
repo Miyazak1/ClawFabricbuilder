@@ -444,19 +444,28 @@ describe('Builder desktop layout styles', () => {
     expect(textarea).toContain('background: transparent;');
   });
 
-  it('keeps the composer workspace chip tall enough for its two-line label', () => {
+  it('keeps the composer workspace context on the top edge outside the footer', () => {
     const source = styles();
+    const shell = styleBlock(source, '.cf-builder-composer-shell');
+    const contextBar = styleBlock(source, '.cf-builder-composer-context-bar');
+    const contextPill = styleBlock(source, '.cf-builder-composer-context-pill');
     const workspaceChip = styleBlock(source, '.cf-builder-workspace-chip');
     const workspaceCopy = styleBlock(source, '.cf-builder-workspace-chip-copy');
     const workspaceLabel = styleBlock(source, '.cf-builder-workspace-chip-label');
     const workspaceDetail = styleBlock(source, '.cf-builder-workspace-chip-detail');
+    const picker = styleBlock(source, '.cf-builder-workspace-picker');
 
-    expect(workspaceChip).toContain('min-height: 40px;');
-    expect(workspaceChip).toContain('padding: 3px 9px;');
+    expect(shell).toContain('grid-template-rows: auto minmax(72px, auto) auto;');
+    expect(contextBar).toContain('display: flex;');
+    expect(contextBar).toContain('padding: 8px 10px 0;');
+    expect(contextPill).toContain('white-space: nowrap;');
+    expect(workspaceChip).toContain('min-height: 34px;');
+    expect(workspaceChip).toContain('padding: 3px 8px;');
     expect(workspaceCopy).toContain('display: grid;');
     expect(workspaceCopy).toContain('gap: 1px;');
     expect(workspaceLabel).toContain('white-space: nowrap;');
     expect(workspaceDetail).toContain('white-space: nowrap;');
     expect(workspaceDetail).toContain('line-height: 1.15;');
+    expect(picker).toContain('top: 48px;');
   });
 });

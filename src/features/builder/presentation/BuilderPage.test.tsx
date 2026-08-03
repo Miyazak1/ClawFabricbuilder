@@ -1326,6 +1326,10 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-activity="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.closest('[data-builder-composer-context-bar="true"]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.closest('.cf-builder-composer-footer'))
+      .toBeNull();
     expect(container.textContent).not.toContain('Start from an idea');
     expect(container.textContent).not.toContain('Select a project to see activity.');
     expect(container.textContent).not.toContain('No activity yet.');
@@ -1359,6 +1363,8 @@ describe('BuilderPage v2', () => {
       .toContain('Choose project');
     expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
       .toContain('Chat only until you choose a folder');
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.closest('[data-builder-composer-context-bar="true"]'))
+      .not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
 
     click(container, '[data-builder-workspace-chip="true"]');

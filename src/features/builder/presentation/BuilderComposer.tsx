@@ -178,6 +178,9 @@ export function BuilderComposer({
     : workingProject !== null
       ? sourceFolderBoundaryLabel(workingProject.source_folders[0]?.name)
       : 'Chat only until you choose a folder';
+  const workspaceEnvironmentLabels = [
+    savedProject !== null || workingProject !== null ? 'Local' : null,
+  ].filter((label): label is string => label !== null);
   const composerRouteEvidence = routeDecisionEvidence(composerRouteDecision);
   const composerPlaceholder = (() => {
     if (hasUnsavedDraft) return 'Ask about this draft, or describe the next change...';
@@ -402,6 +405,34 @@ export function BuilderComposer({
       data-builder-route={composerRouteDecision?.route}
     >
       <div className="cf-builder-composer-shell">
+        <div className="cf-builder-composer-context-bar" data-builder-composer-context-bar="true">
+          <button
+            aria-expanded={workspacePickerOpen}
+            aria-haspopup="dialog"
+            className="cf-builder-workspace-chip"
+            data-builder-workspace-chip="true"
+            disabled={busy && !canAddContext}
+            onClick={toggleWorkspacePicker}
+            title={workspaceLabel}
+            type="button"
+          >
+            <FolderOpen aria-hidden="true" className="size-3.5" />
+            <span className="cf-builder-workspace-chip-copy">
+              <span className="cf-builder-workspace-chip-label">{workspaceLabel}</span>
+              <span className="cf-builder-workspace-chip-detail">{workspaceDetail}</span>
+            </span>
+            <ChevronDown aria-hidden="true" className="size-3.5" />
+          </button>
+          {workspaceEnvironmentLabels.length > 0 ? (
+            <span className="cf-builder-composer-context-pills" data-builder-composer-context-pills="true">
+              {workspaceEnvironmentLabels.map((label) => (
+                <span className="cf-builder-composer-context-pill" key={label}>
+                  {label}
+                </span>
+              ))}
+            </span>
+          ) : null}
+        </div>
         <textarea
           aria-label="Ask a question, or describe what to build or change"
           className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
@@ -514,23 +545,6 @@ export function BuilderComposer({
                 </div>
               ) : null}
             </div>
-            <button
-              aria-expanded={workspacePickerOpen}
-              aria-haspopup="dialog"
-              className="cf-builder-workspace-chip"
-              data-builder-workspace-chip="true"
-              disabled={busy && !canAddContext}
-              onClick={toggleWorkspacePicker}
-              title={workspaceLabel}
-              type="button"
-            >
-              <FolderOpen aria-hidden="true" className="size-3.5" />
-              <span className="cf-builder-workspace-chip-copy">
-                <span className="cf-builder-workspace-chip-label">{workspaceLabel}</span>
-                <span className="cf-builder-workspace-chip-detail">{workspaceDetail}</span>
-              </span>
-              <ChevronDown aria-hidden="true" className="size-3.5" />
-            </button>
             {composerMode === 'plan' ? (
               <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip="plan">
                 <ListChecks aria-hidden="true" className="size-3.5" />

@@ -331,7 +331,12 @@ describe('BuilderComposer', () => {
 
     expect(ready.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     expect(ready.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
-    expect(ready.querySelector('[data-builder-workspace-chip="true"]')).not.toBeNull();
+    const contextBar = ready.querySelector('[data-builder-composer-context-bar="true"]');
+    const workspaceChip = ready.querySelector('[data-builder-workspace-chip="true"]');
+    const footer = ready.querySelector('.cf-builder-composer-footer');
+    expect(contextBar).not.toBeNull();
+    expect(workspaceChip?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
+    expect(workspaceChip?.closest('.cf-builder-composer-footer')).not.toBe(footer);
     expect(ready.querySelector('[data-builder-submit-turn="true"]')).not.toBeNull();
 
     const draft = render(
