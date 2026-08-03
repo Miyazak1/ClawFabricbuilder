@@ -887,8 +887,16 @@ Current checkpoint:
   receipts; opens no IPC/preload path; shows no Agents UI; grants no
   permission; dispatches no provider/model or tool; reads no credentials or
   source; writes no files; runs no process or tests; mutates no Git or Project
-  Revision facts; and creates no Review/Artifact authority. Review/Contribution
-  admission remains a separate gate.
+  Revision facts; and creates no Review/Artifact authority.
+- the current Agent Delegation result admission contract adds the local
+  Contribution-like admission receipt for a returned child result. It binds the
+  Delegation result receipt, parent/child Conversation/Task/Run identity,
+  owner, project, fixed result summary, and owner-review-before-parent-
+  materialization boundary. It admits only to the parent review boundary; it
+  creates no Review row, Artifact, child assignment, provider/tool dispatch,
+  permission grant, source materialization, Git mutation, Project Revision, or
+  parent Task mutation authority. A durable admission store and real
+  Review/Artifact materialization remain separate gates.
 
 ### Track B - People and Spaces
 

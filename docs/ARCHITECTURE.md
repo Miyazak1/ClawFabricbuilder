@@ -249,7 +249,11 @@ parent review without raw output, Review creation, or parent materialization.
 The current Agent Delegation result store persists those return receipts in
 main-owned SQLite with parent/child Task result listing and one result per
 Delegation receipt, but still creates no Review, Artifact, or parent
-materialization. These Agent authorities expose no Agents UI,
+materialization. The current Agent Delegation result admission contract is only
+a local Contribution-like receipt: it can admit a recorded delegated result to
+the parent review boundary while still creating no Review row, Artifact, child
+assignment, source materialization, parent mutation, Git fact, or Project
+Revision. These Agent authorities expose no Agents UI,
 IPC/preload command, permission grant, provider/tool dispatch, source read, Git
 mutation, Review, Revision, or Artifact authority.
 
