@@ -256,8 +256,17 @@ assignment, source materialization, parent mutation, Git fact, or Project
 Revision. The current Agent Delegation result admission store persists those
 local admission receipts in main-owned SQLite with parent/child Task admission
 listing, read-by-result lookup, and one admission per Delegation result, but
-still creates no Review, Artifact, or parent materialization. These Agent
-authorities expose no Agents UI,
+still creates no Review, Artifact, or parent materialization. The current Agent
+Delegation result review decision contract is only a pure owner decision receipt
+over an admitted child result: it can approve a proposed child result for later
+parent materialization, reject it, or acknowledge a blocked/failed child result
+without materialization. The current Agent Delegation result review store
+persists those owner decision receipts in main-owned SQLite with owner-scoped
+reads, parent/child Task review listing, read-by-admission lookup, one review
+per admitted child result, and restart/idempotency/schema-fingerprint checks,
+but still creates no generic Review row, Artifact, parent mutation, source
+materialization, Git fact, Project Revision, provider/tool dispatch, permission
+grant, or parent materialization. These Agent authorities expose no Agents UI,
 IPC/preload command, permission grant, provider/tool dispatch, source read, Git
 mutation, Review, Revision, or Artifact authority.
 
