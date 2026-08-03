@@ -1402,6 +1402,54 @@ function addProgressAndToolFacts(evidence) {
   return replaceTaskStreamItems(evidence, items);
 }
 
+function addContextSnapshotAndBriefFacts(evidence) {
+  const conversation = evidence.task_stream.conversation;
+  const items = [];
+  let inserted = false;
+  for (const item of conversation.items) {
+    items.push(item);
+    if (!inserted && item.item_kind === 'run_started' && item.task_id !== null) {
+      inserted = true;
+      items.push(
+        {
+          item_kind: 'run_context_snapshot_recorded',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          task_id: item.task_id,
+          context: {
+            recorded_state: 'recorded',
+            route: 'build',
+            dispatch: 'build',
+            brief: 'available',
+            base: 'new_project_or_unsaved',
+            permission_result: 'allowed',
+            command_execution: 'not_included',
+            network_access: 'not_included',
+          },
+        },
+        {
+          item_kind: 'task_brief_updated',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          task: {
+            task_id: item.task_id,
+            title: 'Make a focus timer',
+          },
+          brief: {
+            status: 'ready',
+            summary: 'Build a compact focus timer with a saved result.',
+            contextual_build_ready: true,
+          },
+          recorded_state: 'updated',
+        },
+      );
+    }
+  }
+  return replaceTaskStreamItems(evidence, items);
+}
+
 function addSteeringMessage(evidence) {
   const items = [...evidence.task_stream.conversation.items];
   let runStartedIndex = -1;
@@ -2582,6 +2630,37 @@ test('rejects explanations that are not bound to a taskless question turn', () =
   );
 });
 
+test('preserves fixed read-evidence substages without exposing bridge details', async () => {
+  const page = new FakePage();
+  page.evaluate = async () => { throw new Error('secret-marker'); };
+
+  await assert.rejects(
+    readSanitizedBridgeEvidence(page, null, 'canary_read_evidence_initial_saved_failed'),
+    (error) => error.code === 'canary_read_evidence_initial_saved_failed'
+      && error.stage === 'read_evidence_initial_saved'
+      && !String(error.message).includes('secret-marker'),
+  );
+});
+
+test('preserves initial-current read-evidence component substages', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const currentFailure = bridgeEvidence(projectId, true, 1, 1, 0);
+  currentFailure.current.operation = 'current_missing';
+  assert.throws(
+    () => assertReadEvidence(currentFailure, 'canary_read_evidence_initial_current_failed'),
+    (error) => error.code === 'canary_read_evidence_initial_current_current_failed'
+      && error.stage === 'read_evidence_initial_current_current',
+  );
+
+  const taskStreamFailure = bridgeEvidence(projectId, true, 1, 1, 0);
+  taskStreamFailure.task_stream.stream_version = 'builder-task-stream-read-result.v0';
+  assert.throws(
+    () => assertReadEvidence(taskStreamFailure, 'canary_read_evidence_initial_current_failed'),
+    (error) => error.code === 'canary_read_evidence_initial_current_task_stream_failed'
+      && error.stage === 'read_evidence_initial_current_task_stream',
+  );
+});
+
 test('skips plan source-read approval when no prompt is visible', async () => {
   const page = new FakePage();
 
@@ -3319,6 +3398,35 @@ test('accepts renderer-safe run progress and tool activity in task stream eviden
   assert.doesNotMatch(
     JSON.stringify(assertReadEvidence(evidence).task_stream),
     /permission_admission_receipt|record_digest|resource_id|raw_output|stdout|stderr|provider|credential|source_tree|commit_oid|tree_oid/iu,
+  );
+});
+
+test('accepts renderer-safe route context and task brief task stream evidence', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = addContextSnapshotAndBriefFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const revision = evidence.current.product_revision_receipt;
+  const facts = assertTaskStreamCandidateFacts(evidence, revision, 1, 0);
+
+  assert.deepEqual(facts, {
+    answer_count: 0,
+    accepted_review_count: 1,
+    candidate_ready_count: 1,
+    candidate_reviewed_count: 1,
+    candidate_result_count: 1,
+    explanation_result_count: 0,
+    head_sequence: 7,
+    item_count: 7,
+    latest_candidate_bound_to_revision: true,
+    latest_candidate_review: 'accepted',
+    latest_saved_revision_number: 1,
+    run_progress_count: 0,
+    source_availability: 'not_loaded',
+    tool_request_count: 0,
+    tool_result_count: 0,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(assertReadEvidence(evidence).task_stream),
+    /matchedSignals|rawRouteContext|provider|credential|source_tree|commit_oid|tree_oid|permission_admission_receipt/iu,
   );
 });
 

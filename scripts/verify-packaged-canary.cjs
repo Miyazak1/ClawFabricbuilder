@@ -201,6 +201,16 @@ const ERROR_MESSAGES = Object.freeze({
   canary_preview_failed: 'Packaged canary preview evidence failed.',
   canary_version_failed: 'Packaged canary revision version evidence failed.',
   canary_read_evidence_failed: 'Packaged canary read evidence failed.',
+  canary_read_evidence_initial_current_failed: 'Packaged canary initial current evidence failed.',
+  canary_read_evidence_initial_current_current_failed: 'Packaged canary initial current project evidence failed.',
+  canary_read_evidence_initial_current_task_stream_failed: 'Packaged canary initial current task stream evidence failed.',
+  canary_read_evidence_initial_saved_failed: 'Packaged canary initial saved evidence failed.',
+  canary_read_evidence_pending_update_failed: 'Packaged canary pending update evidence failed.',
+  canary_read_evidence_plan_proposal_failed: 'Packaged canary plan proposal evidence failed.',
+  canary_read_evidence_restart_continuation_failed: 'Packaged canary restart continuation evidence failed.',
+  canary_read_evidence_saved_profile_boot_failed: 'Packaged canary saved profile boot evidence failed.',
+  canary_read_evidence_updated_current_failed: 'Packaged canary updated current evidence failed.',
+  canary_read_evidence_updated_saved_failed: 'Packaged canary updated saved evidence failed.',
   canary_restart_failed: 'Packaged canary restart restore failed.',
   canary_restart_open_failed: 'Packaged canary could not reopen the saved project.',
   canary_restart_preview_failed: 'Packaged canary could not restore the saved preview.',
@@ -278,6 +288,16 @@ const ERROR_STAGES = Object.freeze({
   canary_preview_failed: 'preview',
   canary_version_failed: 'version',
   canary_read_evidence_failed: 'read_evidence',
+  canary_read_evidence_initial_current_failed: 'read_evidence_initial_current',
+  canary_read_evidence_initial_current_current_failed: 'read_evidence_initial_current_current',
+  canary_read_evidence_initial_current_task_stream_failed: 'read_evidence_initial_current_task_stream',
+  canary_read_evidence_initial_saved_failed: 'read_evidence_initial_saved',
+  canary_read_evidence_pending_update_failed: 'read_evidence_pending_update',
+  canary_read_evidence_plan_proposal_failed: 'read_evidence_plan_proposal',
+  canary_read_evidence_restart_continuation_failed: 'read_evidence_restart_continuation',
+  canary_read_evidence_saved_profile_boot_failed: 'read_evidence_saved_profile_boot',
+  canary_read_evidence_updated_current_failed: 'read_evidence_updated_current',
+  canary_read_evidence_updated_saved_failed: 'read_evidence_updated_saved',
   canary_restart_failed: 'restart',
   canary_restart_open_failed: 'restart_open',
   canary_restart_preview_failed: 'restart_preview',
@@ -443,6 +463,16 @@ const TASK_STREAM_USER_MESSAGE_KEYS = Object.freeze([
   'mode',
   'task',
 ]);
+const TASK_STREAM_TASK_BRIEF_UPDATED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task',
+  'brief',
+  'recorded_state',
+]);
+const TASK_STREAM_TASK_BRIEF_KEYS = Object.freeze(['status', 'summary', 'contextual_build_ready']);
 const TASK_STREAM_RUN_STARTED_KEYS = Object.freeze([
   'item_kind',
   'sequence',
@@ -452,6 +482,24 @@ const TASK_STREAM_RUN_STARTED_KEYS = Object.freeze([
   'attempt_number',
   'retry_of_run_id',
   'recorded_state',
+]);
+const TASK_STREAM_RUN_CONTEXT_SNAPSHOT_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task_id',
+  'context',
+]);
+const TASK_STREAM_RUN_CONTEXT_KEYS = Object.freeze([
+  'recorded_state',
+  'route',
+  'dispatch',
+  'brief',
+  'base',
+  'permission_result',
+  'command_execution',
+  'network_access',
 ]);
 const TASK_STREAM_RUN_PROGRESS_KEYS = Object.freeze([
   'item_kind',
@@ -2620,7 +2668,7 @@ async function readPendingUpdateDraftRestoreEvidence(
   }
 }
 
-async function readOnlyBridgeEvidence(page, projectId = null) {
+async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_read_evidence_failed') {
   try {
     return await page.evaluate(async (request) => {
       const bridge = globalThis.clawfabricBuilder;
@@ -2659,22 +2707,55 @@ async function readOnlyBridgeEvidence(page, projectId = null) {
       return { bridge_contract, catalog, current, status, task_stream };
     }, { projectId });
   } catch {
-    fail('canary_read_evidence_failed');
+    fail(code);
   }
 }
 
-async function readSanitizedBridgeEvidence(page, projectId = null) {
+async function readSanitizedBridgeEvidence(page, projectId = null, code = 'canary_read_evidence_failed') {
   try {
-    return assertReadEvidence(await readOnlyBridgeEvidence(page, projectId));
+    return assertReadEvidence(await readOnlyBridgeEvidence(page, projectId, code), code);
   } catch (error) {
-    if (error instanceof BuilderPackagedCanaryError && error.code === 'canary_read_evidence_failed') {
-      throw error;
+    if (error instanceof BuilderPackagedCanaryError) {
+      const componentCodes = READ_EVIDENCE_COMPONENT_FAILURE_CODES[code];
+      if (
+        error.code === code
+        || (
+          componentCodes !== undefined
+          && Object.values(componentCodes).includes(error.code)
+        )
+      ) {
+        throw error;
+      }
     }
-    fail('canary_read_evidence_failed');
+    fail(code);
   }
 }
 
-function assertReadEvidence(value) {
+const READ_EVIDENCE_COMPONENT_FAILURE_CODES = Object.freeze({
+  canary_read_evidence_initial_current_failed: Object.freeze({
+    current: 'canary_read_evidence_initial_current_current_failed',
+    task_stream: 'canary_read_evidence_initial_current_task_stream_failed',
+  }),
+});
+
+function readEvidenceComponentCode(code, component) {
+  const componentCodes = READ_EVIDENCE_COMPONENT_FAILURE_CODES[code];
+  if (componentCodes === undefined) return code;
+  return componentCodes[component] ?? code;
+}
+
+function sanitizeReadEvidenceComponent(code, component, callback) {
+  try {
+    return callback();
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) {
+      fail(readEvidenceComponentCode(code, component));
+    }
+    throw error;
+  }
+}
+
+function assertReadEvidence(value, code = 'canary_evidence_failed') {
   if (
     value !== null
     && (typeof value === 'object' || typeof value === 'function')
@@ -2699,12 +2780,20 @@ function assertReadEvidence(value) {
   const catalog = sanitizeCatalog(evidenceDescriptors.catalog.value);
   const current = evidenceDescriptors.current.value === null
     ? null
-    : sanitizeCurrent(evidenceDescriptors.current.value);
+    : sanitizeReadEvidenceComponent(
+      code,
+      'current',
+      () => sanitizeCurrent(evidenceDescriptors.current.value),
+    );
   const taskStream = evidenceDescriptors.task_stream.value === null
     ? null
-    : sanitizeTaskStream(
-      evidenceDescriptors.task_stream.value,
-      current === null ? null : current.product_revision_receipt.project_id,
+    : sanitizeReadEvidenceComponent(
+      code,
+      'task_stream',
+      () => sanitizeTaskStream(
+        evidenceDescriptors.task_stream.value,
+        current === null ? null : current.product_revision_receipt.project_id,
+      ),
     );
   const result = Object.freeze({
     bridge_contract: bridgeContract,
@@ -2880,6 +2969,37 @@ function sanitizeTaskStreamUserMessage(source, sequence) {
   });
 }
 
+function sanitizeTaskStreamTaskBrief(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_TASK_BRIEF_KEYS);
+  const status = descriptors.status.value;
+  const contextualBuildReady = descriptors.contextual_build_ready.value;
+  if (
+    (status !== 'discussing' && status !== 'ready')
+    || typeof contextualBuildReady !== 'boolean'
+    || (status !== 'ready' && contextualBuildReady)
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    status,
+    summary_digest: digestText(evidenceText(descriptors.summary.value, 4_096, 16 * 1_024, true, true)),
+    contextual_build_ready: contextualBuildReady,
+  });
+}
+
+function sanitizeTaskStreamTaskBriefUpdated(source, sequence) {
+  if (source.recorded_state !== 'updated') fail('canary_evidence_failed');
+  const task = sanitizeTaskStreamTask(source.task);
+  if (task === null) fail('canary_evidence_failed');
+  return Object.freeze({
+    item_kind: 'task_brief_updated',
+    sequence,
+    turn_id: safeBuilderId(source.turn_id, 'turn_id'),
+    run_id: safeBuilderId(source.run_id, 'run_id'),
+    task,
+    brief: sanitizeTaskStreamTaskBrief(source.brief),
+    recorded_state: 'updated',
+  });
+}
+
 function sanitizeTaskStreamRunStarted(source, sequence) {
   const attemptNumber = source.attempt_number;
   const retryOfRunId = source.retry_of_run_id === null
@@ -2901,6 +3021,42 @@ function sanitizeTaskStreamRunStarted(source, sequence) {
     attempt_number: attemptNumber,
     retry_of_run_id: retryOfRunId,
     recorded_state: 'started',
+  });
+}
+
+function sanitizeTaskStreamRunContextSnapshot(source, sequence) {
+  const context = exactDataObject(source.context, TASK_STREAM_RUN_CONTEXT_KEYS);
+  const route = context.route.value;
+  const dispatch = context.dispatch.value;
+  const brief = context.brief.value;
+  const base = context.base.value;
+  const permissionResult = context.permission_result.value;
+  if (
+    !['answer', 'clarify', 'update_brief', 'plan', 'build'].includes(route)
+    || !['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked'].includes(dispatch)
+    || !['available', 'not_available'].includes(brief)
+    || !['new_project_or_unsaved', 'project_revision'].includes(base)
+    || !['not_required', 'allowed', 'ask', 'denied'].includes(permissionResult)
+    || context.recorded_state.value !== 'recorded'
+    || context.command_execution.value !== 'not_included'
+    || context.network_access.value !== 'not_included'
+  ) fail('canary_evidence_failed');
+  return Object.freeze({
+    item_kind: 'run_context_snapshot_recorded',
+    sequence,
+    turn_id: safeBuilderId(source.turn_id, 'turn_id'),
+    run_id: safeBuilderId(source.run_id, 'run_id'),
+    task_id: source.task_id === null ? null : safeBuilderId(source.task_id, 'task_id'),
+    context: Object.freeze({
+      recorded_state: 'recorded',
+      route,
+      dispatch,
+      brief,
+      base,
+      permission_result: permissionResult,
+      command_execution: 'not_included',
+      network_access: 'not_included',
+    }),
   });
 }
 
@@ -3114,8 +3270,12 @@ function sanitizeTaskStreamItem(value) {
   let source;
   if (itemKind === 'user_message') {
     source = exactTaskStreamValues(value, TASK_STREAM_USER_MESSAGE_KEYS);
+  } else if (itemKind === 'task_brief_updated') {
+    source = exactTaskStreamValues(value, TASK_STREAM_TASK_BRIEF_UPDATED_KEYS);
   } else if (itemKind === 'run_started') {
     source = exactTaskStreamValues(value, TASK_STREAM_RUN_STARTED_KEYS);
+  } else if (itemKind === 'run_context_snapshot_recorded') {
+    source = exactTaskStreamValues(value, TASK_STREAM_RUN_CONTEXT_SNAPSHOT_KEYS);
   } else if (itemKind === 'run_progress_recorded') {
     source = exactTaskStreamValues(value, TASK_STREAM_RUN_PROGRESS_KEYS);
   } else if (itemKind === 'run_control_requested') {
@@ -3137,7 +3297,9 @@ function sanitizeTaskStreamItem(value) {
   }
   const sequence = safePositiveInteger(source.sequence);
   if (itemKind === 'user_message') return sanitizeTaskStreamUserMessage(source, sequence);
+  if (itemKind === 'task_brief_updated') return sanitizeTaskStreamTaskBriefUpdated(source, sequence);
   if (itemKind === 'run_started') return sanitizeTaskStreamRunStarted(source, sequence);
+  if (itemKind === 'run_context_snapshot_recorded') return sanitizeTaskStreamRunContextSnapshot(source, sequence);
   if (itemKind === 'run_progress_recorded') return sanitizeTaskStreamRunProgress(source, sequence);
   if (itemKind === 'run_control_requested') return sanitizeTaskStreamRunControl(source, sequence);
   if (itemKind === 'tool_call_requested') return sanitizeTaskStreamToolCallRequested(source, sequence);
@@ -3162,9 +3324,11 @@ function taskStreamItemCounts(items) {
     plan_rejected_count: 0,
     plan_result_count: 0,
     plan_reviewed_count: 0,
+    run_context_snapshot_count: 0,
     run_completed_count: 0,
     run_progress_count: 0,
     run_started_count: 0,
+    task_brief_update_count: 0,
     tool_request_count: 0,
     tool_result_count: 0,
     tool_result_cancelled_count: 0,
@@ -3187,6 +3351,7 @@ function taskStreamItemCounts(items) {
   const planReviewByRunId = new Map();
   const planRunCompletedByRunId = new Map();
   const progressStageByRunId = new Map();
+  const runContextSnapshotByRunId = new Map();
   const runCompletedByRunId = new Map();
   const runStartedByRunId = new Map();
   const toolRequestById = new Map();
@@ -3208,6 +3373,15 @@ function taskStreamItemCounts(items) {
         if (activeRun === null || activeRun.sequence >= item.sequence) fail('canary_evidence_failed');
       }
     }
+    if (item.item_kind === 'task_brief_updated') {
+      counts.task_brief_update_count += 1;
+      const started = runStartedByRunId.get(item.run_id) ?? null;
+      if (
+        started === null
+        || started.turn_id !== item.turn_id
+        || item.sequence <= started.sequence
+      ) fail('canary_evidence_failed');
+    }
     if (item.item_kind === 'run_started') {
       counts.run_started_count += 1;
       if (runStartedByRunId.has(item.run_id) || activeRunByTurnId.has(item.turn_id)) {
@@ -3215,6 +3389,18 @@ function taskStreamItemCounts(items) {
       }
       runStartedByRunId.set(item.run_id, item);
       activeRunByTurnId.set(item.turn_id, item);
+    }
+    if (item.item_kind === 'run_context_snapshot_recorded') {
+      counts.run_context_snapshot_count += 1;
+      const started = runStartedByRunId.get(item.run_id) ?? null;
+      if (
+        started === null
+        || started.turn_id !== item.turn_id
+        || runCompletedByRunId.has(item.run_id)
+        || runContextSnapshotByRunId.has(item.run_id)
+        || item.sequence <= started.sequence
+      ) fail('canary_evidence_failed');
+      runContextSnapshotByRunId.set(item.run_id, item);
     }
     if (item.item_kind === 'run_progress_recorded') {
       counts.run_progress_count += 1;
@@ -3829,7 +4015,9 @@ function expectedTaskStreamItemCount(
   const expectedUserMessageCount = expectedTurnCount + counts.steering_message_count;
   const expectedItemCount = expectedBaseItemCount
     + counts.steering_message_count
+    + counts.run_context_snapshot_count
     + counts.run_progress_count
+    + counts.task_brief_update_count
     + counts.tool_request_count
     + counts.tool_result_count;
   return Object.freeze({
@@ -3846,7 +4034,9 @@ function assertTaskStreamPlanCounts(counts, expectedTurnCount, planOptions) {
     || counts.plan_reviewed_count !== planOptions.planReviews
     || counts.plan_approved_count !== planOptions.approvedPlanReviews
     || counts.plan_rejected_count !== planOptions.rejectedPlanReviews
+    || counts.run_context_snapshot_count > expectedTurnCount
     || counts.run_progress_count > expectedTurnCount * TASK_STREAM_RUN_PROGRESS_STAGES.length
+    || counts.task_brief_update_count > expectedTurnCount
     || counts.tool_request_count !== counts.tool_result_count
     || (
       planOptions.requireToolActivity
@@ -4636,15 +4826,19 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (input.mode !== 'saved_profile') {
       await fillProviderSettingsViaUi(page, input.provider, gate);
     } else {
-      await readSanitizedBridgeEvidence(page);
+      await readSanitizedBridgeEvidence(page, null, 'canary_read_evidence_saved_profile_boot_failed');
       gate.allow();
     }
     const initialChat = await askInitialChatQuestionViaUi(page);
     const initialDraft = await generateProjectViaUi(page, input.idea);
     const initialSavedActivity = await captureSavedActivityEvidence(page, 1);
-    const initialEvidence = await readSanitizedBridgeEvidence(page);
+    const initialEvidence = await readSanitizedBridgeEvidence(page, null, 'canary_read_evidence_initial_saved_failed');
     const initialProject = projectFromReadEvidence(initialEvidence, 1);
-    const initialCurrentEvidence = await readSanitizedBridgeEvidence(page, initialProject.project_id);
+    const initialCurrentEvidence = await readSanitizedBridgeEvidence(
+      page,
+      initialProject.project_id,
+      'canary_read_evidence_initial_current_failed',
+    );
     const initialRevision = exactRevisionFromReadEvidence(initialCurrentEvidence, initialProject);
     const initialTaskStream = assertTaskStreamCandidateFacts(initialCurrentEvidence, initialRevision, 1);
     const initialPreviewEvidence = await capturePreviewEvidence(page, gate);
@@ -4655,7 +4849,11 @@ async function runPackagedCanary(rawInput, options = {}) {
       CANARY_UPDATE_INSTRUCTION,
       1,
     );
-    const pendingUpdateEvidence = await readSanitizedBridgeEvidence(page, initialProject.project_id);
+    const pendingUpdateEvidence = await readSanitizedBridgeEvidence(
+      page,
+      initialProject.project_id,
+      'canary_read_evidence_pending_update_failed',
+    );
     const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
     if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
     const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 1);
@@ -4696,9 +4894,17 @@ async function runPackagedCanary(rawInput, options = {}) {
       ...(await saveUpdateDraftViaUi(pendingRestartPage, initialRevision)),
     });
     const updatedSavedActivity = await captureSavedActivityEvidence(pendingRestartPage, 2);
-    const updatedEvidence = await readSanitizedBridgeEvidence(pendingRestartPage);
+    const updatedEvidence = await readSanitizedBridgeEvidence(
+      pendingRestartPage,
+      null,
+      'canary_read_evidence_updated_saved_failed',
+    );
     const updatedProject = projectFromReadEvidence(updatedEvidence, 2);
-    const updatedCurrentEvidence = await readSanitizedBridgeEvidence(pendingRestartPage, updatedProject.project_id);
+    const updatedCurrentEvidence = await readSanitizedBridgeEvidence(
+      pendingRestartPage,
+      updatedProject.project_id,
+      'canary_read_evidence_updated_current_failed',
+    );
     const updatedRevision = exactRevisionFromReadEvidence(updatedCurrentEvidence, updatedProject);
     assertRevisionAdvance(initialRevision, updatedRevision);
     const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 1);
@@ -4774,7 +4980,11 @@ async function runPackagedCanary(rawInput, options = {}) {
       1,
     );
     const planProposalProject = projectFromReadEvidence(
-      await readSanitizedBridgeEvidence(restartedPage, updatedProject.project_id),
+      await readSanitizedBridgeEvidence(
+        restartedPage,
+        updatedProject.project_id,
+        'canary_read_evidence_plan_proposal_failed',
+      ),
       2,
     );
     if (!sameCatalogProjectRevision(planProposalProject, updatedProject)) {
@@ -4787,7 +4997,11 @@ async function runPackagedCanary(rawInput, options = {}) {
       1,
       1,
     );
-    const restartContinuationEvidence = await readSanitizedBridgeEvidence(restartedPage, updatedProject.project_id);
+    const restartContinuationEvidence = await readSanitizedBridgeEvidence(
+      restartedPage,
+      updatedProject.project_id,
+      'canary_read_evidence_restart_continuation_failed',
+    );
     const restartContinuationProject = projectFromReadEvidence(restartContinuationEvidence, 2);
     if (!sameCatalogProjectRevision(restartContinuationProject, updatedProject)) {
       fail('canary_evidence_failed');
