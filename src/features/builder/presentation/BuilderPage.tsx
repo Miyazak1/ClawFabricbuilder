@@ -231,6 +231,7 @@ function activityItems(
 function activityEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
   const entries: ActivityEntry[] = [];
   const completedRuns = new Set<string>();
+  const progressStagesByRun = new Map<string, BuilderConversationRunProgressStage[]>();
   const workEntries = new Map<string, ActivityWorkStatusEntry>();
   const toolRequestEntries = new Map<string, ActivityItemEntry>();
   for (const item of activityItems(snapshot)) {
@@ -249,6 +250,11 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
     }
     if (item.item_kind === 'run_progress_recorded') {
       const key = `${item.turn_id}:${item.run_id}`;
+      const progressStages = progressStagesByRun.get(key) ?? [];
+      if (progressStages.at(-1) !== item.stage) {
+        progressStages.push(item.stage);
+        progressStagesByRun.set(key, progressStages);
+      }
       const existing = workEntries.get(key);
       if (existing === undefined) {
         const entry: ActivityWorkStatusEntry = {
@@ -289,6 +295,13 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       completedRuns.add(key);
       const workEntry = workEntries.get(key);
       if (workEntry !== undefined) workEntry.hidden = true;
+      entries.push({
+        entry_kind: 'item',
+        item,
+        progressStages: progressStagesByRun.get(key) ?? [],
+        hidden: false,
+      });
+      continue;
     }
     if (
       item.item_kind === 'turn_completed'
@@ -530,6 +543,7 @@ type ActivityWorkStatusEntry = {
 type ActivityItemEntry = {
   entry_kind: 'item';
   item: BuilderConversationItem;
+  progressStages?: readonly BuilderConversationRunProgressStage[];
   hidden: boolean;
 };
 
@@ -553,6 +567,13 @@ function workStatusBody(status: ActivityWorkStatus): string {
   if (status === 'provider_request_started') return 'Writing the response.';
   if (status === 'provider_response_received') return 'Checking the response.';
   return 'Preparing the result for review.';
+}
+
+function progressStepLabel(stage: BuilderConversationRunProgressStage): string {
+  if (stage === 'context_ready') return 'Read the current project context.';
+  if (stage === 'provider_request_started') return 'Wrote the response.';
+  if (stage === 'provider_response_received') return 'Checked the response.';
+  return 'Prepared the result for review.';
 }
 
 function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
@@ -1074,6 +1095,7 @@ function ActivityItem({
   planReviewFailed,
   planReviewRecorded,
   pendingPlanReview,
+  progressStages = [],
 }: Readonly<{
   canReviewPlan: boolean;
   hasUnsavedDraft: boolean;
@@ -1083,6 +1105,7 @@ function ActivityItem({
   planReviewFailed: boolean;
   planReviewRecorded: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
+  progressStages?: readonly BuilderConversationRunProgressStage[];
 }>) {
   const displayRole = activityDisplayRole(item);
   const messageSurface = displayRole === 'user'
@@ -1130,7 +1153,11 @@ function ActivityItem({
         {item.item_kind === 'run_completed' && (
           item.terminal_status !== 'succeeded' || item.result_kind !== 'explanation'
         ) ? (
-          <ActivityCompletionSummaryView hasUnsavedDraft={hasUnsavedDraft} item={item} />
+          <ActivityCompletionSummaryView
+            hasUnsavedDraft={hasUnsavedDraft}
+            item={item}
+            progressStages={progressStages}
+          />
         ) : null}
         {item.item_kind === 'run_completed' && item.candidate !== null ? (
           <>
@@ -1250,9 +1277,11 @@ function ActivityWorkStatusItem({
 function ActivityCompletionSummaryView({
   hasUnsavedDraft,
   item,
+  progressStages,
 }: Readonly<{
   hasUnsavedDraft: boolean;
   item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>;
+  progressStages: readonly BuilderConversationRunProgressStage[];
 }>) {
   const summary = completionSummary(item, hasUnsavedDraft);
   const result = item.terminal_status === 'succeeded' ? item.result_kind : item.terminal_status;
@@ -1274,6 +1303,18 @@ function ActivityCompletionSummaryView({
         <dt>Next</dt>
         <dd>{summary.next}</dd>
       </div>
+      {progressStages.length > 0 ? (
+        <div data-builder-completion-steps="true">
+          <dt>Recorded steps</dt>
+          <dd>
+            <ol className="cf-builder-completion-steps">
+              {progressStages.map((stage, index) => (
+                <li key={`${stage}:${index}`}>{progressStepLabel(stage)}</li>
+              ))}
+            </ol>
+          </dd>
+        </div>
+      ) : null}
     </dl>
   );
 }
@@ -1355,6 +1396,7 @@ function ActivityPanel({
                   planReviewFailed={planReviewFailed}
                   planReviewRecorded={planReviewRecorded}
                   pendingPlanReview={pendingPlanReview}
+                  progressStages={entry.progressStages}
                 />
               )
             ))}
@@ -1446,6 +1488,7 @@ function BuilderArtifactLogsPanel({
                 planReviewFailed={false}
                 planReviewRecorded={false}
                 pendingPlanReview={null}
+                progressStages={entry.progressStages}
               />
             )
           ))}

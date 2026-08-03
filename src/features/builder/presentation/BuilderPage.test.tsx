@@ -470,6 +470,48 @@ async function progressActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function candidateProgressActivity() {
+  const wire = createTaskStreamWire();
+  const progressStages = [
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
+  ] as const;
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 8,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 8,
+      },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        ...progressStages.map((stage, index) => ({
+          item_kind: 'run_progress_recorded' as const,
+          sequence: index + 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          stage,
+          recorded_state: 'recorded' as const,
+        })),
+        {
+          ...wire.conversation.items[2],
+          sequence: 7,
+        },
+        {
+          ...wire.conversation.items[3],
+          sequence: 8,
+        },
+      ],
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function failedRunActivity() {
   const progressStages = [
     'context_ready',
@@ -2179,7 +2221,7 @@ describe('BuilderPage v2', () => {
 
   it('shows an unsaved draft and requires the explicit Save version command', async () => {
     const { draftReady } = await snapshots();
-    const activity = await candidateActivity();
+    const activity = await candidateProgressActivity();
     const onSave = vi.fn();
     const onRejectDraft = vi.fn();
     const container = render(
@@ -2205,7 +2247,14 @@ describe('BuilderPage v2', () => {
     expect(completion?.textContent).toContain('A draft is ready for review.');
     expect(completion?.textContent).toContain('A small project.');
     expect(completion?.textContent).toContain('Review Preview and Changes, then save a version if it looks right.');
+    const completionSteps = completion?.querySelector('[data-builder-completion-steps="true"]');
+    expect(completionSteps?.textContent).toContain('Recorded steps');
+    expect(completionSteps?.textContent).toContain('Read the current project context.');
+    expect(completionSteps?.textContent).toContain('Wrote the response.');
+    expect(completionSteps?.textContent).toContain('Checked the response.');
+    expect(completionSteps?.textContent).toContain('Prepared the result for review.');
     expect(completion?.textContent).not.toMatch(/saved|version saved|verified|test passed/iu);
+    expect(completion?.textContent).not.toMatch(/provider_request_started|provider_response_received|result_preparing|context_ready/iu);
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
       .toContain('Static preview is ready');
     expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
@@ -2952,6 +3001,12 @@ describe('BuilderPage v2', () => {
     expect(summary?.textContent).toContain('The AI response arrived but could not be prepared for review.');
     expect(summary?.textContent).toContain('No version was saved by this result.');
     expect(summary?.textContent).toContain('Try again with a smaller request or continue with a clearer follow-up.');
+    const completionSteps = summary?.querySelector('[data-builder-completion-steps="true"]');
+    expect(completionSteps?.textContent).toContain('Recorded steps');
+    expect(completionSteps?.textContent).toContain('Read the current project context.');
+    expect(completionSteps?.textContent).toContain('Wrote the response.');
+    expect(completionSteps?.textContent).toContain('Checked the response.');
+    expect(completionSteps?.textContent).not.toContain('Prepared the result for review.');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
