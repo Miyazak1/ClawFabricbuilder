@@ -533,6 +533,13 @@ Deliverables:
 - tests assert downgrade reasons;
 - UI can show route status without guessing from draft state.
 
+Current checkpoint: renderer and main fallback routing share the same public
+matched-signal vocabulary for current Builder routes, including
+`local_file_artifact` for Markdown/README/notes/text artifact writes. Main
+`submit` now dispatches from the resolved `RouteDecision` instead of a second
+boolean answer/build classifier, so workspace admission, write permission, and
+provider route selection cannot silently diverge.
+
 ### Slice 3 - Task Capsule And Working Brief
 
 Goal: support "chat first, execute later."

@@ -2472,24 +2472,27 @@ test('submits one composer turn through main-owned work or explanation routing',
     onGenerationStarted(event) {
       startedEvents.push(event);
     },
-    transport: async (input) => ({
-      transport_version: 'builder-openai-compatible-transport.v1',
-      generated_text: input.messages[1].content.includes('"instruction":"开始吧"')
-        || input.messages[1].content.includes('What does this project do')
-        || input.messages[1].content.includes('这个项目是做什么')
-        || input.messages[1].content.includes('怎么把按钮改红')
-        || input.messages[1].content.includes('我想先聊一下这个页面怎么做')
-        || input.messages[1].content.includes('我想创建一个登录页')
-        || input.messages[1].content.includes('我想做一个登录页')
-        || input.messages[1].content.includes('我要做一个登录页')
-        || input.messages[1].content.includes('保存这个方向')
-        || input.messages[1].content.includes('可以帮我做一个登录页吗')
-        || input.messages[1].content.includes('Can you build a login page')
-        || input.messages[1].content.includes('Should we create a dashboard')
-        || input.messages[1].content.includes('这里字都重叠了')
-        ? JSON.stringify(providerExplanation())
-        : JSON.stringify(providerOutput()),
-    }),
+    transport: async (input) => {
+      const userPrompt = input.messages[1].content;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: userPrompt.includes('"instruction":"开始吧"')
+          || userPrompt.includes('What does this project do')
+          || userPrompt.includes('这个项目是做什么')
+          || userPrompt.includes('怎么把按钮改红')
+          || userPrompt.includes('我想先聊一下这个页面怎么做')
+          || userPrompt.includes('我想创建一个登录页')
+          || userPrompt.includes('我想做一个登录页')
+          || userPrompt.includes('我要做一个登录页')
+          || userPrompt.includes('保存这个方向')
+          || userPrompt.includes('可以帮我做一个登录页吗')
+          || userPrompt.includes('Can you build a login page')
+          || userPrompt.includes('Should we create a dashboard')
+          || userPrompt.includes('这里字都重叠了')
+          ? JSON.stringify(providerExplanation())
+          : JSON.stringify(providerOutput()),
+      };
+    },
   });
 
   await assert.rejects(service.submit(request({ instruction: 'Make a timer.' })), {
@@ -2707,6 +2710,66 @@ test('submits one composer turn through main-owned work or explanation routing',
     ]),
     /credential|provider\.example|builder-model|git_request_id/iu,
   );
+});
+
+test('routes local Markdown artifact submit through main-owned build admission', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let transportInput = null;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInput = input;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Project README',
+          summary: 'Adds a Markdown project overview.',
+          operations: [
+            {
+              operation: 'upsert',
+              path: 'README.md',
+              content: '# Project overview\n\nLocal notes.\n',
+            },
+          ],
+        })),
+      };
+    },
+  });
+
+  await assert.rejects(service.submit(request({ instruction: '新建一个 README.md，写项目说明' })), {
+    code: 'builder_generation_project_workspace_required',
+  });
+  const draft = await service.submit(request({
+    instruction: '新建一个 README.md，写项目说明',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.admissions.draft, 'candidate_not_saved');
+  assert.equal(draft.admissions.save, 'not_performed');
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 0);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.dispatch, 'build');
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.required_permissions, ['write_project']);
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['local_file_artifact']);
+  assert.match(transportInput.messages[0].content, /Markdown, README, notes, a \.md file, or a text document/iu);
+  assert.doesNotMatch(JSON.stringify(draft), /credential|provider\.example|builder-model|git_request_id/iu);
 });
 
 test('keeps natural-language plan requests out of the submit build fallback', async () => {

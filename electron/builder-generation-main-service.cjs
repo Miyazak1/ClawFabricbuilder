@@ -188,6 +188,10 @@ const EXPLORATORY_WORK_INTENT_PATTERNS = Object.freeze([
   /^(?:i|we)\s+(?:want|would like|need|hope|plan|intend)\s+to\s+(?:build|create|make|implement|design|develop|add|change|modify|update)\b/u,
   /^(?:i|we)\s+(?:am|are|'m|'re)\s+(?:thinking|considering|planning)\s+(?:about\s+)?(?:building|creating|making|implementing|designing)\b/u,
 ]);
+const LOCAL_FILE_ARTIFACT_PATTERNS = Object.freeze([
+  /(?:创建|新建|生成|写|编写|保存|添加|新增).{0,40}(?:\.md\b|markdown|md\s*(?:文档|文件)|readme|说明文档|文档|文件|笔记|notes?)/u,
+  /(?:create|write|generate|add|save).{0,48}(?:\.md\b|markdown|readme|notes?\s+file|document|text\s+file)/u,
+]);
 const CONTEXTUAL_WORK_INTENT_PATTERNS = Object.freeze([
   /^(?:就这样(?:写|做|改|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)|开始(?:写|做|改|实现|执行)|可以开始了)[。.!！]*$/u,
   /^(?:(?:好|好的|可以|行|嗯)[，,\s]*)?(?:(?:就)?(?:照|按)(?:这个|刚才(?:说的|聊的|讨论的|确认的)?|上面(?:说的)?|前面(?:说的)?|我们刚才(?:说的|聊的|讨论的|确认的)?)(?:方案|计划)?(?:写|做|改|实现|执行|来)|(?:开始|执行)(?:吧|了)?|可以开始(?:了|吧)?)[。.!！]*$/u,
@@ -217,39 +221,6 @@ function isContextualSubmitContextIntent(instruction) {
   if (text.length === 0) return false;
   return matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)
     || matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text);
-}
-
-function shouldSubmitAsExplanation(
-  instruction,
-  hasContextualBuildContext = false,
-) {
-  const text = normalizedIntentText(instruction);
-  if (text.length === 0) return false;
-  if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return true;
-  const hasQuestionMark = /[?\uFF1F]\s*$/u.test(text);
-  const hasExplanationIntent =
-    ENGLISH_EXPLANATION_INTENT_PATTERN.test(text)
-    || CHINESE_EXPLANATION_INTENT_PATTERN.test(text);
-  if (matchesAny(GOAL_MODE_INTENT_PATTERNS, text)) return true;
-  if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return true;
-  if (matchesAny(EXPLICIT_BRIEF_INTENT_PATTERNS, text)) return true;
-  if (matchesAny(WORK_DISCUSSION_INTENT_PATTERNS, text)) return true;
-  if (matchesAny(CAPABILITY_QUESTION_INTENT_PATTERNS, text)) return true;
-  if (hasQuestionMark && hasExplanationIntent) return true;
-  if (hasExplanationIntent) return true;
-  if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) return true;
-  if (matchesAny(EXPLORATORY_WORK_INTENT_PATTERNS, text)) return true;
-  if (matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)) {
-    return hasContextualBuildContext !== true;
-  }
-  if (matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)) {
-    return hasContextualBuildContext !== true;
-  }
-  if (
-    ENGLISH_WORK_INTENT_PATTERN.test(text)
-    || CHINESE_WORK_INTENT_PATTERN.test(text)
-  ) return false;
-  return true;
 }
 
 function routeDecisionHint({
@@ -353,6 +324,7 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
     });
   }
   if (hasQuestionMark && hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
+  if (matchesAny(LOCAL_FILE_ARTIFACT_PATTERNS, text)) return buildRouteDecisionHint(['local_file_artifact']);
   if (hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) {
     return routeDecisionHint({
@@ -2689,14 +2661,11 @@ function createBuilderGenerationMainService(rawOptions) {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
     const hasContextualBuildContext = hasContextualBuildContextForRequest(request);
-    const shouldAnswer = shouldSubmitAsExplanation(
-      request.instruction,
-      hasContextualBuildContext,
-    );
     const routeDecision = classifySubmitRouteDecision(
       request.instruction,
       hasContextualBuildContext,
     );
+    const shouldAnswer = routeDecision.route !== 'build';
     if (!shouldAnswer && request.existing_project_id === null) {
       return Promise.reject(new BuilderGenerationMainServiceError(
         'builder_generation_project_workspace_required',
