@@ -82,7 +82,10 @@ result review decision contract that records owner
 approval, rejection, or acknowledgement of an admitted child result without
 creating a generic Review row, Artifact, parent mutation, or materialized source
 change, plus a main-only Delegation result review store for restart-safe parent/
-child review lookup. The Agent stores and Delegation contracts are not visible
+child review lookup, plus a main-only Delegation result review service that
+records or replays owner review decision receipts only after reading a
+store-backed admitted child result and verifying parent/child Task admission and
+review listings. The Agent stores and Delegation contracts are not visible
 activation: they create no provider/tool dispatch, permission grant, child
 assignment execution, Revision, Artifact, generic Review row, or parent
 materialization authority. The lease and Delegation stores are local evidence

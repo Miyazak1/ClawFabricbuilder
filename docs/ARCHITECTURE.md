@@ -387,9 +387,18 @@ reads, parent/child Task review listing, read-by-admission lookup, one review
 per admitted child result, and restart/idempotency/schema-fingerprint checks,
 but still creates no generic Review row, Artifact, parent mutation, source
 materialization, Git fact, Project Revision, provider/tool dispatch, permission
-grant, or parent materialization. These Agent authorities expose no Agents UI,
-IPC/preload command, permission grant, provider/tool dispatch, source read, Git
-mutation, Review, Revision, or Artifact authority.
+grant, or parent materialization. The current Agent Delegation result review
+service is only a main-only composition gate over the Delegation result
+admission store and Delegation result review store: it reads the store-backed
+admitted child result receipt, verifies parent/child Task admission listings,
+records or replays the owner review decision receipt, and verifies
+parent/child Task review listings plus read-by-review and read-by-admission. It
+still creates no generic Review row, Artifact, child Assignment, child Run,
+parent materialization, source materialization, Project Revision,
+provider/tool dispatch, permission grant, IPC/preload command, or visible Agents
+UI. These Agent authorities expose no Agents UI, IPC/preload command, permission
+grant, provider/tool dispatch, source read, Git mutation, Review, Revision, or
+Artifact authority.
 
 ## Project Storage Model
 
