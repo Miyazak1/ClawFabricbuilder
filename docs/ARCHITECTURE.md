@@ -239,7 +239,11 @@ epochs; it is not a Run executor. The current Agent Delegation contract is only
 a pure main-side evidence contract: it binds an active parent assignment and
 lease to a target Agent version, child Task/Run identity, permission and budget
 intersection, cancellation propagation, and review-return boundary, but creates
-no child assignment or execution. These Agent authorities expose no Agents UI,
+no child assignment or execution. The current Agent Delegation store is only an
+internal durable delegation evidence authority: it persists those receipts in
+main-owned SQLite with parent/child Task listing and child Task/Run duplicate
+protection, but still creates no child assignment or execution. These Agent
+authorities expose no Agents UI,
 IPC/preload command, permission grant, provider/tool dispatch, source read, Git
 mutation, Review, Revision, or Artifact authority.
 

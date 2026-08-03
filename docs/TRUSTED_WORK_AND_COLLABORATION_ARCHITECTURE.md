@@ -30,12 +30,13 @@ main-only local Agent Definition/Version/lifecycle record store, a main-only
 local Agent Assignment/status record store, and a main-only local Agent
 Supervision Lease/release record store. It also has a pure main-side Agent
 Delegation contract for scoped parent/child Agent, Task, permission, budget, and
-review-return evidence. The Agent stores and Delegation contract are not visible
-activation: they create no provider/tool dispatch, permission grant, child
-assignment execution, Review, Revision, or Artifact authority. The lease store
-is local supervision evidence only, not Agent execution or Run dispatch. The
-remaining authorities are roadmap contracts and must be introduced through
-independent implementation gates.
+review-return evidence, plus a main-only Agent Delegation receipt store for
+restart-safe parent/child Task lookup. The Agent stores and Delegation contract
+are not visible activation: they create no provider/tool dispatch, permission
+grant, child assignment execution, Review, Revision, or Artifact authority. The
+lease and Delegation stores are local evidence only, not Agent execution or Run
+dispatch. The remaining authorities are roadmap contracts and must be introduced
+through independent implementation gates.
 
 ## Actor Model
 

@@ -863,6 +863,15 @@ Current checkpoint:
   permission, dispatches no provider/model or tool, reads no credentials or
   source, writes no files, runs no process or tests, mutates no Git or Project
   Revision facts, and creates no Review/Artifact authority.
+- the current Agent Delegation store persists those receipts in a strict
+  main-only SQLite store with restart restore, idempotent replay, owner-scoped
+  reads, parent-task and child-task listing, child Task/Run duplicate
+  protection, schema fingerprint verification, and fixed redacted failures. It
+  stores only indexed identity plus canonical contract receipts; creates no
+  child assignment store row; opens no IPC/preload path; shows no Agents UI;
+  grants no permission; dispatches no provider/model or tool; reads no
+  credentials or source; writes no files; runs no process or tests; mutates no
+  Git or Project Revision facts; and creates no Review/Artifact authority.
 
 ### Track B - People and Spaces
 
