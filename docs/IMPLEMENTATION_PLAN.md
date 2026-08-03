@@ -1216,6 +1216,18 @@ Current checkpoint:
   row, IPC/preload path, or visible Agents UI. Store-backed context snapshot
   persistence and using the snapshot before real provider/tool dispatch remain
   later gates.
+- the current Agent Task Context Snapshot store checkpoint persists those
+  snapshot receipts in a strict main-only SQLite store with restart restore,
+  idempotent replay, owner-scoped reads, read-by-Budget-Audit lookup,
+  task-scoped listing, run-scoped listing, one snapshot per Budget Audit,
+  schema fingerprint verification, guarded absolute database paths, and fixed
+  redacted failures. It stores only indexed identity plus canonical snapshot
+  receipts; it opens no IPC/preload path, shows no Agents UI, dispatches no
+  provider/model or tool, grants no permissions, reads no credentials or
+  source, writes no files, runs no process or tests, mutates no Git or Project
+  Revision facts, and creates no Review or Artifact authority. A service gate
+  that composes this store before actual supervised Agent execution remains a
+  later checkpoint.
 
 ### Track B - People and Spaces
 

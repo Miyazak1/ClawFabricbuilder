@@ -2928,6 +2928,59 @@ commands, installer evidence, or a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Task Context Snapshot Store Package Check
+
+This addendum records the package checkpoint after adding the strict main-only
+SQLite store for Agent Task Context Snapshot receipts. It persists the
+digest-bound context snapshot facts for restart recovery and owner-scoped
+reads; it does not enable visible Agents UI, autonomous Agent execution,
+provider/model dispatch, tool calls, command execution, source reads or writes,
+generic Review row creation, Artifact creation, source materialization, check
+runs, Project Revision creation, Git mutation, permission grants,
+IPC/preload commands, installer evidence, or a real saved-profile DeepSeek
+canary pass.
+
+- The store records or replays only sanitized
+  `builder-agent-task-context-snapshot.v1` receipts. It verifies canonical
+  snapshot JSON against indexed identity, owner/project/conversation/task/run,
+  Assignment, active status, lease, Budget Audit, context digest, requested
+  action, and created/observed times before returning stored facts. It supports
+  read-by-snapshot, read-by-Budget-Audit, task-scoped listing, run-scoped
+  listing, restart restore, one snapshot per Budget Audit, schema fingerprint
+  verification, guarded absolute database paths, and fixed redacted failures.
+- The store records only
+  `main_owned_agent_task_context_snapshot_store` evidence authority over
+  canonical snapshot receipts. It carries no prompt, raw transcript, current
+  brief text, child output, patch, source tree, file content, display child
+  summary text, provider/model envelope, credential, permission grant, generic
+  Review row, Artifact payload, source materialization, check run output, Git
+  mutation, Project Revision row, IPC/preload path, or visible Agents UI
+  authority.
+- Focused validation passed through
+  `node --test tests\builder-agent-task-context-snapshot-store.test.cjs`; the
+  command reported 5 passing Node tests.
+- Adjacent Agent context validation passed through the Agent Definition,
+  Assignment, Supervision Lease, Budget Audit, parent task context projection,
+  Agent Task Context Snapshot contract, and Agent Task Context Snapshot store
+  set; the command reported 31 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 870 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 793 ASAR
+  entries. The refreshed executable timestamp was `2026/8/4 04:39:38` local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
