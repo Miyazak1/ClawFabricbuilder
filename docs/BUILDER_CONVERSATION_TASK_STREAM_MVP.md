@@ -279,6 +279,11 @@ receipts, raw tool output, Save authority, or Project Revision facts. Main's
 project-id-only activity hint only tells the desktop conversation controller to
 refresh the current read-only projection; it keeps the existing chat visible
 while reading and never lets the renderer create, accept, or reinterpret work.
+Agent Step Start/Result receipts now also have a pure renderer-safe progress
+projection that can turn already-recorded main-store facts into bounded public
+step status items. That projection is not yet admitted into Conversation replay
+or shown in the visible Task Stream. Until that later gate lands, the UI must not
+invent Agent step narration from live text, provider deltas, or local state.
 
 The chat flow should feel like the assistant is continuously working with the
 user, but it must be driven by facts rather than invented narration. The current

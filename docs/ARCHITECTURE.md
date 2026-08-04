@@ -478,7 +478,15 @@ step execution, provider/model/tool dispatch, source access, permission grant,
 raw-output/context storage, Git/Project Revision mutation, Review/Artifact
 creation, IPC/preload exposure, or visible Agents UI. Step-runner orchestration
 and using Step Result receipts in Agent progress projection remain separate
-later gates. The current Agent Tool Call Record service
+later gates. A separate Agent Step Progress projection can now consume recorded
+Step Start store and Step Result store list results and expose only a bounded,
+renderer-safe progress window: step id, step index, recorded state, and fixed
+public summaries. It verifies receipt binding and rejects orphan, duplicate, or
+identity-drifted facts, but it exposes no receipt digest, supervised action
+admission, Budget Audit, assignment/lease, provider/tool/model fact, source,
+raw output, Git, Review, Artifact, IPC/preload, or renderer authority. It does
+not start, run, store, subscribe, or render Agent steps; Conversation/Task
+Stream admission remains a later gate. The current Agent Tool Call Record service
 connects a persisted `call_tool` supervised action admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies
 Task/Run admission listings, accepts only

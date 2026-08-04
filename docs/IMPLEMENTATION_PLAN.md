@@ -1362,6 +1362,18 @@ Current checkpoint:
   Artifact, open IPC/preload, or show visible Agents UI. Step runner
   orchestration and using step result receipts in later Agent progress projection
   remain separate checkpoints.
+- the current Agent Step Progress projection checkpoint converts already
+  recorded Step Start store and Step Result store list results into a bounded,
+  renderer-safe progress window. It verifies all Step Start and Step Result
+  receipts, owner/Project/Task/Run identity, Step Start digest binding,
+  duplicate/orphan result absence, fixed result summaries, and the latest
+  128-step public window before exposing only step id, step index, recorded
+  state, and fixed public summaries. It does not expose Step Start/Result
+  receipt digests, supervised action admission, Budget Audit, assignment/lease,
+  provider/model/tool facts, source, raw output, Git, Review, Artifact, IPC, or
+  renderer authority. It still does not start or run steps, store progress,
+  subscribe to Task Stream changes, or show visible Agents UI; Conversation/Task
+  Stream admission remains a later checkpoint.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads

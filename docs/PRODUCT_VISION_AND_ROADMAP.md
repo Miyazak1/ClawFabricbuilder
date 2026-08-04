@@ -282,7 +282,11 @@ creating user-visible progress UI. A main-only Step Result service now composes
 the Step Start store and Step Result store to admit and cross-check one fixed
 step result after a recorded Step Start, while still avoiding runner execution,
 tool/provider dispatch, source access, Review/Artifact/Git/Project Revision
-authority, IPC, or visible Agents UI. Builder also has a main-only Project Work Result service
+authority, IPC, or visible Agents UI. A pure Agent Step Progress projection now
+turns those recorded Step Start/Result store facts into a bounded renderer-safe
+step progress window without exposing receipts, admissions, budgets, raw output,
+source, Git, Review, Artifact, IPC, or execution authority; Task Stream
+admission and visible Agent progress UI remain later work. Builder also has a main-only Project Work Result service
 that records or replays fixed project-edit or project-test result receipts only
 after an allowed `finish_for_review` budget audit for the same active lease,
 still without creating Review, Artifact, source materialization, or Project
