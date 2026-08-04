@@ -1374,6 +1374,17 @@ Current checkpoint:
   renderer authority. It still does not start or run steps, store progress,
   subscribe to Task Stream changes, or show visible Agents UI; Conversation/Task
   Stream admission remains a later checkpoint.
+- the current Agent Step Progress read-service checkpoint composes the Step
+  Start store, Step Result store, and renderer-safe projection behind one
+  main-only read entrypoint. It accepts only owner, Project, Task, and Run ids,
+  reads Run-scoped Step Start/Result store facts, projects the bounded public
+  progress window, and returns only projection plus fixed read counts/statuses
+  and `main_owned_agent_step_progress_read_service` evidence. It returns no
+  receipt objects, digests, supervised action admission, Budget Audit,
+  assignment/lease, provider/model/tool facts, source, raw output, Git, Review,
+  Artifact, IPC, preload, or renderer authority. It still does not admit Agent
+  progress into Conversation replay, subscribe to Task Stream changes, start or
+  run steps, or show visible Agents UI.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads

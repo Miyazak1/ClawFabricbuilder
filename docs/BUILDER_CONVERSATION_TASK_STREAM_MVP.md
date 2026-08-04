@@ -281,9 +281,12 @@ refresh the current read-only projection; it keeps the existing chat visible
 while reading and never lets the renderer create, accept, or reinterpret work.
 Agent Step Start/Result receipts now also have a pure renderer-safe progress
 projection that can turn already-recorded main-store facts into bounded public
-step status items. That projection is not yet admitted into Conversation replay
-or shown in the visible Task Stream. Until that later gate lands, the UI must not
-invent Agent step narration from live text, provider deltas, or local state.
+step status items. A main-only read service can compose the Step Start store,
+Step Result store, and that projection for one owner/Project/Task/Run read,
+returning only public progress items plus fixed read counts/statuses. That read
+service is still not admitted into Conversation replay or shown in the visible
+Task Stream. Until that later gate lands, the UI must not invent Agent step
+narration from live text, provider deltas, or local state.
 
 The chat flow should feel like the assistant is continuously working with the
 user, but it must be driven by facts rather than invented narration. The current

@@ -286,7 +286,13 @@ authority, IPC, or visible Agents UI. A pure Agent Step Progress projection now
 turns those recorded Step Start/Result store facts into a bounded renderer-safe
 step progress window without exposing receipts, admissions, budgets, raw output,
 source, Git, Review, Artifact, IPC, or execution authority; Task Stream
-admission and visible Agent progress UI remain later work. Builder also has a main-only Project Work Result service
+admission and visible Agent progress UI remain later work. A main-only Agent
+Step Progress read service now composes the Step Start store, Step Result store,
+and that projection for one owner/Project/Task/Run read, returning only public
+progress items plus fixed read status/count evidence while still avoiding
+Conversation admission, IPC/preload, renderer authority, step running, provider
+or tool dispatch, source access, Git/Review/Artifact/Revision authority, and
+visible Agents UI. Builder also has a main-only Project Work Result service
 that records or replays fixed project-edit or project-test result receipts only
 after an allowed `finish_for_review` budget audit for the same active lease,
 still without creating Review, Artifact, source materialization, or Project

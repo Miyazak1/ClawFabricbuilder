@@ -486,8 +486,16 @@ identity-drifted facts, but it exposes no receipt digest, supervised action
 admission, Budget Audit, assignment/lease, provider/tool/model fact, source,
 raw output, Git, Review, Artifact, IPC/preload, or renderer authority. It does
 not start, run, store, subscribe, or render Agent steps; Conversation/Task
-Stream admission remains a later gate. The current Agent Tool Call Record service
-connects a persisted `call_tool` supervised action admission to the existing
+Stream admission remains a later gate. A separate Agent Step Progress read
+service composes the Step Start store, Step Result store, and that projection
+behind one main-only read entrypoint. It accepts only owner, Project, Task, and
+Run ids, returns only the bounded projection plus fixed read counts/statuses and
+`main_owned_agent_step_progress_read_service` evidence, and exposes no receipt
+objects, digests, supervised action admission, Budget Audit, assignment/lease,
+provider/tool/model fact, source, raw output, Git, Review, Artifact, IPC,
+preload, renderer authority, execution, or UI subscription. The current Agent
+Tool Call Record service connects a persisted `call_tool` supervised action
+admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies
 Task/Run admission listings, accepts only
 `next_gate=tool_call_record_required_later`, and creates a deterministic
