@@ -270,7 +270,13 @@ supervision lease only after lease-window preflight, still without starting
 execution. Builder also has a main-only Budget Audit service that records or
 replays allowed or denied pre-action budget facts only when the matching active
 lease is store-backed at the observed time, still without performing the
-requested next action. Builder also has a main-only Project Work Result service
+requested next action. Builder also has a main-only Step Start service and
+Step Start store that record or replay one admitted `start_step` receipt
+without executing the step, plus a pure main-only Step Result receipt contract
+that can bind a fixed `succeeded`, `blocked`, `failed`, or `cancelled` outcome
+to that Step Start receipt without raw output, provider/tool dispatch, source
+access, Review, Artifact, Git, or Project Revision authority. Builder also has
+a main-only Project Work Result service
 that records or replays fixed project-edit or project-test result receipts only
 after an allowed `finish_for_review` budget audit for the same active lease,
 still without creating Review, Artifact, source materialization, or Project

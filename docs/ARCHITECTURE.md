@@ -451,7 +451,18 @@ as restart-replayable SQLite facts, keyed by Run step id, supervised action
 admission id, and receipt digest, with owner-scoped Task/Run listings and
 schema-fingerprint/tamper checks. Together they still start no step, dispatch no
 provider/model/tool, read or write no source, and expose no IPC/preload or
-visible Agents UI. The current Agent Tool Call Record service
+visible Agents UI. The current Agent Step Result receipt contract is a
+separate pure main-only fixed-summary receipt over one Step Start receipt: it
+records only a `succeeded`, `blocked`, `failed`, or `cancelled` step outcome,
+fixed display summary, and digest-bound Agent/Project/Conversation/Task/Run
+identity. It stores no raw output, source context, prompt, provider/model
+envelope, tool result payload, command output, Git fact, Project Revision,
+Review row, Artifact payload, IPC/preload command, or visible Agents UI
+authority. The contract itself still executes no step, dispatches no
+provider/model/tool, reads or writes no source, runs no process, grants no
+permission, creates no result-for-review, and materializes no source; store
+replay and step-runner orchestration remain separate later gates. The current
+Agent Tool Call Record service
 connects a persisted `call_tool` supervised action admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies
 Task/Run admission listings, accepts only

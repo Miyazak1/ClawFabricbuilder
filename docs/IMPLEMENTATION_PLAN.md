@@ -1325,6 +1325,17 @@ Current checkpoint:
   process, stores no raw context, mutates no Git or Project Revision facts, and
   creates no generic Review row or Artifact authority. Actual step runner
   orchestration and execution remain later checkpoints.
+- the current Agent Step Result receipt contract checkpoint adds a pure
+  main-side fixed-summary receipt over one Step Start receipt. It records only
+  that a started Agent step reached `succeeded`, `blocked`, `failed`, or
+  `cancelled` with a fixed display summary and digest; it stores no raw output,
+  prompt, source context, file content, provider/model envelope, command output,
+  tool result payload, Git fact, Project Revision, generic Review row, Artifact,
+  IPC/preload command, or visible Agents UI authority. The contract itself does
+  not execute the step, dispatch a provider/model/tool, read or write source,
+  run a process, grant permission, create a result-for-review, or materialize
+  source. Store-backed replay, step runner orchestration, and using step result
+  receipts in later Agent progress projection remain separate checkpoints.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads
