@@ -468,9 +468,17 @@ supervised action admission id, and Run step id, with owner-scoped Task/Run
 listings and schema-fingerprint/tamper checks. It still executes no step,
 dispatches no provider/model/tool, reads or writes no source, stores no raw
 output, mutates no Git or Project Revision, creates no Review or Artifact, and
-exposes no IPC/preload or visible Agents UI. Step Result service composition
-and step-runner orchestration remain separate later gates. The current Agent
-Tool Call Record service
+exposes no IPC/preload or visible Agents UI. The current Agent Step Result
+service composes that store with the recorded Step Start store: it reads a Step
+Start receipt by owner and Run step id, requires the expected Step Start digest,
+verifies Step Start admission/Task/Run listings, creates and stores or replays
+the fixed-summary Step Result receipt, and cross-checks result reads by result
+digest, Step Start digest, admission id, Task, and Run. It still performs no
+step execution, provider/model/tool dispatch, source access, permission grant,
+raw-output/context storage, Git/Project Revision mutation, Review/Artifact
+creation, IPC/preload exposure, or visible Agents UI. Step-runner orchestration
+and using Step Result receipts in Agent progress projection remain separate
+later gates. The current Agent Tool Call Record service
 connects a persisted `call_tool` supervised action admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies
 Task/Run admission listings, accepts only

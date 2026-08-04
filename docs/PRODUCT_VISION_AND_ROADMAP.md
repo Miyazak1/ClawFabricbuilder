@@ -278,7 +278,11 @@ to that Step Start receipt without raw output, provider/tool dispatch, source
 access, Review, Artifact, Git, or Project Revision authority. A main-only Step
 Result store now persists those fixed-summary receipts for restart-safe owner,
 Task, Run, Step Start, and admission lookup, still without executing steps or
-creating user-visible progress UI. Builder also has a main-only Project Work Result service
+creating user-visible progress UI. A main-only Step Result service now composes
+the Step Start store and Step Result store to admit and cross-check one fixed
+step result after a recorded Step Start, while still avoiding runner execution,
+tool/provider dispatch, source access, Review/Artifact/Git/Project Revision
+authority, IPC, or visible Agents UI. Builder also has a main-only Project Work Result service
 that records or replays fixed project-edit or project-test result receipts only
 after an allowed `finish_for_review` budget audit for the same active lease,
 still without creating Review, Artifact, source materialization, or Project

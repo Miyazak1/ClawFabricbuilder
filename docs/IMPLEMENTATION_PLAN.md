@@ -1347,8 +1347,21 @@ Current checkpoint:
   step, grants no permission, reads or writes no source, runs no process, stores
   no raw output or raw context, mutates no Git or Project Revision facts, and
   creates no generic Review row or Artifact authority. Step Result service
-  composition, step runner orchestration, and using step result receipts in
-  later Agent progress projection remain separate checkpoints.
+  composition remains a separate checkpoint.
+- the current Agent Step Result service checkpoint composes the recorded Step
+  Start store and Step Result store into a main-only admission service. It reads
+  the Step Start receipt by owner and Run step id, requires the caller's
+  expected Step Start digest to match, verifies Step Start admission, Task, and
+  Run listings, creates the fixed-summary Step Result receipt, stores or replays
+  it, and cross-checks result reads by result digest, Step Start digest,
+  admission id, Task, and Run. The service records only
+  `main_owned_agent_step_result_service`, Step Start store, Step Result store,
+  and receipt-contract evidence. It still does not run a step, choose or call a
+  tool, dispatch a provider/model, read/write source, grant permission, store raw
+  output/context, mutate Git or Project Revision, create a generic Review row or
+  Artifact, open IPC/preload, or show visible Agents UI. Step runner
+  orchestration and using step result receipts in later Agent progress projection
+  remain separate checkpoints.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads
