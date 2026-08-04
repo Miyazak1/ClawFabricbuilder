@@ -462,7 +462,15 @@ authority. The contract itself still executes no step, dispatches no
 provider/model/tool, reads or writes no source, runs no process, grants no
 permission, creates no result-for-review, and materializes no source; store
 replay and step-runner orchestration remain separate later gates. The current
-Agent Tool Call Record service
+Agent Step Result store persists those fixed-summary receipts as
+restart-replayable SQLite facts, keyed by Step Result digest, Step Start digest,
+supervised action admission id, and Run step id, with owner-scoped Task/Run
+listings and schema-fingerprint/tamper checks. It still executes no step,
+dispatches no provider/model/tool, reads or writes no source, stores no raw
+output, mutates no Git or Project Revision, creates no Review or Artifact, and
+exposes no IPC/preload or visible Agents UI. Step Result service composition
+and step-runner orchestration remain separate later gates. The current Agent
+Tool Call Record service
 connects a persisted `call_tool` supervised action admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies
 Task/Run admission listings, accepts only

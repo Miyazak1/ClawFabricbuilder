@@ -1334,8 +1334,21 @@ Current checkpoint:
   IPC/preload command, or visible Agents UI authority. The contract itself does
   not execute the step, dispatch a provider/model/tool, read or write source,
   run a process, grant permission, create a result-for-review, or materialize
-  source. Store-backed replay, step runner orchestration, and using step result
-  receipts in later Agent progress projection remain separate checkpoints.
+  source.
+- the current Agent Step Result store checkpoint persists those fixed-summary
+  step result receipts as restart-replayable SQLite facts. The store verifies
+  the Step Result receipt contract before writing, enforces one result per Step
+  Start receipt, supervised action admission, and Run step id, exposes
+  owner-scoped reads by result digest, Step Start digest, and admission id,
+  lists results by Task or Run, verifies canonical receipt JSON, schema
+  fingerprint, runtime pragmas, and row/receipt consistency, and reports only
+  `main_owned_agent_step_result_store` evidence. It still opens no IPC/preload
+  path, shows no Agents UI, dispatches no provider/model or tool, executes no
+  step, grants no permission, reads or writes no source, runs no process, stores
+  no raw output or raw context, mutates no Git or Project Revision facts, and
+  creates no generic Review row or Artifact authority. Step Result service
+  composition, step runner orchestration, and using step result receipts in
+  later Agent progress projection remain separate checkpoints.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads

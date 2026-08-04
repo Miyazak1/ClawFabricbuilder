@@ -275,8 +275,10 @@ Step Start store that record or replay one admitted `start_step` receipt
 without executing the step, plus a pure main-only Step Result receipt contract
 that can bind a fixed `succeeded`, `blocked`, `failed`, or `cancelled` outcome
 to that Step Start receipt without raw output, provider/tool dispatch, source
-access, Review, Artifact, Git, or Project Revision authority. Builder also has
-a main-only Project Work Result service
+access, Review, Artifact, Git, or Project Revision authority. A main-only Step
+Result store now persists those fixed-summary receipts for restart-safe owner,
+Task, Run, Step Start, and admission lookup, still without executing steps or
+creating user-visible progress UI. Builder also has a main-only Project Work Result service
 that records or replays fixed project-edit or project-test result receipts only
 after an allowed `finish_for_review` budget audit for the same active lease,
 still without creating Review, Artifact, source materialization, or Project
