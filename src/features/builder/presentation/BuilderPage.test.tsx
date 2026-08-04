@@ -470,6 +470,78 @@ async function progressActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function agentStepProgressActivity() {
+  const wire = createTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 6,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 6,
+      },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        {
+          item_kind: 'agent_step_progress_recorded' as const,
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174030',
+          step_index: 30,
+          recorded_state: 'start_recorded' as const,
+          result: null,
+          summary: {
+            status: 'started' as const,
+            display_summary: 'Agent step start was recorded.',
+          },
+          lifecycle: {
+            conversation_admission: 'verified_public_progress' as const,
+            raw_output_admission: 'not_included' as const,
+            revision_admission: 'not_created' as const,
+          },
+        },
+        {
+          item_kind: 'agent_step_progress_recorded' as const,
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174030',
+          step_index: 30,
+          recorded_state: 'result_recorded' as const,
+          result: {
+            status: 'succeeded' as const,
+            summary_code: 'agent_step_completed_without_raw_output' as const,
+            display_summary: 'Agent step completed. Details were not kept.',
+          },
+          summary: {
+            status: 'succeeded' as const,
+            display_summary: 'Agent step completed. Details were not kept.',
+          },
+          lifecycle: {
+            conversation_admission: 'verified_public_progress' as const,
+            raw_output_admission: 'not_included' as const,
+            revision_admission: 'not_created' as const,
+          },
+        },
+        {
+          ...wire.conversation.items[2],
+          sequence: 5,
+        },
+        {
+          ...wire.conversation.items[3],
+          sequence: 6,
+        },
+      ],
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function candidateProgressActivity() {
   const wire = createTaskStreamWire();
   const progressStages = [
@@ -3066,6 +3138,29 @@ describe('BuilderPage v2', () => {
     expect(resultPreparing).toBeNull();
     expect(container.textContent).not.toMatch(
       /provider_request_started|provider_response_received|result_preparing|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
+  it('renders fact-backed Agent step progress without admission details', async () => {
+    const { saved } = await snapshots();
+    const activity = await agentStepProgressActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const completedStep = container.querySelector('[data-builder-agent-step-progress="result_recorded"]');
+    expect(completedStep).not.toBeNull();
+    expect(completedStep?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(completedStep?.textContent).toContain('Step completed');
+    expect(completedStep?.textContent).toContain('This step completed.');
+    expect(container.querySelector('[data-builder-agent-step-progress="start_recorded"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /agent_step_progress_recorded|progress_admission|admission_digest|read_service|step_start_count|step_result_count|builder-run-step|provider|credential|source_tree|stdout|stderr|commit_oid|tree_oid|receipt/iu,
     );
   });
 

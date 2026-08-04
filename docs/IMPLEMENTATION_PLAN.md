@@ -1372,8 +1372,8 @@ Current checkpoint:
   receipt digests, supervised action admission, Budget Audit, assignment/lease,
   provider/model/tool facts, source, raw output, Git, Review, Artifact, IPC, or
   renderer authority. It still does not start or run steps, store progress,
-  subscribe to Task Stream changes, or show visible Agents UI; Conversation/Task
-  Stream admission remains a later checkpoint.
+  subscribe to Task Stream changes, or show visible Agents UI; Conversation
+  admission and visible Task Stream projection are separate checkpoints.
 - the current Agent Step Progress read-service checkpoint composes the Step
   Start store, Step Result store, and renderer-safe projection behind one
   main-only read entrypoint. It accepts only owner, Project, Task, and Run ids,
@@ -1382,9 +1382,9 @@ Current checkpoint:
   and `main_owned_agent_step_progress_read_service` evidence. It returns no
   receipt objects, digests, supervised action admission, Budget Audit,
   assignment/lease, provider/model/tool facts, source, raw output, Git, Review,
-  Artifact, IPC, preload, or renderer authority. It still does not admit Agent
-  progress into Conversation replay, subscribe to Task Stream changes, start or
-  run steps, or show visible Agents UI.
+  Artifact, IPC, preload, or renderer authority. It still does not append
+  Conversation events, subscribe to Task Stream changes, start or run steps, or
+  show visible Agents UI.
 - the current Agent Step Progress Conversation-admission checkpoint converts
   one public item from that read-service result into a digest-bound
   main-side admission record for later Conversation event recording. It requires
@@ -1398,6 +1398,19 @@ Current checkpoint:
   source, raw output, Git, Review, Artifact, IPC, preload, or renderer
   authority. It still does not append Conversation events, subscribe to Task
   Stream changes, start or run Agent steps, or show visible Agents UI.
+- the current Agent Step Progress Conversation/Task Stream checkpoint accepts
+  only those already-created admission records as
+  `agent_step_progress_recorded` Conversation events. Replay verifies that the
+  matching work Turn/Task/Run is active, running, not cancelled/interrupted, and
+  that step results cannot appear before starts except for a renderer-safe
+  truncated-window prefix case. The Task Stream exposes only public step id,
+  step index, recorded state, fixed summary/result, and lifecycle values; the
+  renderer sanitizer re-validates the same ordering and hides internal event
+  names, admission digests, read-service evidence, receipts, provider/model/tool
+  facts, source, raw output, Git, Review, Artifact, Revision, IPC, preload, and
+  renderer append authority. This checkpoint still does not create the events
+  from stores, subscribe to step progress, start/run Agent steps, dispatch tools
+  or providers, read/write source, or enable autonomous Agents UI.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads

@@ -100,6 +100,35 @@ export type BuilderConversationRunProgressStage =
   | 'provider_response_received'
   | 'result_preparing';
 
+export type BuilderConversationAgentStepResultStatus =
+  | 'succeeded'
+  | 'blocked'
+  | 'failed'
+  | 'cancelled';
+
+export type BuilderConversationAgentStepResultSummaryCode =
+  | 'agent_step_completed_without_raw_output'
+  | 'agent_step_needs_owner_attention'
+  | 'agent_step_failed_without_raw_output'
+  | 'agent_step_cancelled_without_raw_output';
+
+export type BuilderConversationAgentStepResult = Readonly<{
+  status: BuilderConversationAgentStepResultStatus;
+  summary_code: BuilderConversationAgentStepResultSummaryCode;
+  display_summary: string;
+}>;
+
+export type BuilderConversationAgentStepSummary = Readonly<{
+  status: 'started' | BuilderConversationAgentStepResultStatus;
+  display_summary: string;
+}>;
+
+export type BuilderConversationAgentStepLifecycle = Readonly<{
+  conversation_admission: 'verified_public_progress';
+  raw_output_admission: 'not_included';
+  revision_admission: 'not_created';
+}>;
+
 export type BuilderConversationFailurePhase =
   | 'not_applicable'
   | 'not_recorded'
@@ -151,6 +180,19 @@ export type BuilderConversationItem =
     run_id: string;
     stage: BuilderConversationRunProgressStage;
     recorded_state: 'recorded';
+  }>
+  | Readonly<{
+    item_kind: 'agent_step_progress_recorded';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    task_id: string;
+    step_id: string;
+    step_index: number;
+    recorded_state: 'start_recorded' | 'result_recorded';
+    result: BuilderConversationAgentStepResult | null;
+    summary: BuilderConversationAgentStepSummary;
+    lifecycle: BuilderConversationAgentStepLifecycle;
   }>
   | Readonly<{
     item_kind: 'run_control_requested';
@@ -377,6 +419,33 @@ const RUN_PROGRESS_KEYS = Object.freeze([
   'stage',
   'recorded_state',
 ]);
+const AGENT_STEP_PROGRESS_RECORDED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task_id',
+  'step_id',
+  'step_index',
+  'recorded_state',
+  'result',
+  'summary',
+  'lifecycle',
+]);
+const AGENT_STEP_RESULT_KEYS = Object.freeze([
+  'status',
+  'summary_code',
+  'display_summary',
+]);
+const AGENT_STEP_SUMMARY_KEYS = Object.freeze([
+  'status',
+  'display_summary',
+]);
+const AGENT_STEP_LIFECYCLE_KEYS = Object.freeze([
+  'conversation_admission',
+  'raw_output_admission',
+  'revision_admission',
+]);
 const TASK_BRIEF_UPDATED_KEYS = Object.freeze([
   'item_kind',
   'sequence',
@@ -448,6 +517,26 @@ const RUN_PROGRESS_STAGES: readonly BuilderConversationRunProgressStage[] = Obje
   'provider_response_received',
   'result_preparing',
 ]);
+const AGENT_STEP_RESULT_SUMMARY_BY_CODE: Readonly<
+  Record<BuilderConversationAgentStepResultSummaryCode, string>
+> = Object.freeze({
+  agent_step_completed_without_raw_output:
+    'Agent step completed. Details were not kept.',
+  agent_step_needs_owner_attention:
+    'Agent step needs owner attention.',
+  agent_step_failed_without_raw_output:
+    'Agent step could not finish. Details were not kept.',
+  agent_step_cancelled_without_raw_output:
+    'Agent step was stopped. Details were not kept.',
+});
+const AGENT_STEP_RESULT_CODE_BY_STATUS: Readonly<
+  Record<BuilderConversationAgentStepResultStatus, BuilderConversationAgentStepResultSummaryCode>
+> = Object.freeze({
+  succeeded: 'agent_step_completed_without_raw_output',
+  blocked: 'agent_step_needs_owner_attention',
+  failed: 'agent_step_failed_without_raw_output',
+  cancelled: 'agent_step_cancelled_without_raw_output',
+});
 const RUN_CONTEXT_ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
 const RUN_CONTEXT_DISPATCHES = Object.freeze([
   'reply',
@@ -725,6 +814,13 @@ function safeRevisionNumber(value: unknown): number {
   return Number(value);
 }
 
+function safeStepIndex(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 256) {
+    throw unavailable();
+  }
+  return Number(value);
+}
+
 function nullableId(value: unknown, pattern: RegExp): string | null {
   return value === null ? null : safePattern(value, pattern);
 }
@@ -921,6 +1017,111 @@ function sanitizeRunProgress(
     run_id: safePattern(source.run_id, RUN_ID_PATTERN),
     stage: source.stage as BuilderConversationRunProgressStage,
     recorded_state: 'recorded' as const,
+  };
+}
+
+function sanitizeAgentStepResultStatus(
+  value: unknown,
+): BuilderConversationAgentStepResultStatus {
+  if (
+    value !== 'succeeded'
+    && value !== 'blocked'
+    && value !== 'failed'
+    && value !== 'cancelled'
+  ) throw unavailable();
+  return value;
+}
+
+function sanitizeAgentStepResultSummaryCode(
+  value: unknown,
+  status: BuilderConversationAgentStepResultStatus,
+): BuilderConversationAgentStepResultSummaryCode {
+  if (
+    typeof value !== 'string'
+    || AGENT_STEP_RESULT_CODE_BY_STATUS[status] !== value
+  ) throw unavailable();
+  return value as BuilderConversationAgentStepResultSummaryCode;
+}
+
+function sanitizeAgentStepResult(
+  value: unknown,
+): BuilderConversationAgentStepResult {
+  const source = exactRecord(value, AGENT_STEP_RESULT_KEYS);
+  const status = sanitizeAgentStepResultStatus(source.status);
+  const summaryCode = sanitizeAgentStepResultSummaryCode(source.summary_code, status);
+  const displaySummary = AGENT_STEP_RESULT_SUMMARY_BY_CODE[summaryCode];
+  if (source.display_summary !== displaySummary) throw unavailable();
+  return {
+    status,
+    summary_code: summaryCode,
+    display_summary: displaySummary,
+  };
+}
+
+function sanitizeAgentStepSummary(
+  value: unknown,
+  result: BuilderConversationAgentStepResult | null,
+): BuilderConversationAgentStepSummary {
+  const source = exactRecord(value, AGENT_STEP_SUMMARY_KEYS);
+  if (result === null) {
+    if (
+      source.status !== 'started'
+      || source.display_summary !== 'Agent step start was recorded.'
+    ) throw unavailable();
+    return {
+      status: 'started',
+      display_summary: 'Agent step start was recorded.',
+    };
+  }
+  if (
+    source.status !== result.status
+    || source.display_summary !== result.display_summary
+  ) throw unavailable();
+  return {
+    status: result.status,
+    display_summary: result.display_summary,
+  };
+}
+
+function sanitizeAgentStepLifecycle(value: unknown): BuilderConversationAgentStepLifecycle {
+  const source = exactRecord(value, AGENT_STEP_LIFECYCLE_KEYS);
+  if (
+    source.conversation_admission !== 'verified_public_progress'
+    || source.raw_output_admission !== 'not_included'
+    || source.revision_admission !== 'not_created'
+  ) throw unavailable();
+  return {
+    conversation_admission: 'verified_public_progress',
+    raw_output_admission: 'not_included',
+    revision_admission: 'not_created',
+  };
+}
+
+function sanitizeAgentStepProgress(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'agent_step_progress_recorded' }> {
+  const recordedState = source.recorded_state;
+  if (
+    recordedState !== 'start_recorded'
+    && recordedState !== 'result_recorded'
+  ) throw unavailable();
+  const result = source.result === null ? null : sanitizeAgentStepResult(source.result);
+  if ((recordedState === 'start_recorded') !== (result === null)) {
+    throw unavailable();
+  }
+  return {
+    item_kind: 'agent_step_progress_recorded' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    task_id: safePattern(source.task_id, TASK_ID_PATTERN),
+    step_id: safePattern(source.step_id, STEP_ID_PATTERN),
+    step_index: safeStepIndex(source.step_index),
+    recorded_state: recordedState,
+    result,
+    summary: sanitizeAgentStepSummary(source.summary, result),
+    lifecycle: sanitizeAgentStepLifecycle(source.lifecycle),
   };
 }
 
@@ -1231,6 +1432,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_CONTROL_KEYS);
   } else if (itemKind === 'run_progress_recorded') {
     source = exactRecord(value, RUN_PROGRESS_KEYS);
+  } else if (itemKind === 'agent_step_progress_recorded') {
+    source = exactRecord(value, AGENT_STEP_PROGRESS_RECORDED_KEYS);
   } else if (itemKind === 'task_brief_updated') {
     source = exactRecord(value, TASK_BRIEF_UPDATED_KEYS);
   } else if (itemKind === 'tool_call_result_recorded') {
@@ -1256,6 +1459,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   }
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
   if (itemKind === 'run_progress_recorded') return sanitizeRunProgress(source, sequence);
+  if (itemKind === 'agent_step_progress_recorded') return sanitizeAgentStepProgress(source, sequence);
   if (itemKind === 'task_brief_updated') return sanitizeTaskBriefUpdated(source, sequence);
   if (itemKind === 'tool_call_result_recorded') {
     return sanitizeToolCallResultRecorded(source, sequence);
@@ -1284,6 +1488,10 @@ type ReplayTurn = {
     control: 'cancel' | 'interrupt' | null;
     context_snapshot_recorded: boolean;
     progress_stages: BuilderConversationRunProgressStage[];
+    agent_step_progress: Map<
+      string,
+      { step_index: number; result_recorded: boolean }
+    >;
   }>;
 };
 
@@ -1322,6 +1530,48 @@ function failurePhaseMatchesRun(
     return item.failure_phase !== 'not_applicable';
   }
   return item.failure_phase === 'not_recorded';
+}
+
+function recordAgentStepProgress(
+  run: {
+    run_id: string;
+    status: 'running' | 'completed';
+    control: 'cancel' | 'interrupt' | 'unknown' | null;
+    agent_step_progress: Map<string, { step_index: number; result_recorded: boolean }>;
+  },
+  item: Extract<BuilderConversationItem, { item_kind: 'agent_step_progress_recorded' }>,
+  mayDependOnOmittedStart: boolean,
+): void {
+  if (
+    run.run_id !== item.run_id
+    || run.status !== 'running'
+    || run.control !== null
+  ) throw unavailable();
+  const existing = run.agent_step_progress.get(item.step_id) ?? null;
+  if (item.recorded_state === 'start_recorded') {
+    if (existing !== null || item.result !== null) throw unavailable();
+    run.agent_step_progress.set(item.step_id, {
+      step_index: item.step_index,
+      result_recorded: false,
+    });
+    return;
+  }
+  if (item.result === null) throw unavailable();
+  if (existing === null) {
+    if (!mayDependOnOmittedStart) throw unavailable();
+    run.agent_step_progress.set(item.step_id, {
+      step_index: item.step_index,
+      result_recorded: true,
+    });
+    return;
+  }
+  if (existing.step_index !== item.step_index || existing.result_recorded) {
+    throw unavailable();
+  }
+  run.agent_step_progress.set(item.step_id, {
+    step_index: item.step_index,
+    result_recorded: true,
+  });
 }
 
 function validateCompleteWindow(
@@ -1444,6 +1694,7 @@ function validateCompleteWindow(
         control: null,
         context_snapshot_recorded: false,
         progress_stages: [],
+        agent_step_progress: new Map(),
       });
       continue;
     }
@@ -1484,6 +1735,15 @@ function validateCompleteWindow(
         || stageIndex !== expectedIndex
       ) throw unavailable();
       currentRun.progress_stages.push(item.stage);
+      continue;
+    }
+    if (item.item_kind === 'agent_step_progress_recorded') {
+      if (
+        activeTurn.mode !== 'work'
+        || activeTurn.task === null
+        || item.task_id !== activeTurn.task.task_id
+      ) throw unavailable();
+      recordAgentStepProgress(currentRun, item, false);
       continue;
     }
     if (item.item_kind === 'tool_call_requested') {
@@ -1587,6 +1847,10 @@ type SuffixRun = {
   control: 'cancel' | 'interrupt' | 'unknown' | null;
   context_snapshot_recorded: boolean;
   progress_stages: BuilderConversationRunProgressStage[];
+  agent_step_progress: Map<
+    string,
+    { step_index: number; result_recorded: boolean }
+  >;
 };
 
 type SuffixTurn = {
@@ -1821,6 +2085,7 @@ function validateTruncatedWindow(
         control: null,
         context_snapshot_recorded: false,
         progress_stages: [],
+        agent_step_progress: new Map(),
       };
       continue;
     }
@@ -1866,6 +2131,7 @@ function validateTruncatedWindow(
           control: null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       const currentRun = activeTurn.current_run;
@@ -1899,6 +2165,7 @@ function validateTruncatedWindow(
           control: null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       const currentRun = activeTurn.current_run;
@@ -1920,6 +2187,50 @@ function validateTruncatedWindow(
       continue;
     }
 
+    if (item.item_kind === 'agent_step_progress_recorded') {
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix') throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'running',
+          terminal_status: null,
+          result_kind: null,
+          candidate_draft_id: null,
+          plan_review: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+          context_snapshot_recorded: false,
+          progress_stages: [],
+          agent_step_progress: new Map(),
+        };
+      }
+      if (activeTurn.mode === 'unknown') {
+        if (taskIds.has(item.task_id)) throw unavailable();
+        taskIds.add(item.task_id);
+        activeTurn.mode = 'work';
+        activeTurn.task_id = item.task_id;
+      } else if (
+        activeTurn.mode === 'work'
+        && activeTurn.task_id === null
+      ) {
+        if (taskIds.has(item.task_id)) throw unavailable();
+        taskIds.add(item.task_id);
+        activeTurn.task_id = item.task_id;
+      }
+      if (
+        activeTurn.mode !== 'work'
+        || activeTurn.task_id !== item.task_id
+      ) throw unavailable();
+      const currentRun = activeTurn.current_run;
+      if (currentRun === null) throw unavailable();
+      recordAgentStepProgress(currentRun, item, mayUsePrefixState);
+      continue;
+    }
+
     if (item.item_kind === 'tool_call_requested') {
       if (activeTurn.current_run === null) {
         if (activeTurn.origin !== 'prefix') throw unavailable();
@@ -1938,6 +2249,7 @@ function validateTruncatedWindow(
           control: null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       if (activeTurn.mode === 'unknown') activeTurn.mode = 'work';
@@ -1981,6 +2293,7 @@ function validateTruncatedWindow(
           control: null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       if (activeTurn.mode === 'unknown') activeTurn.mode = 'work';
@@ -2041,6 +2354,7 @@ function validateTruncatedWindow(
           control: null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       const currentRun = activeTurn.current_run;
@@ -2071,6 +2385,7 @@ function validateTruncatedWindow(
           control: mayUsePrefixState ? 'unknown' : null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       const currentRun = activeTurn.current_run;
@@ -2124,6 +2439,7 @@ function validateTruncatedWindow(
           control: null,
           context_snapshot_recorded: false,
           progress_stages: [],
+          agent_step_progress: new Map(),
         };
       }
       const currentRun = activeTurn.current_run;

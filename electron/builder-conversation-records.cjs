@@ -18,6 +18,9 @@ const {
 const {
   sanitizeBuilderRunContextSnapshot,
 } = require('./builder-run-context-snapshot.cjs');
+const {
+  sanitizeBuilderAgentStepProgressConversationAdmission,
+} = require('./builder-agent-step-progress-conversation-admission.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -157,6 +160,7 @@ const PAYLOAD_KEYS = Object.freeze({
   run_cancel_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   tool_call_requested: Object.freeze(['tool_call_record']),
   tool_call_result_recorded: Object.freeze(['tool_result_record']),
+  agent_step_progress_recorded: Object.freeze(['progress_admission']),
   run_completed: Object.freeze([
     'turn_id', 'run_id', 'terminal_status', 'result_kind', 'result_digest',
     'assistant_message', 'candidate_result', 'plan_admission',
@@ -785,6 +789,18 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
       ) fail();
       return {
         tool_result_record: toolResultRecord,
+      };
+    }
+    case 'agent_step_progress_recorded': {
+      const progressAdmission = sanitizeBuilderAgentStepProgressConversationAdmission(
+        valueAt(value, 'progress_admission'),
+      );
+      if (
+        progressAdmission.project_id !== projectId
+        || progressAdmission.conversation_id !== conversationId
+      ) fail();
+      return {
+        progress_admission: progressAdmission,
       };
     }
     case 'run_completed': {

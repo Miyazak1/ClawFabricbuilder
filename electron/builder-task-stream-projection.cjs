@@ -313,6 +313,33 @@ function itemFromEvent(event, progressStagesByRun) {
         recorded_state: 'recorded',
       };
     }
+    case 'agent_step_progress_recorded': {
+      const admission = payload.progress_admission;
+      return {
+        item_kind: 'agent_step_progress_recorded',
+        sequence: event.sequence,
+        turn_id: admission.turn_id,
+        run_id: admission.run_id,
+        task_id: admission.task_id,
+        step_id: admission.step_id,
+        step_index: admission.step_index,
+        recorded_state: admission.recorded_state,
+        result: admission.result === null ? null : {
+          status: admission.result.status,
+          summary_code: admission.result.summary_code,
+          display_summary: admission.result.display_summary,
+        },
+        summary: {
+          status: admission.summary.status,
+          display_summary: admission.summary.display_summary,
+        },
+        lifecycle: {
+          conversation_admission: 'verified_public_progress',
+          raw_output_admission: 'not_included',
+          revision_admission: 'not_created',
+        },
+      };
+    }
     case 'run_completed':
       return {
         item_kind: 'run_completed',

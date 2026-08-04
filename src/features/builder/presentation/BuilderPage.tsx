@@ -236,6 +236,7 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
   const progressStagesByRun = new Map<string, BuilderConversationRunProgressStage[]>();
   const workEntries = new Map<string, ActivityWorkStatusEntry>();
   const toolRequestEntries = new Map<string, ActivityItemEntry>();
+  const agentStepEntries = new Map<string, ActivityItemEntry>();
   for (const item of activityItems(snapshot)) {
     if (item.item_kind === 'run_started') {
       const key = `${item.turn_id}:${item.run_id}`;
@@ -292,6 +293,23 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       entries.push({ entry_kind: 'item', item, hidden: false });
       continue;
     }
+    if (item.item_kind === 'agent_step_progress_recorded') {
+      const key = `${item.turn_id}:${item.run_id}:${item.step_id}`;
+      if (item.recorded_state === 'start_recorded') {
+        const entry: ActivityItemEntry = {
+          entry_kind: 'item',
+          item,
+          hidden: false,
+        };
+        agentStepEntries.set(key, entry);
+        entries.push(entry);
+      } else {
+        const startEntry = agentStepEntries.get(key);
+        if (startEntry !== undefined) startEntry.hidden = true;
+        entries.push({ entry_kind: 'item', item, hidden: false });
+      }
+      continue;
+    }
     if (item.item_kind === 'run_completed') {
       const key = `${item.turn_id}:${item.run_id}`;
       completedRuns.add(key);
@@ -324,6 +342,7 @@ function isArtifactLogItem(item: BuilderConversationItem): boolean {
     || item.item_kind === 'task_brief_updated'
     || item.item_kind === 'tool_call_requested'
     || item.item_kind === 'tool_call_result_recorded'
+    || item.item_kind === 'agent_step_progress_recorded'
     || item.item_kind === 'candidate_reviewed'
     || item.item_kind === 'plan_reviewed'
   ) return true;
@@ -348,6 +367,7 @@ function artifactWorkStatusEntry(
 function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
   const entries: ActivityEntry[] = [];
   const toolRequestEntries = new Map<string, ActivityItemEntry>();
+  const agentStepEntries = new Map<string, ActivityItemEntry>();
   for (const item of activityItems(snapshot)) {
     if (item.item_kind === 'run_started' || item.item_kind === 'run_progress_recorded') {
       entries.push(artifactWorkStatusEntry(item));
@@ -363,6 +383,19 @@ function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | nu
       const toolRequestEntry = toolRequestEntries.get(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`);
       if (toolRequestEntry !== undefined) toolRequestEntry.hidden = true;
       entries.push({ entry_kind: 'item', item, hidden: false });
+      continue;
+    }
+    if (item.item_kind === 'agent_step_progress_recorded') {
+      const key = `${item.turn_id}:${item.run_id}:${item.step_id}`;
+      if (item.recorded_state === 'start_recorded') {
+        const entry: ActivityItemEntry = { entry_kind: 'item', item, hidden: false };
+        agentStepEntries.set(key, entry);
+        entries.push(entry);
+      } else {
+        const startEntry = agentStepEntries.get(key);
+        if (startEntry !== undefined) startEntry.hidden = true;
+        entries.push({ entry_kind: 'item', item, hidden: false });
+      }
       continue;
     }
     if (isArtifactLogItem(item)) {
@@ -532,6 +565,28 @@ function progressBody(item: Extract<BuilderConversationItem, { item_kind: 'run_p
   return 'Preparing the result for review.';
 }
 
+function agentStepTitle(
+  item: Extract<BuilderConversationItem, { item_kind: 'agent_step_progress_recorded' }>,
+): string {
+  if (item.recorded_state === 'start_recorded') return 'Step started';
+  if (item.result?.status === 'succeeded') return 'Step completed';
+  if (item.result?.status === 'blocked') return 'Step needs attention';
+  if (item.result?.status === 'cancelled') return 'Step stopped';
+  return 'Step could not finish';
+}
+
+function agentStepBody(
+  item: Extract<BuilderConversationItem, { item_kind: 'agent_step_progress_recorded' }>,
+): string {
+  if (item.recorded_state === 'start_recorded') {
+    return 'This step was recorded as started.';
+  }
+  if (item.result?.status === 'succeeded') return 'This step completed.';
+  if (item.result?.status === 'blocked') return 'This step needs your attention.';
+  if (item.result?.status === 'cancelled') return 'This step was stopped.';
+  return 'This step could not finish.';
+}
+
 type ActivityWorkStatus = 'started' | BuilderConversationRunProgressStage;
 
 type ActivityWorkStatusEntry = {
@@ -585,6 +640,12 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'run_progress_recorded') return <RefreshCw className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
   if (item.item_kind === 'task_brief_updated') return <ListChecks className="size-3.5" />;
+  if (item.item_kind === 'agent_step_progress_recorded') {
+    if (item.recorded_state === 'start_recorded') return <RefreshCw className="size-3.5" />;
+    if (item.result?.status === 'succeeded') return <CheckCircle2 className="size-3.5" />;
+    if (item.result?.status === 'cancelled') return <StopCircle className="size-3.5" />;
+    return <AlertCircle className="size-3.5" />;
+  }
   if (item.item_kind === 'tool_call_requested') return <Play className="size-3.5" />;
   if (item.item_kind === 'tool_call_result_recorded') {
     if (item.result.status === 'succeeded') return <CheckCircle2 className="size-3.5" />;
@@ -619,6 +680,7 @@ function activityTitle(item: BuilderConversationItem): string {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
   if (item.item_kind === 'task_brief_updated') return 'Direction updated';
+  if (item.item_kind === 'agent_step_progress_recorded') return agentStepTitle(item);
   if (item.item_kind === 'tool_call_requested') return toolRequestTitle(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultTitle(item);
   if (item.item_kind === 'candidate_reviewed') {
@@ -783,6 +845,7 @@ function activityBody(item: BuilderConversationItem): string {
       : 'You asked to stop the current work.';
   }
   if (item.item_kind === 'task_brief_updated') return item.brief.summary;
+  if (item.item_kind === 'agent_step_progress_recorded') return agentStepBody(item);
   if (item.item_kind === 'tool_call_requested') return toolRequestBody(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultBody(item);
   if (item.item_kind === 'candidate_reviewed') {
@@ -1151,6 +1214,9 @@ function ActivityItem({
         : item.item_kind === 'tool_call_result_recorded'
           ? item.result.status
           : undefined}
+      data-builder-agent-step-progress={item.item_kind === 'agent_step_progress_recorded'
+        ? item.recorded_state
+        : undefined}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
         <ActivityGlyph item={item} />

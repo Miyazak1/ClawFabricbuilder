@@ -40,6 +40,9 @@ const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
 const {
+  createBuilderAgentStepProgressConversationAdmission,
+} = require('../electron/builder-agent-step-progress-conversation-admission.cjs');
+const {
   CONVERSATION_REPLAY_VERSION,
   BuilderConversationReplayError,
   replayBuilderConversation,
@@ -239,6 +242,190 @@ function planAdmission(previous, callRecord, resultRecord, resultDigest = RESULT
       result_status: 'succeeded',
     }],
     ...overrides,
+  });
+}
+
+function agentStepProgressItem({
+  turnId,
+  taskId,
+  runId,
+  index,
+  recordedState = 'start_recorded',
+  resultStatus = 'succeeded',
+}) {
+  const stepId = id('run-step', index);
+  if (recordedState === 'start_recorded') {
+    return {
+      item_kind: 'agent_step_progress',
+      step_id: stepId,
+      step_index: index,
+      recorded_state: 'start_recorded',
+      result: null,
+      summary: {
+        status: 'started',
+        display_summary: 'Agent step start was recorded.',
+      },
+    };
+  }
+  const byStatus = {
+    succeeded: {
+      summary_code: 'agent_step_completed_without_raw_output',
+      display_summary: 'Agent step completed. Details were not kept.',
+    },
+    blocked: {
+      summary_code: 'agent_step_needs_owner_attention',
+      display_summary: 'Agent step needs owner attention.',
+    },
+    failed: {
+      summary_code: 'agent_step_failed_without_raw_output',
+      display_summary: 'Agent step could not finish. Details were not kept.',
+    },
+    cancelled: {
+      summary_code: 'agent_step_cancelled_without_raw_output',
+      display_summary: 'Agent step was stopped. Details were not kept.',
+    },
+  }[resultStatus];
+  void turnId;
+  void taskId;
+  void runId;
+  return {
+    item_kind: 'agent_step_progress',
+    step_id: stepId,
+    step_index: index,
+    recorded_state: 'result_recorded',
+    result: {
+      status: resultStatus,
+      summary_code: byStatus.summary_code,
+      display_summary: byStatus.display_summary,
+    },
+    summary: {
+      status: resultStatus,
+      display_summary: byStatus.display_summary,
+    },
+  };
+}
+
+function agentStepProgressReadResult({ taskId, runId, items }) {
+  const stepResultCount = items.filter((item) => item.result !== null).length;
+  return {
+    result_version: 'builder-agent-step-progress-read-service-result.v1',
+    service_version: 'builder-agent-step-progress-read-service.v1',
+    operation: 'agent_step_progress_projected',
+    status: 'ready',
+    projection: {
+      projection_version: 'builder-agent-step-progress-projection.v1',
+      project_id: PROJECT_ID,
+      task_id: taskId,
+      run_id: runId,
+      progress: {
+        window: {
+          first_step_index: items[0].step_index,
+          last_step_index: items.at(-1).step_index,
+          has_earlier: false,
+        },
+        items,
+      },
+      authority: {
+        agent_step_source: 'main_owned_step_start_and_result_store_projection',
+        step_start_receipt: 'verified_not_exposed',
+        step_result_receipt: 'verified_not_exposed',
+        renderer_authority: 'not_present',
+        ipc_authority: 'not_present',
+        provider_dispatch: false,
+        model_dispatch: false,
+        tool_dispatch: false,
+        step_execution: false,
+        permission_grant_authority: false,
+        credential_storage: 'not_present',
+        source_access: 'not_present',
+        source_read: 'not_present',
+        source_write: 'not_present',
+        process_run: false,
+        network_access: false,
+        revision_authority: false,
+        review_authority: false,
+        artifact_authority: false,
+        raw_output_storage: false,
+        raw_context_storage: false,
+      },
+    },
+    read_summary: {
+      step_start_status: 'ready',
+      step_result_status: stepResultCount === 0 ? 'absent' : 'ready',
+      step_start_count: items.length,
+      step_result_count: stepResultCount,
+      truncated: false,
+    },
+    evidence: {
+      service_authority: 'main_owned_agent_step_progress_read_service',
+      projection_authority: 'main_owned_step_start_and_result_store_projection',
+      step_start_store_authority: 'main_owned_agent_step_start_store',
+      step_result_store_authority: 'main_owned_agent_step_result_store',
+      step_start_receipt: 'verified_not_exposed',
+      step_result_receipt: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      model_dispatch: false,
+      tool_dispatch: false,
+      step_execution: false,
+      permission_grant_authority: false,
+      credential_storage: 'not_present',
+      source_access: 'not_present',
+      source_read: 'not_present',
+      source_write: 'not_present',
+      process_run: false,
+      network_access: false,
+      revision_authority: false,
+      review_authority: false,
+      artifact_authority: false,
+      raw_output_storage: false,
+      raw_context_storage: false,
+      recovery_model: 'read_only_store_projection_replay',
+    },
+  };
+}
+
+function agentStepProgressAdmission({
+  turnId = id('turn', 1),
+  taskId = id('task', 1),
+  runId = id('run', 1),
+  index = 1,
+  recordedState = 'start_recorded',
+  resultStatus = 'succeeded',
+  admittedAtMs = 1_000,
+} = {}) {
+  const selected = agentStepProgressItem({
+    turnId,
+    taskId,
+    runId,
+    index,
+    recordedState,
+    resultStatus,
+  });
+  const readItems = index === 1
+    ? [selected, agentStepProgressItem({
+      turnId,
+      taskId,
+      runId,
+      index: 2,
+      recordedState: 'result_recorded',
+    })]
+    : [agentStepProgressItem({ turnId, taskId, runId, index: 1 }), selected];
+  return createBuilderAgentStepProgressConversationAdmission({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    read_result: agentStepProgressReadResult({ taskId, runId, items: readItems }),
+    step_id: selected.step_id,
+    step_index: selected.step_index,
+    recorded_state: selected.recorded_state,
+    admitted_at_ms: admittedAtMs,
   });
 }
 
@@ -562,6 +749,101 @@ test('replays fixed run progress only in order while the run is active', () => {
     run_id: id('run', 10),
     stage: 'provider_response_received',
   }, 20)), assertReplayError);
+});
+
+test('replays Agent step progress only from admitted active work runs', () => {
+  const turnId = id('turn', 110);
+  const taskId = id('task', 110);
+  const runId = id('run', 110);
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 110), text: 'Build a small timer.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Build timer' },
+    base_revision: null,
+  }, 110);
+  events = append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_A,
+  }, 111);
+  const stepStarted = agentStepProgressAdmission({
+    turnId,
+    taskId,
+    runId,
+    index: 111,
+    recordedState: 'start_recorded',
+    admittedAtMs: 1_111,
+  });
+  events = append(events, 'agent_step_progress_recorded', {
+    progress_admission: stepStarted,
+  }, 112);
+  const stepResult = agentStepProgressAdmission({
+    turnId,
+    taskId,
+    runId,
+    index: 111,
+    recordedState: 'result_recorded',
+    resultStatus: 'failed',
+    admittedAtMs: 1_112,
+  });
+  events = append(events, 'agent_step_progress_recorded', {
+    progress_admission: stepResult,
+  }, 113);
+
+  const replay = replayBuilderConversation(events);
+  assert.equal(replay.active_turn_id, turnId);
+  assert.equal(Object.hasOwn(replay.turns[0].runs[0], 'agent_step_progress'), false);
+  assert.doesNotMatch(
+    JSON.stringify(replay),
+    /admission_digest|read_service|step_start_count|step_result_count|provider|credential|source_tree|stdout|stderr|commit_oid|tree_oid/iu,
+  );
+
+  assert.throws(() => replayBuilderConversation(append(events.slice(0, 2), 'agent_step_progress_recorded', {
+    progress_admission: stepResult,
+  }, 114)), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append([...events], 'agent_step_progress_recorded', {
+    progress_admission: stepResult,
+  }, 115)), assertReplayError);
+  const cancelled = append(events.slice(0, 2), 'run_cancel_requested', {
+    turn_id: turnId,
+    run_id: runId,
+    request_id: id('cancel-request', 110),
+  }, 116);
+  assert.throws(() => replayBuilderConversation(append(cancelled, 'agent_step_progress_recorded', {
+    progress_admission: stepStarted,
+  }, 117)), assertReplayError);
+
+  let questionEvents = [];
+  questionEvents = append(questionEvents, 'turn_submitted', {
+    message: { message_id: id('message', 118), text: 'What is this project?' },
+    turn_id: id('turn', 118),
+    mode: 'question',
+    task: null,
+    base_revision: null,
+  }, 118);
+  questionEvents = append(questionEvents, 'run_started', {
+    turn_id: id('turn', 118),
+    run_id: id('run', 118),
+    task_id: null,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_A,
+  }, 119);
+  assert.throws(() => replayBuilderConversation(append(questionEvents, 'agent_step_progress_recorded', {
+    progress_admission: agentStepProgressAdmission({
+      turnId: id('turn', 118),
+      taskId,
+      runId: id('run', 118),
+      index: 118,
+      recordedState: 'start_recorded',
+      admittedAtMs: 1_118,
+    }),
+  }, 120)), assertReplayError);
 });
 
 test('replays tool call requests and fixed-code results only inside an active work run', async () => {

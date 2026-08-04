@@ -68,14 +68,20 @@ type MutableConversationItem = {
     display_summary: string;
     summary_digest?: string;
     stdout?: string;
-  };
+  } | null;
   lifecycle?: {
+    conversation_admission?: string;
     permission_admission?: string;
     dispatch_admission?: string;
     execution_admission?: string;
-    result_admission: string;
+    result_admission?: string;
     raw_output_admission?: string;
     revision_admission?: string;
+  };
+  step_index?: number;
+  summary?: {
+    status: string;
+    display_summary: string;
   };
   terminal_status?: string;
   result_kind?: string;
@@ -395,6 +401,69 @@ function progressWire(): MutableWire {
       run_id: id('run', 3),
       stage: 'provider_request_started',
       recorded_state: 'recorded',
+    },
+    {
+      ...wire.conversation.items[2]!,
+      sequence: 5,
+    },
+    {
+      ...wire.conversation.items[3]!,
+      sequence: 6,
+    },
+  ];
+  return wire;
+}
+
+function agentStepProgressWire(): MutableWire {
+  const wire = candidateWire();
+  wire.conversation.head_sequence = 6;
+  wire.conversation.window.last_sequence = 6;
+  wire.conversation.items = [
+    wire.conversation.items[0]!,
+    wire.conversation.items[1]!,
+    {
+      item_kind: 'agent_step_progress_recorded',
+      sequence: 3,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      task_id: id('task', 2),
+      step_id: id('run-step', 30),
+      step_index: 30,
+      recorded_state: 'start_recorded',
+      result: null,
+      summary: {
+        status: 'started',
+        display_summary: 'Agent step start was recorded.',
+      },
+      lifecycle: {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+    },
+    {
+      item_kind: 'agent_step_progress_recorded',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      task_id: id('task', 2),
+      step_id: id('run-step', 30),
+      step_index: 30,
+      recorded_state: 'result_recorded',
+      result: {
+        status: 'succeeded',
+        summary_code: 'agent_step_completed_without_raw_output',
+        display_summary: 'Agent step completed. Details were not kept.',
+      },
+      summary: {
+        status: 'succeeded',
+        display_summary: 'Agent step completed. Details were not kept.',
+      },
+      lifecycle: {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
     },
     {
       ...wire.conversation.items[2]!,
@@ -883,6 +952,98 @@ describe('Builder conversation snapshot', () => {
     ];
 
     for (const value of [leaked, skipped, duplicate, afterControl]) {
+      expectUnavailable(value);
+    }
+  });
+
+  it('accepts admitted Agent step progress facts without exposing admission evidence', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(agentStepProgressWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items[2]).toEqual({
+      item_kind: 'agent_step_progress_recorded',
+      sequence: 3,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      task_id: id('task', 2),
+      step_id: id('run-step', 30),
+      step_index: 30,
+      recorded_state: 'start_recorded',
+      result: null,
+      summary: {
+        status: 'started',
+        display_summary: 'Agent step start was recorded.',
+      },
+      lifecycle: {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+    });
+    expect(snapshot.conversation.items[3]).toEqual({
+      item_kind: 'agent_step_progress_recorded',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      task_id: id('task', 2),
+      step_id: id('run-step', 30),
+      step_index: 30,
+      recorded_state: 'result_recorded',
+      result: {
+        status: 'succeeded',
+        summary_code: 'agent_step_completed_without_raw_output',
+        display_summary: 'Agent step completed. Details were not kept.',
+      },
+      summary: {
+        status: 'succeeded',
+        display_summary: 'Agent step completed. Details were not kept.',
+      },
+      lifecycle: {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /progress_admission|admission_digest|read_service|step_start_count|step_result_count|provider|credential|source_tree|stdout|stderr|commit_oid|tree_oid|input_digest|prompt|token|secret/iu,
+    );
+  });
+
+  it('rejects forged or out-of-order Agent step progress facts', () => {
+    const leaked = agentStepProgressWire();
+    (leaked.conversation.items[2] as Record<string, unknown>).admission_digest =
+      `sha256:${'a'.repeat(64)}`;
+
+    const resultBeforeStart = agentStepProgressWire();
+    resultBeforeStart.conversation.items.splice(2, 1);
+    resultBeforeStart.conversation.items = resultBeforeStart.conversation.items.map(
+      (item, index) => ({ ...item, sequence: index + 1 }),
+    );
+    resultBeforeStart.conversation.head_sequence = 5;
+    resultBeforeStart.conversation.window.last_sequence = 5;
+
+    const mismatchedSummary = agentStepProgressWire();
+    mismatchedSummary.conversation.items[3]!.summary = {
+      status: 'failed',
+      display_summary: 'Agent step completed. Details were not kept.',
+    };
+
+    const afterControl = agentStepProgressWire();
+    afterControl.conversation.head_sequence = 7;
+    afterControl.conversation.window.last_sequence = 7;
+    afterControl.conversation.items.splice(3, 0, {
+      item_kind: 'run_control_requested',
+      sequence: 4,
+      turn_id: id('turn', 1),
+      run_id: id('run', 3),
+      action: 'cancel',
+    });
+    afterControl.conversation.items = afterControl.conversation.items.map(
+      (item, index) => ({ ...item, sequence: index + 1 }),
+    );
+
+    for (const value of [leaked, resultBeforeStart, mismatchedSummary, afterControl]) {
       expectUnavailable(value);
     }
   });

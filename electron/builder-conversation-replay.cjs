@@ -99,6 +99,17 @@ function cloneToolResultRecord(record) {
   };
 }
 
+function cloneAgentStepProgressAdmission(record) {
+  return {
+    ...record,
+    result: record.result === null ? null : { ...record.result },
+    summary: { ...record.summary },
+    source: { ...record.source },
+    lifecycle: { ...record.lifecycle },
+    authority: { ...record.authority },
+  };
+}
+
 function compactToolSessionCalls(toolCalls) {
   return toolCalls.map((toolCall) => ({
     step_id: toolCall.step_id,
@@ -186,6 +197,7 @@ function applyRunStarted(state, payload) {
     progress_stages: [],
     interrupt_request_id: null,
     cancel_request_id: null,
+    agent_step_progress: [],
   });
 }
 
@@ -322,6 +334,42 @@ function applyToolCallResultRecorded(state, payload) {
   });
   state.toolResultRecordDigests.add(record.record_digest);
   toolCall.tool_result_record = cloneToolResultRecord(record);
+}
+
+function applyAgentStepProgressRecorded(state, payload) {
+  const admission = payload.progress_admission;
+  const turn = requireActiveTurn(state, admission.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  if (
+    turn.mode !== 'work'
+    || turn.task === null
+    || turn.task.task_id !== admission.task_id
+    || run === null
+    || run.run_id !== admission.run_id
+    || run.status !== 'running'
+    || run.interrupt_request_id !== null
+    || run.cancel_request_id !== null
+    || state.agentStepProgressAdmissionDigests.has(admission.admission_digest)
+  ) fail();
+  const existing = run.agent_step_progress.find(
+    (item) => item.step_id === admission.step_id,
+  ) ?? null;
+  const existingResult = run.agent_step_progress.find(
+    (item) => item.step_id === admission.step_id && item.recorded_state === 'result_recorded',
+  ) ?? null;
+  if (admission.recorded_state === 'start_recorded') {
+    if (existing !== null) fail();
+    run.agent_step_progress.push(cloneAgentStepProgressAdmission(admission));
+  } else {
+    if (
+      existing === null
+      || existing.recorded_state !== 'start_recorded'
+      || existing.step_index !== admission.step_index
+      || existingResult !== null
+    ) fail();
+    run.agent_step_progress.push(cloneAgentStepProgressAdmission(admission));
+  }
+  state.agentStepProgressAdmissionDigests.add(admission.admission_digest);
 }
 
 function applyCandidateReviewed(state, payload) {
@@ -537,6 +585,7 @@ const TRANSITIONS = Object.freeze({
   run_cancel_requested: applyRunCancelRequested,
   tool_call_requested: applyToolCallRequested,
   tool_call_result_recorded: applyToolCallResultRecorded,
+  agent_step_progress_recorded: applyAgentStepProgressRecorded,
   run_completed: applyRunCompleted,
   task_brief_updated: applyTaskBriefUpdated,
   turn_completed: applyTurnCompleted,
@@ -549,47 +598,51 @@ function publicTurn(turn) {
     status: turn.status,
     task: turn.task === null ? null : { ...turn.task },
     base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
-    runs: turn.runs.map((run) => ({
-      ...run,
-      context_snapshot: run.context_snapshot === null ? null : {
-        ...run.context_snapshot,
-        included_message_ids: [...run.context_snapshot.included_message_ids],
-        route_decision: {
-          ...run.context_snapshot.route_decision,
-          matched_signals: [...run.context_snapshot.route_decision.matched_signals],
+    runs: turn.runs.map((run) => {
+      const publicRun = { ...run };
+      delete publicRun.agent_step_progress;
+      return {
+        ...publicRun,
+        context_snapshot: run.context_snapshot === null ? null : {
+          ...run.context_snapshot,
+          included_message_ids: [...run.context_snapshot.included_message_ids],
+          route_decision: {
+            ...run.context_snapshot.route_decision,
+            matched_signals: [...run.context_snapshot.route_decision.matched_signals],
+          },
+          brief_reference: { ...run.context_snapshot.brief_reference },
+          base_revision: run.context_snapshot.base_revision === null
+            ? null
+            : { ...run.context_snapshot.base_revision },
+          permissions: {
+            ...run.context_snapshot.permissions,
+            required_permissions: [...run.context_snapshot.permissions.required_permissions],
+          },
+          capabilities: { ...run.context_snapshot.capabilities },
         },
-        brief_reference: { ...run.context_snapshot.brief_reference },
-        base_revision: run.context_snapshot.base_revision === null
-          ? null
-          : { ...run.context_snapshot.base_revision },
-        permissions: {
-          ...run.context_snapshot.permissions,
-          required_permissions: [...run.context_snapshot.permissions.required_permissions],
+        progress_stages: [...run.progress_stages],
+        tool_calls: run.tool_calls.map((toolCall) => ({
+          ...toolCall,
+          resource: { ...toolCall.resource },
+          lifecycle: { ...toolCall.lifecycle },
+          tool_call_record: cloneToolCallRecord(toolCall.tool_call_record),
+          tool_result_record: toolCall.tool_result_record === null
+            ? null
+            : cloneToolResultRecord(toolCall.tool_result_record),
+        })),
+        plan_review: run.plan_review === null ? null : { ...run.plan_review },
+        candidate_result: run.candidate_result === null ? null : {
+          ...run.candidate_result,
+          git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
         },
-        capabilities: { ...run.context_snapshot.capabilities },
-      },
-      progress_stages: [...run.progress_stages],
-      tool_calls: run.tool_calls.map((toolCall) => ({
-        ...toolCall,
-        resource: { ...toolCall.resource },
-        lifecycle: { ...toolCall.lifecycle },
-        tool_call_record: cloneToolCallRecord(toolCall.tool_call_record),
-        tool_result_record: toolCall.tool_result_record === null
-          ? null
-          : cloneToolResultRecord(toolCall.tool_result_record),
-      })),
-      plan_review: run.plan_review === null ? null : { ...run.plan_review },
-      candidate_result: run.candidate_result === null ? null : {
-        ...run.candidate_result,
-        git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
-      },
-      candidate_review: run.candidate_review === null ? null : {
-        ...run.candidate_review,
-        revision: run.candidate_review.revision === null
-          ? null
-          : { ...run.candidate_review.revision },
-      },
-    })),
+        candidate_review: run.candidate_review === null ? null : {
+          ...run.candidate_review,
+          revision: run.candidate_review.revision === null
+            ? null
+            : { ...run.candidate_review.revision },
+        },
+      };
+    }),
     messages: turn.messages.map((message) => ({ ...message })),
     outcome: turn.outcome,
   };
@@ -618,6 +671,7 @@ function replayBuilderConversation(rawEvents) {
     stepIds: new Set(),
     toolCallIds: new Set(),
     toolResultRecordDigests: new Set(),
+    agentStepProgressAdmissionDigests: new Set(),
     interruptRequestIds: new Set(),
     cancelRequestIds: new Set(),
     reviewIds: new Set(),

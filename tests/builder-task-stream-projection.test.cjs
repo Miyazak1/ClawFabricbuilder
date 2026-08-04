@@ -45,6 +45,9 @@ const {
   createBuilderToolResultRecord,
 } = require('../electron/builder-tool-result-records.cjs');
 const {
+  createBuilderAgentStepProgressConversationAdmission,
+} = require('../electron/builder-agent-step-progress-conversation-admission.cjs');
+const {
   BUILDER_TASK_STREAM_VERSION,
   MAX_PUBLIC_BYTES,
   MAX_PUBLIC_ITEMS,
@@ -196,6 +199,165 @@ function runContextSnapshot({ turnId, taskId, runId, routeDecisionRecord, messag
     latest_task_capsule: null,
     base_revision: null,
     created_at_ms: 4_000,
+  });
+}
+
+function agentStepProgressItem(index, recordedState = 'start_recorded', resultStatus = 'succeeded') {
+  if (recordedState === 'start_recorded') {
+    return {
+      item_kind: 'agent_step_progress',
+      step_id: id('run-step', index),
+      step_index: index,
+      recorded_state: 'start_recorded',
+      result: null,
+      summary: {
+        status: 'started',
+        display_summary: 'Agent step start was recorded.',
+      },
+    };
+  }
+  const summary = {
+    succeeded: {
+      summary_code: 'agent_step_completed_without_raw_output',
+      display_summary: 'Agent step completed. Details were not kept.',
+    },
+    blocked: {
+      summary_code: 'agent_step_needs_owner_attention',
+      display_summary: 'Agent step needs owner attention.',
+    },
+    failed: {
+      summary_code: 'agent_step_failed_without_raw_output',
+      display_summary: 'Agent step could not finish. Details were not kept.',
+    },
+    cancelled: {
+      summary_code: 'agent_step_cancelled_without_raw_output',
+      display_summary: 'Agent step was stopped. Details were not kept.',
+    },
+  }[resultStatus];
+  return {
+    item_kind: 'agent_step_progress',
+    step_id: id('run-step', index),
+    step_index: index,
+    recorded_state: 'result_recorded',
+    result: {
+      status: resultStatus,
+      summary_code: summary.summary_code,
+      display_summary: summary.display_summary,
+    },
+    summary: {
+      status: resultStatus,
+      display_summary: summary.display_summary,
+    },
+  };
+}
+
+function agentStepProgressReadResult({ taskId, runId, items }) {
+  const stepResultCount = items.filter((item) => item.result !== null).length;
+  return {
+    result_version: 'builder-agent-step-progress-read-service-result.v1',
+    service_version: 'builder-agent-step-progress-read-service.v1',
+    operation: 'agent_step_progress_projected',
+    status: 'ready',
+    projection: {
+      projection_version: 'builder-agent-step-progress-projection.v1',
+      project_id: PROJECT_ID,
+      task_id: taskId,
+      run_id: runId,
+      progress: {
+        window: {
+          first_step_index: items[0].step_index,
+          last_step_index: items.at(-1).step_index,
+          has_earlier: false,
+        },
+        items,
+      },
+      authority: {
+        agent_step_source: 'main_owned_step_start_and_result_store_projection',
+        step_start_receipt: 'verified_not_exposed',
+        step_result_receipt: 'verified_not_exposed',
+        renderer_authority: 'not_present',
+        ipc_authority: 'not_present',
+        provider_dispatch: false,
+        model_dispatch: false,
+        tool_dispatch: false,
+        step_execution: false,
+        permission_grant_authority: false,
+        credential_storage: 'not_present',
+        source_access: 'not_present',
+        source_read: 'not_present',
+        source_write: 'not_present',
+        process_run: false,
+        network_access: false,
+        revision_authority: false,
+        review_authority: false,
+        artifact_authority: false,
+        raw_output_storage: false,
+        raw_context_storage: false,
+      },
+    },
+    read_summary: {
+      step_start_status: 'ready',
+      step_result_status: stepResultCount === 0 ? 'absent' : 'ready',
+      step_start_count: items.length,
+      step_result_count: stepResultCount,
+      truncated: false,
+    },
+    evidence: {
+      service_authority: 'main_owned_agent_step_progress_read_service',
+      projection_authority: 'main_owned_step_start_and_result_store_projection',
+      step_start_store_authority: 'main_owned_agent_step_start_store',
+      step_result_store_authority: 'main_owned_agent_step_result_store',
+      step_start_receipt: 'verified_not_exposed',
+      step_result_receipt: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      model_dispatch: false,
+      tool_dispatch: false,
+      step_execution: false,
+      permission_grant_authority: false,
+      credential_storage: 'not_present',
+      source_access: 'not_present',
+      source_read: 'not_present',
+      source_write: 'not_present',
+      process_run: false,
+      network_access: false,
+      revision_authority: false,
+      review_authority: false,
+      artifact_authority: false,
+      raw_output_storage: false,
+      raw_context_storage: false,
+      recovery_model: 'read_only_store_projection_replay',
+    },
+  };
+}
+
+function agentStepProgressAdmission({
+  turnId,
+  taskId,
+  runId,
+  index,
+  recordedState = 'start_recorded',
+  resultStatus = 'succeeded',
+}) {
+  const selected = agentStepProgressItem(index, recordedState, resultStatus);
+  const readItems = index === 1
+    ? [selected, agentStepProgressItem(2, 'result_recorded')]
+    : [agentStepProgressItem(1), selected];
+  return createBuilderAgentStepProgressConversationAdmission({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: turnId,
+    task_id: taskId,
+    run_id: runId,
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    read_result: agentStepProgressReadResult({ taskId, runId, items: readItems }),
+    step_id: selected.step_id,
+    step_index: selected.step_index,
+    recorded_state: selected.recorded_state,
+    admitted_at_ms: 4_000 + index,
   });
 }
 
@@ -863,6 +1025,100 @@ test('projects fixed run progress as renderer-safe status items', () => {
   assert.doesNotMatch(
     JSON.stringify(stream),
     /provider_secret|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid|input_digest|prompt|token/iu,
+  );
+});
+
+test('projects admitted Agent step progress without exposing admission evidence', () => {
+  const events = [];
+  const turnId = id('turn', 150);
+  const taskId = id('task', 151);
+  const runId = id('run', 152);
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 153), text: 'Build a focused timer.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Create Builder project' },
+    base_revision: null,
+  }, 154);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 155);
+  append(events, 'agent_step_progress_recorded', {
+    progress_admission: agentStepProgressAdmission({
+      turnId,
+      taskId,
+      runId,
+      index: 156,
+      recordedState: 'start_recorded',
+    }),
+  }, 156);
+  append(events, 'agent_step_progress_recorded', {
+    progress_admission: agentStepProgressAdmission({
+      turnId,
+      taskId,
+      runId,
+      index: 156,
+      recordedState: 'result_recorded',
+      resultStatus: 'blocked',
+    }),
+  }, 157);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.deepEqual(stream.conversation.items.slice(2), [
+    {
+      item_kind: 'agent_step_progress_recorded',
+      sequence: 3,
+      turn_id: turnId,
+      run_id: runId,
+      task_id: taskId,
+      step_id: id('run-step', 156),
+      step_index: 156,
+      recorded_state: 'start_recorded',
+      result: null,
+      summary: {
+        status: 'started',
+        display_summary: 'Agent step start was recorded.',
+      },
+      lifecycle: {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+    },
+    {
+      item_kind: 'agent_step_progress_recorded',
+      sequence: 4,
+      turn_id: turnId,
+      run_id: runId,
+      task_id: taskId,
+      step_id: id('run-step', 156),
+      step_index: 156,
+      recorded_state: 'result_recorded',
+      result: {
+        status: 'blocked',
+        summary_code: 'agent_step_needs_owner_attention',
+        display_summary: 'Agent step needs owner attention.',
+      },
+      summary: {
+        status: 'blocked',
+        display_summary: 'Agent step needs owner attention.',
+      },
+      lifecycle: {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      },
+    },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /progress_admission|admission_digest|read_service|step_start_count|step_result_count|provider|credential|source_tree|stdout|stderr|commit_oid|tree_oid|input_digest|prompt|token/iu,
   );
 });
 

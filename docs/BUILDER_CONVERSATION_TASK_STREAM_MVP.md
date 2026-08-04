@@ -283,14 +283,18 @@ Agent Step Start/Result receipts now also have a pure renderer-safe progress
 projection that can turn already-recorded main-store facts into bounded public
 step status items. A main-only read service can compose the Step Start store,
 Step Result store, and that projection for one owner/Project/Task/Run read,
-returning only public progress items plus fixed read counts/statuses. That read
-service is still not admitted into Conversation replay or shown in the visible
-Task Stream. A separate main-side Conversation admission contract can validate
-one selected public progress item from the read-service result against a trusted
-active Project/Conversation/Turn/Task/Run context and produce a digest-bound
-record for later event appending. It still does not append that event or render
-it. Until that later gate lands, the UI must not invent Agent step narration
-from live text, provider deltas, or local state.
+returning only public progress items plus fixed read counts/statuses. A
+separate main-side Conversation admission contract validates one selected
+public progress item from the read-service result against a trusted active
+Project/Conversation/Turn/Task/Run context and produces a digest-bound record.
+Conversation replay now accepts that admitted progress only while the matching
+work Run is active, and the renderer-safe Task Stream exposes only the public
+`agent_step_progress_recorded` item with step id/index, recorded state, fixed
+summary, and no raw output or revision authority. This still does not add an
+IPC/preload command, subscribe to step stores, start or run Agent steps, dispatch
+provider/model/tool work, read or write source, or let the renderer append
+progress. Until those later gates land, the UI must not invent Agent step
+narration from live text, provider deltas, or local state.
 
 The chat flow should feel like the assistant is continuously working with the
 user, but it must be driven by facts rather than invented narration. The current
@@ -302,6 +306,10 @@ MVP should show:
   result;
 - `tool_call_requested` and `tool_call_result_recorded` as sanitized project
   steps only after the tool facts have been admitted;
+- `agent_step_progress_recorded` as sanitized Agent step status only after a
+  main-side progress admission has been recorded into Conversation; recorded
+  starts must not be described as live running work, and recorded results expose
+  only fixed public summaries;
 - `run_completed` as the terminal answer, plan, candidate, failure, cancelled,
   or interrupted result. Failed completions carry only a fixed public
   `failure_phase` such as `not_recorded`, `context_ready`,

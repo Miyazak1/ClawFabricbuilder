@@ -46,6 +46,9 @@ const {
 const {
   createBuilderRunContextSnapshot,
 } = require('../electron/builder-run-context-snapshot.cjs');
+const {
+  createBuilderAgentStepProgressConversationAdmission,
+} = require('../electron/builder-agent-step-progress-conversation-admission.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
@@ -235,6 +238,142 @@ function planAdmission(previous, callRecord, resultRecord, resultDigest = DIGEST
       result_status: 'succeeded',
     }],
     ...overrides,
+  });
+}
+
+function agentStepProgressItem(index, recordedState = 'start_recorded', overrides = {}) {
+  if (recordedState === 'start_recorded') {
+    return {
+      item_kind: 'agent_step_progress',
+      step_id: typedId('run-step', index),
+      step_index: index,
+      recorded_state: 'start_recorded',
+      result: null,
+      summary: {
+        status: 'started',
+        display_summary: 'Agent step start was recorded.',
+      },
+      ...overrides,
+    };
+  }
+  return {
+    item_kind: 'agent_step_progress',
+    step_id: typedId('run-step', index),
+    step_index: index,
+    recorded_state: 'result_recorded',
+    result: {
+      status: 'succeeded',
+      summary_code: 'agent_step_completed_without_raw_output',
+      display_summary: 'Agent step completed. Details were not kept.',
+    },
+    summary: {
+      status: 'succeeded',
+      display_summary: 'Agent step completed. Details were not kept.',
+    },
+    ...overrides,
+  };
+}
+
+function agentStepProgressReadResult(items) {
+  const stepResultCount = items.filter((item) => item.result !== null).length;
+  return {
+    result_version: 'builder-agent-step-progress-read-service-result.v1',
+    service_version: 'builder-agent-step-progress-read-service.v1',
+    operation: 'agent_step_progress_projected',
+    status: 'ready',
+    projection: {
+      projection_version: 'builder-agent-step-progress-projection.v1',
+      project_id: PROJECT_ID,
+      task_id: typedId('task', 1),
+      run_id: typedId('run', 1),
+      progress: {
+        window: {
+          first_step_index: items[0].step_index,
+          last_step_index: items.at(-1).step_index,
+          has_earlier: false,
+        },
+        items,
+      },
+      authority: {
+        agent_step_source: 'main_owned_step_start_and_result_store_projection',
+        step_start_receipt: 'verified_not_exposed',
+        step_result_receipt: 'verified_not_exposed',
+        renderer_authority: 'not_present',
+        ipc_authority: 'not_present',
+        provider_dispatch: false,
+        model_dispatch: false,
+        tool_dispatch: false,
+        step_execution: false,
+        permission_grant_authority: false,
+        credential_storage: 'not_present',
+        source_access: 'not_present',
+        source_read: 'not_present',
+        source_write: 'not_present',
+        process_run: false,
+        network_access: false,
+        revision_authority: false,
+        review_authority: false,
+        artifact_authority: false,
+        raw_output_storage: false,
+        raw_context_storage: false,
+      },
+    },
+    read_summary: {
+      step_start_status: 'ready',
+      step_result_status: stepResultCount === 0 ? 'absent' : 'ready',
+      step_start_count: items.length,
+      step_result_count: stepResultCount,
+      truncated: false,
+    },
+    evidence: {
+      service_authority: 'main_owned_agent_step_progress_read_service',
+      projection_authority: 'main_owned_step_start_and_result_store_projection',
+      step_start_store_authority: 'main_owned_agent_step_start_store',
+      step_result_store_authority: 'main_owned_agent_step_result_store',
+      step_start_receipt: 'verified_not_exposed',
+      step_result_receipt: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      model_dispatch: false,
+      tool_dispatch: false,
+      step_execution: false,
+      permission_grant_authority: false,
+      credential_storage: 'not_present',
+      source_access: 'not_present',
+      source_read: 'not_present',
+      source_write: 'not_present',
+      process_run: false,
+      network_access: false,
+      revision_authority: false,
+      review_authority: false,
+      artifact_authority: false,
+      raw_output_storage: false,
+      raw_context_storage: false,
+      recovery_model: 'read_only_store_projection_replay',
+    },
+  };
+}
+
+function agentStepProgressAdmission(index, recordedState = 'start_recorded') {
+  const selected = agentStepProgressItem(index, recordedState);
+  const readItems = index === 1
+    ? [selected, agentStepProgressItem(2, 'result_recorded')]
+    : [agentStepProgressItem(1), selected];
+  return createBuilderAgentStepProgressConversationAdmission({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: typedId('turn', 1),
+    task_id: typedId('task', 1),
+    run_id: typedId('run', 1),
+    run_status: 'running',
+    interrupt_requested: false,
+    cancel_requested: false,
+    read_result: agentStepProgressReadResult(readItems),
+    step_id: selected.step_id,
+    step_index: selected.step_index,
+    recorded_state: selected.recorded_state,
+    admitted_at_ms: 2_000 + index,
   });
 }
 
@@ -481,6 +620,58 @@ test('supports fixed run progress payloads without provider or source authority'
     run_id: typedId('run', 1),
     stage: 'token_delta',
   }, started, 4), assertRecordError());
+});
+
+test('supports admitted Agent step progress payloads without runtime authority', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a quiet timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create focus timer' },
+    base_revision: null,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const progress = create('agent_step_progress_recorded', {
+    progress_admission: agentStepProgressAdmission(1),
+  }, started, 3);
+  const completedProgress = create('agent_step_progress_recorded', {
+    progress_admission: agentStepProgressAdmission(2, 'result_recorded'),
+  }, progress, 4);
+
+  assert.deepEqual(Object.keys(progress.payload).sort(), ['progress_admission']);
+  assert.equal(progress.payload.progress_admission.recorded_state, 'start_recorded');
+  assert.equal(progress.payload.progress_admission.summary.display_summary, 'Agent step start was recorded.');
+  assert.equal(completedProgress.payload.progress_admission.recorded_state, 'result_recorded');
+  assert.equal(
+    completedProgress.payload.progress_admission.result.display_summary,
+    'Agent step completed. Details were not kept.',
+  );
+  assert.doesNotMatch(
+    JSON.stringify(completedProgress),
+    /provider_secret|credential_value|credential_secret|secret-value|api\.deepseek|source_tree|file_content|stdout|stderr|commit_oid|tree_oid|review_id|artifact_id|ipcMain|ipcRenderer/iu,
+  );
+
+  const forgedProject = agentStepProgressAdmission(1);
+  assert.throws(() => create('agent_step_progress_recorded', {
+    progress_admission: {
+      ...forgedProject,
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174099',
+    },
+  }, started, 5), assertRecordError());
+  const leakedAuthority = agentStepProgressAdmission(1);
+  assert.throws(() => create('agent_step_progress_recorded', {
+    progress_admission: {
+      ...leakedAuthority,
+      source_tree: 'private-marker',
+    },
+  }, started, 6), assertRecordError());
 });
 
 test('supports digest-bound run context snapshots without source or provider authority', () => {

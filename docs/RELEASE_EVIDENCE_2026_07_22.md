@@ -4098,6 +4098,55 @@ UI, or prove a real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Step Progress Task Stream Package Check
+
+This addendum records the package checkpoint after admitting already-verified
+Agent Step Progress records into Conversation replay, projecting them through
+the renderer-safe Task Stream, and re-validating/rendering them in the frontend
+as compact fact-backed status rows. Conversation accepts
+`agent_step_progress_recorded` only for the matching active work Turn/Task/Run,
+rejects result-before-start, duplicate-result, question-mode, cancelled, and
+interrupted contexts, and keeps internal progress state out of the public
+replayed Turn. Task Stream exposes only public step id/index, recorded state,
+fixed summary/result text, and fixed lifecycle flags. The renderer sanitizer
+replays the suffix and rejects forged ordering, lifecycle drift, internal
+admission/read-service evidence, source content, provider, credential, Git,
+Review, Artifact, IPC, or raw-output material before `BuilderPage` renders the
+status item. This checkpoint still does not create Agent progress events from
+the stores, add IPC/preload subscription, start or run Agent steps, dispatch
+provider/model/tool, read or write source, run processes, grant permissions,
+store raw output/context, create Project Revisions, Reviews, Artifacts, visible
+Agents UI, or prove a real saved-profile DeepSeek canary pass.
+
+- Focused main validation passed through
+  `node --test tests\builder-conversation-records.test.cjs
+  tests\builder-conversation-replay.test.cjs
+  tests\builder-task-stream-projection.test.cjs
+  tests\builder-agent-step-progress-conversation-admission.test.cjs`; the
+  command reported 52 passing Node tests.
+- Focused renderer validation passed through
+  `npm.cmd exec vitest run
+  src\features\builder\domain\builderConversationSnapshot.test.ts
+  src\features\builder\presentation\BuilderPage.test.tsx --runInBand`; the
+  command reported 103 passing Vitest tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, and `npm.cmd run test:boundaries`. The full Node
+  boundary suite reported 960 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build, Electron packaging, signing, and `verify:package`.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 811 ASAR entries. The refreshed executable
+  timestamp was 2026-08-04 09:29:46 local time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,
