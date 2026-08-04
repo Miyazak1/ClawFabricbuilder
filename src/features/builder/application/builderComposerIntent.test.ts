@@ -229,6 +229,76 @@ describe('routeBuilderComposerIntent', () => {
     });
   });
 
+  it('routes active-run cancel requests without write admission', () => {
+    expect(decideBuilderComposerIntent('停止', {
+      activeRunCanQueueFollowup: true,
+      activeRunStatus: 'working',
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'cancel',
+      confidence: 'high',
+      matchedSignals: ['active_run_cancel'],
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'cancel',
+      activeRunInput: 'cancel_requested',
+    });
+  });
+
+  it('queues active-run input by default instead of steering or building immediately', () => {
+    expect(decideBuilderComposerIntent('Change the main heading to My Notes.', {
+      activeRunCanQueueFollowup: true,
+      activeRunStatus: 'answering',
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'queue_followup',
+      confidence: 'medium',
+      matchedSignals: ['active_run_followup'],
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'queue_followup',
+      activeRunInput: 'queued_followup',
+    });
+  });
+
+  it('admits active-run steering only when an explicit steering gate allows it', () => {
+    expect(decideBuilderComposerIntent('Actually use the compact header instead.', {
+      activeRunCanQueueFollowup: true,
+      activeRunCanSteer: true,
+      activeRunStatus: 'working',
+      hasWorkspace: true,
+    })).toMatchObject({
+      route: 'steer',
+      confidence: 'medium',
+      matchedSignals: ['active_run_steer'],
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'steer',
+      activeRunInput: 'steer_admitted',
+    });
+  });
+
+  it('downgrades active-run input when follow-up queueing is unavailable', () => {
+    expect(decideBuilderComposerIntent('那就写', {
+      activeRunCanQueueFollowup: false,
+      activeRunStatus: 'answering',
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+    })).toMatchObject({
+      route: 'clarify',
+      confidence: 'medium',
+      matchedSignals: ['active_run_unsupported'],
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+      activeRunInput: 'unsupported',
+    });
+  });
+
   it('records explicit brief requests without write admission', () => {
     expect(decideBuilderComposerIntent('保存这个方向，后面按这个来：目标用户是小团队', {
       hasWorkspace: true,

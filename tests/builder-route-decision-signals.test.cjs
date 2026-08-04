@@ -12,6 +12,10 @@ const {
 
 test('defines the fixed public route-decision signal vocabulary', () => {
   assert.deepEqual(PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS, [
+    'active_run_cancel',
+    'active_run_followup',
+    'active_run_steer',
+    'active_run_unsupported',
     'capability_question',
     'chat_default',
     'clear_build',

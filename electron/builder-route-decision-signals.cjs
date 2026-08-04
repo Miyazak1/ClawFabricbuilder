@@ -1,6 +1,10 @@
 'use strict';
 
 const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
+  'active_run_cancel',
+  'active_run_followup',
+  'active_run_steer',
+  'active_run_unsupported',
   'capability_question',
   'chat_default',
   'clear_build',

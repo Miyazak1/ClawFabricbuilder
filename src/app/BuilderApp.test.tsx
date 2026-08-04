@@ -3294,9 +3294,10 @@ describe('BuilderApp v2', () => {
     });
   });
 
-  it('adds desktop composer context to live work through request-id-only steering', async () => {
+  it('queues desktop composer follow-up while live work is active instead of steering by default', async () => {
     const {
       container,
+      continueDraft,
       emitGenerationStarted,
       readTaskStream,
       resolveGenerate,
@@ -3336,7 +3337,7 @@ describe('BuilderApp v2', () => {
     readTaskStream.mockClear();
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-        ?.call(textarea, 'Make it blue.');
+        ?.call(textarea, 'Make it responsive.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -3348,27 +3349,33 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(steer).toHaveBeenCalledExactlyOnceWith({
-        request_id: expected.request_digest,
-        message: 'Make it blue.',
-      });
+      expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')?.textContent)
+        .toContain('will run after the current step finishes');
     });
-    expect(steer.mock.calls[0][0]).not.toHaveProperty('instruction');
-    expect(steer.mock.calls[0][0]).not.toHaveProperty('source_tree');
-    expect(steer.mock.calls[0][0]).not.toHaveProperty('project_id');
+    const activeComposer = container.querySelector('[data-builder-composer="true"]');
+    expect(activeComposer?.getAttribute('data-builder-route')).toBe('queue_followup');
+    expect(activeComposer?.getAttribute('data-builder-route-dispatch')).toBe('queue_followup');
+    expect(activeComposer?.getAttribute('data-builder-route-active-run-input')).toBe('queued_followup');
+    expect(activeComposer?.getAttribute('data-builder-route-signals')).toBe('active_run_followup');
+    expect(steer).not.toHaveBeenCalled();
     expect(submit).toHaveBeenCalledOnce();
+    expect(continueDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
-    await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-    });
 
     await act(async () => {
       await resolveGenerate();
       await Promise.resolve();
     });
+    await waitFor(() => {
+      expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        instruction: 'Make it responsive.',
+      });
+    });
+    expect(steer).not.toHaveBeenCalled();
   });
 
-  it('queues a build command instead of steering while an answer is active', async () => {
+  it('queues a build command as an active-run follow-up while an answer is active', async () => {
     const {
       answer,
       container,
@@ -3415,23 +3422,24 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-active-answer-build-blocked="true"]')?.textContent)
-        .toContain('will start after the answer finishes');
-      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')?.textContent)
+        .toContain('will run after the current step finishes');
     });
     expect(steer).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     const composer = container.querySelector('[data-builder-composer="true"]');
-    expect(composer?.getAttribute('data-builder-route')).toBe('build');
-    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
+    expect(composer?.getAttribute('data-builder-route')).toBe('queue_followup');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('queue_followup');
+    expect(composer?.getAttribute('data-builder-route-active-run-input')).toBe('queued_followup');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('active_run_followup');
 
     await act(async () => {
       await resolveAnswer();
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-active-answer-build-blocked="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).toBeNull();
     });
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: change });
@@ -3476,15 +3484,16 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).not.toBeNull();
     });
     expect(steer).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     const composer = container.querySelector('[data-builder-composer="true"]');
-    expect(composer?.getAttribute('data-builder-route')).toBe('build');
-    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
-    expect(composer?.getAttribute('data-builder-route-signals')).toBe('contextual_build_phrase');
-    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+    expect(composer?.getAttribute('data-builder-route')).toBe('queue_followup');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('queue_followup');
+    expect(composer?.getAttribute('data-builder-route-active-run-input')).toBe('queued_followup');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('active_run_followup');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
 
     await act(async () => {
@@ -3492,7 +3501,7 @@ describe('BuilderApp v2', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).toBeNull();
     });
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: contextualExecution });
@@ -3500,7 +3509,7 @@ describe('BuilderApp v2', () => {
     expect(steer).not.toHaveBeenCalled();
   });
 
-  it('keeps queued active-answer builds behind current-project write approval', async () => {
+  it('keeps queued active-run build follow-ups behind current-project write approval', async () => {
     const {
       answer,
       container,
@@ -3544,7 +3553,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-active-answer-build-queued="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).not.toBeNull();
     });
     expect(steer).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();

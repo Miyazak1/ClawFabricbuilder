@@ -1,4 +1,12 @@
-export type BuilderComposerIntentRoute = 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
+export type BuilderComposerIntentRoute =
+  | 'answer'
+  | 'clarify'
+  | 'update_brief'
+  | 'plan'
+  | 'steer'
+  | 'queue_followup'
+  | 'cancel'
+  | 'build';
 
 export type BuilderComposerIntentConfidence = 'low' | 'medium' | 'high';
 
@@ -6,6 +14,9 @@ export type BuilderComposerIntentDispatch =
   | 'reply'
   | 'brief_update'
   | 'plan'
+  | 'steer'
+  | 'queue_followup'
+  | 'cancel'
   | 'build'
   | 'ask_workspace'
   | 'ask_permission'
@@ -28,7 +39,17 @@ export type BuilderComposerApprovalMode =
   | 'ask_before_write'
   | 'allow_current_project';
 
+export type BuilderComposerActiveRunInput =
+  | 'not_active'
+  | 'cancel_requested'
+  | 'steer_admitted'
+  | 'queued_followup'
+  | 'unsupported';
+
 export type BuilderComposerIntentContext = Readonly<{
+  activeRunCanQueueFollowup?: boolean;
+  activeRunCanSteer?: boolean;
+  activeRunStatus?: 'not_active' | 'answering' | 'working';
   approvalMode?: BuilderComposerApprovalMode;
   composerMode?: 'plan' | null;
   hasPriorBuildContext?: boolean;
@@ -46,6 +67,7 @@ export type BuilderComposerRouteDecision = Readonly<{
   requiredPermissions: readonly string[];
   permissionResult: BuilderComposerIntentPermissionResult;
   dispatch: BuilderComposerIntentDispatch;
+  activeRunInput: BuilderComposerActiveRunInput;
 }>;
 
 export type BuilderComposerRouteDecisionEvidence = Readonly<BuilderComposerRouteDecision & {
@@ -70,6 +92,16 @@ const READ_ONLY_PATTERNS = Object.freeze([
   /(?:是什么|为什么|为何|怎么|如何|怎么回事|什么原因|解释一下|说明一下|介绍一下|当前状态|现在在做什么)/u,
   /^(?:what|why|how|when|where|who|which)\b/u,
   /\b(?:explain|describe|tell me|status|what's|whats)\b/u,
+]);
+
+const ACTIVE_RUN_CANCEL_PATTERNS = Object.freeze([
+  /^(?:停止|取消|别做了|不要做了|先停|停一下|停下|暂停|中止|打断)[。.!！]*$/u,
+  /^(?:stop|cancel|abort|interrupt|pause)[.?!]*$/u,
+]);
+
+const ACTIVE_RUN_STEER_PATTERNS = Object.freeze([
+  /^(?:等一下|等等|补充一下|改成|改为|这里|这个|当前|别用|不要用|换成|加上|去掉|删掉|记得).*/u,
+  /^(?:wait|hold on|actually|instead|use|don'?t use|make it|change it|add|remove)\b/u,
 ]);
 
 const VAGUE_CHANGE_PATTERNS = Object.freeze([
@@ -194,6 +226,7 @@ function createDecision(
   route: BuilderComposerIntentRoute,
   context: BuilderComposerIntentContext,
   options: Readonly<{
+    activeRunInput?: BuilderComposerActiveRunInput;
     confidence: BuilderComposerIntentConfidence;
     downgradedFrom?: BuilderComposerIntentRoute | null;
     downgradeReason?: BuilderComposerIntentDowngradeReason;
@@ -216,6 +249,9 @@ function createDecision(
     if (requiresWrite && permissionResult === 'ask') return 'ask_permission';
     if (route === 'build') return 'build';
     if (route === 'plan') return 'plan';
+    if (route === 'steer') return 'steer';
+    if (route === 'queue_followup') return 'queue_followup';
+    if (route === 'cancel') return 'cancel';
     if (route === 'update_brief') return 'brief_update';
     return 'reply';
   })();
@@ -231,6 +267,7 @@ function createDecision(
     requiredPermissions: Object.freeze(requiresWrite ? ['write_project'] : []),
     permissionResult,
     dispatch,
+    activeRunInput: options.activeRunInput ?? 'not_active',
   });
 }
 
@@ -243,6 +280,37 @@ export function decideBuilderComposerIntent(
     return createDecision('answer', context, {
       confidence: 'high',
       matchedSignals: ['empty_message'],
+    });
+  }
+  if (context.activeRunStatus !== undefined && context.activeRunStatus !== 'not_active') {
+    if (ACTIVE_RUN_CANCEL_PATTERNS.some((pattern) => pattern.test(normalized))) {
+      return createDecision('cancel', context, {
+        activeRunInput: 'cancel_requested',
+        confidence: 'high',
+        matchedSignals: ['active_run_cancel'],
+      });
+    }
+    if (
+      context.activeRunCanSteer === true
+      && ACTIVE_RUN_STEER_PATTERNS.some((pattern) => pattern.test(normalized))
+    ) {
+      return createDecision('steer', context, {
+        activeRunInput: 'steer_admitted',
+        confidence: 'medium',
+        matchedSignals: ['active_run_steer'],
+      });
+    }
+    if (context.activeRunCanQueueFollowup === false) {
+      return createDecision('clarify', context, {
+        activeRunInput: 'unsupported',
+        confidence: 'medium',
+        matchedSignals: ['active_run_unsupported'],
+      });
+    }
+    return createDecision('queue_followup', context, {
+      activeRunInput: 'queued_followup',
+      confidence: 'medium',
+      matchedSignals: ['active_run_followup'],
     });
   }
   if (context.composerMode === 'plan') {

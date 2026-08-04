@@ -45,7 +45,7 @@ export type BuilderComposerWorkingBrief = Readonly<{
 export type BuilderComposerMode = 'plan';
 
 export type BuilderComposerProps = Readonly<{
-  activeAnswerBuildBlocked?: boolean;
+  activeRunFollowupQueued?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
   busy: boolean;
   canAddContext: boolean;
@@ -109,7 +109,7 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
 }
 
 export function BuilderComposer({
-  activeAnswerBuildBlocked = false,
+  activeRunFollowupQueued = false,
   approvalMode = 'ask_before_write',
   busy,
   canAddContext,
@@ -466,6 +466,7 @@ export function BuilderComposer({
       data-builder-route-decision-id={composerRouteEvidence?.decisionId}
       data-builder-route-dispatch={composerRouteDecision?.dispatch}
       data-builder-route-downgrade={composerRouteDecision?.downgradeReason ?? undefined}
+      data-builder-route-active-run-input={composerRouteDecision?.activeRunInput}
       data-builder-route-message-id={composerRouteEvidence?.messageId}
       data-builder-route-permission={composerRouteDecision?.permissionResult}
       data-builder-route-project-id={composerRouteEvidence?.projectId ?? undefined}
@@ -529,13 +530,12 @@ export function BuilderComposer({
           aria-keyshortcuts={canSubmitComposer ? 'Enter' : undefined}
           value={instruction}
         />
-        {activeAnswerBuildBlocked ? (
+        {activeRunFollowupQueued ? (
           <p
             className="cf-builder-composer-busy-build-notice"
-            data-builder-active-answer-build-blocked="true"
-            data-builder-active-answer-build-queued="true"
+            data-builder-active-run-followup-queued="true"
           >
-            I&apos;m still answering. This change is queued and will start after the answer finishes.
+            I&apos;m still working. This message is queued and will run after the current step finishes.
           </p>
         ) : null}
         <footer className="cf-builder-composer-footer">

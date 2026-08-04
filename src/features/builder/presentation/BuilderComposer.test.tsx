@@ -632,6 +632,7 @@ describe('BuilderComposer', () => {
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_workspace');
     expect(composer?.getAttribute('data-builder-route-confidence')).toBe('high');
     expect(composer?.getAttribute('data-builder-route-downgrade')).toBe('workspace_required');
+    expect(composer?.getAttribute('data-builder-route-active-run-input')).toBe('not_active');
     expect(composer?.getAttribute('data-builder-route-permission')).toBe('ask');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
     expect(composer?.getAttribute('data-builder-route-decision-id')).

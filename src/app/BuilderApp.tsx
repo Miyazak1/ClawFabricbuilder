@@ -418,7 +418,7 @@ type PendingBuildAfterWorkspace = Readonly<{
   messageId: string;
 }>;
 
-type QueuedActiveAnswerBuild = Readonly<{
+type QueuedActiveRunFollowup = Readonly<{
   epoch: number;
   instruction: string;
   messageId: string;
@@ -824,8 +824,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [approvalMode, setApprovalMode] = useState<BuilderComposerApprovalMode>('ask_before_write');
   const [composerRouteDecision, setComposerRouteDecision] =
     useState<BuilderComposerRouteDecisionEvidence | null>(null);
-  const [queuedActiveAnswerBuild, setQueuedActiveAnswerBuild] =
-    useState<QueuedActiveAnswerBuild | null>(null);
+  const [queuedActiveRunFollowup, setQueuedActiveRunFollowup] =
+    useState<QueuedActiveRunFollowup | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [answerFailureRecordedSuccess, setAnswerFailureRecordedSuccess] = useState(false);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -857,13 +857,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const currentProjectWriteApprovalStatusRef =
     useRef<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
-  const queuedActiveAnswerBuildRef = useRef<QueuedActiveAnswerBuild | null>(null);
+  const queuedActiveRunFollowupRef = useRef<QueuedActiveRunFollowup | null>(null);
   const submitInstructionTextRef = useRef<SubmitInstructionText | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
-  const publishQueuedActiveAnswerBuild = useCallback((queued: QueuedActiveAnswerBuild | null) => {
-    queuedActiveAnswerBuildRef.current = queued;
-    setQueuedActiveAnswerBuild(queued);
+  const publishQueuedActiveRunFollowup = useCallback((queued: QueuedActiveRunFollowup | null) => {
+    queuedActiveRunFollowupRef.current = queued;
+    setQueuedActiveRunFollowup(queued);
   }, []);
   const createComposerRouteEvidence = useCallback((
     decision: BuilderComposerRouteDecision,
@@ -1009,27 +1009,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [conversation.snapshot]);
 
   useEffect(() => {
-    if (queuedActiveAnswerBuild === null) return undefined;
-    const dispatchQueuedBuild = () => {
-      const queued = queuedActiveAnswerBuildRef.current;
+    if (queuedActiveRunFollowup === null) return undefined;
+    const dispatchQueuedFollowup = () => {
+      const queued = queuedActiveRunFollowupRef.current;
       if (queued === null) return;
       if (workspaceEpochRef.current !== queued.epoch) {
-        publishQueuedActiveAnswerBuild(null);
+        publishQueuedActiveRunFollowup(null);
         return;
       }
       if (projectSnapshotRef.current.busy || submitInFlightRef.current) return;
-      publishQueuedActiveAnswerBuild(null);
+      publishQueuedActiveRunFollowup(null);
       void submitInstructionTextRef.current?.(queued.instruction, {
         existingMessageId: queued.messageId,
       });
     };
-    const initialHandle = window.setTimeout(dispatchQueuedBuild, 0);
-    const intervalHandle = window.setInterval(dispatchQueuedBuild, 50);
+    const initialHandle = window.setTimeout(dispatchQueuedFollowup, 0);
+    const intervalHandle = window.setInterval(dispatchQueuedFollowup, 50);
     return () => {
       window.clearTimeout(initialHandle);
       window.clearInterval(intervalHandle);
     };
-  }, [publishQueuedActiveAnswerBuild, queuedActiveAnswerBuild]);
+  }, [publishQueuedActiveRunFollowup, queuedActiveRunFollowup]);
 
   useEffect(() => {
     if (!catalogNewProjectPending) return;
@@ -1131,7 +1131,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     planSourceReadApprovalRef.current = null;
     currentProjectWriteApprovalRef.current = null;
     currentProjectWriteApprovalStatusRef.current = null;
-    publishQueuedActiveAnswerBuild(null);
+    publishQueuedActiveRunFollowup(null);
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
     setApprovedPlanContinuationFailure(null);
@@ -1148,7 +1148,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setActiveFile(null);
     setLiveOutput(null);
     setView('project');
-  }, [publishPlanReviewInFlight, publishQueuedActiveAnswerBuild]);
+  }, [publishPlanReviewInFlight, publishQueuedActiveRunFollowup]);
 
   const openProject = useCallback((nextProjectId: string) => {
     resetWorkspace(nextProjectId);
@@ -1529,7 +1529,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     options = Object.freeze({}),
   ) => {
     if (submitInFlightRef.current || submittedIdea.trim().length === 0) return;
-    publishQueuedActiveAnswerBuild(null);
+    publishQueuedActiveRunFollowup(null);
     setAnswerFailureRecordedSuccess(false);
     let decision = decideBuilderComposerIntent(
       submittedIdea,
@@ -1729,7 +1729,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     project,
     ports.generator,
     createComposerRouteEvidence,
-    publishQueuedActiveAnswerBuild,
+    publishQueuedActiveRunFollowup,
     readActivityAfterTerminal,
     reviewPlan,
     submitPlanInstruction,
@@ -1743,10 +1743,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (projectSnapshotRef.current.busy) {
       const currentSnapshot = projectSnapshotRef.current;
       const submittedIdea = idea;
-      if (currentSnapshot.status === 'answering' && submittedIdea.trim().length > 0) {
-        const decision = decideBuilderComposerIntent(
-          submittedIdea,
-          composerIntentContext(
+      if (submittedIdea.trim().length === 0) return;
+      const decision = decideBuilderComposerIntent(
+        submittedIdea,
+        {
+          ...composerIntentContext(
             conversationSnapshotRef.current,
             currentSnapshot,
             composerModeRef.current,
@@ -1757,39 +1758,58 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               currentProjectWriteApprovalStatusRef.current,
             ),
           ),
-        );
-        if (decision.route === 'build') {
-          const routeWorkingBrief = composerWorkingBrief(
-            conversationSnapshotRef.current,
-            currentSnapshot,
-          );
-          const routeTaskId = routeWorkingBrief !== null
-            ? routeWorkingBrief.taskId
-            : null;
-          const routeEvidence = createComposerRouteEvidence(
-            decision,
-            currentSnapshot,
-            null,
-            routeTaskId,
-          );
-          setComposerRouteDecision(routeEvidence);
-          publishQueuedActiveAnswerBuild(Object.freeze({
-            epoch: workspaceEpochRef.current,
-            instruction: submittedIdea,
-            messageId: routeEvidence.messageId,
-          }));
-          setIdea('');
-          return;
-        }
+          activeRunCanQueueFollowup: true,
+          activeRunCanSteer: false,
+          activeRunStatus: currentSnapshot.status === 'answering' ? 'answering' : 'working',
+        },
+      );
+      const routeEvidence = createComposerRouteEvidence(
+        decision,
+        currentSnapshot,
+        null,
+        null,
+      );
+      setComposerRouteDecision(routeEvidence);
+      if (decision.dispatch === 'cancel') {
+        const commandEpoch = workspaceEpochRef.current;
+        setIdea('');
+        const result = await project.cancel();
+        if (workspaceEpochRef.current !== commandEpoch) return;
+        await readActivityAfterTerminal(result, commandEpoch);
+        setLiveOutput(null);
+        return;
       }
-      await steerInstruction();
+      if (decision.dispatch === 'steer') {
+        await steerInstruction();
+        return;
+      }
+      if (decision.dispatch === 'queue_followup') {
+        publishQueuedActiveRunFollowup(Object.freeze({
+          epoch: workspaceEpochRef.current,
+          instruction: submittedIdea,
+          messageId: routeEvidence.messageId,
+        }));
+        setIdea('');
+        return;
+      }
+      if (decision.dispatch === 'reply') {
+        return;
+      }
+      publishQueuedActiveRunFollowup(Object.freeze({
+        epoch: workspaceEpochRef.current,
+        instruction: submittedIdea,
+        messageId: routeEvidence.messageId,
+      }));
+      setIdea('');
       return;
     }
     await submitInstructionText(idea);
   }, [
     idea,
     createComposerRouteEvidence,
-    publishQueuedActiveAnswerBuild,
+    project,
+    publishQueuedActiveRunFollowup,
+    readActivityAfterTerminal,
     steerInstruction,
     submitInstructionText,
   ]);
@@ -2215,9 +2235,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             </div>
           ) : (
             <BuilderPage
-              activeAnswerBuildBlocked={queuedActiveAnswerBuild !== null
-                && project.snapshot.busy
-                && project.snapshot.status === 'answering'}
+              activeRunFollowupQueued={queuedActiveRunFollowup !== null
+                && project.snapshot.busy}
               activeFile={activeFile}
               answerFailureRecordedSuccess={answerFailureRecordedSuccess}
               approvalMode={visibleApprovalMode}

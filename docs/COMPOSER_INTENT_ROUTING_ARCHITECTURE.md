@@ -536,7 +536,11 @@ Current signal parity checkpoint: renderer and main classifiers must not invent
 private `matchedSignals` strings. The fixed public vocabulary includes ordinary
 chat/build/brief/plan signals plus UI-mode signals such as
 `composer_mode_plan` and future-mode boundary signals such as
-`goal_mode_request`. Node contract tests scan both classifier surfaces for
+`goal_mode_request`. Active-run input signals (`active_run_cancel`,
+`active_run_followup`, `active_run_steer`, and `active_run_unsupported`) are
+part of the same public vocabulary because they decide whether a message can
+cancel, steer, or wait behind an already-active run. Node contract tests scan
+both classifier surfaces for
 hard-coded route signals and fail if any signal is missing from the public
 vocabulary. Adding a route signal is therefore a route-contract change, not a
 local UI string tweak.
@@ -640,7 +644,9 @@ Deliverables:
 
 Current checkpoint: renderer and main fallback routing share the same public
 matched-signal vocabulary for current Builder routes, including
-`local_file_artifact` for Markdown/README/notes/text artifact writes. Main
+`local_file_artifact` for Markdown/README/notes/text artifact writes and
+`active_run_followup` for the current renderer-only safe queued follow-up
+surface. Main
 `submit` now dispatches from the resolved `RouteDecision` instead of a second
 boolean answer/build classifier, so workspace admission, write permission, and
 provider route selection cannot silently diverge.
