@@ -78,6 +78,24 @@ remain independently governed.
 Source reference:
 [DotHarness/dotcraft](https://github.com/DotHarness/dotcraft/tree/ffac645929d97150474d09fb004f16d220543182).
 
+### Pi
+
+Pi demonstrates a small, extensible terminal coding agent with JSONL session
+history, session tree branching, fork/clone exploration, compaction, queued
+steering, queued follow-up input, provider abstraction, extension packages, and
+application-owned scrolling.
+
+ClawFabric adopts the input-continuity and session-management principles: the
+composer remains usable while work is active, later input is classified as
+cancel, steering, or queued follow-up, and alternate directions can later branch
+without rewriting history. It does not adopt Pi's unrestricted default
+`read`/`write`/`edit`/`bash` tool surface, terminal-first UI, JSONL storage
+layout, or reliance on external containerization as the product permission
+model.
+
+Source reference:
+[earendil-works/pi](https://github.com/earendil-works/pi/tree/a96fb984d8c8b065fc5d193309fc812a882adee0).
+
 ### Resulting ClawFabric Model
 
 The common pattern is not "add a chat panel." It is:
@@ -242,6 +260,12 @@ silently reviving a rejected plan.
   primary send action. Plan-first work may appear as a secondary composer tool,
   but it must route through the same conversation/task stream rather than a
   separate planning panel.
+- While a Run is active, the composer may remain editable, but a new submit must
+  become one of three explicit facts: cancel/interrupt requested, steering
+  admitted for the active Turn, or queued follow-up after the active Turn
+  finishes. It must not clear prior messages, replace the current assistant
+  answer with a failure banner after already showing usable text, or silently
+  start a second side-effecting Run.
 - Ordinary chat and explanations may work before a local project folder is
   selected. Build/draft/save flows must not use a logical New project as a
   hidden write target. The composer shows a current project/workspace chip.
@@ -357,6 +381,10 @@ Detailed tool-level narration, command output, file-by-file work, test runs,
 repair loops, child Agent updates, and cross-task summaries require later
 Permission, Tool Call, Context Snapshot, and Agent Delegation gates. The UI must
 not display those steps unless their underlying facts exist.
+- Session branch, fork, clone, and compaction controls require durable facts
+  before becoming visible product actions. Compaction may change what is sent to
+  the model, but it cannot remove the user's conversation, saved versions,
+  review decisions, permissions, or run outcomes.
 - Candidate, saved, failed, and superseded states are visually distinct.
 - The user can always identify the current saved Version.
 - Engineering terms such as IPC, schema, receipt, adapter, and admission remain

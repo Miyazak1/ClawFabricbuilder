@@ -195,6 +195,15 @@ projections, and terminal result summaries. File-by-file edits, command runs,
 test/repair loops, child Agent updates, and cross-task summaries require the
 later Permission and Tool gates.
 
+The personal workbench should also prepare for mature active-run input without
+overexposing agent internals. References such as Pi show that steering,
+queued follow-up, branch/fork/clone, compaction, and package-based extensions
+are valuable long-term affordances. In ClawFabric they must arrive as governed
+Task/Run/Permission facts and product surfaces, not as terminal shortcuts or
+unrestricted tool access. The near-term Builder only needs enough of this model
+to preserve multi-turn chat, keep composer focus, queue safe follow-up input,
+and avoid erasing visible conversation history.
+
 Required facts:
 
 - Goal and Task identify requested work;

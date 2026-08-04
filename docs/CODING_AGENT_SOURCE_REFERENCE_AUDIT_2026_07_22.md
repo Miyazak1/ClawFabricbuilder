@@ -118,6 +118,72 @@ Primary source paths:
 Pinned source:
 [DotHarness/dotcraft](https://github.com/DotHarness/dotcraft/tree/ffac645929d97150474d09fb004f16d220543182).
 
+## Pi
+
+### Evidence boundary
+
+- Source reference inspected from
+  [earendil-works/pi](https://github.com/earendil-works/pi/tree/a96fb984d8c8b065fc5d193309fc812a882adee0)
+  on 2026-08-04.
+- The public repository contains readable TypeScript monorepo packages for an
+  agent core, coding-agent CLI, provider abstraction, and terminal UI library.
+- This audit uses Pi as source-level architecture evidence for session
+  branching, queued input, provider abstraction, extension packaging, and
+  viewport ownership. Before any code-level dependency or copied design is
+  introduced, the exact upstream commit must be pinned and reviewed separately.
+- Pi is MIT licensed. ClawFabric currently adopts product and architecture
+  principles only; source reuse would require a separate license and
+  attribution review.
+
+### Source findings
+
+- Pi is a minimal terminal coding harness rather than an Electron desktop
+  product. Its public package split is useful: `pi-coding-agent` owns the coding
+  surface, `pi-agent-core` owns tool-calling and state management, `pi-ai`
+  abstracts providers, and `pi-tui` owns terminal rendering.
+- The default coding-agent surface gives the model `read`, `write`, `edit`, and
+  `bash` tools. Builder must not copy this default because its ordinary-user
+  desktop needs fail-closed permission admission before writes or command
+  execution.
+- Pi distinguishes queued steering from queued follow-up input: steering can be
+  delivered after the current assistant turn finishes its current tool-call
+  segment, while follow-up waits until all active work finishes. This supports
+  Builder's future active-run input model: "send while working" is not the same
+  command as "cancel" or "start a new build."
+- Sessions are JSONL records with `id` and `parentId`, enabling an in-file
+  tree. `/tree`, `/fork`, and `/clone` expose branching, recovery, and alternate
+  direction exploration without rewriting history. Builder should adopt the
+  concept, not the storage layout: Conversation, Task, Run, Candidate, Review,
+  and Project Revision remain separate facts.
+- Pi supports manual and automatic compaction while preserving full session
+  history. Builder should treat compaction as a context assembly step, never as
+  deletion of durable facts or as Project memory authority.
+- Pi's extension, skill, prompt-template, and package model shows a useful
+  long-term capability pattern: keep the core small and load specialized
+  abilities through explicit packages. Builder can use this idea for future
+  document writers, review helpers, tool adapters, and agent roles, but only
+  after permission gates exist.
+- Pi's containerization guide is explicit about the boundary: Pi has no built-in
+  filesystem/process/network/credential permission system and recommends
+  routing tools into a VM, Docker container, or policy sandbox when stronger
+  isolation is needed. Builder must invert that default: permissions are a
+  product fact before tool dispatch, and sandbox/runtime choices are downstream
+  enforcement.
+- `pi-tui` demonstrates application-owned scrolling, fixed editor/footer
+  regions, overlays, focus handling, and differential rendering. Builder should
+  translate this into desktop layout contracts: the chat region scrolls; title,
+  sidebars, artifact panel, and composer remain stable; menus and pickers are
+  overlays with focus restore.
+
+Primary source paths:
+
+- `packages/coding-agent/README.md`
+- `packages/coding-agent/docs/containerization.md`
+- `packages/tui/README.md`
+
+Source reference:
+[earendil-works/pi](https://github.com/earendil-works/pi/tree/a96fb984d8c8b065fc5d193309fc812a882adee0).
+
 ## Claude Code
 
 ### Evidence boundary
@@ -206,10 +272,17 @@ Builder will adopt these implementation principles:
    execution, permission, save, or artifact authority.
 9. The provider adapter retains project, conversation, turn, run, item, request,
    causation, and idempotency identities across the boundary.
-10. Ordinary users see Project, Task, Progress, Preview, Changes, Review, and
+10. Active-run input distinguishes cancel, steering, and follow-up. A second
+    composer submit while work is active must not mutate an already-issued
+    provider/tool request or erase visible conversation history.
+11. Branching and compaction are context-management features over durable
+    facts. They do not rewrite Project source, Review, Save, Permission, or Run
+    evidence.
+12. Ordinary users see Project, Task, Progress, Preview, Changes, Review, and
     Version. Internal protocol and authority terms remain engineering evidence.
 
 Builder will not adopt DotCraft's storage layout, Codex's developer-only
-repository assumptions, Claude Code's terminal-first interaction, a generic
-request bus, renderer-owned durable state, memory-only replay, implicit tool
-approval, or conversation-as-source-of-truth.
+repository assumptions, Pi's unrestricted default `read`/`write`/`edit`/`bash`
+tool authority, Claude Code's terminal-first interaction, a generic request bus,
+renderer-owned durable state, memory-only replay, implicit tool approval, or
+conversation-as-source-of-truth.

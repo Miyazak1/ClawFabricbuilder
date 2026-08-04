@@ -28,6 +28,7 @@ storage models differ.
 | --- | --- | --- |
 | Codex | Thread, Turn, Item, approval request, file-change evidence, interrupt, steer, and resumable work | developer-only repository assumptions and terminal-first density |
 | DotCraft | project-local runtime, durable sessions, approvals, queued input, Goals, Agent Teams, reviewable project memory | `.craft` storage layout or treating project files as the only authority |
+| Pi | JSONL session tree, fork/clone exploration, queued steering vs queued follow-up, provider abstraction, extensions/skills/packages, application-owned scrolling | unrestricted default read/write/edit/bash tools, terminal-only UI, or delegating permission to external sandboxing alone |
 | aider | ask/code/architect flow; discuss first, then terse contextual execution such as `go ahead` | forcing every ordinary user to manually switch modes |
 | Cursor | Ask/Agent/Manual capability split; read-only exploration is distinct from autonomous edits | closed product-specific UI assumptions |
 | OpenHands | each step chooses conversation or code/tool action | unrestricted code-action runtime in the Builder MVP |
@@ -41,6 +42,19 @@ Internal routing is explicit and testable.
 Permissions are evaluated after intent, before side effects.
 Task/brief state makes contextual execution possible.
 ```
+
+Pi adds one important correction to the active-run model: "the user typed again
+while the assistant is working" is not one behavior. Builder must classify that
+input as cancel/interrupt, steering for the active turn, a queued follow-up for
+after the active work completes, or a new task after the current turn is
+terminal. This is a first-class route decision, not an incidental composer
+state.
+
+Pi also validates the long-term session shape: users need branching, retry,
+clone, and compaction without losing durable facts. Builder should expose these
+as project/task operations later, but the storage authority remains Builder's
+Conversation, Task, Run, Candidate, Review, Permission, and Project Revision
+facts, not Pi's JSONL layout.
 
 ## Product Contract
 
@@ -105,6 +119,10 @@ Route context includes:
 - current draft/candidate/review state;
 - current permission policy;
 - whether a run is active, interrupted, or awaiting approval;
+- active-run input policy, including whether steering and queued follow-up are
+  supported for the current run;
+- branch/fork origin state when the conversation was cloned from another task
+  or alternate direction;
 - recent route decision evidence for recovery and debugging.
 
 ## Route Types
@@ -115,6 +133,9 @@ type ComposerRoute =
   | "clarify"
   | "update_brief"
   | "plan"
+  | "steer"
+  | "queue_followup"
+  | "cancel"
   | "build";
 ```
 
@@ -226,6 +247,52 @@ Examples:
 instruction, and write permission. Missing requirements downgrade to
 `clarify` or a permission/workspace request, not a silent failure.
 
+### steer
+
+Use only during an active turn when the user's new input is clearly meant to
+adjust the current in-flight work before it finishes.
+
+Examples:
+
+- `等一下，这个页面要偏暗色`
+- `这里别用卡片，改成表格`
+- `补充一下，移动端也要考虑`
+
+`steer` may append a steering event to the active Turn only when the current
+provider/tool segment supports safe steering. If the segment cannot accept new
+input, the route must downgrade to `queue_followup` or ask whether to cancel.
+It must not mutate an already-issued provider or tool request.
+
+### queue_followup
+
+Use during an active turn when the new input is a normal next question or next
+instruction that should run after the current work reaches a terminal state.
+
+Examples:
+
+- `做完后再解释一下你改了什么`
+- `下一步帮我把配色统一`
+- `等这个结束后再给我一个总结`
+
+Queued follow-up preserves the visible chat history and the user's text. It
+does not create a second simultaneous build, does not clear the active response,
+and does not gain permission from the active Run.
+
+### cancel
+
+Use when the user clearly asks to stop the active turn.
+
+Examples:
+
+- `停止`
+- `取消`
+- `别做了`
+- `stop`
+
+Cancel is an asynchronous command. The UI can show that cancellation was
+requested, but terminal cancellation is only proven by a later Run completion
+fact.
+
 ## Admission Rules
 
 Intent classification is not enough. Side-effecting work must pass admission.
@@ -277,8 +344,12 @@ When route confidence is low and build would create or modify files, choose
 
 During an active run:
 
-- `stop`, `cancel`, `暂停` -> cancel/interrupt;
-- `继续`, `再试一次`, `按这个改` -> steer or queued input only when supported;
+- `stop`, `cancel`, `暂停` -> `cancel`;
+- direct corrections about the in-flight result -> `steer` only when the active
+  run supports safe steering;
+- independent next questions or next tasks -> `queue_followup`;
+- `继续`, `再试一次`, `按这个改` -> steer or queued input only when supported and
+  only after the route context proves what is active;
 - while a read-only answer is active, a clear build/change instruction must not
   be silently recorded as steering context. The current Builder queues it as the
   next build request, keeps a visible queued notice while the answer is active,
@@ -288,6 +359,12 @@ During an active run:
 - ordinary questions can be queued or answered after the run according to UI
   policy;
 - no route may mutate an already-issued provider/tool request.
+
+Current active-run checkpoint: Builder does not yet expose mature steering.
+Until the provider/tool protocol can prove steer acceptance, the product should
+prefer `queue_followup` for non-cancel input during active work. This keeps the
+conversation usable without pretending that the current provider request can be
+edited in place.
 
 ## Permission Admission
 
@@ -421,7 +498,23 @@ type RouteDecision = {
   downgradeReason: string | null;
   requiredPermissions: string[];
   permissionResult: "not_required" | "allowed" | "ask" | "denied";
-  dispatch: "reply" | "brief_update" | "plan" | "build" | "ask_workspace" | "ask_permission" | "blocked";
+  dispatch:
+    | "reply"
+    | "brief_update"
+    | "plan"
+    | "build"
+    | "steer"
+    | "queue_followup"
+    | "cancel"
+    | "ask_workspace"
+    | "ask_permission"
+    | "blocked";
+  activeRunInput:
+    | "not_active"
+    | "cancel_requested"
+    | "steer_admitted"
+    | "queued_followup"
+    | "unsupported";
   createdAt: string;
 };
 ```
@@ -606,6 +699,23 @@ Deliverables:
 - route context binds `agent_id` and `task_id`;
 - subtask/delegation intent remains denied until the delegation gate;
 - Agent memory is retrieved only through task-centered context assembly.
+
+### Slice 7 - Active-Run Input And Branching
+
+Goal: make the composer behave like a continuing work surface while the
+assistant is busy.
+
+Deliverables:
+
+- second submit during active work records `cancel`, `steer`, or
+  `queue_followup` route evidence;
+- queued follow-up preserves visible chat history and reuses normal admission
+  after the active Run is terminal;
+- unsupported steering downgrades to queued follow-up or asks whether to cancel;
+- branch/fork/clone facts exist before any UI claims alternate directions are
+  durable;
+- compaction affects model context assembly only and never deletes Conversation,
+  Task, Run, Permission, Candidate, Review, or Revision facts.
 
 ## Acceptance Standard
 
