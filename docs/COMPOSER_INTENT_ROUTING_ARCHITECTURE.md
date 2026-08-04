@@ -56,6 +56,22 @@ as project/task operations later, but the storage authority remains Builder's
 Conversation, Task, Run, Candidate, Review, Permission, and Project Revision
 facts, not Pi's JSONL layout.
 
+The target is not merely to imitate Pi. For the capabilities Builder chooses to
+adopt, the product standard is Pi parity or better while preserving Builder's
+stronger desktop, review, version, and permission model:
+
+- queued input must be at least as dependable as Pi's steering/follow-up split,
+  but visible in ordinary desktop language rather than terminal commands;
+- branching must be at least as safe as Pi's fork/clone tree, but bound to
+  Project, Task, Run, Candidate, and Review facts instead of one session file;
+- compaction must be at least as useful as Pi's compacted context, but never
+  delete or blur durable work evidence;
+- provider and capability abstraction must be as extensible as Pi packages, but
+  every capability must declare action/resource permissions before dispatch;
+- viewport ownership must match or exceed Pi's stable TUI regions: chat scrolls
+  independently, composer focus survives sends, and side panels never make the
+  conversation unusable.
+
 ## Product Contract
 
 The user can:
@@ -722,6 +738,19 @@ Deliverables:
   durable;
 - compaction affects model context assembly only and never deletes Conversation,
   Task, Run, Permission, Candidate, Review, or Revision facts.
+
+Pi parity/exceed acceptance:
+
+- sending a second message during active work never erases prior messages or
+  hides the active result;
+- cancel, steer, and queued follow-up are separately recorded and separately
+  rendered;
+- queued follow-up runs through the normal route and permission pipeline after
+  the active Run is terminal;
+- users can later branch from a useful direction without replacing the original
+  task history;
+- compacted context can improve model performance, but users can still inspect
+  the underlying conversation, decisions, versions, and outcomes.
 
 ## Acceptance Standard
 

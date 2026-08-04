@@ -204,6 +204,13 @@ unrestricted tool access. The near-term Builder only needs enough of this model
 to preserve multi-turn chat, keep composer focus, queue safe follow-up input,
 and avoid erasing visible conversation history.
 
+For adopted Pi-like capabilities, the product bar is parity or better, not a
+weaker clone. Builder should match Pi's continuity benefits while exceeding it
+in ordinary-user control: stronger permission admission, reviewable candidates,
+saved versions, artifact previews, restart-safe facts, and desktop interaction
+quality. If a feature cannot meet that bar yet, it should stay behind a roadmap
+gate rather than ship as a half-visible placeholder.
+
 Required facts:
 
 - Goal and Task identify requested work;
