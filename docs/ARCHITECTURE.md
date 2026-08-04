@@ -517,7 +517,15 @@ Workbench may render a compact fact-backed status row. This still does not
 create the Agent progress event directly from the stores, add IPC/preload
 subscription, start or run Agent steps, dispatch provider/model/tool, read or
 write source, store raw output/context, create Revision/Review/Artifact
-authority, or add autonomous Agents UI. The current Agent
+authority, or add autonomous Agents UI. The current Agent Step Progress
+Conversation recording service now provides the first internal composition gate
+over that chain: it re-reads the store-backed progress window, creates the
+selected Conversation admission, and invokes the trusted Conversation main
+service append method, while returning only the advanced trusted context and
+fixed main-owned service evidence. It is not a poller or subscription, exposes
+no renderer/IPC/preload command, and does not own step execution,
+provider/model/tool dispatch, source access, raw output, Git, Revision, Review,
+Artifact, or visible Agents authority. The current Agent
 Tool Call Record service connects a persisted `call_tool` supervised action
 admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies

@@ -1415,6 +1415,21 @@ Current checkpoint:
   authority. This checkpoint still does not create the events directly from
   stores, subscribe to step progress, start/run Agent steps, dispatch tools or
   providers, read/write source, or enable autonomous Agents UI.
+- the current Agent Step Progress Conversation-recording service checkpoint
+  composes the main-owned Step Progress read service, the Conversation
+  admission contract, and the trusted Conversation main service into one
+  fail-closed internal recording entrypoint. It accepts owner, Project,
+  Conversation, Turn, Task, Run, step id/index/state, the trusted Run context,
+  and admitted time; re-reads the store-backed public progress window; creates
+  the selected admission record; and records it through
+  `record_agent_step_progress`. It returns only the advanced trusted context and
+  fixed service evidence. It exposes no Step Start/Result receipts or digests,
+  supervised action admission, Budget Audit, assignment/lease, owner/agent ids
+  beyond request scoping, provider/model/tool facts, source, raw output, Git,
+  Review, Artifact, Revision, IPC, preload, renderer append authority, or
+  subscription. It still does not start/run Agent steps, poll or subscribe to
+  stores, dispatch tools/providers, read/write source, or show autonomous
+  Agents UI.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads

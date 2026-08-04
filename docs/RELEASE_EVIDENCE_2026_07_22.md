@@ -4191,6 +4191,53 @@ real saved-profile DeepSeek canary pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Step Progress Conversation Recording Service Package Check
+
+This addendum records the package checkpoint after adding the main-only Agent
+Step Progress Conversation recording service. The service composes the
+store-backed Agent Step Progress read service, the Conversation admission
+contract, and the trusted Conversation main service append method. It accepts
+only owner/Project/Conversation/Turn/Task/Run/step identity, the trusted active
+Run context, selected recorded state, and admitted time; re-reads the bounded
+public progress window; creates the selected admission record; records it
+through `record_agent_step_progress`; and returns only the advanced trusted
+context plus fixed service evidence. It rejects missing, stale, future, or
+out-of-order progress without committing partial Conversation events. This
+checkpoint still does not subscribe to Step Start/Result stores, start or run
+Agent steps, dispatch provider/model/tool work, read or write source, expose
+IPC/preload or renderer append authority, store raw output/context, create Git
+or Project Revision facts, create Reviews or Artifacts, show autonomous Agents
+UI, or prove a real saved-profile DeepSeek canary pass.
+
+- Focused service validation passed through
+  `node --test
+  tests\builder-agent-step-progress-conversation-recording-service.test.cjs`;
+  the command reported 3 passing Node tests.
+- Adjacent Agent progress Conversation validation passed through
+  `node --test
+  tests\builder-agent-step-progress-conversation-recording-service.test.cjs
+  tests\builder-agent-step-progress-read-service.test.cjs
+  tests\builder-agent-step-progress-conversation-admission.test.cjs
+  tests\builder-conversation-main-service.test.cjs`; the command reported 50
+  passing Node tests.
+- Repository validation passed through `npm.cmd exec tsc -b --pretty false`,
+  `npm.cmd run lint`, and `npm.cmd run test:boundaries`. The full Node
+  boundary suite reported 965 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build, Electron packaging, signing, and `verify:package`.
+  Package verification reported `builder_package_verified`, production
+  network-denying CSP, app id `com.clawfabric.builder`, product name
+  `ClawFabric Builder`, and 812 ASAR entries. The refreshed executable
+  timestamp was 2026-08-04 10:08:16 local time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

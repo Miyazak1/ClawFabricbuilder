@@ -301,7 +301,14 @@ provider/model/tool dispatch, IPC/preload, or renderer append authority. This is
 still not Agent execution: Builder does not start/run steps, subscribe to step
 stores, create progress events directly from stores, dispatch providers/tools,
 access source, mutate Git/Review/Artifact/Revision authority, or show autonomous
-Agents UI from this checkpoint. Builder
+Agents UI from this checkpoint. Builder now also has a main-only Agent Step
+Progress Conversation recording service that composes the store-backed read
+service, Conversation admission contract, and trusted Conversation append
+method for one selected public progress item. It returns only the advanced
+trusted context plus fixed service evidence and still creates no subscription,
+runner, provider/model/tool dispatch, source access, Git, Review, Artifact, or
+Revision authority, IPC/preload command, renderer append path, or visible
+Agents UI. Builder
 also has a main-only Project Work Result service
 that records or replays fixed project-edit or project-test result receipts only
 after an allowed `finish_for_review` budget audit for the same active lease,

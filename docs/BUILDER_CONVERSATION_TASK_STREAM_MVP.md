@@ -299,6 +299,16 @@ from the stores, or let the renderer append progress. Until those later gates
 land, the UI must not invent Agent step narration from live text, provider
 deltas, or local state.
 
+A main-only Agent Step Progress Conversation recording service can now bridge
+that chain without widening the renderer surface: it accepts the trusted active
+Run context plus selected owner/Project/Conversation/Turn/Task/Run/step
+identity, re-reads the store-backed public progress window, creates the
+Conversation admission for the selected item, and records it through the
+trusted `record_agent_step_progress` method. It returns only the advanced
+trusted context and fixed service evidence. It is still not a subscription,
+poller, runner, tool executor, provider stream, source reader, Save authority,
+or renderer command.
+
 The chat flow should feel like the assistant is continuously working with the
 user, but it must be driven by facts rather than invented narration. The current
 MVP should show:
