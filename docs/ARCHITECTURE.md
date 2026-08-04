@@ -497,24 +497,27 @@ preload, renderer authority, execution, or UI subscription. The current Agent
 Step Progress Conversation admission contract can then bind one selected public
 step progress item from that read-service result to a trusted active
 Project/Conversation/Turn/Task/Run context. It emits a digest-bound main-side
-admission record for later Conversation event recording, carrying only the
+admission record for trusted Conversation event recording, carrying only the
 public step id/index/state, fixed result summary, read/projection version
 stamps, lifecycle, authority, and admission digest. It exposes no Step
 Start/Result receipt object or digest, supervised action admission, Budget
 Audit, assignment/lease, owner/agent id, provider/tool/model fact, source, raw
 output, Git, Review, Artifact, IPC/preload, renderer authority, execution, or
-Task Stream subscription. Conversation replay can now accept that verified
-admission only while the matching work Turn/Task/Run is active and still
-running; duplicate admissions, result-before-start, question-mode, cancelled,
-or interrupted contexts are rejected. The renderer-safe Task Stream exposes
+Task Stream subscription. The Conversation main service can now append one such
+admission through a trusted-context-only `record_agent_step_progress` method,
+advancing the trusted Run head without accepting renderer authority. Conversation
+replay accepts that verified admission only while the matching work Turn/Task/Run
+is active and still running; duplicate admissions, result-before-start,
+question-mode, cancelled, or interrupted contexts are rejected. The renderer-safe
+Task Stream exposes
 only a public `agent_step_progress_recorded` item with step id/index, recorded
 state, fixed summaries, and fixed lifecycle flags. The renderer domain
 sanitizer re-validates ordering and lifecycle rules before the visible
 Workbench may render a compact fact-backed status row. This still does not
-create the Agent progress event from the stores, add IPC/preload subscription,
-start or run Agent steps, dispatch provider/model/tool, read or write source,
-store raw output/context, create Revision/Review/Artifact authority, or add
-autonomous Agents UI. The current Agent
+create the Agent progress event directly from the stores, add IPC/preload
+subscription, start or run Agent steps, dispatch provider/model/tool, read or
+write source, store raw output/context, create Revision/Review/Artifact
+authority, or add autonomous Agents UI. The current Agent
 Tool Call Record service connects a persisted `call_tool` supervised action
 admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies

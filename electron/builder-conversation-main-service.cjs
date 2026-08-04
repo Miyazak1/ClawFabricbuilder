@@ -58,6 +58,9 @@ const {
 const {
   createBuilderRunContextSnapshot,
 } = require('./builder-run-context-snapshot.cjs');
+const {
+  sanitizeBuilderAgentStepProgressConversationAdmission,
+} = require('./builder-agent-step-progress-conversation-admission.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -766,6 +769,20 @@ function assertToolRecordContext(context, record) {
     || record.turn_id !== context.ids.turn_id
     || record.task_id !== context.ids.task_id
     || record.run_id !== context.ids.run_id
+  ) fail();
+}
+
+function assertAgentStepProgressContext(context, admission) {
+  if (
+    context.mode !== 'work'
+    || context.ids.task_id === null
+    || context.run_terminal_failure_code !== null
+    || context.cancel_requested
+    || admission.project_id !== context.project.project_id
+    || admission.conversation_id !== context.conversation.conversation_id
+    || admission.turn_id !== context.ids.turn_id
+    || admission.task_id !== context.ids.task_id
+    || admission.run_id !== context.ids.run_id
   ) fail();
 }
 
@@ -1668,6 +1685,43 @@ function createBuilderConversationMainService(rawOptions) {
       conversation: context.conversation,
       expectedHead: context.start_head,
       events: [progress],
+      recordedAtMs,
+    });
+    const progressedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(progressedContext);
+    return progressedContext;
+  }
+
+  function recordAgentStepProgress(rawRequest) {
+    exactObject(rawRequest, ['context', 'progress_admission']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    const admission = sanitizeBuilderAgentStepProgressConversationAdmission(
+      valueAt(rawRequest, 'progress_admission'),
+    );
+    assertAgentStepProgressContext(context, admission);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    if (admission.admitted_at_ms > recordedAtMs) fail();
+    openRunFromContext(context);
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'agent_step_progress_recorded',
+      previous: context.start_head,
+      payload: {
+        progress_admission: admission,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
       recordedAtMs,
     });
     const progressedContext = freezeDeep({
@@ -2785,6 +2839,7 @@ function createBuilderConversationMainService(rawOptions) {
     record_retryable_failure: recordRetryableFailure,
     record_run_context_snapshot: recordRunContextSnapshot,
     record_run_progress: recordRunProgress,
+    record_agent_step_progress: recordAgentStepProgress,
     retry_after_failure: retryAfterFailure,
     begin_approved_plan_work: beginApprovedPlanWork,
     begin_draft_continuation_work: beginDraftContinuationWork,
@@ -2816,6 +2871,7 @@ function createBuilderConversationMainService(rawOptions) {
       question_explanation: 'sqlite_event_chain_without_git_revision',
       run_context_snapshot_recording: 'main_only_digest_bound_event',
       run_progress_recording: 'main_only_fixed_stage_event',
+      agent_step_progress_recording: 'main_only_admitted_progress_event',
       run_steering_recording: 'main_only_active_run_message_no_provider_mutation',
       tool_call_recording: 'main_only_pre_dispatch_event',
       tool_result_recording: 'main_only_fixed_code_event',

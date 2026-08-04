@@ -287,14 +287,17 @@ returning only public progress items plus fixed read counts/statuses. A
 separate main-side Conversation admission contract validates one selected
 public progress item from the read-service result against a trusted active
 Project/Conversation/Turn/Task/Run context and produces a digest-bound record.
-Conversation replay now accepts that admitted progress only while the matching
-work Run is active, and the renderer-safe Task Stream exposes only the public
+The Conversation main service can now append that admission through a
+trusted-context-only `record_agent_step_progress` method, then Conversation
+replay accepts the admitted progress only while the matching work Run is active.
+The renderer-safe Task Stream exposes only the public
 `agent_step_progress_recorded` item with step id/index, recorded state, fixed
 summary, and no raw output or revision authority. This still does not add an
 IPC/preload command, subscribe to step stores, start or run Agent steps, dispatch
-provider/model/tool work, read or write source, or let the renderer append
-progress. Until those later gates land, the UI must not invent Agent step
-narration from live text, provider deltas, or local state.
+provider/model/tool work, read or write source, create progress events directly
+from the stores, or let the renderer append progress. Until those later gates
+land, the UI must not invent Agent step narration from live text, provider
+deltas, or local state.
 
 The chat flow should feel like the assistant is continuously working with the
 user, but it must be driven by facts rather than invented narration. The current
