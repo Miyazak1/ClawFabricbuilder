@@ -494,6 +494,17 @@ Run ids, returns only the bounded projection plus fixed read counts/statuses and
 objects, digests, supervised action admission, Budget Audit, assignment/lease,
 provider/tool/model fact, source, raw output, Git, Review, Artifact, IPC,
 preload, renderer authority, execution, or UI subscription. The current Agent
+Step Progress Conversation admission contract can then bind one selected public
+step progress item from that read-service result to a trusted active
+Project/Conversation/Turn/Task/Run context. It emits a digest-bound main-side
+admission record for later Conversation event recording, carrying only the
+public step id/index/state, fixed result summary, read/projection version
+stamps, lifecycle, authority, and admission digest. It exposes no Step
+Start/Result receipt object or digest, supervised action admission, Budget
+Audit, assignment/lease, owner/agent id, provider/tool/model fact, source, raw
+output, Git, Review, Artifact, IPC/preload, renderer authority, execution, or
+Task Stream subscription; Conversation event appending and visible Agent
+progress remain later gates. The current Agent
 Tool Call Record service connects a persisted `call_tool` supervised action
 admission to the existing
 main-only Tool Call Record contract: it reads the admission by owner, verifies

@@ -1385,6 +1385,19 @@ Current checkpoint:
   Artifact, IPC, preload, or renderer authority. It still does not admit Agent
   progress into Conversation replay, subscribe to Task Stream changes, start or
   run steps, or show visible Agents UI.
+- the current Agent Step Progress Conversation-admission checkpoint converts
+  one public item from that read-service result into a digest-bound
+  main-side admission record for later Conversation event recording. It requires
+  the caller's trusted active Project/Conversation/Turn/Task/Run context to be
+  running and not cancelled/interrupted, verifies the read-service result,
+  projection authority, read counts/statuses, selected step id/index/state, and
+  fixed public summary, then records only public step progress, source version
+  stamps, lifecycle, authority, and an admission digest. It exposes no
+  Step Start/Result receipt objects or digests, supervised action admission,
+  Budget Audit, assignment/lease, owner/agent ids, provider/model/tool facts,
+  source, raw output, Git, Review, Artifact, IPC, preload, or renderer
+  authority. It still does not append Conversation events, subscribe to Task
+  Stream changes, start or run Agent steps, or show visible Agents UI.
 - the current Agent Tool Call Record service checkpoint connects the
   `call_tool` supervised action admission to the existing main-only Tool Call
   Record contract. The service accepts a supervised action admission id, reads

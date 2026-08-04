@@ -4051,6 +4051,53 @@ pass.
   because it uses the locally saved DeepSeek profile and may consume provider
   quota.
 
+## 2026-08-04 Agent Step Progress Conversation Admission Package Check
+
+This addendum records the package checkpoint after adding the pure main-side
+Agent Step Progress Conversation admission contract. The contract verifies one
+selected public step progress item from the read-service result against a
+trusted active Project/Conversation/Turn/Task/Run context, then produces a
+digest-bound admission record for later Conversation event recording. It carries
+only public step id/index/state, fixed result summary, read/projection version
+stamps, lifecycle, authority, and admission digest. This checkpoint does not
+append Conversation events, admit Agent step progress into the visible Task
+Stream, add IPC/preload, start or run Agent steps, dispatch provider/model/tool,
+read or write source, run a process, grant permission, store raw output/context,
+create a Project Revision, generic Review row, or Artifact, add visible Agents
+UI, or prove a real saved-profile DeepSeek canary pass.
+
+- Admission authority records
+  `main_agent_step_progress_conversation_admission_contract_v1`, requires
+  `main_owned_agent_step_progress_read_service` and
+  `main_owned_step_start_and_result_store_projection`, and keeps Step
+  Start/Result receipts verified but not exposed. Renderer, IPC,
+  provider/model dispatch, tool dispatch, step execution, permission grants,
+  credentials, source access, process run, network access, Revision, Review,
+  Artifact, raw-output storage, and raw-context storage remain absent.
+- Focused validation passed through
+  `node --test tests\builder-agent-step-progress-conversation-admission.test.cjs`;
+  the command reported 4 passing Node tests.
+- Adjacent Agent progress validation passed through Agent Step Progress
+  Conversation admission, read service, and projection tests; the command
+  reported 17 passing Node tests.
+- Repository validation passed through `npm.cmd run lint`,
+  `npm.cmd exec tsc -b --pretty false`, and `npm.cmd run test:boundaries`. The
+  full Node boundary suite reported 957 passing tests.
+- Production package refresh passed through `npm.cmd run pack`, including the
+  production Vite build and `verify:package`. Package verification reported
+  `builder_package_verified`, production network-denying CSP, app id
+  `com.clawfabric.builder`, product name `ClawFabric Builder`, and 811 ASAR
+  entries. The refreshed executable timestamp was 2026-08-04 08:59:43 local
+  time.
+- Packaged launch smoke passed through `npm.cmd run verify:packaged-launch`.
+  It reported `builder-preload.v20`, isolated user-data launch, executable path
+  `D:\CODE\clawfabric-builder\release\win-unpacked\ClawFabric Builder.exe`,
+  and `provider_configured: false` for the isolated smoke profile.
+- A real saved-profile DeepSeek V4 packaged canary was not run for this
+  checkpoint. Running it requires an explicit user-authorized provider call
+  because it uses the locally saved DeepSeek profile and may consume provider
+  quota.
+
 ## Evidence Inheritance Rule
 
 Later changes to generation, provider storage, project persistence, preview,

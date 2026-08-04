@@ -285,8 +285,12 @@ step status items. A main-only read service can compose the Step Start store,
 Step Result store, and that projection for one owner/Project/Task/Run read,
 returning only public progress items plus fixed read counts/statuses. That read
 service is still not admitted into Conversation replay or shown in the visible
-Task Stream. Until that later gate lands, the UI must not invent Agent step
-narration from live text, provider deltas, or local state.
+Task Stream. A separate main-side Conversation admission contract can validate
+one selected public progress item from the read-service result against a trusted
+active Project/Conversation/Turn/Task/Run context and produce a digest-bound
+record for later event appending. It still does not append that event or render
+it. Until that later gate lands, the UI must not invent Agent step narration
+from live text, provider deltas, or local state.
 
 The chat flow should feel like the assistant is continuously working with the
 user, but it must be driven by facts rather than invented narration. The current
