@@ -1722,6 +1722,9 @@ Evidence requirements:
   document;
 - the current code slice is a pure main-side Local Work Capsule Manifest
   contract;
+- the current service slice is a pure main-side read-only Local Work Capsule
+  Manifest assembly service over product metadata and Session/Task Address
+  store reads;
 - the manifest references existing Project Revision, Artifact Preview, Review
   Decision, verification summary, public summary, remix metadata placeholder,
   and Session/Task Address facts;
@@ -1743,11 +1746,20 @@ publication-shaped inputs. It opens no store, IPC/preload, export file,
 publication, network, source, Git, provider, permission, community, or
 autonomous experiment authority.
 
+Current service checkpoint: `builder-work-capsule-manifest-service.v1` loads the
+Project Revision from product metadata, reads the explicit Session and Task
+Address from the main-owned address store, derives accepted review and
+verification summaries from saved revision evidence, and then invokes the
+manifest contract. It still writes no file, mutates no Git or SQLite state,
+opens no IPC/preload surface, reads no source bytes, dispatches no
+provider/tool, publishes nothing, and starts no autonomous experiment work.
+
 Delivery order:
 
 ```text
 Work Capsule architecture decision
 -> Local Work Capsule Manifest contract
+-> Local Work Capsule Manifest service
 -> Exportable Capsule package
 -> Shareable Capsule candidate
 -> Community Remix
