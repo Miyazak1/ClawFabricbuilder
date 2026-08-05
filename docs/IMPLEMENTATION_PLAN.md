@@ -156,12 +156,14 @@ mutation, Git mutation, permission grants, or export materialization. The
 current address-store checkpoint adds a separate main-only
 `builder-session-task-address-store.v1` SQLite store for those already-validated
 facts, with idempotent record/replay, restart recovery, schema fingerprint
-validation, project-scoped reads, and a foreign-key requirement that Task
-Address facts attach to an existing Session Address. It still creates no
+validation, project-scoped reads, conversation-scoped lookup of the latest
+non-archived Task Address with its Session Address, and a foreign-key
+requirement that Task Address facts attach to an existing Session Address. It
+still creates no
 renderer/preload IPC, no automatic migration from existing Conversation rows,
 no fork/archive/delete/export materialization, no provider/tool dispatch, no
-source/Git mutation, and no permission grant. The current runtime composition
-checkpoint creates and closes this local store under
+source/Git mutation, no run binding, and no permission grant. The current runtime
+composition checkpoint creates and closes this local store under
 `builder-session-task-addresses-v1/session-task-addresses.sqlite` in the desktop
 generation runtime, including registration-failure cleanup and dispose cleanup,
 but still does not pass address facts into run admission or expose a renderer
@@ -176,7 +178,9 @@ generation-main integration now composes this bridge before provider dispatch
 for fresh work and plan contexts. Read-only answers, queued follow-up work,
 retry, draft continuation, and approved-plan continuation do not create a new
 Session/Task Address; they remain later binding work because they must attach to
-an existing product Task Address rather than silently fork a new one.
+an existing product Task Address rather than silently fork a new one. The
+conversation-scoped Address store lookup is now the main-only read prerequisite
+for that later binding work, but generation main does not consume it yet.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 

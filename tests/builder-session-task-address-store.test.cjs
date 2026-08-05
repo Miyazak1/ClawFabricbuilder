@@ -25,6 +25,8 @@ const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
 const OTHER_PROJECT_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174200';
 const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174203';
+const LATER_TASK_ADDRESS_ID = 'builder-task-address:423e4567-e89b-42d3-a456-426614174203';
+const ARCHIVED_TASK_ADDRESS_ID = 'builder-task-address:523e4567-e89b-42d3-a456-426614174203';
 const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174205';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174206';
 
@@ -160,6 +162,60 @@ test('records session and task addresses and restores them after restart', (t) =
   restarted.close();
 });
 
+test('reads the current non-archived Session and Task Address for a conversation', (t) => {
+  const databasePath = temporaryDatabase(t);
+  const store = createBuilderSessionTaskAddressStore(databasePath);
+  const session = sessionAddress();
+  const firstTask = taskAddress();
+  const laterTask = taskAddress({
+    task_address_id: LATER_TASK_ADDRESS_ID,
+    title: 'Refine management dashboard',
+    updated_at_ms: 1200,
+  });
+  const archivedLaterTask = taskAddress({
+    task_address_id: ARCHIVED_TASK_ADDRESS_ID,
+    title: 'Archived experiment',
+    status: 'archived',
+    updated_at_ms: 1300,
+    closed_at_ms: 1300,
+  });
+
+  store.record_session_address({ session_address: session });
+  store.record_task_address({ task_address: firstTask });
+  store.record_task_address({ task_address: laterTask });
+  store.record_task_address({ task_address: archivedLaterTask });
+
+  const readCurrent = store.read_current_session_task_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  assert.equal(readCurrent.result_version, BUILDER_SESSION_TASK_ADDRESS_STORE_READ_RESULT_VERSION);
+  assert.equal(readCurrent.status, 'ready');
+  assert.deepEqual(readCurrent.session_address.session_address, session);
+  assert.deepEqual(readCurrent.task_address.task_address, laterTask);
+  assert.equal(Object.isFrozen(readCurrent.task_address.task_address), true);
+  assert.equal(readCurrent.address_evidence.conversation_append, false);
+  assert.equal(readCurrent.address_evidence.provider_dispatch, false);
+  assert.equal(readCurrent.address_evidence.source_write, 'not_present');
+  assert.equal(readCurrent.address_evidence.git_mutation, false);
+
+  assert.equal(
+    store.read_current_session_task_for_conversation({
+      project_id: OTHER_PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }).status,
+    'absent',
+  );
+  assert.equal(
+    store.read_current_session_task_for_conversation({
+      project_id: PROJECT_ID,
+      conversation_id: 'builder-conversation:223e4567-e89b-42d3-a456-426614174205',
+    }).status,
+    'absent',
+  );
+  store.close();
+});
+
 test('rejects task addresses before their session and keeps project reads scoped', (t) => {
   const databasePath = temporaryDatabase(t);
   const store = createBuilderSessionTaskAddressStore(databasePath);
@@ -229,6 +285,11 @@ test('rejects conflicting replay, malformed input, accessors, proxies, and tampe
     task_address_id: TASK_ADDRESS_ID,
     extra: true,
   }));
+  assertStoreError(() => store.read_current_session_task_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    extra: true,
+  }));
 
   let getterCalls = 0;
   const accessor = {};
@@ -266,6 +327,13 @@ test('rejects conflicting replay, malformed input, accessors, proxies, and tampe
   const reopened = createBuilderSessionTaskAddressStore(databasePath);
   assertStoreError(
     () => reopened.read_task_address({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }),
+    'builder_session_task_address_store_integrity_failed',
+  );
+  assertStoreError(
+    () => reopened.read_current_session_task_for_conversation({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }),
     'builder_session_task_address_store_integrity_failed',
   );
   reopened.close();
@@ -307,6 +375,7 @@ test('source boundary remains a main-only Session/Task Address store without run
   assert.match(source, /record_task_address/u);
   assert.match(source, /read_session_address/u);
   assert.match(source, /read_task_address/u);
+  assert.match(source, /read_current_session_task_for_conversation/u);
   assert.match(source, /node:sqlite/u);
   assert.match(source, /conversation_append: false/u);
   assert.match(source, /provider_dispatch: false/u);

@@ -17,17 +17,19 @@ const {
 const BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION = 'builder-session-task-address-store.v1';
 const BUILDER_SESSION_TASK_ADDRESS_STORE_RESULT_VERSION = 'builder-session-task-address-store-result.v1';
 const BUILDER_SESSION_TASK_ADDRESS_STORE_READ_RESULT_VERSION = 'builder-session-task-address-store-read-result.v1';
-const BUILDER_SESSION_TASK_ADDRESS_STORE_SCHEMA_VERSION = 'builder-session-task-address-store-schema.v1';
-const BUILDER_SESSION_TASK_ADDRESS_STORE_USER_VERSION = 1;
+const BUILDER_SESSION_TASK_ADDRESS_STORE_SCHEMA_VERSION = 'builder-session-task-address-store-schema.v2';
+const BUILDER_SESSION_TASK_ADDRESS_STORE_USER_VERSION = 2;
 const DATABASE_ID = 'builder-session-task-address-store.v1';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const SESSION_ID_PATTERN = new RegExp(`^builder-session:${UUID_SOURCE}$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const RECORD_SESSION_KEYS = Object.freeze(['session_address']);
 const RECORD_TASK_KEYS = Object.freeze(['task_address']);
 const READ_SESSION_KEYS = Object.freeze(['project_id', 'session_id']);
 const READ_TASK_KEYS = Object.freeze(['project_id', 'task_address_id']);
+const READ_CURRENT_SESSION_TASK_KEYS = Object.freeze(['project_id', 'conversation_id']);
 const MAX_RECORD_JSON_BYTES = 96 * 1024;
 const CREATE_SCHEMA_SQL = Object.freeze([
   `CREATE TABLE session_addresses (
@@ -39,7 +41,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     updated_at_ms INTEGER NOT NULL,
     record_json TEXT NOT NULL,
     schema_version TEXT NOT NULL,
-    CHECK (schema_version = 'builder-session-task-address-store-schema.v1'),
+    CHECK (schema_version = 'builder-session-task-address-store-schema.v2'),
     CHECK (record_version = 'builder-session-address.v1'),
     CHECK (status IN ('active', 'archived', 'deleted_pending', 'deleted')),
     CHECK (updated_at_ms >= 0),
@@ -52,11 +54,12 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     agent_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at_ms INTEGER NOT NULL,
     record_json TEXT NOT NULL,
     schema_version TEXT NOT NULL,
-    CHECK (schema_version = 'builder-session-task-address-store-schema.v1'),
+    CHECK (schema_version = 'builder-session-task-address-store-schema.v2'),
     CHECK (record_version = 'builder-task-address.v1'),
     CHECK (status IN ('draft', 'discussing', 'planned', 'active', 'blocked', 'review_needed', 'completed', 'archived')),
     CHECK (updated_at_ms >= 0),
@@ -68,6 +71,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
   'CREATE INDEX session_addresses_project_idx ON session_addresses(project_id, updated_at_ms DESC, session_id)',
   'CREATE INDEX task_addresses_session_idx ON task_addresses(project_id, session_id, updated_at_ms DESC, task_address_id)',
   'CREATE INDEX task_addresses_agent_idx ON task_addresses(project_id, agent_id, updated_at_ms DESC, task_address_id)',
+  'CREATE INDEX task_addresses_conversation_idx ON task_addresses(project_id, conversation_id, updated_at_ms DESC, task_address_id)',
 ]);
 const ERROR_MESSAGES = Object.freeze({
   builder_session_task_address_store_invalid: 'Builder session and task address storage request could not be verified.',
@@ -175,6 +179,10 @@ function safeSessionId(value) {
 
 function safeTaskAddressId(value) {
   return safePattern(value, TASK_ADDRESS_ID_PATTERN);
+}
+
+function safeConversationId(value) {
+  return safePattern(value, CONVERSATION_ID_PATTERN);
 }
 
 function safeDatabasePath(value) {
@@ -300,6 +308,7 @@ function assertSchema(db) {
   const expected = [
     'session_addresses_project_idx',
     'task_addresses_agent_idx',
+    'task_addresses_conversation_idx',
     'task_addresses_session_idx',
     'session_addresses',
     'task_addresses',
@@ -401,6 +410,7 @@ function taskRowToRecord(row) {
     || row.session_id !== taskAddress.session_id
     || row.project_id !== taskAddress.project_id
     || row.agent_id !== taskAddress.agent_id
+    || row.conversation_id !== taskAddress.conversation_id
     || row.status !== taskAddress.status
     || row.updated_at_ms !== taskAddress.updated_at_ms
   ) fail('builder_session_task_address_store_integrity_failed');
@@ -440,8 +450,8 @@ function insertTask(db, taskAddress) {
     db,
     `INSERT INTO task_addresses (
       task_address_id, address_id, record_version, session_id, project_id, agent_id,
-      status, updated_at_ms, record_json, schema_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      conversation_id, status, updated_at_ms, record_json, schema_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       taskAddress.task_address_id,
       taskAddress.address_id,
@@ -449,6 +459,7 @@ function insertTask(db, taskAddress) {
       taskAddress.session_id,
       taskAddress.project_id,
       taskAddress.agent_id,
+      taskAddress.conversation_id,
       taskAddress.status,
       taskAddress.updated_at_ms,
       recordJson,
@@ -573,6 +584,40 @@ function createBuilderSessionTaskAddressStore(databasePath) {
       );
       if (row === null) return readResult(database, 'absent', { task_address: null });
       return readResult(database, 'ready', { task_address: taskRowToRecord(row) });
+    },
+    read_current_session_task_for_conversation(rawRequest) {
+      exactObject(rawRequest, READ_CURRENT_SESSION_TASK_KEYS);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      const conversationId = safeConversationId(valueAt(rawRequest, 'conversation_id'));
+      const database = activeDb();
+      const taskRow = one(
+        database,
+        `SELECT task_addresses.*
+          FROM task_addresses
+          INNER JOIN session_addresses
+            ON session_addresses.session_id = task_addresses.session_id
+            AND session_addresses.project_id = task_addresses.project_id
+          WHERE task_addresses.project_id = ?
+            AND task_addresses.conversation_id = ?
+            AND task_addresses.status <> 'archived'
+            AND session_addresses.status = 'active'
+          ORDER BY task_addresses.updated_at_ms DESC, task_addresses.task_address_id DESC
+          LIMIT 1`,
+        [projectId, conversationId],
+      );
+      if (taskRow === null) {
+        return readResult(database, 'absent', { session_address: null, task_address: null });
+      }
+      const sessionRow = one(
+        database,
+        'SELECT * FROM session_addresses WHERE project_id = ? AND session_id = ?',
+        [projectId, taskRow.session_id],
+      );
+      if (sessionRow === null) fail('builder_session_task_address_store_integrity_failed');
+      return readResult(database, 'ready', {
+        session_address: sessionRowToRecord(sessionRow),
+        task_address: taskRowToRecord(taskRow),
+      });
     },
     close() {
       if (closed) return;

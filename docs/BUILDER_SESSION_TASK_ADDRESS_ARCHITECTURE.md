@@ -224,11 +224,13 @@ facts.
 Current store checkpoint: `electron/builder-session-task-address-store.cjs`
 persists those already-validated Session/Task Address facts in a main-only
 SQLite store. It supports idempotent replay, restart recovery, schema
-fingerprint validation, project-scoped reads, and a foreign-key dependency from
-Task Address to Session Address. This is still only the durable product address
-fact layer: it does not migrate existing Conversation rows, expose renderer or
-preload IPC, implement fork/archive/delete/export, dispatch providers or tools,
-mutate source or Git, grant permissions, or materialize public bundles.
+fingerprint validation, project-scoped reads, conversation-scoped lookup of the
+latest non-archived Task Address with its Session Address, and a foreign-key
+dependency from Task Address to Session Address. This is still only the durable
+product address fact layer: it does not migrate existing Conversation rows,
+expose renderer or preload IPC, implement fork/archive/delete/export, dispatch
+providers or tools, mutate source or Git, grant permissions, bind runs, or
+materialize public bundles.
 
 Current runtime checkpoint: `electron/builder-generation-ipc-runtime.cjs`
 creates that store in the real desktop main lifecycle at
@@ -256,10 +258,12 @@ snapshot and before provider dispatch, failing closed if the address recording
 cannot be verified. Read-only answers and queued follow-up work do not create
 new product addresses. Retry, draft continuation, and approved-plan continuation
 also stay out of this first integration because they need explicit binding to an
-existing Task Address instead of a newly minted product task. The desktop IPC
-runtime now creates the recording service beside the Address store and passes it
-into generation main with a fixed local Builder Agent id until the later Agent
-Profile store exists.
+existing Task Address instead of a newly minted product task. The Address store
+now has the required read-only `project_id` + `conversation_id` lookup surface
+for that later binding work, but generation main does not consume it yet. The
+desktop IPC runtime now creates the recording service beside the Address store
+and passes it into generation main with a fixed local Builder Agent id until the
+later Agent Profile store exists.
 
 ## Non-Goals For The Current Builder MVP
 

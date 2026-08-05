@@ -444,20 +444,23 @@ The Session/Task Address store checkpoint gives those future scope rules a
 main-only durable home before wiring them into Builder run admission. Task
 Address facts can now be stored and recovered only after their Session Address
 exists, but current Builder messages and runs are not yet migrated or bound to
-those product-level addresses. The desktop generation runtime now creates and
-closes this store with its other main-owned local stores, so later Agent-facing
-context assembly can depend on a runtime-owned product address store instead of
-inventing a renderer or prompt-side memory surface. The current address-recording
-service can now derive and store a product Session/Task Address pair from a
-verified new `begin_work` Conversation context. That gives future Agent-facing
-task contracts a concrete product address to target, while keeping low-level
-`task_id` values as execution facts and withholding renderer IPC, provider/tool
-dispatch, source/Git mutation, permission inheritance, migration, and
-archive/delete/fork/export behavior. Generation main now uses that service before
-provider dispatch for fresh work and plan contexts only. Follow-up, retry, draft
-continuation, approved-plan continuation, and subagent delegation still need the
-next binding layer so they can point at an existing Task Address instead of
-creating unrelated product tasks.
+those product-level addresses. It can now also read the latest non-archived Task
+Address and its Session Address by `project_id` + `conversation_id`, giving the
+later binding layer a main-only way to reconnect follow-up work to an existing
+product task. The desktop generation runtime now creates and closes this store
+with its other main-owned local stores, so later Agent-facing context assembly
+can depend on a runtime-owned product address store instead of inventing a
+renderer or prompt-side memory surface. The current address-recording service
+can now derive and store a product Session/Task Address pair from a verified new
+`begin_work` Conversation context. That gives future Agent-facing task contracts
+a concrete product address to target, while keeping low-level `task_id` values
+as execution facts and withholding renderer IPC, provider/tool dispatch,
+source/Git mutation, permission inheritance, migration, run binding, and
+archive/delete/fork/export behavior. Generation main now uses that service
+before provider dispatch for fresh work and plan contexts only. Follow-up,
+retry, draft continuation, approved-plan continuation, and subagent delegation
+still need the next binding layer so they can point at an existing Task Address
+instead of creating unrelated product tasks.
 
 ### Slice C - Agent Profile Store
 
