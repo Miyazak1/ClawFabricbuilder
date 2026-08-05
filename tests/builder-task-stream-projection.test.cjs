@@ -815,6 +815,107 @@ test('projects queued active-run follow-ups as bounded user messages', () => {
   );
 });
 
+test('projects queued follow-up consumption as a compact receipt', () => {
+  const events = [];
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 660), text: 'Build a calmer dashboard.' },
+    turn_id: id('turn', 660),
+    mode: 'work',
+    task: { task_id: id('task', 661), title: 'Build dashboard' },
+    base_revision: null,
+  }, 660);
+  append(events, 'run_started', {
+    turn_id: id('turn', 660),
+    run_id: id('run', 662),
+    task_id: id('task', 661),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 661);
+  append(events, 'turn_followup_queued', {
+    turn_id: id('turn', 660),
+    run_id: id('run', 662),
+    message: {
+      message_id: id('message', 663),
+      text: 'Then make the summary shorter.',
+    },
+  }, 662);
+  append(events, 'run_completed', {
+    turn_id: id('turn', 660),
+    run_id: id('run', 662),
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: DIGEST,
+    assistant_message: { message_id: id('message', 664), text: 'The draft is ready.' },
+    candidate_result: {
+      draft_id: `builder-generation-draft:${'6'.repeat(64)}`,
+      title: 'Generated dashboard',
+      summary: 'A generated dashboard candidate.',
+      git_candidate_receipt: {
+        receipt_version: 'builder-git-candidate-receipt.v1',
+        repository_version: 'builder-git-project-repository.v1',
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        turn_id: id('turn', 660),
+        task_id: id('task', 661),
+        run_id: id('run', 662),
+        request_id: id('git-request', 662),
+        candidate_id: `builder-code-change-candidate:${'7'.repeat(64)}`,
+        candidate_digest: DIGEST,
+        resulting_tree_digest: DIGEST,
+        semantic_identity_digest: DIGEST,
+        verification_receipt_digest: DIGEST,
+        object_format: 'sha1',
+        commit_oid: '2'.repeat(40),
+        tree_oid: '3'.repeat(40),
+        parent_oid: null,
+        expected_base_oid: null,
+        code_authority: 'git_commit_candidate',
+        product_revision_admission: 'not_recorded',
+        replay: false,
+      },
+    },
+  }, 663);
+  append(events, 'turn_completed', {
+    turn_id: id('turn', 660),
+    run_id: id('run', 662),
+    outcome: 'candidate_ready',
+  }, 664);
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 665), text: 'Then make the summary shorter.' },
+    turn_id: id('turn', 666),
+    mode: 'work',
+    task: { task_id: id('task', 667), title: 'Shorten summary' },
+    base_revision: null,
+  }, 665);
+  append(events, 'turn_followup_consumed', {
+    turn_id: id('turn', 660),
+    run_id: id('run', 662),
+    message_id: id('message', 663),
+    consuming_turn_id: id('turn', 666),
+    consuming_message_id: id('message', 665),
+  }, 666);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.deepEqual(stream.conversation.items.at(-1), {
+    item_kind: 'queued_followup_consumed',
+    sequence: 7,
+    turn_id: id('turn', 660),
+    run_id: id('run', 662),
+    message_id: id('message', 663),
+    consumed_by: {
+      turn_id: id('turn', 666),
+      message_id: id('message', 665),
+    },
+    recorded_state: 'consumed',
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /provider|credential|git_candidate_receipt|commit_oid|tree_oid|source_tree|save_admission|permission_admission/iu,
+  );
+});
+
 test('projects task brief updates as compact renderer-safe context items', () => {
   const events = [];
   append(events, 'turn_submitted', {

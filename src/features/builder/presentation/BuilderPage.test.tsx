@@ -507,6 +507,77 @@ async function queuedFollowupActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function consumedQueuedFollowupActivity() {
+  const wire = createTaskStreamWire();
+  const queuedMessageId = 'builder-message:123e4567-e89b-42d3-a456-426614174088';
+  const consumingTurnId = 'builder-turn:123e4567-e89b-42d3-a456-426614174089';
+  const consumingMessageId = 'builder-message:123e4567-e89b-42d3-a456-426614174090';
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 7,
+      recorded_active_turn_id: consumingTurnId,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 7,
+      },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        {
+          item_kind: 'user_message',
+          sequence: 3,
+          turn_id: TURN_ID,
+          message: {
+            message_id: queuedMessageId,
+            text: 'After this, make the summary shorter.',
+          },
+          message_kind: 'queued_followup',
+          mode: null,
+          task: null,
+        },
+        {
+          ...wire.conversation.items[2],
+          sequence: 4,
+        },
+        {
+          ...wire.conversation.items[3],
+          sequence: 5,
+        },
+        {
+          item_kind: 'user_message',
+          sequence: 6,
+          turn_id: consumingTurnId,
+          message: {
+            message_id: consumingMessageId,
+            text: 'After this, make the summary shorter.',
+          },
+          message_kind: 'submitted',
+          mode: 'work',
+          task: {
+            task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174091',
+            title: 'Shorten summary',
+          },
+        },
+        {
+          item_kind: 'queued_followup_consumed',
+          sequence: 7,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          message_id: queuedMessageId,
+          consumed_by: {
+            turn_id: consumingTurnId,
+            message_id: consumingMessageId,
+          },
+          recorded_state: 'consumed',
+        },
+      ],
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function agentStepProgressActivity() {
   const wire = createTaskStreamWire();
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
@@ -3344,6 +3415,26 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /builder-run:|builder-message:|sha256:|provider|credential|source_tree|receipt|running|live/iu,
+    );
+  });
+
+  it('renders consumed queued follow-ups as a compact handoff receipt', async () => {
+    const { saved } = await snapshots();
+    const activity = await consumedQueuedFollowupActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const consumed = container.querySelector('[data-builder-activity-card="Follow-up picked up"]');
+    expect(consumed).not.toBeNull();
+    expect(consumed?.textContent).toContain('The queued follow-up moved into the next request.');
+    expect(container.textContent).not.toMatch(
+      /turn_followup_consumed|builder-run:|builder-message:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 

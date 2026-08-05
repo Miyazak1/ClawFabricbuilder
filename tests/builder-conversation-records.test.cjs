@@ -530,6 +530,52 @@ test('supports active-run queued follow-up payloads without execution evidence',
   }
 });
 
+test('supports queued follow-up consumption receipts without execution evidence', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create focus timer' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const queued = create('turn_followup_queued', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    message: { message_id: typedId('message', 2), text: 'Then make the summary shorter.' },
+  }, started, 3);
+  const consumed = create('turn_followup_consumed', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    message_id: typedId('message', 2),
+    consuming_turn_id: typedId('turn', 2),
+    consuming_message_id: typedId('message', 3),
+  }, queued, 4);
+
+  assert.equal(consumed.event_type, 'turn_followup_consumed');
+  assert.equal(consumed.payload.message_id, typedId('message', 2));
+  assert.equal(consumed.payload.consuming_turn_id, typedId('turn', 2));
+  assert.doesNotMatch(
+    JSON.stringify(consumed),
+    /provider|credential|git_candidate_receipt|commit_oid|tree_oid|source_tree|terminal_result|dispatch_result|save_admission/iu,
+  );
+
+  for (const drift of [
+    { ...consumed, payload: { ...consumed.payload, message_id: typedId('run', 2) } },
+    { ...consumed, payload: { ...consumed.payload, consuming_turn_id: typedId('message', 3) } },
+    { ...consumed, payload: { ...consumed.payload, instruction: 'Run this now.' } },
+  ]) {
+    assert.throws(() => sanitizeBuilderConversationEvent(drift), assertRecordError());
+  }
+});
+
 test('supports durable task brief updates without source or execution authority', () => {
   const submitted = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: '我想先聊一下这个作品集首页怎么做。' },

@@ -186,6 +186,7 @@ turn.submitted
 plan.proposed | plan.revised | plan.approved
 task.created | task.updated
 run.started | run.progress.recorded | run.steered | run.followup.queued | run.interrupted | run.completed
+run.followup.consumed
 tool.call.requested
 candidate.created | candidate.accepted | candidate.rejected
 verification.started | verification.completed

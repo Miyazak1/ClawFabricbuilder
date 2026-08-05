@@ -145,6 +145,18 @@ export type BuilderConversationItem =
     task: BuilderConversationTask | null;
   }>
   | Readonly<{
+    item_kind: 'queued_followup_consumed';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    message_id: string;
+    consumed_by: Readonly<{
+      turn_id: string;
+      message_id: string;
+    }>;
+    recorded_state: 'consumed';
+  }>
+  | Readonly<{
     item_kind: 'run_started';
     sequence: number;
     turn_id: string;
@@ -373,6 +385,19 @@ const USER_MESSAGE_KEYS = Object.freeze([
   'message_kind',
   'mode',
   'task',
+]);
+const QUEUED_FOLLOWUP_CONSUMED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'message_id',
+  'consumed_by',
+  'recorded_state',
+]);
+const QUEUED_FOLLOWUP_CONSUMED_BY_KEYS = Object.freeze([
+  'turn_id',
+  'message_id',
 ]);
 const RUN_STARTED_KEYS = Object.freeze([
   'item_kind',
@@ -921,6 +946,26 @@ function sanitizeUserMessage(
   };
 }
 
+function sanitizeQueuedFollowupConsumed(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'queued_followup_consumed' }> {
+  if (source.recorded_state !== 'consumed') throw unavailable();
+  const consumedBy = exactRecord(source.consumed_by, QUEUED_FOLLOWUP_CONSUMED_BY_KEYS);
+  return {
+    item_kind: 'queued_followup_consumed' as const,
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    message_id: safePattern(source.message_id, MESSAGE_ID_PATTERN),
+    consumed_by: {
+      turn_id: safePattern(consumedBy.turn_id, TURN_ID_PATTERN),
+      message_id: safePattern(consumedBy.message_id, MESSAGE_ID_PATTERN),
+    },
+    recorded_state: 'consumed' as const,
+  };
+}
+
 function sanitizeRunStarted(
   source: Record<string, unknown>,
   sequence: number,
@@ -1428,6 +1473,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   let source: Record<string, unknown>;
   if (itemKind === 'user_message') {
     source = exactRecord(value, USER_MESSAGE_KEYS);
+  } else if (itemKind === 'queued_followup_consumed') {
+    source = exactRecord(value, QUEUED_FOLLOWUP_CONSUMED_KEYS);
   } else if (itemKind === 'run_started') {
     source = exactRecord(value, RUN_STARTED_KEYS);
   } else if (itemKind === 'run_context_snapshot_recorded') {
@@ -1457,6 +1504,9 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   }
   const sequence = safeSequence(source.sequence);
   if (itemKind === 'user_message') return sanitizeUserMessage(source, sequence);
+  if (itemKind === 'queued_followup_consumed') {
+    return sanitizeQueuedFollowupConsumed(source, sequence);
+  }
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_context_snapshot_recorded') {
     return sanitizeRunContextSnapshotRecorded(source, sequence);
@@ -1479,6 +1529,8 @@ type ReplayTurn = {
   turn_id: string;
   mode: 'question' | 'work';
   task: BuilderConversationTask | null;
+  submitted_message_id: string;
+  submitted_text: string;
   runs: Array<{
     run_id: string;
     attempt_number: number;
@@ -1599,6 +1651,12 @@ function validateCompleteWindow(
       result_recorded: boolean;
     }
   >();
+  const queuedFollowups = new Map<string, {
+    consumed: boolean;
+    run_id: string;
+    text: string;
+    turn_id: string;
+  }>();
   let activeTurn: ReplayTurn | null = null;
 
   for (const item of items) {
@@ -1615,6 +1673,8 @@ function validateCompleteWindow(
           turn_id: item.turn_id,
           mode: item.mode as 'question' | 'work',
           task: item.task,
+          submitted_message_id: item.message.message_id,
+          submitted_text: item.message.text,
           runs: [],
         };
         turns.set(item.turn_id, activeTurn);
@@ -1626,7 +1686,35 @@ function validateCompleteWindow(
           currentRun !== null
           && (currentRun.status !== 'running' || currentRun.control !== null)
         ) throw unavailable();
+        if (item.message_kind === 'queued_followup') {
+          if (currentRun === null || queuedFollowups.has(item.message.message_id)) {
+            throw unavailable();
+          }
+          queuedFollowups.set(item.message.message_id, {
+            consumed: false,
+            run_id: currentRun.run_id,
+            text: item.message.text,
+            turn_id: item.turn_id,
+          });
+        }
       }
+      continue;
+    }
+
+    if (item.item_kind === 'queued_followup_consumed') {
+      if (activeTurn === null) throw unavailable();
+      const queued = queuedFollowups.get(item.message_id) ?? null;
+      if (
+        queued === null
+        || queued.consumed
+        || queued.turn_id !== item.turn_id
+        || queued.run_id !== item.run_id
+        || item.consumed_by.turn_id !== activeTurn.turn_id
+        || item.consumed_by.message_id !== activeTurn.submitted_message_id
+        || activeTurn.submitted_text !== queued.text
+        || activeTurn.runs.length !== 0
+      ) throw unavailable();
+      queued.consumed = true;
       continue;
     }
 
@@ -1862,6 +1950,8 @@ type SuffixTurn = {
   mode: 'question' | 'work' | 'unknown';
   task_id: string | null;
   origin: 'visible' | 'prefix';
+  submitted_message_id: string | null;
+  submitted_text: string | null;
   current_run: SuffixRun | null;
 };
 
@@ -1912,6 +2002,12 @@ function validateTruncatedWindow(
     string,
     Readonly<{ turn_id: string; review: 'approved' | 'rejected' | null }>
   >();
+  const queuedFollowups = new Map<string, {
+    consumed: boolean;
+    run_id: string;
+    text: string;
+    turn_id: string;
+  }>();
   let activeTurn: SuffixTurn | null = null;
 
   for (let index = 0; index < items.length; index += 1) {
@@ -1933,6 +2029,8 @@ function validateTruncatedWindow(
           mode: item.mode as 'question' | 'work',
           task_id: item.task?.task_id ?? null,
           origin: 'visible',
+          submitted_message_id: item.message.message_id,
+          submitted_text: item.message.text,
           current_run: null,
         };
       } else {
@@ -1945,6 +2043,8 @@ function validateTruncatedWindow(
             mode: 'unknown',
             task_id: null,
             origin: 'prefix',
+            submitted_message_id: null,
+            submitted_text: null,
             current_run: null,
           };
         }
@@ -1956,7 +2056,61 @@ function validateTruncatedWindow(
             || activeTurn.current_run.control !== null
           )
         ) throw unavailable();
+        if (item.message_kind === 'queued_followup') {
+          if (
+            activeTurn.current_run === null
+            || queuedFollowups.has(item.message.message_id)
+          ) throw unavailable();
+          queuedFollowups.set(item.message.message_id, {
+            consumed: false,
+            run_id: activeTurn.current_run.run_id,
+            text: item.message.text,
+            turn_id: item.turn_id,
+          });
+        }
       }
+      continue;
+    }
+
+    if (item.item_kind === 'queued_followup_consumed') {
+      const queued = queuedFollowups.get(item.message_id) ?? null;
+      if (
+        queued !== null
+        && (
+          queued.consumed
+          || queued.turn_id !== item.turn_id
+          || queued.run_id !== item.run_id
+        )
+      ) throw unavailable();
+      if (activeTurn === null) {
+        if (!mayUsePrefixState || turnIds.has(item.consumed_by.turn_id)) {
+          throw unavailable();
+        }
+        turnIds.add(item.consumed_by.turn_id);
+        activeTurn = {
+          turn_id: item.consumed_by.turn_id,
+          mode: 'unknown',
+          task_id: null,
+          origin: 'prefix',
+          submitted_message_id: item.consumed_by.message_id,
+          submitted_text: null,
+          current_run: null,
+        };
+      }
+      if (
+        activeTurn.turn_id !== item.consumed_by.turn_id
+        || activeTurn.current_run !== null
+        || (
+          activeTurn.submitted_message_id !== null
+          && activeTurn.submitted_message_id !== item.consumed_by.message_id
+        )
+        || (
+          queued !== null
+          && activeTurn.submitted_text !== null
+          && activeTurn.submitted_text !== queued.text
+        )
+      ) throw unavailable();
+      if (queued !== null) queued.consumed = true;
       continue;
     }
 
@@ -2021,6 +2175,8 @@ function validateTruncatedWindow(
         mode: 'unknown',
         task_id: null,
         origin: 'prefix',
+        submitted_message_id: null,
+        submitted_text: null,
         current_run: null,
       };
     }

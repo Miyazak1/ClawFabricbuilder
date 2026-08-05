@@ -201,6 +201,19 @@ function itemFromEvent(event, progressStagesByRun) {
         mode: null,
         task: null,
       };
+    case 'turn_followup_consumed':
+      return {
+        item_kind: 'queued_followup_consumed',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        message_id: payload.message_id,
+        consumed_by: {
+          turn_id: payload.consuming_turn_id,
+          message_id: payload.consuming_message_id,
+        },
+        recorded_state: 'consumed',
+      };
     case 'task_brief_updated': {
       const capsule = payload.task_capsule;
       return {

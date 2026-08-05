@@ -146,6 +146,8 @@ function applyTurnSubmitted(state, payload) {
     task: payload.task === null ? null : { ...payload.task },
     base_revision: payload.base_revision === null ? null : { ...payload.base_revision },
     route_decision: { ...payload.route_decision },
+    submitted_message_id: message.message_id,
+    submitted_text: message.text,
     runs: [],
     messages: [message],
     outcome: null,
@@ -161,7 +163,9 @@ function applyActiveRunUserMessage(state, payload, kind) {
   if (run === null ? payload.run_id !== null
     : payload.run_id !== run.run_id || run.status !== 'running'
       || run.interrupt_request_id !== null || run.cancel_request_id !== null) fail();
-  turn.messages.push(addMessage(state, payload.message, 'user', kind));
+  const message = addMessage(state, payload.message, 'user', kind);
+  turn.messages.push(message);
+  return { message, run, turn };
 }
 
 function applyTurnSteered(state, payload) {
@@ -169,7 +173,33 @@ function applyTurnSteered(state, payload) {
 }
 
 function applyTurnFollowupQueued(state, payload) {
-  applyActiveRunUserMessage(state, payload, 'queued_followup');
+  const queued = applyActiveRunUserMessage(state, payload, 'queued_followup');
+  state.queuedFollowups.set(payload.message.message_id, {
+    consumed: false,
+    message_id: payload.message.message_id,
+    run_id: queued.run.run_id,
+    text: queued.message.text,
+    turn_id: queued.turn.turn_id,
+  });
+}
+
+function applyTurnFollowupConsumed(state, payload) {
+  const queued = state.queuedFollowups.get(payload.message_id) ?? null;
+  if (
+    queued === null
+    || queued.consumed
+    || queued.turn_id !== payload.turn_id
+    || queued.run_id !== payload.run_id
+  ) fail();
+  const sourceTurn = state.turns.get(payload.turn_id);
+  if (!sourceTurn || sourceTurn.status !== 'completed') fail();
+  const consumingTurn = requireActiveTurn(state, payload.consuming_turn_id);
+  if (
+    consumingTurn.runs.length !== 0
+    || consumingTurn.submitted_message_id !== payload.consuming_message_id
+    || consumingTurn.submitted_text !== queued.text
+  ) fail();
+  queued.consumed = true;
 }
 
 function applyRunStarted(state, payload) {
@@ -584,6 +614,7 @@ const TRANSITIONS = Object.freeze({
   turn_submitted: applyTurnSubmitted,
   turn_steered: applyTurnSteered,
   turn_followup_queued: applyTurnFollowupQueued,
+  turn_followup_consumed: applyTurnFollowupConsumed,
   candidate_rejected: applyCandidateReviewed,
   candidate_accepted: applyCandidateReviewed,
   plan_reviewed: applyPlanReviewed,
@@ -687,6 +718,7 @@ function replayBuilderConversation(rawEvents) {
     turns: new Map(),
     turnOrder: [],
     activeTurnId: null,
+    queuedFollowups: new Map(),
     latestTaskCapsule: null,
     priorHead: null,
   };

@@ -619,6 +619,95 @@ test('replays queued follow-ups only while the current run is active', () => {
   }, 31)), assertReplayError);
 });
 
+test('replays queued follow-up consumption only before the consuming run starts', () => {
+  let events = [];
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 40), text: 'Build a calmer dashboard.' },
+    turn_id: id('turn', 40),
+    mode: 'work',
+    task: { task_id: id('task', 40), title: 'Build dashboard' },
+    base_revision: BASE_REVISION,
+  }, 40);
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    task_id: id('task', 40),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_A,
+  }, 41);
+  events = append(events, 'turn_followup_queued', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    message: { message_id: id('message', 41), text: 'Then make the summary shorter.' },
+  }, 42);
+  events = append(events, 'run_completed', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: RESULT_A,
+    assistant_message: { message_id: id('message', 42), text: 'The draft is ready.' },
+  }, 43);
+  events = append(events, 'turn_completed', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    outcome: 'candidate_ready',
+  }, 44);
+  events = append(events, 'turn_submitted', {
+    message: { message_id: id('message', 43), text: 'Then make the summary shorter.' },
+    turn_id: id('turn', 41),
+    mode: 'work',
+    task: { task_id: id('task', 41), title: 'Shorten summary' },
+    base_revision: BASE_REVISION,
+  }, 45);
+  events = append(events, 'turn_followup_consumed', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    message_id: id('message', 41),
+    consuming_turn_id: id('turn', 41),
+    consuming_message_id: id('message', 43),
+  }, 46);
+  const withConsumption = events;
+  events = append(events, 'run_started', {
+    turn_id: id('turn', 41),
+    run_id: id('run', 41),
+    task_id: id('task', 41),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_B,
+  }, 47);
+
+  const replay = replayBuilderConversation(events);
+  assert.equal(replay.active_turn_id, id('turn', 41));
+  assert.equal(replay.turns[0].messages.at(-2).kind, 'queued_followup');
+  assert.equal(replay.turns[1].messages[0].text, 'Then make the summary shorter.');
+
+  assert.throws(() => replayBuilderConversation(append(withConsumption, 'turn_followup_consumed', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    message_id: id('message', 41),
+    consuming_turn_id: id('turn', 41),
+    consuming_message_id: id('message', 43),
+  }, 48)), assertReplayError);
+
+  const afterRunStarted = append(withConsumption, 'run_started', {
+    turn_id: id('turn', 41),
+    run_id: id('run', 42),
+    task_id: id('task', 41),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_B,
+  }, 49);
+  assert.throws(() => replayBuilderConversation(append(afterRunStarted, 'turn_followup_consumed', {
+    turn_id: id('turn', 40),
+    run_id: id('run', 40),
+    message_id: id('message', 41),
+    consuming_turn_id: id('turn', 41),
+    consuming_message_id: id('message', 43),
+  }, 50)), assertReplayError);
+});
+
 test('replays durable task brief updates only after an update-brief explanation completes', () => {
   let events = [];
   events = append(events, 'turn_submitted', {

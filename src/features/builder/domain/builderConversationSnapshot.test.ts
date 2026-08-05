@@ -31,9 +31,11 @@ type MutableConversationItem = {
   sequence: number;
   turn_id: string;
   message?: MutableMessage;
+  message_id?: string;
   message_kind?: string;
   mode?: string | null;
   task?: { task_id: string; title: string } | null;
+  consumed_by?: { turn_id: string; message_id: string };
   context?: {
     recorded_state: string;
     route: string;
@@ -791,6 +793,98 @@ describe('Builder conversation snapshot', () => {
       mode: null,
       task: null,
     });
+  });
+
+  it('accepts a consumed queued follow-up only before the consuming run starts', () => {
+    const wire = candidateWire();
+    const turnId = id('turn', 1);
+    const runId = id('run', 3);
+    const queuedMessageId = id('message', 40);
+    const consumingTurnId = id('turn', 41);
+    const consumingMessageId = id('message', 42);
+    wire.conversation.head_sequence = 7;
+    wire.conversation.recorded_active_turn_id = consumingTurnId;
+    wire.conversation.window.last_sequence = 7;
+    wire.conversation.items = [
+      wire.conversation.items[0]!,
+      wire.conversation.items[1]!,
+      {
+        item_kind: 'user_message',
+        sequence: 3,
+        turn_id: turnId,
+        message: {
+          message_id: queuedMessageId,
+          text: 'Then make the summary shorter.',
+        },
+        message_kind: 'queued_followup',
+        mode: null,
+        task: null,
+      },
+      { ...wire.conversation.items[2]!, sequence: 4 },
+      { ...wire.conversation.items[3]!, sequence: 5 },
+      {
+        item_kind: 'user_message',
+        sequence: 6,
+        turn_id: consumingTurnId,
+        message: {
+          message_id: consumingMessageId,
+          text: 'Then make the summary shorter.',
+        },
+        message_kind: 'submitted',
+        mode: 'work',
+        task: {
+          task_id: id('task', 43),
+          title: 'Shorten summary',
+        },
+      },
+      {
+        item_kind: 'queued_followup_consumed',
+        sequence: 7,
+        turn_id: turnId,
+        run_id: runId,
+        message_id: queuedMessageId,
+        consumed_by: {
+          turn_id: consumingTurnId,
+          message_id: consumingMessageId,
+        },
+        recorded_state: 'consumed',
+      },
+    ];
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.recorded_active_turn_id).toBe(consumingTurnId);
+    expect(snapshot.conversation.items.at(-1)).toEqual({
+      item_kind: 'queued_followup_consumed',
+      sequence: 7,
+      turn_id: turnId,
+      run_id: runId,
+      message_id: queuedMessageId,
+      consumed_by: {
+        turn_id: consumingTurnId,
+        message_id: consumingMessageId,
+      },
+      recorded_state: 'consumed',
+    });
+
+    wire.conversation.head_sequence = 8;
+    wire.conversation.window.last_sequence = 8;
+    wire.conversation.items.splice(6, 0, {
+      item_kind: 'run_started',
+      sequence: 7,
+      turn_id: consumingTurnId,
+      run_id: id('run', 44),
+      task_id: id('task', 43),
+      attempt_number: 1,
+      retry_of_run_id: null,
+      recorded_state: 'started',
+    });
+    wire.conversation.items[7]!.sequence = 8;
+    expect(() => sanitizeBuilderConversationSnapshot(wire)).toThrowError(
+      BuilderConversationSnapshotError,
+    );
   });
 
   it('accepts a durable task brief update after a question explanation', () => {

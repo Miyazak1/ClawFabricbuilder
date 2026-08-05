@@ -635,6 +635,7 @@ function progressStepLabel(stage: BuilderConversationRunProgressStage): string {
 
 function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
+  if (item.item_kind === 'queued_followup_consumed') return <CheckCircle2 className="size-3.5" />;
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
   if (item.item_kind === 'run_context_snapshot_recorded') return <ListChecks className="size-3.5" />;
   if (item.item_kind === 'run_progress_recorded') return <RefreshCw className="size-3.5" />;
@@ -675,6 +676,7 @@ function activityTitle(item: BuilderConversationItem): string {
     if (item.message_kind === 'queued_followup') return 'You queued a follow-up';
     return 'You';
   }
+  if (item.item_kind === 'queued_followup_consumed') return 'Follow-up picked up';
   if (item.item_kind === 'run_started') return 'Assistant is working';
   if (item.item_kind === 'run_context_snapshot_recorded') return 'Why this ran';
   if (item.item_kind === 'run_progress_recorded') return progressLabel(item);
@@ -838,6 +840,9 @@ function runContextSnapshotBody(
 
 function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') return item.message.text;
+  if (item.item_kind === 'queued_followup_consumed') {
+    return 'The queued follow-up moved into the next request.';
+  }
   if (item.item_kind === 'run_started') return 'Preparing this request.';
   if (item.item_kind === 'run_context_snapshot_recorded') return runContextSnapshotBody(item);
   if (item.item_kind === 'run_progress_recorded') return progressBody(item);

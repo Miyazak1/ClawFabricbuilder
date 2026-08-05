@@ -655,6 +655,12 @@ Evidence requirements:
   provider/tool request, reads or writes no source, creates no Git candidate,
   grants no permission, and creates no Save, Review, Project Revision, branch, or
   compaction fact;
+- the current queued-follow-up consumption checkpoint adds a durable
+  `turn_followup_consumed` receipt to records, canonical replay, Task Stream
+  projection, renderer sanitization, and compact UI. It proves that a queued
+  message was handed to a later submitted turn before that turn started a Run,
+  but it still does not choose a route, bypass workspace/write admission, invoke
+  a provider/tool, or auto-dispatch after restart;
 - the current active-answer admission checkpoint keeps explicit build/change
   commands out of the steering path while a read-only answer is running. The
   renderer prefers queued follow-up route evidence for non-cancel input during

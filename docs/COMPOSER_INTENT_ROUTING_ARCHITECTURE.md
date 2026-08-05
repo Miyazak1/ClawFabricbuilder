@@ -665,10 +665,14 @@ matched-signal vocabulary for current Builder routes, including
 Conversation fact now exists for `turn_followup_queued` / `queued_followup`
 Task Stream projection, and the renderer reaches it only through a controlled
 request-id-only IPC/preload `queueFollowup` command. This fact still does not
-start a second Run, dispatch a provider/tool request, or expose source authority. Main
-`submit` now dispatches from the resolved `RouteDecision` instead of a second
-boolean answer/build classifier, so workspace admission, write permission, and
-provider route selection cannot silently diverge.
+start a second Run, dispatch a provider/tool request, or expose source
+authority. A renderer-safe `turn_followup_consumed` receipt is now part of the
+conversation replay/projection contract so a later dispatcher can prove a
+queued message was picked up by a normal submitted turn before any new Run
+starts; it is not yet an auto-dispatch executor. Main `submit` now dispatches
+from the resolved `RouteDecision` instead of a second boolean answer/build
+classifier, so workspace admission, write permission, and provider route
+selection cannot silently diverge.
 
 ### Slice 3 - Task Capsule And Working Brief
 
