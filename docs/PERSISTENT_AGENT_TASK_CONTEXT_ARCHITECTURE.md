@@ -396,6 +396,11 @@ shape while giving later stores, route decisions, and Agent context snapshots a
 shared verifier. The update record is evidence only: it does not append a
 Conversation event, write SQLite, dispatch a provider, mutate source or Git,
 grant permission, create Review/Revision facts, or expose renderer authority.
+Builder also has a main-only Task Capsule store that persists those update
+records with idempotent replay, latest-by-Project reads, task-scoped history
+reads, schema fingerprint validation, and restart recovery. The store is still
+not a renderer API, build admission path, provider/tool dispatcher, source
+writer, permission grant, Review, Revision, Artifact, or Git authority.
 
 ### Slice B - Context Snapshot Records
 

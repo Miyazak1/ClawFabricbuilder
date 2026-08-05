@@ -596,7 +596,11 @@ main-side `builder-task-capsule.v1`, `builder-working-brief.v1`, and
 `builder-task-capsule-update.v1` contracts validate the bounded brief facts and
 prove that a task capsule update is not provider dispatch, source mutation, Git
 mutation, permission grant, Review, Revision, renderer authority, SQLite write,
-or Conversation append by itself. Selecting a
+or Conversation append by itself. Builder also has a main-only
+`builder-task-capsule-store.v1` that can record or replay those update records
+and read the latest Project/Task capsule context after restart, without IPC,
+preload, provider, source, Git, permission, Review, Revision, or build dispatch
+authority. Selecting a
 workspace does not turn exploratory product discussion into work admission, and
 must not request current-project write permission. The renderer dispatches these
 turns through the answer path; generation main performs its own read-only route

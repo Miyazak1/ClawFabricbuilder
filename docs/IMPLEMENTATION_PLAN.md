@@ -536,6 +536,14 @@ Evidence requirements:
   without creating a new IPC/preload surface, Conversation append command,
   SQLite write, provider dispatch, source/Git mutation, permission grant,
   Review, Revision, or renderer authority;
+- the current task-capsule store checkpoint persists
+  `builder-task-capsule-update.v1` records in a main-only
+  `builder-task-capsule-store.v1` SQLite store. It supports idempotent
+  record/replay, read-by-update, latest Project capsule, task-scoped history,
+  schema fingerprint validation, and restart recovery, while still creating no
+  IPC/preload surface, renderer authority, Conversation append command, build
+  admission, provider/tool dispatch, source/Git mutation, permission grant,
+  Review, Revision, Artifact, command execution, or network authority;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current
