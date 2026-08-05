@@ -55,6 +55,12 @@ const {
 const {
   createBuilderTaskCapsuleStore,
 } = require('../electron/builder-task-capsule-store.cjs');
+const {
+  createBuilderSessionTaskAddressRecordingService,
+} = require('../electron/builder-session-task-address-recording-service.cjs');
+const {
+  createBuilderSessionTaskAddressStore,
+} = require('../electron/builder-session-task-address-store.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -3648,6 +3654,189 @@ test('does not record ordinary read-only answers into the task capsule store', a
   assert.equal(answer.result_kind, 'explanation');
   assert.equal(answer.existing_project_id, null);
   assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'absent');
+});
+
+test('records fresh work turns into the main-owned Session/Task Address store before provider dispatch', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-address-recording-main-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const addressStore = createBuilderSessionTaskAddressStore(path.join(root, 'session-task-addresses.sqlite'));
+  t.after(() => {
+    try { addressStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 9_100;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(910),
+    nowMs: () => now++,
+  });
+  const generatedProjectId = 'builder-project:00000000-0000-4000-8000-000000000398';
+  const sessionUuid = '123e4567-e89b-42d3-a456-426614174310';
+  const taskAddressUuid = '123e4567-e89b-42d3-a456-426614174311';
+  let nextAddressUuid = 0;
+  const addressUuids = [sessionUuid, taskAddressUuid];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      createUuid: createUniqueUuidFactory(920),
+      sessionTaskAddressRecordingService: createBuilderSessionTaskAddressRecordingService({
+        address_store: addressStore,
+        create_uuid: () => addressUuids[nextAddressUuid++],
+        now_ms: () => 9_500,
+        created_by: 'builder-user:123e4567-e89b-42d3-a456-426614174201',
+        agent_id: 'builder-agent:123e4567-e89b-42d3-a456-426614174202',
+      }),
+    }),
+    transport: async () => {
+      const recordedBeforeProvider = addressStore.read_task_address({
+        project_id: generatedProjectId,
+        task_address_id: `builder-task-address:${taskAddressUuid}`,
+      });
+      assert.equal(recordedBeforeProvider.status, 'ready');
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Addressed work',
+          summary: 'Builds after recording product work addresses.',
+        })),
+      };
+    },
+  });
+
+  const draft = await service.generate(request({
+    instruction: 'Build the addressed dashboard.',
+  }));
+  const session = addressStore.read_session_address({
+    project_id: generatedProjectId,
+    session_id: `builder-session:${sessionUuid}`,
+  }).session_address.session_address;
+  const task = addressStore.read_task_address({
+    project_id: generatedProjectId,
+    task_address_id: `builder-task-address:${taskAddressUuid}`,
+  }).task_address.task_address;
+
+  assert.equal(draft.title, 'Addressed work');
+  assert.equal(draft.project_id, generatedProjectId);
+  assert.equal(session.project_id, generatedProjectId);
+  assert.equal(session.current_task_id, task.task_address_id);
+  assert.equal(task.session_id, session.session_id);
+  assert.equal(task.goal, 'Build the addressed dashboard.');
+  assert.equal(task.agent_id, 'builder-agent:123e4567-e89b-42d3-a456-426614174202');
+  assert.match(task.conversation_id, /^builder-conversation:/u);
+  assert.doesNotMatch(task.task_address_id, /^builder-task:/u);
+});
+
+test('does not create new Session/Task Address facts for read-only answers or queued follow-up work', async () => {
+  const calls = [];
+  const lifecycle = conversationService();
+  let activeSignal;
+  let releaseTransport;
+  let transportCall = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          return readResult();
+        },
+      },
+      sessionTaskAddressRecordingService: {
+        record_addresses_from_conversation_context(input) {
+          calls.push(input);
+          return { operation: 'recorded_for_test' };
+        },
+      },
+    }),
+    transport: async (_input, options) => {
+      transportCall += 1;
+      if (transportCall === 1) {
+        activeSignal = options.signal;
+        return new Promise((resolve) => {
+          releaseTransport = () => resolve({
+            transport_version: 'builder-openai-compatible-transport.v1',
+            generated_text: JSON.stringify(providerOutput({
+              title: 'Initial work',
+              summary: 'Initial work stays on the only fresh address.',
+            })),
+          });
+        });
+      }
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(transportCall === 2
+          ? providerOutput({
+            title: 'Queued work',
+            summary: 'Queued work should not create another address.',
+          })
+          : providerExplanation({
+            title: 'Answer only',
+            summary: 'No address should be recorded.',
+          })),
+      };
+    },
+  });
+
+  const firstWork = request({ instruction: 'Make a timer.', existingProjectId: PROJECT_ID });
+  const running = service.generate(firstWork);
+  while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+  const queued = service.queue_followup({
+    request_id: firstWork.request_digest,
+    message: 'Also make it calmer.',
+  });
+  assert.equal(activeSignal.aborted, false);
+  releaseTransport();
+  await running;
+  await service.submit_queued_followup({
+    request: request({ instruction: 'Also make it calmer.', existingProjectId: PROJECT_ID }),
+    queued_followup: queued.queued_followup,
+  });
+  await service.answer(request({
+    instruction: 'Explain what changed.',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(lifecycle.calls.queuedFollowupWork.length, 1);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].context.mode, 'work');
+});
+
+test('fails closed before provider dispatch when Session/Task Address recording fails', async () => {
+  let providerCalled = false;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      projectReadAuthority: {
+        load_current() {
+          return readResult();
+        },
+      },
+      sessionTaskAddressRecordingService: {
+        record_addresses_from_conversation_context() {
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+    }),
+    transport: async () => {
+      providerCalled = true;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  await assert.rejects(
+    service.generate(request({ existingProjectId: PROJECT_ID })),
+    (error) => {
+      assert.equal(error.code, 'builder_generation_base_unavailable');
+      assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
+      return true;
+    },
+  );
+  assert.equal(providerCalled, false);
 });
 
 test('uses a durable task capsule brief as contextual submit build context', async (t) => {

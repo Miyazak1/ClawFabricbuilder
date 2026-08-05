@@ -249,6 +249,18 @@ migration of old Conversation rows, not a renderer lookup surface, not a
 provider/tool dispatcher, not a source/Git mutator, not a permission grant, and
 not archive/delete/fork/export materialization.
 
+Current generation-main integration: `electron/builder-generation-main-service.cjs`
+accepts that recording service as an optional main-owned dependency. Fresh
+work and plan contexts record their Session/Task Address after the run context
+snapshot and before provider dispatch, failing closed if the address recording
+cannot be verified. Read-only answers and queued follow-up work do not create
+new product addresses. Retry, draft continuation, and approved-plan continuation
+also stay out of this first integration because they need explicit binding to an
+existing Task Address instead of a newly minted product task. The desktop IPC
+runtime now creates the recording service beside the Address store and passes it
+into generation main with a fixed local Builder Agent id until the later Agent
+Profile store exists.
+
 ## Non-Goals For The Current Builder MVP
 
 - No unrestricted cross-session source reads.

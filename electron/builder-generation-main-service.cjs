@@ -69,6 +69,7 @@ const OPTION_KEYS = Object.freeze([
   'sourceContextCollector',
   'taskCapsuleStore',
   'taskCapsuleRecordingService',
+  'sessionTaskAddressRecordingService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -1039,6 +1040,12 @@ function sanitizeOptions(value) {
   if (keys.includes('taskCapsuleRecordingService') && !isPlainObject(descriptors.taskCapsuleRecordingService.value)) {
     fail();
   }
+  if (
+    keys.includes('sessionTaskAddressRecordingService')
+    && !isPlainObject(descriptors.sessionTaskAddressRecordingService.value)
+  ) {
+    fail();
+  }
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1054,6 +1061,9 @@ function sanitizeOptions(value) {
     ...(keys.includes('taskCapsuleStore') ? { taskCapsuleStore: descriptors.taskCapsuleStore.value } : {}),
     ...(keys.includes('taskCapsuleRecordingService')
       ? { taskCapsuleRecordingService: descriptors.taskCapsuleRecordingService.value }
+      : {}),
+    ...(keys.includes('sessionTaskAddressRecordingService')
+      ? { sessionTaskAddressRecordingService: descriptors.sessionTaskAddressRecordingService.value }
       : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
@@ -1497,6 +1507,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const recordTaskCapsuleFromConversation = options.taskCapsuleRecordingService === undefined
     ? null
     : ownMethod(options.taskCapsuleRecordingService, 'record_task_capsule_from_conversation');
+  const recordSessionTaskAddressesFromConversation = options.sessionTaskAddressRecordingService === undefined
+    ? null
+    : ownMethod(options.sessionTaskAddressRecordingService, 'record_addresses_from_conversation_context');
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -1789,6 +1802,15 @@ function createBuilderGenerationMainService(rawOptions) {
     );
   }
 
+  function recordSessionTaskAddressesFromWorkContext(conversationContext) {
+    if (recordSessionTaskAddressesFromConversation === null) return;
+    Reflect.apply(
+      recordSessionTaskAddressesFromConversation,
+      options.sessionTaskAddressRecordingService,
+      [{ context: conversationContext }],
+    );
+  }
+
   function generationRequestFromApprovedPlan(editContext) {
     const unsigned = freezeDeep({
       version: 'builder-generation-request.v2',
@@ -1984,6 +2006,7 @@ function createBuilderGenerationMainService(rawOptions) {
           }],
         );
       conversationContext = recordConversationContextSnapshot(conversationContext);
+      if (queuedFollowup === null) recordSessionTaskAddressesFromWorkContext(conversationContext);
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -2171,6 +2194,7 @@ function createBuilderGenerationMainService(rawOptions) {
         }],
       );
       conversationContext = recordConversationContextSnapshot(conversationContext);
+      recordSessionTaskAddressesFromWorkContext(conversationContext);
       activeContexts.set(key, conversationContext);
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);

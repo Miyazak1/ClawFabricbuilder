@@ -219,6 +219,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
             assert.equal(options.taskCapsuleStore, context.__taskCapsuleStore);
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
+            assert.equal(options.sessionTaskAddressRecordingService, context.__sessionTaskAddressRecordingService);
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
@@ -274,6 +275,25 @@ function runtimeWithService(service, probes = {}) {
               },
             };
             return context.__sessionTaskAddressStore;
+          },
+        };
+      }
+      if (specifier === './builder-session-task-address-recording-service.cjs') {
+        return {
+          createBuilderSessionTaskAddressRecordingService: (options) => {
+            probes.sessionTaskAddressRecordingOptions = {
+              address_store: options.address_store,
+              created_by: options.created_by,
+              agent_id: options.agent_id,
+            };
+            assert.equal(options.address_store, context.__sessionTaskAddressStore);
+            assert.equal(typeof options.create_uuid, 'function');
+            assert.equal(typeof options.now_ms, 'function');
+            context.__sessionTaskAddressRecordingService = {
+              service_version: 'builder-session-task-address-recording-service.v1',
+              record_addresses_from_conversation_context() {},
+            };
+            return context.__sessionTaskAddressRecordingService;
           },
         };
       }
@@ -2937,6 +2957,9 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.match(source, /createBuilderTaskCapsuleStore/u);
   assert.match(source, /createBuilderTaskCapsuleRecordingService/u);
   assert.match(source, /createBuilderSessionTaskAddressStore/u);
+  assert.match(source, /createBuilderSessionTaskAddressRecordingService/u);
+  assert.match(source, /sessionTaskAddressRecordingService/u);
+  assert.match(source, /LOCAL_BUILDER_AGENT_ID/u);
   assert.match(source, /createBuilderTaskStreamIpcAdapter/u);
   assert.match(source, /createBuilderPlanReviewIpcAdapter/u);
   assert.match(source, /channel:\s*READ_TASK_STREAM_CHANNEL/u);

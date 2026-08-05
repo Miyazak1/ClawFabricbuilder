@@ -171,7 +171,12 @@ verified `begin_work` Conversation run context and records a product Session
 Address plus Task Address into that store. It preserves the low-level
 `builder-task:*` as an execution fact only, and still creates no renderer/preload
 IPC, provider/tool dispatch, source/Git mutation, permission grant, migration,
-archive/delete/fork/export materialization, or run-admission binding.
+archive/delete/fork/export materialization, or renderer lookup. The current
+generation-main integration now composes this bridge before provider dispatch
+for fresh work and plan contexts. Read-only answers, queued follow-up work,
+retry, draft continuation, and approved-plan continuation do not create a new
+Session/Task Address; they remain later binding work because they must attach to
+an existing product Task Address rather than silently fork a new one.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 

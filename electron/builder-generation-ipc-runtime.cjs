@@ -102,12 +102,16 @@ const {
 const {
   createBuilderSessionTaskAddressStore,
 } = require('./builder-session-task-address-store.cjs');
+const {
+  createBuilderSessionTaskAddressRecordingService,
+} = require('./builder-session-task-address-recording-service.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
 const TASK_CAPSULE_DATABASE = 'task-capsules.sqlite';
 const SESSION_TASK_ADDRESS_DIRECTORY = 'builder-session-task-addresses-v1';
 const SESSION_TASK_ADDRESS_DATABASE = 'session-task-addresses.sqlite';
+const LOCAL_BUILDER_AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174002';
 const OPTION_KEYS = Object.freeze([
   'fetchImpl',
   'grantPermissionForExplicitApproval',
@@ -1067,6 +1071,13 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     sessionTaskAddressStore = createBuilderSessionTaskAddressStore(
       path.join(sessionTaskAddressRoot, SESSION_TASK_ADDRESS_DATABASE),
     );
+    const sessionTaskAddressRecordingService = createBuilderSessionTaskAddressRecordingService({
+      address_store: sessionTaskAddressStore,
+      create_uuid: randomUUID,
+      now_ms: () => Date.now(),
+      created_by: LOCAL_BUILDER_USER_ACTOR_ID,
+      agent_id: LOCAL_BUILDER_AGENT_ID,
+    });
     const permissionEvaluator = permissionFactStore.create_evaluator();
     const permissionAdmission = createBuilderToolPermissionAdmission({
       actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
@@ -1097,6 +1108,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       sourceContextCollector,
       taskCapsuleStore,
       taskCapsuleRecordingService,
+      sessionTaskAddressRecordingService,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
         const started = generationStartedEvent(event);

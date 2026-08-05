@@ -453,7 +453,11 @@ verified new `begin_work` Conversation context. That gives future Agent-facing
 task contracts a concrete product address to target, while keeping low-level
 `task_id` values as execution facts and withholding renderer IPC, provider/tool
 dispatch, source/Git mutation, permission inheritance, migration, and
-archive/delete/fork/export behavior.
+archive/delete/fork/export behavior. Generation main now uses that service before
+provider dispatch for fresh work and plan contexts only. Follow-up, retry, draft
+continuation, approved-plan continuation, and subagent delegation still need the
+next binding layer so they can point at an existing Task Address instead of
+creating unrelated product tasks.
 
 ### Slice C - Agent Profile Store
 
