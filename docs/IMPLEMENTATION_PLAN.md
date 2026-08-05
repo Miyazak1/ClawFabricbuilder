@@ -544,6 +544,15 @@ Evidence requirements:
   IPC/preload surface, renderer authority, Conversation append command, build
   admission, provider/tool dispatch, source/Git mutation, permission grant,
   Review, Revision, Artifact, command execution, or network authority;
+- the current task-capsule recording-service checkpoint composes replayed
+  Conversation events with the main-only Task Capsule store. It accepts an
+  already-existing event window, verifies the target `task_brief_updated`
+  sequence, derives a `builder-task-capsule-update.v1`, records it
+  idempotently, and reads it back after restart. This is still context
+  durability only: it adds no IPC/preload surface, renderer authority,
+  Conversation append command, build admission, provider/model/tool dispatch,
+  source/Git mutation, permission grant, Review, Revision, Artifact, command
+  execution, network access, credential handling, or community/social surface;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current

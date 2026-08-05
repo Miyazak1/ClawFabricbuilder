@@ -400,7 +400,14 @@ Builder also has a main-only Task Capsule store that persists those update
 records with idempotent replay, latest-by-Project reads, task-scoped history
 reads, schema fingerprint validation, and restart recovery. The store is still
 not a renderer API, build admission path, provider/tool dispatcher, source
-writer, permission grant, Review, Revision, Artifact, or Git authority.
+writer, permission grant, Review, Revision, Artifact, or Git authority. The
+current recording-service checkpoint composes replayed Conversation events with
+that store: it verifies a target `task_brief_updated` sequence, derives the
+matching update record, writes it idempotently, and proves restart recovery from
+the store. This is still a main-only context durability slice, not autonomous
+Agent work, community sharing, build admission, IPC/preload, provider/tool
+dispatch, source/Git mutation, permission grant, Review, Revision, Artifact,
+command execution, network access, or credential handling.
 
 ### Slice B - Context Snapshot Records
 

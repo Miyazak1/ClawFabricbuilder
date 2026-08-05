@@ -600,17 +600,23 @@ or Conversation append by itself. Builder also has a main-only
 `builder-task-capsule-store.v1` that can record or replay those update records
 and read the latest Project/Task capsule context after restart, without IPC,
 preload, provider, source, Git, permission, Review, Revision, or build dispatch
-authority. Selecting a
-workspace does not turn exploratory product discussion into work admission, and
-must not request current-project write permission. The renderer dispatches these
-turns through the answer path; generation main performs its own read-only route
-classification and the conversation main service records `task_brief_updated` /
-`builder-task-capsule.v1` without draft, Save, command, or source-write
-authority. Later build route evidence can then bind to the visible task id
-derived from the sanitized task stream. The desktop can inspect the latest
-sanitized brief on demand through Artifact Logs as `Current direction`, but this
-surface exposes no task id, route decision id, provider, credential, source,
-Git, receipt, or correction authority.
+authority. The `builder-task-capsule-recording-service.v1` checkpoint composes
+those two facts: it accepts an already-existing Conversation event window,
+replays it, verifies the target `task_brief_updated` sequence, derives the
+`builder-task-capsule-update.v1`, and records it idempotently in the main-owned
+store. It still adds no renderer API, IPC/preload surface, Conversation append,
+provider/model/tool dispatch, source or Git mutation, permission grant, Review,
+Revision, Artifact, command execution, network access, or credential handling.
+Selecting a workspace does not turn exploratory product discussion into work
+admission, and must not request current-project write permission. The renderer
+dispatches these turns through the answer path; generation main performs its own
+read-only route classification and the conversation main service records
+`task_brief_updated` / `builder-task-capsule.v1` without draft, Save, command,
+or source-write authority. Later build route evidence can then bind to the
+visible task id derived from the sanitized task stream. The desktop can inspect
+the latest sanitized brief on demand through Artifact Logs as `Current
+direction`, but this surface exposes no task id, route decision id, provider,
+credential, source, Git, receipt, or correction authority.
 
 ## Test Matrix
 
