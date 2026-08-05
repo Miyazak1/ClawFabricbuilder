@@ -179,9 +179,12 @@ class FakeLocator {
       }
       this.page.currentProjectWriteApproved = true;
       this.page.currentProjectWriteApprovalVisible = false;
-      this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
+      this.page.recordCandidateAttempt(
+        this.page.pendingCurrentProjectWriteCandidateTurns ?? Math.max(this.page.savedRevision + 1, 1),
+      );
       this.page.values.set(SELECTORS.idea, '');
       this.page.pendingCurrentProjectWriteInstruction = null;
+      this.page.pendingCurrentProjectWriteCandidateTurns = null;
     }
     if (this.selector === SELECTORS.approvePlanSourceRead) {
       if (this.page.planSourceReadApprovalVisible !== true) throw new Error('plan source read approval unavailable');
@@ -648,6 +651,7 @@ class FakePage {
     this.planTurns = 0;
     this.pendingWorkspaceGateInstruction = null;
     this.pendingCurrentProjectWriteInstruction = null;
+    this.pendingCurrentProjectWriteCandidateTurns = null;
     this.planSourceReadApprovalVisible = false;
     this.planModeActive = false;
     this.previewVisible = true;
@@ -753,7 +757,17 @@ class FakePage {
     this.recordPlanApproval = () => {
       if (this.planTurns <= this.approvedPlanReviews) throw new Error('plan unavailable');
       this.approvedPlanReviews += 1;
-      this.recordCandidateAttempt(Math.max(this.savedRevision + 1, this.candidateTurns + 1, 1));
+      const candidateTurns = Math.max(this.savedRevision + 1, this.candidateTurns + 1, 1);
+      if (
+        this.requireCurrentProjectWriteApproval === true
+        && this.currentProjectWriteApproved !== true
+      ) {
+        this.currentProjectWriteApprovalVisible = true;
+        this.pendingCurrentProjectWriteInstruction = 'approved-plan';
+        this.pendingCurrentProjectWriteCandidateTurns = candidateTurns;
+        return;
+      }
+      this.recordCandidateAttempt(candidateTurns);
     };
   }
 
@@ -2958,6 +2972,50 @@ test('proposes and approves a saved-project plan before creating a draft', async
     SELECTORS.composerAddMenuButton,
     SELECTORS.composerAddPlanMode,
   ]);
+});
+
+test('approves current-project write prompt after approving a plan', async (t) => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+  page.draftSaved = true;
+  page.savedRevision = 2;
+  page.candidateTurns = 2;
+  page.questionTurns = 1;
+  page.requireCurrentProjectWriteApproval = true;
+  page.versionLabel = 'Version 2';
+
+  const currentRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+  await proposePlanViaUi(page, currentRevision, 'Add a completed summary.', 2, 1, 1);
+
+  assert.equal(page.approvedPlanReviews, 0);
+  assert.equal(page.currentProjectWriteApprovalVisible, false);
+  assert.equal(page.unsavedDraftVisible, false);
+
+  const draft = await approvePlanViaUi(page, currentRevision, 3, 1, 1);
+
+  assert.equal(page.approvedPlanReviews, 1);
+  assert.equal(page.currentProjectWriteApproved, true);
+  assert.equal(page.currentProjectWriteApprovalVisible, false);
+  assert.equal(page.pendingCurrentProjectWriteCandidateTurns, null);
+  assert.equal(page.candidateTurns, 3);
+  assert.equal(page.unsavedDraftVisible, true);
+  assert.deepEqual(draft, {
+    approved_plan_continued: true,
+    approved_plan_task_stream_verified: true,
+    previous_revision_verified_before_save: true,
+    review_diff: reviewDiffEvidence(),
+    unsaved_draft_observed: true,
+  });
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['Send', 'Approve plan'],
+  );
+  assert.equal(
+    page.events.some((event) => event[0] === 'click' && event[1] === SELECTORS.approveCurrentProjectWrite),
+    true,
+  );
 });
 
 test('reports safe plan stream diagnostics when context was read before plan failure', async (t) => {

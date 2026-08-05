@@ -2729,6 +2729,7 @@ async function approvePlanViaUi(
   try {
     await clickByRole(page, 'button', 'Approve plan');
     await page.locator(SELECTORS.planApproved).waitFor({ state: 'visible' });
+    await approveCurrentProjectWriteIfRequested(page);
     const draftReady = page.locator(SELECTORS.unsavedDraft)
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
