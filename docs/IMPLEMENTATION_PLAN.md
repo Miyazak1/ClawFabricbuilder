@@ -135,6 +135,11 @@ The exact interaction contract is defined in
 [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md).
 The product address model is defined in
 [Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md).
+Current address checkpoint: `builder-session-address.v1` and
+`builder-task-address.v1` exist as pure main-side contracts only. They validate
+future Session/Task product address facts without SQLite persistence, IPC,
+preload exposure, migration, fork, archive, delete, provider dispatch, source
+mutation, Git mutation, permission grants, or export materialization.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 

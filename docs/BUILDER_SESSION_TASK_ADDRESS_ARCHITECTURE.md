@@ -211,6 +211,15 @@ surface.
 9. Add destructive delete only after export, dependency, active-run, and
    package/canary evidence.
 
+Current checkpoint: the pure main-side address contract exists as
+`builder-session-address.v1` and `builder-task-address.v1`. It validates exact
+Session and Task Address facts, status vocabulary, lifecycle timing, parent
+self-reference boundaries, and the absence of renderer, provider, Git, source,
+permission grant, export materialization, SQLite write, or SQLite delete
+authority. It does not create IDs, write SQLite, bind existing conversations,
+expose IPC/preload APIs, fork, archive, delete, export files, or migrate old
+facts.
+
 ## Non-Goals For The Current Builder MVP
 
 - No unrestricted cross-session source reads.
