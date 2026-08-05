@@ -407,7 +407,11 @@ matching update record, writes it idempotently, and proves restart recovery from
 the store. This is still a main-only context durability slice, not autonomous
 Agent work, community sharing, build admission, IPC/preload, provider/tool
 dispatch, source/Git mutation, permission grant, Review, Revision, Artifact,
-command execution, network access, or credential handling.
+command execution, network access, or credential handling. Generation main now
+has an optional main-owned integration that calls this recording service only
+after a read-only answer actually appends a new `task_brief_updated` event, so
+the Task Capsule store starts following real Builder answer turns without
+turning ordinary chat into durable work context.
 
 ### Slice B - Context Snapshot Records
 

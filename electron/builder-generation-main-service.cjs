@@ -67,6 +67,7 @@ const OPTION_KEYS = Object.freeze([
   'onProviderOutputDelta',
   'createUuid',
   'sourceContextCollector',
+  'taskCapsuleRecordingService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -1031,6 +1032,9 @@ function sanitizeOptions(value) {
   if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   if (keys.includes('sourceContextCollector') && !isPlainObject(descriptors.sourceContextCollector.value)) fail();
+  if (keys.includes('taskCapsuleRecordingService') && !isPlainObject(descriptors.taskCapsuleRecordingService.value)) {
+    fail();
+  }
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1043,6 +1047,9 @@ function sanitizeOptions(value) {
     ...(keys.includes('onGenerationStarted') ? { onGenerationStarted: descriptors.onGenerationStarted.value } : {}),
     ...(keys.includes('onProviderOutputDelta') ? { onProviderOutputDelta: descriptors.onProviderOutputDelta.value } : {}),
     ...(keys.includes('sourceContextCollector') ? { sourceContextCollector: descriptors.sourceContextCollector.value } : {}),
+    ...(keys.includes('taskCapsuleRecordingService')
+      ? { taskCapsuleRecordingService: descriptors.taskCapsuleRecordingService.value }
+      : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
 }
@@ -1479,6 +1486,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const collectProjectSourceContext = options.sourceContextCollector === undefined
     ? null
     : ownMethod(options.sourceContextCollector, 'collect_project_source_context');
+  const recordTaskCapsuleFromConversation = options.taskCapsuleRecordingService === undefined
+    ? null
+    : ownMethod(options.taskCapsuleRecordingService, 'record_task_capsule_from_conversation');
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -2283,6 +2293,29 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
+  function recordTaskCapsuleFromExplanationTerminal(conversationContext, terminal) {
+    if (recordTaskCapsuleFromConversation === null) return;
+    const events = valueAt(terminal, 'events');
+    if (!Array.isArray(events)) fail();
+    const targets = events.filter((event) => (
+      event
+      && typeof event === 'object'
+      && !utilTypes.isProxy(event)
+      && valueAt(event, 'event_type') === 'task_brief_updated'
+      && valueAt(event, 'sequence') > conversationContext.start_head.sequence
+    ));
+    if (targets.length === 0) return;
+    if (targets.length !== 1) fail();
+    Reflect.apply(
+      recordTaskCapsuleFromConversation,
+      options.taskCapsuleRecordingService,
+      [{
+        events,
+        target_sequence: valueAt(targets[0], 'sequence'),
+      }],
+    );
+  }
+
   async function createLocalCasualChatExplanation(request, reply) {
     const context = await buildExplanationContext(request);
     const answer = projectBuilderExplanationResult({
@@ -2930,7 +2963,7 @@ function createBuilderGenerationMainService(rawOptions) {
       const conversationContext = latestConversationContext(context, explanationContexts.get(context));
       if (conversationContext === undefined) fail();
       const publicResult = publicExplanationResult(internal, request);
-      Reflect.apply(
+      const terminal = Reflect.apply(
         completeConversationExplanation,
         options.conversationService,
         [{
@@ -2938,6 +2971,7 @@ function createBuilderGenerationMainService(rawOptions) {
           assistant_text: internal.explanation,
         }],
       );
+      recordTaskCapsuleFromExplanationTerminal(conversationContext, terminal);
       return publicResult;
     }).catch((error) => {
       recordFailure(key, error);

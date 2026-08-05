@@ -553,6 +553,14 @@ Evidence requirements:
   Conversation append command, build admission, provider/model/tool dispatch,
   source/Git mutation, permission grant, Review, Revision, Artifact, command
   execution, network access, credential handling, or community/social surface;
+- the current generation-main recording integration wires that recording service
+  as an optional main-owned dependency. After an answer turn completes, it
+  records only a newly appended `task_brief_updated` event into the Task Capsule
+  store; ordinary read-only answers and older historical brief events do not
+  create new records. The integration still adds no renderer/preload IPC,
+  provider/model/tool dispatch, build admission, source/Git mutation,
+  permission grant, Review, Revision, Artifact, command execution, network
+  access, credential handling, or community/social surface;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current

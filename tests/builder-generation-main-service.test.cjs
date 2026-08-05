@@ -49,6 +49,12 @@ const {
 const {
   createBuilderRunContextSnapshot,
 } = require('../electron/builder-run-context-snapshot.cjs');
+const {
+  createBuilderTaskCapsuleRecordingService,
+} = require('../electron/builder-task-capsule-recording-service.cjs');
+const {
+  createBuilderTaskCapsuleStore,
+} = require('../electron/builder-task-capsule-store.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -167,6 +173,24 @@ function createUniqueUuidFactory(seed = 1) {
     value += 1;
     return `00000000-0000-4000-8000-${suffix}`;
   };
+}
+
+function removeRoot(root) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!error || typeof error !== 'object' || !['EBUSY', 'ENOTEMPTY', 'EPERM'].includes(error.code)) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (attempt + 1));
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new Error('Temporary test directory could not be removed.');
 }
 
 function config(model = 'builder-model') {
@@ -3500,6 +3524,130 @@ test('does not admit contextual submit from transcript-only conversation proposa
     transportInput.messages[1].content,
     /builder-working-brief|recent_chat_proposal|builder-(?:project|conversation|turn|task|run|message|conversation-event|command):|sha256:|request_digest|credential|provider|api[_-]?key|Bearer/iu,
   );
+});
+
+test('records update-brief answers into the main-owned task capsule store', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-capsule-recording-main-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
+  t.after(() => {
+    try { taskCapsuleStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 8_500;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(850),
+    nowMs: () => now++,
+  });
+  let transportInput;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          throw new Error('no saved revision yet');
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+      createUuid: createUniqueUuidFactory(860),
+      taskCapsuleRecordingService: createBuilderTaskCapsuleRecordingService({
+        task_capsule_store: taskCapsuleStore,
+      }),
+    }),
+    transport: async (input) => {
+      transportInput = input;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation({
+          title: 'Direction saved',
+          summary: 'Keeps the portfolio direction as working context.',
+          explanation: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+        })),
+      };
+    },
+  });
+
+  const answer = await service.answer(request({
+    instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
+    existingProjectId: PROJECT_ID,
+  }));
+  const latest = taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID });
+  const update = latest.task_capsule_update.task_capsule_update;
+  const providerPrompt = JSON.parse(transportInput.messages[1].content);
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(answer.title, 'Direction saved');
+  assert.equal(latest.status, 'ready');
+  assert.equal(update.project_id, PROJECT_ID);
+  assert.equal(update.conversation_id, CONVERSATION_ID);
+  assert.equal(update.task_capsule.status, 'ready');
+  assert.equal(update.task_capsule.current_brief.latest_user_goal, '我打算做一个作品集首页，目标是星空背景和项目卡片。');
+  assert.equal(update.task_capsule.current_brief.assistant_proposal, answer.explanation);
+  assert.equal(update.task_capsule.current_brief.use_when_instruction_is_contextual, true);
+  assert.equal(providerPrompt.conversation_brief.working_brief, null);
+  assert.match(transportInput.messages[0].content, /builder_conversation_explanation/u);
+  assert.doesNotMatch(transportInput.messages[0].content, /builder_code_change_operations/u);
+});
+
+test('does not record ordinary read-only answers into the task capsule store', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-capsule-no-recording-main-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
+  t.after(() => {
+    try { taskCapsuleStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 8_700;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(870),
+    nowMs: () => now++,
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      createUuid: createUniqueUuidFactory(880),
+      taskCapsuleRecordingService: createBuilderTaskCapsuleRecordingService({
+        task_capsule_store: taskCapsuleStore,
+      }),
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Current project',
+        summary: 'Answers without changing context.',
+        explanation: '这个项目当前是一个本地保存的前端项目。',
+      })),
+    }),
+  });
+
+  const answer = await service.answer(request({
+    instruction: '你好',
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.existing_project_id, null);
+  assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'absent');
 });
 
 test('uses a durable task capsule brief as contextual submit build context', async (t) => {

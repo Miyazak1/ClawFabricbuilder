@@ -607,6 +607,10 @@ replays it, verifies the target `task_brief_updated` sequence, derives the
 store. It still adds no renderer API, IPC/preload surface, Conversation append,
 provider/model/tool dispatch, source or Git mutation, permission grant, Review,
 Revision, Artifact, command execution, network access, or credential handling.
+Generation main can now receive that service as a main-owned optional
+dependency and, after a read-only answer completes, record only the newly
+appended `task_brief_updated` event into the store. Ordinary read-only answers
+and old historical task-brief events are ignored by this recording path.
 Selecting a workspace does not turn exploratory product discussion into work
 admission, and must not request current-project write permission. The renderer
 dispatches these turns through the answer path; generation main performs its own
