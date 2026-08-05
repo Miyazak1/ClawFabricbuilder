@@ -145,6 +145,8 @@ export function BuilderComposer({
 }: BuilderComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const restoreComposerFocusAfterSubmitRef = useRef(false);
+  const restoreComposerFocusAfterLockedBusyRef = useRef(false);
+  const restoreComposerFocusGraceTimerRef = useRef<number | null>(null);
   const [workspacePickerState, setWorkspacePickerState] = useState<Readonly<{
     buildPrompt: boolean;
     createRequest: number;
@@ -206,23 +208,48 @@ export function BuilderComposer({
   const showCancelAction = !showSubmitAction && canCancel;
   const showBusyAction = busy && !showSubmitAction && !showCancelAction;
 
+  function clearPendingComposerFocusRestore(): void {
+    restoreComposerFocusAfterSubmitRef.current = false;
+    restoreComposerFocusAfterLockedBusyRef.current = false;
+    if (restoreComposerFocusGraceTimerRef.current !== null) {
+      window.clearTimeout(restoreComposerFocusGraceTimerRef.current);
+      restoreComposerFocusGraceTimerRef.current = null;
+    }
+  }
+
   useEffect(() => {
     if (!restoreComposerFocusAfterSubmitRef.current) return;
-    if (busy && !canAddContext) return;
+    if (busy && !canAddContext) {
+      restoreComposerFocusAfterLockedBusyRef.current = true;
+      return;
+    }
     if (!canEditInstruction) return;
-    restoreComposerFocusAfterSubmitRef.current = false;
+    const shouldCompleteRestore = restoreComposerFocusAfterLockedBusyRef.current || (busy && canAddContext);
+    if (shouldCompleteRestore) clearPendingComposerFocusRestore();
     textareaRef.current?.focus({ preventScroll: true });
   }, [busy, canAddContext, canEditInstruction, instruction]);
 
+  useEffect(() => () => {
+    if (restoreComposerFocusGraceTimerRef.current !== null) {
+      window.clearTimeout(restoreComposerFocusGraceTimerRef.current);
+    }
+  }, []);
+
   function requestComposerFocusAfterSubmit(): void {
     restoreComposerFocusAfterSubmitRef.current = true;
-    window.setTimeout(() => {
+    restoreComposerFocusAfterLockedBusyRef.current = false;
+    if (restoreComposerFocusGraceTimerRef.current !== null) {
+      window.clearTimeout(restoreComposerFocusGraceTimerRef.current);
+    }
+    restoreComposerFocusGraceTimerRef.current = window.setTimeout(() => {
+      restoreComposerFocusGraceTimerRef.current = null;
       if (!restoreComposerFocusAfterSubmitRef.current) return;
+      if (restoreComposerFocusAfterLockedBusyRef.current) return;
       if (busy && !canAddContext) return;
       if (!canEditInstruction) return;
-      restoreComposerFocusAfterSubmitRef.current = false;
+      clearPendingComposerFocusRestore();
       textareaRef.current?.focus({ preventScroll: true });
-    }, 0);
+    }, 800);
   }
 
   function keepComposerFocusDuringPointerSubmit(event: MouseEvent<HTMLButtonElement>): void {

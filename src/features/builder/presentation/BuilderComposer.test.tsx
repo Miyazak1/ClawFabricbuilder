@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -263,6 +263,50 @@ describe('BuilderComposer', () => {
 
     expect(onSubmitInstruction).toHaveBeenCalledOnce();
     expect(document.activeElement).toBe(textarea);
+  });
+
+  it('restores composer focus after a locked busy submit cycle finishes', async () => {
+    function FocusHarness() {
+      const [busy, setBusy] = useState(false);
+      const [instruction, setInstruction] = useState('Ask a question.');
+      return (
+        <BuilderComposer
+          {...props({
+            busy,
+            canEditInstruction: !busy,
+            canSubmitComposer: instruction.trim().length > 0 && !busy,
+            instruction,
+            onInstructionChange: setInstruction,
+            onSubmitInstruction: () => {
+              setInstruction('');
+              setBusy(true);
+              window.setTimeout(() => setBusy(false), 0);
+            },
+            status: busy ? 'answering' : 'new',
+          })}
+        />
+      );
+    }
+    const container = render(<FocusHarness />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
+    const send = container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]');
+    expect(textarea).not.toBeNull();
+    expect(send).not.toBeNull();
+
+    act(() => textarea?.focus());
+    expect(document.activeElement).toBe(textarea);
+    act(() => send?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })));
+    act(() => send?.click());
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
+    expect(document.activeElement).toBe(container.querySelector<HTMLTextAreaElement>('#builder-idea'));
   });
 
   it('keeps project picking inside the composer without creating hidden build work', () => {
