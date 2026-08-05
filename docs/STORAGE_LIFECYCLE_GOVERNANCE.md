@@ -170,10 +170,13 @@ mirror to disk, mutate SQLite or Git, materialize an export bundle, or grant
 renderer export authority. A later main-owned export service may persist these
 derived mirrors after adding path, overwrite, active-run, and package evidence.
 
-The next Work Capsule slice should follow the same read-only posture: define a
-pure main-side manifest contract that references existing Git and SQLite facts,
-produces no file, publishes nothing, and grants no renderer, network, source,
-Git, Save, delete, or community authority.
+The Work Capsule manifest slice follows the same read-only posture:
+`builder-work-capsule-manifest.v1` references existing Git and SQLite facts,
+produces an in-memory Local Work Capsule Manifest, writes no file, publishes
+nothing, and grants no renderer, network, source, Git, Save, delete, or
+community authority. A later materialization service must still add explicit
+path, overwrite, stale-reference, active-run, privacy, and package evidence
+before writing exportable capsule files.
 
 The first destructive delete feature must ship with replay, foreign-key,
 active-run, export-before-delete, and package/canary evidence.

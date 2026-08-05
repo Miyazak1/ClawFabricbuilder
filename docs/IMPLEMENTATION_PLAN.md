@@ -1703,7 +1703,8 @@ Evidence requirements:
 
 - the first checkpoint is the independent Work Capsule architecture decision
   document;
-- the next code slice is a pure main-side Local Work Capsule Manifest contract;
+- the current code slice is a pure main-side Local Work Capsule Manifest
+  contract;
 - the manifest references existing Project Revision, Artifact Preview, Review
   Decision, verification summary, public summary, remix metadata placeholder,
   and Session/Task Address facts;
@@ -1714,6 +1715,16 @@ Evidence requirements:
 - no renderer IPC/preload surface, network, upload, publish, community UI,
   autonomous run, source mutation, Git mutation, Save authority, delete
   authority, or token-running experiment branch is introduced.
+
+Current checkpoint: `builder-work-capsule-manifest.v1` now creates deterministic
+in-memory Local Work Capsule Manifests from already existing reviewed saved work
+facts. It validates Project Revision, Artifact refs, accepted Review Decision,
+verification summary, public summary, remix metadata placeholder, and
+Session/Task Address binding, then fails closed for rejected, stale,
+cross-project, unclosed, malformed, accessor, proxy, duplicate-artifact, or
+publication-shaped inputs. It opens no store, IPC/preload, export file,
+publication, network, source, Git, provider, permission, community, or
+autonomous experiment authority.
 
 Delivery order:
 

@@ -17,9 +17,10 @@ The stable product terms are:
 - `Shareable Capsule`;
 - `Community Remix`.
 
-Implementation checkpoints should preserve these boundaries. A docs checkpoint
-may land before any code contract. A later manifest contract should be a separate
-main-side slice, and publishing or community work should remain separate again.
+Implementation checkpoints should preserve these boundaries. The architecture
+decision may land before any code contract. The first manifest contract is a
+separate main-side slice, and publishing or community work should remain
+separate again.
 
 ## Definition
 
@@ -60,7 +61,7 @@ the manifest must be regenerated or marked stale.
 
 ## Capsule Shape
 
-The future manifest should be exact, bounded, and reference-first:
+The manifest is exact, bounded, and reference-first:
 
 ```text
 WorkCapsule
@@ -101,9 +102,9 @@ ranking, or server sync.
 
 ## Minimum Safe Slice
 
-The first checkpoint should be this documentation decision. The next
-implementation slice should be a pure main-side Local Work Capsule Manifest
-contract.
+The first checkpoint is this documentation decision. The current implementation
+slice adds `builder-work-capsule-manifest.v1`, a pure main-side Local Work
+Capsule Manifest contract.
 
 The contract should:
 
@@ -117,8 +118,19 @@ The contract should:
   autonomous run, source mutation, Git mutation, Save authority, or delete
   authority.
 
-Only after that contract is stable should Builder materialize local capsule
+Only after this contract is stable should Builder materialize local capsule
 files, then export packages, then explicit share candidates.
+
+Current checkpoint: Builder now has a pure main-side
+`builder-work-capsule-manifest.v1` contract. It accepts already existing
+Project Revision, Artifact reference, accepted Review Decision, verification
+summary, public summary, remix metadata placeholder, and Session/Task Address
+facts. It produces a deterministic in-memory Local Work Capsule Manifest and
+fails closed on rejected, stale, cross-project, unclosed, malformed, accessor,
+proxy, duplicate-artifact, or publication-shaped inputs. It creates no file,
+SQLite write, Git mutation, IPC/preload surface, provider dispatch, source
+mutation, permission grant, network access, publication, community UI, or
+autonomous experiment work.
 
 ## Relationship To Existing Architecture
 
