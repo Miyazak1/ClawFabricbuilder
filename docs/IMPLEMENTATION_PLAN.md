@@ -569,6 +569,13 @@ Evidence requirements:
   adding a renderer channel, preload surface, provider/tool dispatch,
   source/Git mutation, permission grant, Review, Revision, Artifact, command
   execution, network access, credential handling, or community/social surface;
+- the current Task Capsule route fallback checkpoint lets generation main use
+  the latest ready Task Capsule store record as supplementary main-owned route
+  evidence when task-stream projection is unavailable or not enough to prove a
+  contextual build phrase. It does not put store text directly into the prompt:
+  build prompt context still comes from replayed Conversation events and the
+  generated build-context snapshot remains prompt context only, not permission,
+  source, Git, Review, Revision, or renderer authority;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current

@@ -1084,6 +1084,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       conversationService,
       gitAuthority: projectMainAuthority.git_authority,
       sourceContextCollector,
+      taskCapsuleStore,
       taskCapsuleRecordingService,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {

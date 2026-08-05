@@ -217,6 +217,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.conversationService, context.__conversationService);
             assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
             assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
+            assert.equal(options.taskCapsuleStore, context.__taskCapsuleStore);
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
@@ -1906,6 +1907,8 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__conversationService);
   assert.equal(probes.serviceOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
+  assert.equal(probes.serviceOptions.taskCapsuleStore,
+    runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.serviceOptions.taskCapsuleRecordingService,
     runtimeModule.context.__taskCapsuleRecordingService);
   assert.equal(probes.saveOptions.generationDrafts, service);

@@ -3746,6 +3746,144 @@ test('uses a durable task capsule brief as contextual submit build context', asy
   );
 });
 
+test('uses the main-owned task capsule store as contextual submit route evidence', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-brief-store-route-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
+  t.after(() => {
+    try { taskCapsuleStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 8_900;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(890),
+    nowMs: () => now++,
+  });
+  const recordingService = createBuilderTaskCapsuleRecordingService({
+    task_capsule_store: taskCapsuleStore,
+  });
+  const answerService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          throw new Error('no saved revision yet');
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+      createUuid: createUniqueUuidFactory(900),
+      taskCapsuleStore,
+      taskCapsuleRecordingService: recordingService,
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Direction saved',
+        summary: 'Stores the agreed direction.',
+        explanation: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+      })),
+    }),
+  });
+  await answerService.answer(request({
+    instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
+    existingProjectId: PROJECT_ID,
+  }));
+  assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'ready');
+
+  const hiddenTaskStreamConversation = {};
+  for (const key of Reflect.ownKeys(conversation)) {
+    const descriptor = Object.getOwnPropertyDescriptor(conversation, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') continue;
+    hiddenTaskStreamConversation[key] = (...args) => Reflect.apply(descriptor.value, conversation, args);
+  }
+  const readStreamCalls = [];
+  hiddenTaskStreamConversation.read_stream = (body) => {
+    readStreamCalls.push(body);
+    return {
+      stream_version: 'builder-task-stream-read-result.v1',
+      project_id: body.project_id,
+      conversation: null,
+      authority: {
+        conversation: 'sqlite_canonical_event_replay_or_absent',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    };
+  };
+  let transportInput;
+  const buildService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: hiddenTaskStreamConversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+          }));
+        },
+      },
+      createUuid: createUniqueUuidFactory(920),
+      taskCapsuleStore,
+    }),
+    transport: async (input) => {
+      transportInput = input;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Portfolio from stored brief',
+          summary: 'Builds from the stored task capsule context.',
+        })),
+      };
+    },
+  });
+
+  const draft = await buildService.submit(request({
+    instruction: '按刚才方案做',
+    existingProjectId: PROJECT_ID,
+  }));
+  const providerPrompt = JSON.parse(transportInput.messages[1].content);
+
+  assert.equal(draft.title, 'Portfolio from stored brief');
+  assert.deepEqual(readStreamCalls, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'task_capsule_update',
+    latest_user_goal: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
+    assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+  assert.equal(providerPrompt.build_context_snapshot.execution_basis, 'task_brief');
+  assert.deepEqual(providerPrompt.build_context_snapshot.working_brief, {
+    available: true,
+    source: 'task_capsule_update',
+    contextual_build_ready: true,
+  });
+  assert.match(transportInput.messages[1].content, /task_capsule_update/u);
+  assert.doesNotMatch(
+    transportInput.messages[1].content,
+    /builder-task-capsule-update|builder-route-decision|credential|provider|api[_-]?key|Bearer/iu,
+  );
+});
+
 test('records a retryable terminal run outcome when provider generation fails', async () => {
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({

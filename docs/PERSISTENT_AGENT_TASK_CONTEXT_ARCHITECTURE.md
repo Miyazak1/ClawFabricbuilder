@@ -414,7 +414,10 @@ the Task Capsule store starts following real Builder answer turns without
 turning ordinary chat into durable work context. The desktop IPC runtime now
 creates and closes the local Task Capsule store as part of its main-owned
 runtime composition, so this durability path exists in real packaged runtime
-assembly rather than only in contract tests.
+assembly rather than only in contract tests. Generation main can now consult
+the latest ready store record as supplementary route evidence for contextual
+submit phrases, while keeping prompt construction tied to replayed Conversation
+events rather than treating the store as a separate prompt database.
 
 ### Slice B - Context Snapshot Records
 

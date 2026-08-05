@@ -67,6 +67,7 @@ const OPTION_KEYS = Object.freeze([
   'onProviderOutputDelta',
   'createUuid',
   'sourceContextCollector',
+  'taskCapsuleStore',
   'taskCapsuleRecordingService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -1032,6 +1033,9 @@ function sanitizeOptions(value) {
   if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   if (keys.includes('sourceContextCollector') && !isPlainObject(descriptors.sourceContextCollector.value)) fail();
+  if (keys.includes('taskCapsuleStore') && !isPlainObject(descriptors.taskCapsuleStore.value)) {
+    fail();
+  }
   if (keys.includes('taskCapsuleRecordingService') && !isPlainObject(descriptors.taskCapsuleRecordingService.value)) {
     fail();
   }
@@ -1047,6 +1051,7 @@ function sanitizeOptions(value) {
     ...(keys.includes('onGenerationStarted') ? { onGenerationStarted: descriptors.onGenerationStarted.value } : {}),
     ...(keys.includes('onProviderOutputDelta') ? { onProviderOutputDelta: descriptors.onProviderOutputDelta.value } : {}),
     ...(keys.includes('sourceContextCollector') ? { sourceContextCollector: descriptors.sourceContextCollector.value } : {}),
+    ...(keys.includes('taskCapsuleStore') ? { taskCapsuleStore: descriptors.taskCapsuleStore.value } : {}),
     ...(keys.includes('taskCapsuleRecordingService')
       ? { taskCapsuleRecordingService: descriptors.taskCapsuleRecordingService.value }
       : {}),
@@ -1486,6 +1491,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const collectProjectSourceContext = options.sourceContextCollector === undefined
     ? null
     : ownMethod(options.sourceContextCollector, 'collect_project_source_context');
+  const readLatestTaskCapsule = options.taskCapsuleStore === undefined
+    ? null
+    : ownMethod(options.taskCapsuleStore, 'read_latest_task_capsule');
   const recordTaskCapsuleFromConversation = options.taskCapsuleRecordingService === undefined
     ? null
     : ownMethod(options.taskCapsuleRecordingService, 'record_task_capsule_from_conversation');
@@ -1551,10 +1559,15 @@ function createBuilderGenerationMainService(rawOptions) {
       const stream = Reflect.apply(readConversationStream, options.conversationService, [{
         project_id: request.existing_project_id,
       }]);
+      const streamHasContext = requested.has_contextual_build_context === true
+        ? hasContextualBuildContextInTaskStream(stream, request.existing_project_id)
+        : false;
       return Object.freeze({
-        hasContextualBuildContext: requested.has_contextual_build_context === true
-          ? hasContextualBuildContextInTaskStream(stream, request.existing_project_id)
-          : false,
+        hasContextualBuildContext: streamHasContext
+          || (
+            requested.has_contextual_build_context === true
+            && hasContextualBuildContextInTaskCapsuleStore(request.existing_project_id)
+          ),
         hasPendingBuildConfirmation: requested.has_pending_build_confirmation === true
           ? hasPendingBuildConfirmationInTaskStream(stream, request.existing_project_id)
           : false,
@@ -1564,6 +1577,33 @@ function createBuilderGenerationMainService(rawOptions) {
         hasContextualBuildContext: false,
         hasPendingBuildConfirmation: false,
       });
+    }
+  }
+
+  function hasContextualBuildContextInTaskCapsuleStore(projectId) {
+    if (readLatestTaskCapsule === null) return false;
+    try {
+      const result = Reflect.apply(readLatestTaskCapsule, options.taskCapsuleStore, [{
+        project_id: projectId,
+      }]);
+      if (
+        !isPlainObject(result)
+        || valueAt(result, 'result_version') !== 'builder-task-capsule-store-read-result.v1'
+        || valueAt(result, 'task_capsule_authority') !== 'main_owned_task_capsule_store'
+        || valueAt(result, 'status') !== 'ready'
+      ) return false;
+      const entry = valueAt(result, 'task_capsule_update');
+      if (!isPlainObject(entry)) return false;
+      const update = valueAt(entry, 'task_capsule_update');
+      if (!isPlainObject(update) || valueAt(update, 'project_id') !== projectId) return false;
+      const capsule = valueAt(update, 'task_capsule');
+      if (!isPlainObject(capsule) || valueAt(capsule, 'status') !== 'ready') return false;
+      const brief = valueAt(capsule, 'current_brief');
+      return isPlainObject(brief)
+        && valueAt(brief, 'source') === 'task_capsule_update'
+        && valueAt(brief, 'use_when_instruction_is_contextual') === true;
+    } catch {
+      return false;
     }
   }
 

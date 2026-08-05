@@ -613,6 +613,11 @@ appended `task_brief_updated` event into the store. Ordinary read-only answers
 and old historical task-brief events are ignored by this recording path. The
 desktop IPC runtime now creates that store under app user data and injects the
 recording service into generation main without exposing a renderer command.
+Generation main can also use the latest ready Task Capsule store record as a
+main-owned fallback when deciding whether contextual submit phrases such as
+`按刚才方案做` have enough prior work context. The actual build prompt still
+derives the working brief from replayed Conversation events; the store fallback
+does not expose brief text or create renderer-side route authority.
 Selecting a workspace does not turn exploratory product discussion into work
 admission, and must not request current-project write permission. The renderer
 dispatches these turns through the answer path; generation main performs its own
