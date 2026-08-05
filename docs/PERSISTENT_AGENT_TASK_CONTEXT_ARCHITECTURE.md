@@ -447,7 +447,13 @@ exists, but current Builder messages and runs are not yet migrated or bound to
 those product-level addresses. The desktop generation runtime now creates and
 closes this store with its other main-owned local stores, so later Agent-facing
 context assembly can depend on a runtime-owned product address store instead of
-inventing a renderer or prompt-side memory surface.
+inventing a renderer or prompt-side memory surface. The current address-recording
+service can now derive and store a product Session/Task Address pair from a
+verified new `begin_work` Conversation context. That gives future Agent-facing
+task contracts a concrete product address to target, while keeping low-level
+`task_id` values as execution facts and withholding renderer IPC, provider/tool
+dispatch, source/Git mutation, permission inheritance, migration, and
+archive/delete/fork/export behavior.
 
 ### Slice C - Agent Profile Store
 

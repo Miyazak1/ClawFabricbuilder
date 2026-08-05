@@ -203,7 +203,8 @@ surface.
 1. Document address model and naming boundaries.
 2. Add pure Session Address and Task Address contracts.
 3. Add main-only SQLite stores for Session and Task Address facts.
-4. Bind existing Builder conversations to a Session Address for new work.
+4. Record product Session/Task Address facts from verified new Builder work
+   contexts.
 5. Bind build/plan/save Runs to Task Address facts.
 6. Add read-only Session/Task lookup and public summaries.
 7. Add export/fork/archive preflight using Session/Task scopes.
@@ -236,6 +237,17 @@ on registration failure or runtime dispose. This proves the address store is
 part of the main-owned runtime composition while still withholding migration,
 run binding, renderer lookup, archive/delete/fork/export, provider/tool
 dispatch, source/Git mutation, and permission authority.
+
+Current recording checkpoint: `electron/builder-session-task-address-recording-service.cjs`
+accepts a real `builder-conversation-run-context.v1` produced by `begin_work`,
+verifies the Project, Conversation, Turn, Run, low-level Task, message, and
+canonical event identities, then records one product Session Address and one
+product Task Address through the main-only Address store. This is the first
+runtime-adjacent bridge from low-level Conversation execution facts into the
+product address layer, but it is deliberately not an IPC/preload API, not a
+migration of old Conversation rows, not a renderer lookup surface, not a
+provider/tool dispatcher, not a source/Git mutator, not a permission grant, and
+not archive/delete/fork/export materialization.
 
 ## Non-Goals For The Current Builder MVP
 

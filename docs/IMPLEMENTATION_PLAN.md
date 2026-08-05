@@ -165,7 +165,13 @@ checkpoint creates and closes this local store under
 `builder-session-task-addresses-v1/session-task-addresses.sqlite` in the desktop
 generation runtime, including registration-failure cleanup and dispose cleanup,
 but still does not pass address facts into run admission or expose a renderer
-lookup channel.
+lookup channel. The current address-recording checkpoint adds a main-only
+`builder-session-task-address-recording-service.v1` bridge that accepts a real
+verified `begin_work` Conversation run context and records a product Session
+Address plus Task Address into that store. It preserves the low-level
+`builder-task:*` as an execution fact only, and still creates no renderer/preload
+IPC, provider/tool dispatch, source/Git mutation, permission grant, migration,
+archive/delete/fork/export materialization, or run-admission binding.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 
