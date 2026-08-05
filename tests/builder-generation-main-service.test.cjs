@@ -4728,6 +4728,76 @@ test('starts queued follow-up build through the replay-verified work gate', asyn
   );
 });
 
+test('binds queued follow-up build to the current product Task Address before provider dispatch', async () => {
+  const firstWork = request({ instruction: 'Make a timer.', existingProjectId: PROJECT_ID });
+  const followupInstruction = 'Create the improved page.';
+  const lifecycle = conversationService();
+  const bindingCalls = [];
+  let releaseFirstWork;
+  let transportCall = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+      sessionTaskAddressBindingService: {
+        bind_queued_followup_work_to_current_task_address(input) {
+          bindingCalls.push(input);
+          return { operation: 'queued_followup_work_bound_for_test' };
+        },
+      },
+    }),
+    transport: async () => {
+      transportCall += 1;
+      if (transportCall === 1) {
+        return new Promise((resolve) => {
+          releaseFirstWork = () => resolve({
+            transport_version: 'builder-openai-compatible-transport.v1',
+            generated_text: JSON.stringify(providerOutput({
+              title: 'Initial addressed work',
+              summary: 'Initial work remains the active run.',
+            })),
+          });
+        });
+      }
+      assert.equal(bindingCalls.length, 1);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Follow-up addressed work',
+          summary: 'Follow-up work binds before provider dispatch.',
+        })),
+      };
+    },
+  });
+
+  const firstGeneration = service.generate(firstWork);
+  for (let attempt = 0; releaseFirstWork === undefined && attempt < 200; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.notEqual(releaseFirstWork, undefined);
+  const queued = service.queue_followup({
+    request_id: firstWork.request_digest,
+    message: followupInstruction,
+  });
+  releaseFirstWork();
+  await firstGeneration;
+
+  const result = await service.submit_queued_followup({
+    request: request({ instruction: followupInstruction, existingProjectId: PROJECT_ID }),
+    queued_followup: queued.queued_followup,
+  });
+
+  assert.equal(result.title, 'Follow-up addressed work');
+  assert.equal(bindingCalls.length, 1);
+  assert.equal(bindingCalls[0].context.mode, 'work');
+  assert.deepEqual(bindingCalls[0].queued_followup, queued.queued_followup);
+  assert.equal(lifecycle.calls.queuedFollowupWork.length, 1);
+  assert.equal(lifecycle.calls.queuedFollowupWork[0].route_decision_hint.route, 'build');
+});
+
 test('starts queued follow-up answer through the replay-verified question gate', async () => {
   const firstWork = request({ instruction: 'Make a timer.', existingProjectId: PROJECT_ID });
   const followupQuestion = 'Also explain the tradeoffs.';

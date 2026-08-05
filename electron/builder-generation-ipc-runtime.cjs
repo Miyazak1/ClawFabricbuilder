@@ -105,6 +105,9 @@ const {
 const {
   createBuilderSessionTaskAddressRecordingService,
 } = require('./builder-session-task-address-recording-service.cjs');
+const {
+  createBuilderSessionTaskAddressBindingService,
+} = require('./builder-session-task-address-binding-service.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
@@ -1078,6 +1081,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       created_by: LOCAL_BUILDER_USER_ACTOR_ID,
       agent_id: LOCAL_BUILDER_AGENT_ID,
     });
+    const sessionTaskAddressBindingService = createBuilderSessionTaskAddressBindingService({
+      address_store: sessionTaskAddressStore,
+    });
     const permissionEvaluator = permissionFactStore.create_evaluator();
     const permissionAdmission = createBuilderToolPermissionAdmission({
       actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
@@ -1109,6 +1115,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       taskCapsuleStore,
       taskCapsuleRecordingService,
       sessionTaskAddressRecordingService,
+      sessionTaskAddressBindingService,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
         const started = generationStartedEvent(event);

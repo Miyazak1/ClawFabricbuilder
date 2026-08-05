@@ -259,11 +259,14 @@ cannot be verified. Read-only answers and queued follow-up work do not create
 new product addresses. Retry, draft continuation, and approved-plan continuation
 also stay out of this first integration because they need explicit binding to an
 existing Task Address instead of a newly minted product task. The Address store
-now has the required read-only `project_id` + `conversation_id` lookup surface
-for that later binding work, but generation main does not consume it yet. The
-desktop IPC runtime now creates the recording service beside the Address store
-and passes it into generation main with a fixed local Builder Agent id until the
-later Agent Profile store exists.
+now has the required read-only `project_id` + `conversation_id` lookup surface,
+and the binding service uses it to fail closed before provider dispatch when
+queued follow-up build work cannot be reconnected to the current product Task
+Address. This does not create a new Task Address, append Conversation events,
+grant permission, or bind retry/draft/approved-plan continuation yet. The
+desktop IPC runtime now creates the recording and binding services beside the
+Address store and passes them into generation main with a fixed local Builder
+Agent id until the later Agent Profile store exists.
 
 ## Non-Goals For The Current Builder MVP
 

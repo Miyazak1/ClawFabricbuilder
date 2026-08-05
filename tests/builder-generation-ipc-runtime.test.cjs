@@ -269,12 +269,28 @@ function runtimeWithService(service, probes = {}) {
               record_task_address() {},
               read_session_address() {},
               read_task_address() {},
+              read_current_session_task_for_conversation() {},
               close() {
                 this.closed = true;
                 return true;
               },
             };
             return context.__sessionTaskAddressStore;
+          },
+        };
+      }
+      if (specifier === './builder-session-task-address-binding-service.cjs') {
+        return {
+          createBuilderSessionTaskAddressBindingService: (options) => {
+            probes.sessionTaskAddressBindingOptions = {
+              address_store: options.address_store,
+            };
+            assert.equal(options.address_store, context.__sessionTaskAddressStore);
+            context.__sessionTaskAddressBindingService = {
+              service_version: 'builder-session-task-address-binding-service.v1',
+              bind_queued_followup_work_to_current_task_address() {},
+            };
+            return context.__sessionTaskAddressBindingService;
           },
         };
       }

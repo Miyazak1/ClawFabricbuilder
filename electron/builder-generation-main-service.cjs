@@ -70,6 +70,7 @@ const OPTION_KEYS = Object.freeze([
   'taskCapsuleStore',
   'taskCapsuleRecordingService',
   'sessionTaskAddressRecordingService',
+  'sessionTaskAddressBindingService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -1046,6 +1047,12 @@ function sanitizeOptions(value) {
   ) {
     fail();
   }
+  if (
+    keys.includes('sessionTaskAddressBindingService')
+    && !isPlainObject(descriptors.sessionTaskAddressBindingService.value)
+  ) {
+    fail();
+  }
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1064,6 +1071,9 @@ function sanitizeOptions(value) {
       : {}),
     ...(keys.includes('sessionTaskAddressRecordingService')
       ? { sessionTaskAddressRecordingService: descriptors.sessionTaskAddressRecordingService.value }
+      : {}),
+    ...(keys.includes('sessionTaskAddressBindingService')
+      ? { sessionTaskAddressBindingService: descriptors.sessionTaskAddressBindingService.value }
       : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
@@ -1510,6 +1520,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const recordSessionTaskAddressesFromConversation = options.sessionTaskAddressRecordingService === undefined
     ? null
     : ownMethod(options.sessionTaskAddressRecordingService, 'record_addresses_from_conversation_context');
+  const bindQueuedFollowupWorkToCurrentTaskAddress = options.sessionTaskAddressBindingService === undefined
+    ? null
+    : ownMethod(options.sessionTaskAddressBindingService, 'bind_queued_followup_work_to_current_task_address');
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -1811,6 +1824,15 @@ function createBuilderGenerationMainService(rawOptions) {
     );
   }
 
+  function bindQueuedFollowupWorkContextToCurrentTaskAddress(conversationContext, queuedFollowup) {
+    if (bindQueuedFollowupWorkToCurrentTaskAddress === null) return;
+    Reflect.apply(
+      bindQueuedFollowupWorkToCurrentTaskAddress,
+      options.sessionTaskAddressBindingService,
+      [{ context: conversationContext, queued_followup: queuedFollowup }],
+    );
+  }
+
   function generationRequestFromApprovedPlan(editContext) {
     const unsigned = freezeDeep({
       version: 'builder-generation-request.v2',
@@ -2005,8 +2027,13 @@ function createBuilderGenerationMainService(rawOptions) {
             queued_followup: queuedFollowup,
           }],
         );
+      const addressBindingContext = conversationContext;
       conversationContext = recordConversationContextSnapshot(conversationContext);
-      if (queuedFollowup === null) recordSessionTaskAddressesFromWorkContext(conversationContext);
+      if (queuedFollowup === null) {
+        recordSessionTaskAddressesFromWorkContext(addressBindingContext);
+      } else {
+        bindQueuedFollowupWorkContextToCurrentTaskAddress(addressBindingContext, queuedFollowup);
+      }
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,

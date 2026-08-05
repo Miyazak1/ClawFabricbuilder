@@ -457,10 +457,13 @@ a concrete product address to target, while keeping low-level `task_id` values
 as execution facts and withholding renderer IPC, provider/tool dispatch,
 source/Git mutation, permission inheritance, migration, run binding, and
 archive/delete/fork/export behavior. Generation main now uses that service
-before provider dispatch for fresh work and plan contexts only. Follow-up,
-retry, draft continuation, approved-plan continuation, and subagent delegation
-still need the next binding layer so they can point at an existing Task Address
-instead of creating unrelated product tasks.
+before provider dispatch for fresh work and plan contexts only. A read-only
+binding service now reconnects queued follow-up build work to the latest
+non-archived product Task Address for the same Project/Conversation before the
+new provider dispatch can start. Retry, draft continuation, approved-plan
+continuation, and subagent delegation still need their own binding layers so
+they can point at an existing Task Address instead of creating unrelated product
+tasks.
 
 ### Slice C - Agent Profile Store
 
