@@ -29,6 +29,13 @@ Space/Membership, Identity/Conversation, and Publication facts.
 Conversation, reactions, presence, and UI state are interaction surfaces, not
 durable work authority.
 
+Builder also needs a product-level address layer above low-level event IDs.
+`conversation_id`, `task_id`, `run_id`, and receipt digests remain necessary
+facts, but the user-visible unit for continuing work, fork/clone/handoff,
+archive/delete, cross-session references, and subagent boundaries is a Builder
+Session with addressable Tasks. The model is defined in
+[Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md).
+
 In this roadmap, a **Goal** is not a plan, todo title, working brief, or single
 build instruction. It is the persistent-agent contract: the agent keeps moving
 through planned steps, execution, verification, repair, and progress reporting
@@ -173,6 +180,9 @@ Required facts:
   receipt or Run;
 - Activity is a read model derived from those facts, not a second source of
   truth.
+- Builder Session and Task Address facts provide the user-visible scope for
+  continuing work, fork/clone/handoff, archive/delete, subagent delegation, and
+  cross-session references; raw `conversation_id` is not the product surface.
 - storage lifecycle operations are explicit: export and archive arrive before
   destructive delete, destructive delete must fail closed on active or pending
   Runs, and cache cleanup is separate from deleting authoritative facts.
@@ -387,7 +397,10 @@ parent materialization, and exposes no visible Agents UI.
 Persistent Agent context must be task-centered rather than transcript-centered:
 the Agent owns stable identity and curated memory, while durable work context,
 decisions, permissions, run evidence, artifacts, and child delegations are
-attached to Tasks. The executable context model is defined in
+attached to addressable Tasks inside Builder Sessions. The public address model
+is defined in
+[Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md),
+and the executable context model is defined in
 [Persistent Agent Task Context Architecture](PERSISTENT_AGENT_TASK_CONTEXT_ARCHITECTURE.md).
 
 ### Stage 4 - Spaces and Human Collaboration

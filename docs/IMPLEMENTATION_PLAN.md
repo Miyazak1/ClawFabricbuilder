@@ -121,6 +121,10 @@ Evidence requirements:
 - questions can produce explanations without creating source-change Tasks;
 - requested work creates an explicit Task bound to the base Git commit and user
   Message;
+- the product-level Builder Session/Task Address layer is distinct from raw
+  `conversation_id`, `task_id`, and `run_id`, and becomes the scope for future
+  fork, clone, handoff, archive, delete, subagent, and cross-session reference
+  operations;
 - each attempt is a distinct Run with pending, completed, failed, cancelled, or
   interrupted terminal state;
 - retries link to prior attempts and never rewrite them;
@@ -129,6 +133,8 @@ Evidence requirements:
 
 The exact interaction contract is defined in
 [Builder Conversation and Task Stream MVP](BUILDER_CONVERSATION_TASK_STREAM_MVP.md).
+The product address model is defined in
+[Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md).
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 

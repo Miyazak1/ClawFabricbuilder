@@ -21,6 +21,12 @@ archive, export, or inspect.
 
 ## Product Lifecycle Surfaces
 
+Lifecycle surfaces should be scoped by product-level Builder Sessions and Tasks
+wherever the user is managing continuing work. `conversation_id` remains a
+replay fact, but archive, export, delete, fork, handoff, and retention need the
+user-visible address semantics described in
+[Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md).
+
 ### Project Lifecycle
 
 `Delete Project` must eventually operate on the full project scope:

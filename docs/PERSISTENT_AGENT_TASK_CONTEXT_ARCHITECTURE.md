@@ -22,6 +22,13 @@ context is stored as one growing chat log, the Agent will eventually mix
 unrelated work, carry stale decisions, leak unnecessary information into model
 prompts, and become hard to inspect or correct.
 
+Agent Tasks must bind to the product-level Builder Session and Task Address
+layer once that layer exists. The address layer is what users, subagents,
+handoffs, forks, archives, deletes, and cross-session references point at; raw
+`conversation_id` values remain lower-level replay facts. The address model is
+defined in
+[Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md).
+
 ## Product Target
 
 The user should be able to keep named Agents in a familiar chat list, such as:
@@ -157,6 +164,9 @@ Rules:
 - Every tool-using or build-producing Agent action must bind a Task.
 - A Task can exist before code changes. Discussion and planning are valid Task
   states.
+- Once Builder Session/Task Address facts exist, an AgentTask should reference
+  the product Task Address rather than treating `conversation_id` as the public
+  work unit.
 - Closing a Task should produce a completion summary and optional memory
   promotion proposals.
 
