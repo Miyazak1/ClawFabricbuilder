@@ -465,6 +465,61 @@ function candidateReadyTaskStream(projectId = PROJECT_ID) {
   ]);
 }
 
+function pendingBuildConfirmationTaskStream(projectId = PROJECT_ID) {
+  const candidateTurnId = `builder-turn:${UUIDS[1]}`;
+  const candidateRunId = `builder-run:${UUIDS[2]}`;
+  const proposalTurnId = `builder-turn:${UUIDS[6]}`;
+  const proposalRunId = `builder-run:${UUIDS[7]}`;
+  return taskStreamWithItems(projectId, [
+    {
+      item_kind: 'run_completed',
+      sequence: 1,
+      turn_id: candidateTurnId,
+      run_id: candidateRunId,
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      failure_phase: 'not_applicable',
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[4]}`,
+        text: 'Created the first draft.',
+      },
+      candidate: {
+        draft_id: `builder-generation-draft:${'a'.repeat(64)}`,
+        title: 'Draft',
+        summary: 'A proposed project draft.',
+        candidate_state: 'proposed',
+        source_availability: 'not_loaded',
+      },
+    },
+    {
+      item_kind: 'user_message',
+      sequence: 2,
+      turn_id: proposalTurnId,
+      message: {
+        message_id: `builder-message:${UUIDS[8]}`,
+        text: '改下颜色',
+      },
+      message_kind: 'submitted',
+      mode: 'question',
+      task: null,
+    },
+    {
+      item_kind: 'run_completed',
+      sequence: 3,
+      turn_id: proposalTurnId,
+      run_id: proposalRunId,
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      failure_phase: 'not_applicable',
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[9]}`,
+        text: '可以把侧边栏改成深蓝、卡片改成浅蓝。需要我直接修改这些颜色吗？',
+      },
+      candidate: null,
+    },
+  ]);
+}
+
 function readOnlyExplorationQuestionTaskStream(projectId = PROJECT_ID) {
   const turnId = `builder-turn:${UUIDS[1]}`;
   const runId = `builder-run:${UUIDS[2]}`;
@@ -2744,7 +2799,7 @@ test('submits one composer turn through main-owned work or explanation routing',
       'answer',
       'answer',
       'clarify',
-      'clarify',
+      'answer',
     ],
   );
   assert.deepEqual(
@@ -2767,8 +2822,8 @@ test('submits one composer turn through main-owned work or explanation routing',
   );
   assert.deepEqual(lifecycle.calls.question[4].route_decision_hint.matched_signals, ['explicit_brief']);
   assert.deepEqual(
-    lifecycle.calls.question.slice(-2).map((input) => input.route_decision_hint.downgrade_reason),
-    ['missing_prior_build_context', 'missing_prior_build_context'],
+    lifecycle.calls.question.slice(-2).map((input) => input.route_decision_hint.downgrade_reason ?? null),
+    ['missing_prior_build_context', null],
   );
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 3);
@@ -3121,6 +3176,172 @@ test('allows current artifact defect feedback only with main-owned build context
   assert.equal(git.receipts.length, 1);
 });
 
+test('allows concise current artifact changes only with main-owned build context', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: candidateReadyTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        title: 'Color update',
+        summary: 'Updates the current result palette.',
+      })),
+    }),
+  });
+
+  const draft = await service.submit(request({
+    instruction: '改下颜色',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.title, 'Color update');
+  assert.equal(draft.admissions.draft, 'candidate_not_saved');
+  assert.equal(draft.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_direct_change']);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 1);
+});
+
+test('keeps concise current artifact changes read-only without main-owned build context', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: transcriptOnlyProposalTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Need current result',
+        summary: 'Confirm a saved result before changing colors.',
+      })),
+    }),
+  });
+
+  const answer = await service.submit(request({
+    instruction: '改下颜色',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['current_artifact_direct_change']);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 0);
+});
+
+test('admits short confirmations only after an assistant execution proposal is pending', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: pendingBuildConfirmationTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        title: 'Confirmed color update',
+        summary: 'Applies the assistant proposed color update.',
+      })),
+    }),
+  });
+
+  const draft = await service.submit(request({
+    instruction: '要',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.title, 'Confirmed color update');
+  assert.equal(draft.admissions.draft, 'candidate_not_saved');
+  assert.equal(draft.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['pending_build_confirmation']);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 1);
+});
+
+test('keeps isolated short confirmations read-only even after prior candidate context', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: candidateReadyTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Need confirmation target',
+        summary: 'There is no pending execution proposal to confirm.',
+      })),
+    }),
+  });
+
+  const answer = await service.submit(request({
+    instruction: '要',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(answer.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'answer');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['chat_default']);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 0);
+});
+
 test('keeps contextual submit in answer route after transcript-only proposals', async () => {
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
@@ -3201,8 +3422,9 @@ test('keeps contextual submit in answer route after read-only exploratory diagno
   assert.equal(lifecycle.calls.question.length, 1);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.explanation.length, 1);
-  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
-  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'answer');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['chat_default']);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, null);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 0);
 });

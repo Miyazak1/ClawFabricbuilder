@@ -171,11 +171,21 @@ const VAGUE_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:can|could)\s+(?:this|it|that)\s+look\s+better[.?!]*$/u,
   /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
 ]);
+const SHORT_BUILD_CONFIRMATION_INTENT_PATTERNS = Object.freeze([
+  /^(?:要|需要|可以|好|好的|行|嗯|嗯嗯|对|是的|确认|同意|改吧|做吧|写吧|开始吧|直接改|直接做|就这样|按这个来)[。.!！]*$/u,
+  /^(?:yes|yep|yeah|ok|okay|sure|please do|do it|go ahead|sounds good|that works)[.?!]*$/u,
+]);
 const CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS = Object.freeze([
   /(?:这里|这块|这个|当前|页面|界面|聊天框|预览|按钮|文字|字|内容|布局|右侧|左侧|顶部|底部|卡片|气泡).{0,24}(?:重叠|挡住|遮住|挤(?:在一起|成|坏|爆|压)?|溢出|错位|穿出|太窄|太宽|看不清|乱了|坏了|不对|不齐|不稳|出去了)/u,
   /(?:重叠|挡住|遮住|溢出|错位|穿出|挤坏|挤爆|看不清|布局乱了|版式坏了|样式坏了)/u,
   /\b(?:overlap|overlapping|overflow|misaligned|clipped|covered|covering|too narrow|too wide|layout is broken|looks broken|text is cut off)\b/u,
 ]);
+const CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS = Object.freeze([
+  /^(?:(?:帮我|请|麻烦)?\s*)?(?:改|修改|调整|换|更换|优化|统一|更新)(?:一下|下)?(?:这个|当前|页面|界面|结果|稿子|版本)?(?:的)?(?:颜色|配色|主题色|色彩|背景|字体|字号|标题|按钮|卡片|间距|圆角|布局|样式)[。.!！]*$/u,
+  /^(?:change|update|adjust|tweak|switch|improve)\s+(?:the\s+)?(?:color|colors|palette|theme|background|font|heading|button|card|spacing|radius|layout|style)s?[.?!]*$/u,
+]);
+const PENDING_BUILD_CONFIRMATION_INTENT_PATTERN =
+  /(?:需要我|要我|要不要我|是否(?:需要|要)我|我可以|可以帮你|如果你想).{0,64}(?:直接|现在|马上)?(?:修改|调整|更改|改|应用|生成|创建|实现|写|做|开始)|(?:would you like|do you want me to|should i|i can).{0,96}(?:change|modify|apply|build|create|implement|update|make|write)/iu;
 const WORK_DISCUSSION_INTENT_PATTERNS = Object.freeze([
   /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
   /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|should we|could we|can we|requirements|style direction)\b/u,
@@ -221,7 +231,8 @@ function isContextualSubmitContextIntent(instruction) {
   const text = normalizedIntentText(instruction);
   if (text.length === 0) return false;
   return matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)
-    || matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text);
+    || matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)
+    || matchesAny(CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS, text);
 }
 
 function routeDecisionHint({
@@ -306,7 +317,30 @@ function buildRouteDecisionHint(matchedSignals = ['clear_build']) {
   });
 }
 
-function classifySubmitRouteDecision(instruction, hasContextualBuildContext = false) {
+function normalizeSubmitRouteContext(value) {
+  if (value === true || value === false) {
+    return Object.freeze({
+      hasContextualBuildContext: value,
+      hasPendingBuildConfirmation: false,
+    });
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.freeze({
+      hasContextualBuildContext: value.hasContextualBuildContext === true,
+      hasPendingBuildConfirmation: value.hasPendingBuildConfirmation === true,
+    });
+  }
+  return Object.freeze({
+    hasContextualBuildContext: false,
+    hasPendingBuildConfirmation: false,
+  });
+}
+
+function classifySubmitRouteDecision(instruction, routeContext = false) {
+  const {
+    hasContextualBuildContext,
+    hasPendingBuildConfirmation,
+  } = normalizeSubmitRouteContext(routeContext);
   const text = normalizedIntentText(instruction);
   if (text.length === 0) return answerRouteDecisionHint(['empty_message']);
   const hasQuestionMark = /[?\uFF1F]\s*$/u.test(text);
@@ -358,6 +392,11 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
       dispatch: 'brief_update',
     });
   }
+  if (matchesAny(SHORT_BUILD_CONFIRMATION_INTENT_PATTERNS, text)) {
+    return hasPendingBuildConfirmation
+      ? buildRouteDecisionHint(['pending_build_confirmation'])
+      : answerRouteDecisionHint(['chat_default']);
+  }
   if (matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)) {
     return hasContextualBuildContext
       ? buildRouteDecisionHint(['current_artifact_defect'])
@@ -365,6 +404,17 @@ function classifySubmitRouteDecision(instruction, hasContextualBuildContext = fa
         route: 'clarify',
         confidence: 'medium',
         matchedSignals: ['current_artifact_defect'],
+        downgradedFrom: 'build',
+        downgradeReason: 'missing_prior_build_context',
+      });
+  }
+  if (matchesAny(CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS, text)) {
+    return hasContextualBuildContext
+      ? buildRouteDecisionHint(['current_artifact_direct_change'])
+      : routeDecisionHint({
+        route: 'clarify',
+        confidence: 'medium',
+        matchedSignals: ['current_artifact_direct_change'],
         downgradedFrom: 'build',
         downgradeReason: 'missing_prior_build_context',
       });
@@ -542,6 +592,52 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
   } catch {
     return false;
   }
+}
+
+function hasPendingBuildConfirmationInTaskStream(value, expectedProjectId) {
+  try {
+    const items = taskStreamItemsForSubmitContext(value, expectedProjectId);
+    if (!hasContextualBuildContextInTaskStream(value, expectedProjectId)) return false;
+    let latestUserSequence = 0;
+    let latestProposalSequence = 0;
+    for (const item of items) {
+      const itemKind = optionalValueAt(item, 'item_kind');
+      if (itemKind === 'user_message' && optionalValueAt(item, 'message_kind') === 'submitted') {
+        const sequence = optionalValueAt(item, 'sequence');
+        if (typeof sequence === 'number') latestUserSequence = sequence;
+        latestProposalSequence = 0;
+        continue;
+      }
+      if (itemKind !== 'run_completed') continue;
+      if (
+        optionalValueAt(item, 'terminal_status') !== 'succeeded'
+        || optionalValueAt(item, 'result_kind') !== 'explanation'
+      ) continue;
+      const sequence = optionalValueAt(item, 'sequence');
+      const text = messageTextFromTaskStreamItem(item, 'assistant_message');
+      if (
+        typeof sequence === 'number'
+        && sequence > latestUserSequence
+        && text !== null
+        && PENDING_BUILD_CONFIRMATION_INTENT_PATTERN.test(normalizedIntentText(text))
+      ) {
+        latestProposalSequence = sequence;
+      }
+    }
+    return latestProposalSequence > latestUserSequence;
+  } catch {
+    return false;
+  }
+}
+
+function routeContextForSubmitInstruction(instruction) {
+  const text = normalizedIntentText(instruction);
+  return Object.freeze({
+    has_contextual_build_context:
+      isContextualSubmitContextIntent(instruction)
+      || matchesAny(SHORT_BUILD_CONFIRMATION_INTENT_PATTERNS, text),
+    has_pending_build_confirmation: matchesAny(SHORT_BUILD_CONFIRMATION_INTENT_PATTERNS, text),
+  });
 }
 
 function isPlainObject(value) {
@@ -1427,19 +1523,37 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function hasContextualBuildContextForRequest(request) {
-    if (request.existing_project_id === null || !isContextualSubmitContextIntent(request.instruction)) {
-      return false;
+  function submitRouteContextForRequest(request) {
+    const requested = routeContextForSubmitInstruction(request.instruction);
+    if (
+      request.existing_project_id === null
+      || (
+        requested.has_contextual_build_context !== true
+        && requested.has_pending_build_confirmation !== true
+      )
+    ) {
+      return Object.freeze({
+        hasContextualBuildContext: false,
+        hasPendingBuildConfirmation: false,
+      });
     }
     try {
-      return hasContextualBuildContextInTaskStream(
-        Reflect.apply(readConversationStream, options.conversationService, [{
-          project_id: request.existing_project_id,
-        }]),
-        request.existing_project_id,
-      );
+      const stream = Reflect.apply(readConversationStream, options.conversationService, [{
+        project_id: request.existing_project_id,
+      }]);
+      return Object.freeze({
+        hasContextualBuildContext: requested.has_contextual_build_context === true
+          ? hasContextualBuildContextInTaskStream(stream, request.existing_project_id)
+          : false,
+        hasPendingBuildConfirmation: requested.has_pending_build_confirmation === true
+          ? hasPendingBuildConfirmationInTaskStream(stream, request.existing_project_id)
+          : false,
+      });
     } catch {
-      return false;
+      return Object.freeze({
+        hasContextualBuildContext: false,
+        hasPendingBuildConfirmation: false,
+      });
     }
   }
 
@@ -2742,10 +2856,10 @@ function createBuilderGenerationMainService(rawOptions) {
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    const hasContextualBuildContext = hasContextualBuildContextForRequest(request);
+    const routeContext = submitRouteContextForRequest(request);
     const routeDecision = classifySubmitRouteDecision(
       request.instruction,
-      hasContextualBuildContext,
+      routeContext,
     );
     const shouldAnswer = routeDecision.route !== 'build';
     if (!shouldAnswer && request.existing_project_id === null) {
@@ -2769,11 +2883,11 @@ function createBuilderGenerationMainService(rawOptions) {
     } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    const hasContextualBuildContext = hasContextualBuildContextForRequest(request);
+    const routeContext = submitRouteContextForRequest(request);
     const routeDecision = withRouteDecisionMatchedSignal(
       classifySubmitRouteDecision(
         request.instruction,
-        hasContextualBuildContext,
+        routeContext,
       ),
       'active_run_followup',
     );
@@ -2848,7 +2962,7 @@ function createBuilderGenerationMainService(rawOptions) {
       request,
       classifyReadOnlyAnswerRouteDecision(
         request.instruction,
-        hasContextualBuildContextForRequest(request),
+        submitRouteContextForRequest(request),
       ),
     );
   }
@@ -2869,7 +2983,7 @@ function createBuilderGenerationMainService(rawOptions) {
       withRouteDecisionMatchedSignal(
         classifyReadOnlyAnswerRouteDecision(
           request.instruction,
-          hasContextualBuildContextForRequest(request),
+          submitRouteContextForRequest(request),
         ),
         'active_run_followup',
       ),

@@ -52,6 +52,7 @@ export type BuilderComposerIntentContext = Readonly<{
   activeRunStatus?: 'not_active' | 'answering' | 'working';
   approvalMode?: BuilderComposerApprovalMode;
   composerMode?: 'plan' | null;
+  hasPendingBuildConfirmation?: boolean;
   hasPriorBuildContext?: boolean;
   hasWorkspace?: boolean;
   hasWritePermission?: boolean;
@@ -111,10 +112,20 @@ const VAGUE_CHANGE_PATTERNS = Object.freeze([
   /^(?:make|improve)\s+(?:it|this|that)\s+(?:better|nicer|cleaner|prettier|more polished)[.?!]*$/u,
 ]);
 
+const SHORT_BUILD_CONFIRMATION_PATTERNS = Object.freeze([
+  /^(?:要|需要|可以|好|好的|行|嗯|嗯嗯|对|是的|确认|同意|改吧|做吧|写吧|开始吧|直接改|直接做|就这样|按这个来)[。.!！]*$/u,
+  /^(?:yes|yep|yeah|ok|okay|sure|please do|do it|go ahead|sounds good|that works)[.?!]*$/u,
+]);
+
 const CURRENT_ARTIFACT_DEFECT_PATTERNS = Object.freeze([
   /(?:这里|这块|这个|当前|页面|界面|聊天框|预览|按钮|文字|字|内容|布局|右侧|左侧|顶部|底部|卡片|气泡).{0,24}(?:重叠|挡住|遮住|挤(?:在一起|成|坏|爆|压)?|溢出|错位|穿出|太窄|太宽|看不清|乱了|坏了|不对|不齐|不稳|出去了)/u,
   /(?:重叠|挡住|遮住|溢出|错位|穿出|挤坏|挤爆|看不清|布局乱了|版式坏了|样式坏了)/u,
   /\b(?:overlap|overlapping|overflow|misaligned|clipped|covered|covering|too narrow|too wide|layout is broken|looks broken|text is cut off)\b/u,
+]);
+
+const CURRENT_ARTIFACT_DIRECT_CHANGE_PATTERNS = Object.freeze([
+  /^(?:(?:帮我|请|麻烦)?\s*)?(?:改|修改|调整|换|更换|优化|统一|更新)(?:一下|下)?(?:这个|当前|页面|界面|结果|稿子|版本)?(?:的)?(?:颜色|配色|主题色|色彩|背景|字体|字号|标题|按钮|卡片|间距|圆角|布局|样式)[。.!！]*$/u,
+  /^(?:change|update|adjust|tweak|switch|improve)\s+(?:the\s+)?(?:color|colors|palette|theme|background|font|heading|button|card|spacing|radius|layout|style)s?[.?!]*$/u,
 ]);
 
 const EXPLICIT_PLAN_PATTERNS = Object.freeze([
@@ -349,6 +360,15 @@ export function decideBuilderComposerIntent(
       matchedSignals: ['read_only'],
     });
   }
+  if (
+    context.hasPendingBuildConfirmation === true
+    && SHORT_BUILD_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(normalized))
+  ) {
+    return createDecision('build', context, {
+      confidence: 'high',
+      matchedSignals: ['pending_build_confirmation'],
+    });
+  }
   if (EXPLICIT_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return createDecision('plan', context, {
       confidence: 'high',
@@ -369,6 +389,14 @@ export function decideBuilderComposerIntent(
       downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
       downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
       matchedSignals: ['current_artifact_defect'],
+    });
+  }
+  if (CURRENT_ARTIFACT_DIRECT_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision(context.hasPriorBuildContext === true ? 'build' : 'clarify', context, {
+      confidence: context.hasPriorBuildContext === true ? 'high' : 'medium',
+      downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
+      downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
+      matchedSignals: ['current_artifact_direct_change'],
     });
   }
   if (isBuilderComposerContextualBuildIntent(normalized)) {

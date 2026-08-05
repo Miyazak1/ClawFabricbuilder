@@ -561,17 +561,35 @@ hard-coded route signals and fail if any signal is missing from the public
 vocabulary. Adding a route signal is therefore a route-contract change, not a
 local UI string tweak.
 
+Current contextual follow-up checkpoint: short confirmations such as `要`,
+`可以`, `改吧`, `do it`, or `go ahead` do not become global build shortcuts.
+They route to build only when the current visible conversation has prior build
+context and the latest Assistant answer contains a public execution proposal
+such as asking whether to directly modify, apply, generate, or implement the
+change. The renderer derives this from the sanitized Task Stream projection, and
+main re-reads the same project conversation before accepting
+`pending_build_confirmation` as work evidence. A standalone confirmation remains
+read-only chat even after a project is selected or a previous candidate exists.
+
+Current current-artifact edit checkpoint: concise requests such as `改下颜色`
+or `change the colors` can build only when a current result, approved plan, or
+task brief already supplies durable work context. Without that context they are
+clarification, not an implicit new project. This is recorded with
+`current_artifact_direct_change` and the same missing-context downgrade evidence
+used by defect feedback such as overlapping text.
+
 Current semantic parity checkpoint: signal vocabulary alone is not enough. A
 shared route-decision fixture now locks representative composer messages across
 the renderer's temporary route preview and main-owned `submit` fallback. The
 fixture covers read-only chat, clarification, brief updates, explicit plan
 fallback, future Goal clarification, project-bound build, local Markdown
-artifact creation, and missing-context downgrade evidence. Renderer tests assert
-the preview decision. Main-service tests submit the same instructions through
-the real main boundary and assert whether the result is an explanation or a
-Git-backed candidate. Updating one classifier without updating the shared
-fixture and the other boundary is therefore a route-contract failure, not a
-frontend-only change.
+artifact creation, current-artifact direct changes, standalone confirmations,
+and missing-context downgrade evidence. Renderer tests assert the preview
+decision. Main-service tests submit the same instructions through the real main
+boundary and assert whether the result is an explanation or a Git-backed
+candidate. Updating one classifier without updating the shared fixture and the
+other boundary is therefore a route-contract failure, not a frontend-only
+change.
 
 Current Task Capsule checkpoint: `update_brief` stays read-only. Selecting a
 workspace does not turn exploratory product discussion into work admission, and

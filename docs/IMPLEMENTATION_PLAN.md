@@ -545,16 +545,18 @@ Evidence requirements:
   credentials, route-decision ids, receipts, or other internal evidence cannot
   become durable route signal facts or provider prompt context. Existing public
   routing meaning such as `read_only`, `clear_build`, `exploratory_work`,
-  `contextual_build`, `current_artifact_defect`, `composer_mode_plan`, and
-  `goal_mode_request` remains available for tests, debugging, task capsules,
-  and later "why this built" diagnostics without becoming provider, Git,
-  source, Save, IPC, or permission authority. The current parity guard also
-  scans renderer and main classifier source for hard-coded route signals and
-  fails if any classifier signal is not in that public vocabulary, so UI modes
-  and main fallback evidence cannot silently drift apart. The semantic parity
-  guard adds a shared route-decision fixture consumed by both renderer and
-  main-service tests, proving representative chat, clarify, brief, plan
-  fallback, future Goal-boundary, build, Markdown artifact, and missing-context
+  `contextual_build`, `current_artifact_defect`,
+  `current_artifact_direct_change`, `pending_build_confirmation`,
+  `composer_mode_plan`, and `goal_mode_request` remains available for tests,
+  debugging, task capsules, and later "why this built" diagnostics without
+  becoming provider, Git, source, Save, IPC, or permission authority. The
+  current parity guard also scans renderer and main classifier source for
+  hard-coded route signals and fails if any classifier signal is not in that
+  public vocabulary, so UI modes and main fallback evidence cannot silently
+  drift apart. The semantic parity guard adds a shared route-decision fixture
+  consumed by both renderer and main-service tests, proving representative chat,
+  clarify, brief, plan fallback, future Goal-boundary, build, Markdown artifact,
+  current-artifact direct change, standalone confirmation, and missing-context
   downgrade cases through their real boundaries instead of relying on parallel
   keyword tests;
 - the current composer contextual-execution checkpoint aligns renderer routing

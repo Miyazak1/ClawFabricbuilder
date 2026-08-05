@@ -12,6 +12,7 @@ import {
   CONVERSATION_ID,
   PROJECT_ID,
   RUN_ID,
+  TASK_ID,
   TURN_ID,
   createAcceptedTaskStreamWire,
   createAnswerTaskStreamWire,
@@ -221,6 +222,7 @@ async function setup(options: Readonly<{
   currentProjectWriteApprovalRequired?: boolean;
   failCurrentProjectWriteApproval?: boolean;
   planAfterPropose?: boolean;
+  pendingBuildConfirmationActivity?: boolean;
   pendingActivity?: boolean;
   pendingPlanActivity?: boolean;
   rejectedPlanActivity?: boolean;
@@ -700,6 +702,8 @@ async function setup(options: Readonly<{
         ? createPlanReviewTaskStreamWire('approved')
         : options.pendingPlanActivity === true
           ? createPlanTaskStreamWire()
+          : options.pendingBuildConfirmationActivity === true
+            ? pendingBuildConfirmationTaskStreamWire()
           : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
             ? createRejectedTaskStreamWire()
             : options.briefUpdateActivity === true && (
@@ -1258,6 +1262,67 @@ function runningTaskStreamWire(queuedFollowupText?: string) {
         last_sequence: queuedFollowupText === undefined ? 2 : 3,
       },
       items,
+    },
+  };
+}
+
+function pendingBuildConfirmationTaskStreamWire() {
+  const wire = createAcceptedTaskStreamWire(1);
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 9,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 9,
+      },
+      items: [
+        ...wire.conversation.items,
+        {
+          item_kind: 'user_message',
+          sequence: 6,
+          turn_id: PENDING_TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174066',
+            text: '改下颜色',
+          },
+          message_kind: 'submitted',
+          mode: 'question',
+          task: null,
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 7,
+          turn_id: PENDING_TURN_ID,
+          run_id: PENDING_RUN_ID,
+          task_id: null,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        {
+          item_kind: 'run_completed',
+          sequence: 8,
+          turn_id: PENDING_TURN_ID,
+          run_id: PENDING_RUN_ID,
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          failure_phase: 'not_applicable',
+          assistant_message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174067',
+            text: '可以把侧边栏改成深蓝、卡片改成浅蓝。需要我直接修改这些颜色吗？',
+          },
+          candidate: null,
+        },
+        {
+          item_kind: 'turn_completed',
+          sequence: 9,
+          turn_id: PENDING_TURN_ID,
+          run_id: PENDING_RUN_ID,
+          outcome: 'answered',
+        },
+      ],
     },
   };
 }
@@ -2748,6 +2813,89 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('contextual_build_phrase');
     expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+  });
+
+  it('builds concise current-result edits when current result context exists', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('作品集首页');
+    });
+
+    setComposerInstruction(container, '改下颜色');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '改下颜色' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('current_artifact_direct_change');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(PENDING_TASK_ID);
+  });
+
+  it('confirms the latest assistant execution proposal with a short Chinese answer', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      initiallySaved: true,
+      pendingBuildConfirmationActivity: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('需要我直接修改这些颜色吗？');
+    });
+
+    setComposerInstruction(container, '要');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '要' });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('pending_build_confirmation');
+    expect(composer?.getAttribute('data-builder-route-task-id')).toBe(TASK_ID);
+  });
+
+  it('keeps isolated short confirmations in chat when no assistant execution proposal is pending', async () => {
+    const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
+      contextualBuildActivity: true,
+      initiallySaved: true,
+    });
+    await openSavedProject(container);
+    await waitFor(() => {
+      expect(container.textContent).toContain('作品集首页');
+    });
+
+    setComposerInstruction(container, '要');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '要' });
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('answer');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('reply');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('chat_default');
   });
 
   it('keeps current brief memory hidden before contextual execution', async () => {

@@ -401,6 +401,60 @@ describe('routeBuilderComposerIntent', () => {
     });
   });
 
+  it('uses short confirmations only when an assistant execution proposal is pending', () => {
+    expect(decideBuilderComposerIntent('要', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'answer',
+      matchedSignals: ['chat_default'],
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+    });
+    expect(decideBuilderComposerIntent('要', {
+      hasPendingBuildConfirmation: true,
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: false,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['pending_build_confirmation'],
+      requiredPermissions: ['write_project'],
+      permissionResult: 'ask',
+      dispatch: 'ask_permission',
+    });
+  });
+
+  it('admits concise current-artifact direct changes only with prior build context', () => {
+    expect(decideBuilderComposerIntent('改下颜色', { hasWorkspace: true })).toMatchObject({
+      route: 'clarify',
+      confidence: 'medium',
+      matchedSignals: ['current_artifact_direct_change'],
+      downgradedFrom: 'build',
+      downgradeReason: 'missing_prior_build_context',
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+    });
+    expect(decideBuilderComposerIntent('改下颜色', {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['current_artifact_direct_change'],
+      downgradedFrom: null,
+      downgradeReason: null,
+      requiredPermissions: ['write_project'],
+      permissionResult: 'allowed',
+      dispatch: 'build',
+    });
+  });
+
   it('separates build intent from workspace admission', () => {
     expect(decideBuilderComposerIntent('创建登录页')).toMatchObject({
       route: 'build',

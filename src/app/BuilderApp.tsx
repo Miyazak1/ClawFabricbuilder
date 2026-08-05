@@ -578,6 +578,44 @@ function hasPriorBuildContext(
   return hasContext;
 }
 
+const PENDING_BUILD_CONFIRMATION_PATTERN =
+  /(?:需要我|要我|要不要我|是否(?:需要|要)我|我可以|可以帮你|如果你想).{0,64}(?:直接|现在|马上)?(?:修改|调整|更改|改|应用|生成|创建|实现|写|做|开始)|(?:would you like|do you want me to|should i|i can).{0,96}(?:change|modify|apply|build|create|implement|update|make|write)/iu;
+
+function hasPendingBuildConfirmationContext(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): boolean {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (
+    visibleProjectId === null
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+    || !hasPriorBuildContext(conversationSnapshot, projectSnapshot)
+  ) return false;
+
+  let latestUserSequence = 0;
+  let latestProposalSequence = 0;
+  for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'user_message' && item.message_kind === 'submitted') {
+      latestUserSequence = item.sequence;
+      latestProposalSequence = 0;
+      continue;
+    }
+    if (
+      item.item_kind === 'run_completed'
+      && item.terminal_status === 'succeeded'
+      && item.result_kind === 'explanation'
+      && item.assistant_message !== null
+      && item.sequence > latestUserSequence
+      && PENDING_BUILD_CONFIRMATION_PATTERN.test(item.assistant_message.text.trim().normalize('NFKC'))
+    ) {
+      latestProposalSequence = item.sequence;
+    }
+  }
+  return latestProposalSequence > latestUserSequence;
+}
+
 function compactComposerBriefText(value: string): string | null {
   const normalized = value
     .trim()
@@ -729,6 +767,7 @@ function composerIntentContext(
   return Object.freeze({
     approvalMode,
     composerMode,
+    hasPendingBuildConfirmation: hasPendingBuildConfirmationContext(conversationSnapshot, projectSnapshot),
     hasPriorBuildContext: projectSnapshot.draft !== null
       || (
         hasPriorBuildContext(conversationSnapshot, projectSnapshot)

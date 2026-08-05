@@ -236,6 +236,57 @@
         "downgradeReason": "missing_prior_build_context",
         "resultKind": "explanation"
       }
+    },
+    {
+      "name": "concise current artifact change needs prior build context",
+      "instruction": "改下颜色",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["current_artifact_direct_change"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "missing_prior_build_context"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["current_artifact_direct_change"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "missing_prior_build_context",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "short confirmation without pending assistant proposal stays read-only",
+      "instruction": "要",
+      "context": {
+        "hasPriorBuildContext": true,
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "answer",
+        "dispatch": "reply",
+        "matchedSignals": ["chat_default"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "answer",
+        "dispatch": "reply",
+        "matchedSignals": ["chat_default"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
     }
   ]
 }
