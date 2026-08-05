@@ -549,16 +549,18 @@ function taskStreamRunKey(item) {
   return typeof turnId === 'string' && typeof runId === 'string' ? `${turnId}:${runId}` : null;
 }
 
-function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
+function contextualBuildContextStateInTaskStream(value, expectedProjectId) {
   try {
     const items = taskStreamItemsForSubmitContext(value, expectedProjectId);
-    let latestBuildContext = false;
+    let latestBuildContext = 'unknown';
     const planTextsByRun = new Map();
     for (const item of items) {
       const itemKind = optionalValueAt(item, 'item_kind');
       if (itemKind === 'task_brief_updated') {
         const brief = optionalValueAt(item, 'brief');
-        latestBuildContext = optionalValueAt(brief, 'contextual_build_ready') === true;
+        latestBuildContext = optionalValueAt(brief, 'contextual_build_ready') === true
+          ? 'ready'
+          : 'blocked';
         continue;
       }
       if (itemKind === 'run_completed') {
@@ -566,13 +568,13 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
         const text = messageTextFromTaskStreamItem(item, 'assistant_message');
         const runKey = taskStreamRunKey(item);
         if (resultKind === 'candidate' && optionalValueAt(item, 'candidate') !== null) {
-          latestBuildContext = true;
+          latestBuildContext = 'ready';
           continue;
         }
         if (resultKind === 'plan') {
           if (runKey !== null && text !== null) {
             planTextsByRun.set(runKey, text);
-            latestBuildContext = false;
+            latestBuildContext = 'blocked';
           }
           continue;
         }
@@ -586,14 +588,18 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
           && planTextsByRun.has(runKey)
           && (decision === 'approved' || decision === 'rejected')
         ) {
-          latestBuildContext = decision === 'approved';
+          latestBuildContext = decision === 'approved' ? 'ready' : 'blocked';
         }
       }
     }
     return latestBuildContext;
   } catch {
-    return false;
+    return 'blocked';
   }
+}
+
+function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
+  return contextualBuildContextStateInTaskStream(value, expectedProjectId) === 'ready';
 }
 
 function hasPendingBuildConfirmationInTaskStream(value, expectedProjectId) {
@@ -1583,13 +1589,14 @@ function createBuilderGenerationMainService(rawOptions) {
       const stream = Reflect.apply(readConversationStream, options.conversationService, [{
         project_id: request.existing_project_id,
       }]);
-      const streamHasContext = requested.has_contextual_build_context === true
-        ? hasContextualBuildContextInTaskStream(stream, request.existing_project_id)
-        : false;
+      const streamContextState = requested.has_contextual_build_context === true
+        ? contextualBuildContextStateInTaskStream(stream, request.existing_project_id)
+        : 'unknown';
       return Object.freeze({
-        hasContextualBuildContext: streamHasContext
+        hasContextualBuildContext: streamContextState === 'ready'
           || (
             requested.has_contextual_build_context === true
+            && streamContextState === 'unknown'
             && hasContextualBuildContextInTaskCapsuleStore(request.existing_project_id)
           ),
         hasPendingBuildConfirmation: requested.has_pending_build_confirmation === true

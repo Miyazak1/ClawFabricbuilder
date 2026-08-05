@@ -502,6 +502,9 @@ latest relevant Task Stream fact, not the first historical ready brief. A newer
 `task_brief_updated` event with `contextual_build_ready: false`, a proposed
 plan, or a rejected plan downgrades short execution phrases back to `clarify`
 until a later ready brief, approved plan, or candidate restores build context.
+The Task Capsule store fallback is only admissible when the current Task Stream
+state is unknown; it must not revive an older ready brief over a newer visible
+correction, proposed plan, or rejection.
 
 ## Route Decision Evidence
 

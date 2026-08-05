@@ -4188,6 +4188,116 @@ test('uses the main-owned task capsule store as contextual submit route evidence
   );
 });
 
+test('does not let stale task capsule store readiness override a newer task stream correction', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-brief-store-stale-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
+  t.after(() => {
+    try { taskCapsuleStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 9_200;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(930),
+    nowMs: () => now++,
+  });
+  const recordingService = createBuilderTaskCapsuleRecordingService({
+    task_capsule_store: taskCapsuleStore,
+  });
+  const answerService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          throw new Error('no saved revision yet');
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+      createUuid: createUniqueUuidFactory(940),
+      taskCapsuleStore,
+      taskCapsuleRecordingService: recordingService,
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Direction saved',
+        summary: 'Stores the old direction.',
+        explanation: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+      })),
+    }),
+  });
+  await answerService.answer(request({
+    instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
+    existingProjectId: PROJECT_ID,
+  }));
+  assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'ready');
+
+  const lifecycle = conversationService({ readStreamResult: taskBriefCorrectedTaskStream() });
+  const git = gitAuthority();
+  const transportInputs = [];
+  const buildService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+          }));
+        },
+      },
+      createUuid: createUniqueUuidFactory(950),
+      taskCapsuleStore,
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation({
+          title: 'Need clarification',
+          summary: 'The old direction is no longer ready to execute.',
+          explanation: '旧方向已经撤回，需要先确认新的方案再开始做。',
+        })),
+      };
+    },
+  });
+
+  const answer = await buildService.submit(request({
+    instruction: '按刚才方案做',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(transportInputs.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 0);
+});
+
 test('records a retryable terminal run outcome when provider generation fails', async () => {
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
