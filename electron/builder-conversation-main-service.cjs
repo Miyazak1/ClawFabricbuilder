@@ -109,6 +109,7 @@ const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const MESSAGE_ID_PATTERN = new RegExp(`^builder-message:${UUID_SOURCE}$`, 'u');
 const TOOL_CALL_ID_PATTERN = new RegExp(`^builder-tool-call:${UUID_SOURCE}$`, 'u');
 const REVIEW_ID_PATTERN = new RegExp(`^builder-review:${UUID_SOURCE}$`, 'u');
 const ACTOR_ID_PATTERN = new RegExp(`^(?:builder-user|builder-agent):${UUID_SOURCE}$`, 'u');
@@ -232,6 +233,10 @@ function safeOid(value) {
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail();
   return value;
+}
+
+function safeMessageId(value) {
+  return safePattern(value, MESSAGE_ID_PATTERN);
 }
 
 function safeRunProgressStage(value) {
@@ -671,6 +676,15 @@ function sanitizeBeginRequest(value) {
   });
 }
 
+function sanitizeQueuedFollowupReference(value) {
+  exactObject(value, ['turn_id', 'run_id', 'message_id']);
+  return freezeDeep({
+    turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN),
+    run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN),
+    message_id: safeMessageId(valueAt(value, 'message_id')),
+  });
+}
+
 function sanitizeQuestionRequest(value) {
   const keys = Reflect.ownKeys(value);
   const hasRouteDecisionHint = keys.includes('route_decision_hint');
@@ -682,6 +696,24 @@ function sanitizeQuestionRequest(value) {
     question: safeText(valueAt(value, 'question'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+    route_decision_hint: hasRouteDecisionHint
+      ? sanitizeRouteDecisionHint(valueAt(value, 'route_decision_hint'))
+      : null,
+  });
+}
+
+function sanitizeQueuedFollowupBeginRequest(value, textKey) {
+  const keys = Reflect.ownKeys(value);
+  const hasRouteDecisionHint = keys.includes('route_decision_hint');
+  exactObject(value, hasRouteDecisionHint
+    ? ['project_id', textKey, 'request_digest', 'base_revision', 'queued_followup', 'route_decision_hint']
+    : ['project_id', textKey, 'request_digest', 'base_revision', 'queued_followup']);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    [textKey]: safeText(valueAt(value, textKey), 12_000, 48_000),
+    request_digest: safeDigest(valueAt(value, 'request_digest')),
+    base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
+    queued_followup: sanitizeQueuedFollowupReference(valueAt(value, 'queued_followup')),
     route_decision_hint: hasRouteDecisionHint
       ? sanitizeRouteDecisionHint(valueAt(value, 'route_decision_hint'))
       : null,
@@ -1093,6 +1125,7 @@ function createBuilderConversationMainService(rawOptions) {
     const conversationId = `builder-conversation:${projectUuid(request.project_id)}`;
     let state = load(request.project_id, conversationId);
     if (state === null && request.base_revision !== null) fail();
+    if (request.queued_followup !== undefined && state?.snapshot.active_turn_id !== null) fail();
     const project = freezeDeep({
       project_id: request.project_id,
       created_at_ms: projectCreatedAt(
@@ -1125,6 +1158,9 @@ function createBuilderConversationMainService(rawOptions) {
       task_id: taskId,
       run_id: newId(options.createUuid, 'builder-run'),
     });
+    const followupConsumptionCommandId = request.queued_followup === undefined
+      ? null
+      : newId(options.createUuid, 'builder-command');
     const first = eventAt({
       projectId: request.project_id,
       conversationId,
@@ -1157,13 +1193,30 @@ function createBuilderConversationMainService(rawOptions) {
         }),
       },
     });
+    const followupConsumption = request.queued_followup === undefined
+      ? null
+      : eventAt({
+        projectId: request.project_id,
+        conversationId,
+        sequence: first.sequence + 1,
+        commandId: followupConsumptionCommandId,
+        eventType: 'turn_followup_consumed',
+        previous: eventHead(first),
+        payload: {
+          turn_id: request.queued_followup.turn_id,
+          run_id: request.queued_followup.run_id,
+          message_id: request.queued_followup.message_id,
+          consuming_turn_id: ids.turn_id,
+          consuming_message_id: ids.message_id,
+        },
+      });
     const second = eventAt({
       projectId: request.project_id,
       conversationId,
-      sequence: first.sequence + 1,
+      sequence: (followupConsumption ?? first).sequence + 1,
       commandId: ids.run_command_id,
       eventType: 'run_started',
-      previous: eventHead(first),
+      previous: eventHead(followupConsumption ?? first),
       payload: {
         turn_id: ids.turn_id,
         run_id: ids.run_id,
@@ -1177,7 +1230,7 @@ function createBuilderConversationMainService(rawOptions) {
       project,
       conversation,
       expectedHead: priorHead,
-      events: [first, second],
+      events: followupConsumption === null ? [first, second] : [first, followupConsumption, second],
       recordedAtMs,
     });
     const context = freezeDeep({
@@ -1203,6 +1256,14 @@ function createBuilderConversationMainService(rawOptions) {
 
   function beginQuestion(rawRequest) {
     return beginTurn(sanitizeQuestionRequest(rawRequest), 'question');
+  }
+
+  function beginQueuedFollowupWork(rawRequest) {
+    return beginTurn(sanitizeQueuedFollowupBeginRequest(rawRequest, 'instruction'), 'work');
+  }
+
+  function beginQueuedFollowupQuestion(rawRequest) {
+    return beginTurn(sanitizeQueuedFollowupBeginRequest(rawRequest, 'question'), 'question');
   }
 
   function sameConversationHead(left, right) {
@@ -2873,6 +2934,8 @@ function createBuilderConversationMainService(rawOptions) {
     service_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
     begin_question: beginQuestion,
     begin_work: beginWork,
+    begin_queued_followup_question: beginQueuedFollowupQuestion,
+    begin_queued_followup_work: beginQueuedFollowupWork,
     record_retryable_failure: recordRetryableFailure,
     record_run_context_snapshot: recordRunContextSnapshot,
     record_run_progress: recordRunProgress,
@@ -2912,6 +2975,7 @@ function createBuilderConversationMainService(rawOptions) {
       agent_step_progress_recording: 'main_only_admitted_progress_event',
       run_steering_recording: 'main_only_active_run_message_no_provider_mutation',
       run_followup_queue_recording: 'main_only_active_run_message_no_provider_mutation',
+      run_followup_consumption_start: 'main_only_replay_verified_followup_starts_normal_turn',
       tool_call_recording: 'main_only_pre_dispatch_event',
       tool_result_recording: 'main_only_fixed_code_event',
       tool_dispatch_admission: 'main_only_open_call_no_dispatch',

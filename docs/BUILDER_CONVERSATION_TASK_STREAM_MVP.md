@@ -269,6 +269,10 @@ silently reviving a rejected plan.
   finishes. It must not clear prior messages, replace the current assistant
   answer with a failure banner after already showing usable text, or silently
   start a second side-effecting Run.
+- When a queued follow-up is later started, the durable stream must show the
+  handoff as ordinary submitted work/question plus a compact consumed receipt
+  before the new Run starts. The receipt is not permission, provider dispatch, or
+  restart redispatch evidence by itself.
 - Ordinary chat and explanations may work before a local project folder is
   selected. Build/draft/save flows must not use a logical New project as a
   hidden write target. The composer shows a current project/workspace chip.

@@ -997,6 +997,181 @@ test('records bounded queued follow-ups on the active run without provider or so
   }
 });
 
+test('starts queued follow-up work only through a replay-verified consumption receipt', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    const queued = item.service.record_queued_followup({
+      context: first,
+      message: 'After this finishes, make the summary shorter.',
+    });
+    const queuedEvent = queued.events.at(-1);
+    item.service.complete_candidate({
+      context: queued,
+      candidate_result: candidateResult(queued),
+      assistant_text: 'A shorter summary draft is ready to review.',
+    });
+
+    const followup = item.service.begin_queued_followup_work({
+      project_id: PROJECT_ID,
+      instruction: 'After this finishes, make the summary shorter.',
+      request_digest: `sha256:${'a'.repeat(64)}`,
+      base_revision: BASE_REVISION,
+      queued_followup: {
+        turn_id: first.ids.turn_id,
+        run_id: first.ids.run_id,
+        message_id: queuedEvent.payload.message.message_id,
+      },
+      route_decision_hint: {
+        route: 'build',
+        confidence: 'high',
+        matched_signals: ['active_run_followup'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: ['write_project'],
+        permission_result: 'allowed',
+        dispatch: 'build',
+      },
+    });
+
+    assert.deepEqual(followup.events.slice(-3).map((event) => event.event_type), [
+      'turn_submitted',
+      'turn_followup_consumed',
+      'run_started',
+    ]);
+    const consumed = followup.events.at(-2);
+    assert.equal(consumed.payload.turn_id, first.ids.turn_id);
+    assert.equal(consumed.payload.run_id, first.ids.run_id);
+    assert.equal(consumed.payload.message_id, queuedEvent.payload.message.message_id);
+    assert.equal(consumed.payload.consuming_turn_id, followup.ids.turn_id);
+    assert.equal(consumed.payload.consuming_message_id, followup.ids.message_id);
+    const replayed = replayBuilderConversation(followup.events);
+    assert.equal(replayed.active_turn_id, followup.ids.turn_id);
+    assert.equal(replayed.turns[1].mode, 'work');
+    assert.equal(replayed.turns[1].messages[0].text, 'After this finishes, make the summary shorter.');
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(stream.conversation.items.slice(-3).map((entry) => entry.item_kind), [
+      'user_message',
+      'queued_followup_consumed',
+      'run_started',
+    ]);
+    assert.deepEqual(stream.conversation.items.at(-2), {
+      item_kind: 'queued_followup_consumed',
+      sequence: 7,
+      turn_id: first.ids.turn_id,
+      run_id: first.ids.run_id,
+      message_id: queuedEvent.payload.message.message_id,
+      consumed_by: {
+        turn_id: followup.ids.turn_id,
+        message_id: followup.ids.message_id,
+      },
+      recorded_state: 'consumed',
+    });
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /provider|credential|git_candidate_receipt|commit_oid|tree_oid|source_tree|save_admission|permission_admission|auto_dispatch/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
+test('starts queued follow-up questions without write authority or task creation', () => {
+  const item = fixture();
+  try {
+    const first = beginQuestion(item.service, null, 'What should I improve?');
+    const queued = item.service.record_queued_followup({
+      context: first,
+      message: 'Also explain the tradeoffs.',
+    });
+    const queuedEvent = queued.events.at(-1);
+    item.service.complete_explanation({
+      context: queued,
+      assistant_text: 'You could improve clarity, hierarchy, and copy.',
+    });
+
+    const followup = item.service.begin_queued_followup_question({
+      project_id: PROJECT_ID,
+      question: 'Also explain the tradeoffs.',
+      request_digest: `sha256:${'b'.repeat(64)}`,
+      base_revision: null,
+      queued_followup: {
+        turn_id: first.ids.turn_id,
+        run_id: first.ids.run_id,
+        message_id: queuedEvent.payload.message.message_id,
+      },
+      route_decision_hint: {
+        route: 'answer',
+        confidence: 'high',
+        matched_signals: ['active_run_followup'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'reply',
+      },
+    });
+
+    assert.deepEqual(followup.events.slice(-3).map((event) => event.event_type), [
+      'turn_submitted',
+      'turn_followup_consumed',
+      'run_started',
+    ]);
+    assert.equal(followup.ids.task_id, null);
+    const replayed = replayBuilderConversation(followup.events);
+    assert.equal(replayed.turns[1].mode, 'question');
+    assert.equal(followup.events.at(-2).payload.message_id, queuedEvent.payload.message.message_id);
+    assert.equal(followup.events.at(-1).payload.task_id, null);
+  } finally {
+    item.close();
+  }
+});
+
+test('rejects queued follow-up consumption before terminal completion or with mismatched text', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    const queued = item.service.record_queued_followup({
+      context: first,
+      message: 'After this finishes, make the summary shorter.',
+    });
+    const queuedEvent = queued.events.at(-1);
+    assert.throws(() => item.service.begin_queued_followup_work({
+      project_id: PROJECT_ID,
+      instruction: 'After this finishes, make the summary shorter.',
+      request_digest: `sha256:${'c'.repeat(64)}`,
+      base_revision: BASE_REVISION,
+      queued_followup: {
+        turn_id: first.ids.turn_id,
+        run_id: first.ids.run_id,
+        message_id: queuedEvent.payload.message.message_id,
+      },
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 3);
+
+    item.service.complete_candidate({
+      context: queued,
+      candidate_result: candidateResult(queued),
+      assistant_text: 'A shorter summary draft is ready to review.',
+    });
+    assert.throws(() => item.service.begin_queued_followup_work({
+      project_id: PROJECT_ID,
+      instruction: 'Use a very different follow-up instead.',
+      request_digest: `sha256:${'d'.repeat(64)}`,
+      base_revision: BASE_REVISION,
+      queued_followup: {
+        turn_id: first.ids.turn_id,
+        run_id: first.ids.run_id,
+        message_id: queuedEvent.payload.message.message_id,
+      },
+    }), { code: 'builder_conversation_main_service_unavailable' });
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 5);
+  } finally {
+    item.close();
+  }
+});
+
 test('rejects steering after control or failure and rejects forged steering payloads', () => {
   const item = fixture();
   try {
@@ -3359,10 +3534,13 @@ test('rejects forged contexts and stays isolated from provider, IPC, renderer, a
   assert.match(source, /admit_approved_plan_continuation/u);
   assert.match(source, /begin_approved_plan_work/u);
   assert.match(source, /begin_draft_continuation_work/u);
+  assert.match(source, /begin_queued_followup_work/u);
+  assert.match(source, /begin_queued_followup_question/u);
   assert.match(source, /main_only_current_head_approval_gate/u);
   assert.match(source, /main_only_fresh_approved_plan_no_execution/u);
   assert.match(source, /main_only_current_head_approved_plan_starts_new_work_run/u);
   assert.match(source, /main_only_pending_draft_current_head_starts_new_work_run/u);
+  assert.match(source, /main_only_replay_verified_followup_starts_normal_turn/u);
   assert.doesNotMatch(
     source,
     /BrowserWindow|ipcMain|ipcRenderer|preload|fetch\(|openai|deepseek|safeStorage|persist_candidate_commit|builder-git-project-repository/iu,

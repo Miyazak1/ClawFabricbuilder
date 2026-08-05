@@ -669,10 +669,14 @@ start a second Run, dispatch a provider/tool request, or expose source
 authority. A renderer-safe `turn_followup_consumed` receipt is now part of the
 conversation replay/projection contract so a later dispatcher can prove a
 queued message was picked up by a normal submitted turn before any new Run
-starts; it is not yet an auto-dispatch executor. Main `submit` now dispatches
-from the resolved `RouteDecision` instead of a second boolean answer/build
-classifier, so workspace admission, write permission, and provider route
-selection cannot silently diverge.
+starts. The Conversation main service can now start a main-only queued
+follow-up work/question turn by appending
+`turn_submitted -> turn_followup_consumed -> run_started` in one replay-checked
+event chain; this is still not exposed through IPC/preload and is not an
+auto-dispatch executor. Main `submit` now dispatches from the resolved
+`RouteDecision` instead of a second boolean answer/build classifier, so
+workspace admission, write permission, and provider route selection cannot
+silently diverge.
 
 ### Slice 3 - Task Capsule And Working Brief
 

@@ -661,6 +661,12 @@ Evidence requirements:
   message was handed to a later submitted turn before that turn started a Run,
   but it still does not choose a route, bypass workspace/write admission, invoke
   a provider/tool, or auto-dispatch after restart;
+- the current queued-follow-up begin checkpoint adds a Conversation main-service
+  path that can start a normal work/question Run from a queued follow-up only by
+  appending `turn_submitted`, `turn_followup_consumed`, and `run_started` in a
+  single replay-verified event chain. This gate is main-only, has no IPC/preload
+  command, grants no permission, reads or writes no source, dispatches no
+  provider/tool, and does not run queued follow-ups automatically after restart;
 - the current active-answer admission checkpoint keeps explicit build/change
   commands out of the steering path while a read-only answer is running. The
   renderer prefers queued follow-up route evidence for non-cancel input during
