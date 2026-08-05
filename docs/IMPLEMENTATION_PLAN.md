@@ -6,6 +6,19 @@ This plan turns the product roadmap into independently verifiable engineering
 gates. A projection or UI state must never stand in for a missing fact
 authority.
 
+The current strategic priority is the trusted coding loop:
+
+```text
+read project -> explain current state -> propose plan -> user approves ->
+change code -> run approved checks -> repair -> show diff -> save version
+```
+
+Community, social, Agent personality, and playful surfaces are later
+projections over trusted work facts. They must not consume implementation
+priority ahead of the Codex-like personal workbench, and they must not be
+described as shipped until their own gates have package, provider, restart,
+permission, and review evidence.
+
 ## Verified Starting Point
 
 The standalone Builder has a dedicated desktop shell, encrypted provider
@@ -1599,10 +1612,13 @@ Add authenticated Publication and a work-native community.
 Evidence requirements:
 
 - Publication binds an immutable Version or Artifact;
+- the first public/reusable object is a Work Capsule bound to a verified
+  version, template, artifact, or Agent workflow package;
 - private source and credentials cannot enter public metadata;
 - import/remix creates new identity and preserved lineage;
 - compatibility and availability are explicit;
-- comments, reactions, ranking, and profiles are not work authority;
+- comments, reactions, ranking, profiles, and attention-feed items are not work
+  authority and cannot replace Work Capsule provenance;
 - moderation, privacy, account, sync, and deletion semantics are proven before
   a public network claim.
 
@@ -1653,6 +1669,11 @@ Navigation follows real evidence:
 
 Future destinations may exist in internal descriptors, but empty or disabled
 areas should not be presented as shipped capabilities.
+
+Playful or experimental destinations activate only after the underlying project
+work they display is already safe. They may project Agent personality, history
+maps, challenges, experimental branches, or demos, but they do not grant source,
+command, publish, delete, permission, save, or external-network authority.
 
 ## Release Evidence
 

@@ -22,6 +22,13 @@ long-term system has six connected experiences:
 6. **Discover and Reuse** - publish verified work to a work-native community,
    inspect its lineage, remix it, and improve it.
 
+These experiences are layers, not four or six equal products to build at once.
+The trusted programming loop is the engine. Git, Review, Permission, Revision,
+and Artifact facts are the trusted workbench floor. Agents are long-running
+workers on that floor. Community is a reusable work network. Playful exploration
+and expression may make the product feel alive, but they must stay low-risk and
+cannot bypass review, permission, save, publish, or delete boundaries.
+
 The trusted foundation is shared across all six experiences: Git-backed code
 version facts, Project Revision receipts, Workflow Version, Goal, Task, Run,
 Artifact, Review, Permission, Agent, Contribution, Delegation,
@@ -60,6 +67,23 @@ Say what you want
 
 The user should not need to understand compilers, schemas, adapters, receipts,
 or sandbox protocols to complete this loop.
+
+The near-term product bar is the trusted coding loop:
+
+```text
+Read project
+-> Explain current state
+-> Propose a plan
+-> User approves
+-> Change code
+-> Run approved checks
+-> Repair
+-> Show diff
+-> Save version
+```
+
+Community, Agent personality, social surfaces, and playful features must not
+displace this loop until the underlying workbench can do it reliably.
 
 ## Roadmap Operating Principle
 
@@ -466,9 +490,21 @@ Community is work-native. It is not an entertainment feed optimized for time
 spent. Likes, comments, reactions, and chat do not alter a Project Version,
 Run, Artifact, Permission, or Review.
 
+The first Community object should be a Work Capsule: an immutable project
+version, template, artifact, or Agent workflow package with provenance,
+verification, compatibility, and remix lineage. Raw chat transcripts, attention
+feed items, personality posts, and unreviewed Agent output are not Work
+Capsules.
+
 Publishing is always explicit. The first local Share experience may only create
 a safe proof or export package; public links, profiles, ranking, moderation,
 and server sync require later independent gates.
+
+Playful and "toy" experiences can arrive as projections over already safe work:
+Agent personality, project history maps, daily small challenges, experimental
+branches, or playable demos. They must remain low-permission surfaces and cannot
+create source changes, publish, delete, grant access, run commands, or save
+versions without the same trusted work gates.
 
 Stages 3-6 share common facts but can advance as parallel product tracks after
 the personal workbench foundation. Their numbering describes the product story,
