@@ -625,6 +625,14 @@ Evidence requirements:
   unknown current Task Stream projection, but cannot override an explicit current
   Task Stream correction or rejection. This protects the chat-first loop where
   users can revise direction before asking the AI to act;
+- the current brief-correction recording checkpoint closes the preceding loop:
+  correction messages such as "等等，先不要按这个做" route to
+  `update_brief` / `brief_update`, append a not-ready `task_brief_updated`
+  Conversation fact with `contextual_build_ready: false`, and deliberately skip
+  the ready Task Capsule store fallback. This lets the durable chat stream carry
+  "do not execute the old direction" without granting write permission,
+  provider/tool execution authority, Git mutation, Review, Revision, Save,
+  publish, network, or renderer correction authority;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current

@@ -3728,6 +3728,80 @@ test('records update-brief answers into the main-owned task capsule store', asyn
   assert.doesNotMatch(transportInput.messages[0].content, /builder_code_change_operations/u);
 });
 
+test('records brief corrections as not-ready conversation context without ready task capsule store writes', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-capsule-correction-main-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
+  t.after(() => {
+    try { taskCapsuleStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 8_600;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(865),
+    nowMs: () => now++,
+  });
+  const transportInputs = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          throw new Error('correction must stay read-only');
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+      createUuid: createUniqueUuidFactory(866),
+      taskCapsuleRecordingService: createBuilderTaskCapsuleRecordingService({
+        task_capsule_store: taskCapsuleStore,
+      }),
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation({
+          title: 'Direction paused',
+          summary: 'The prior direction is no longer ready to execute.',
+          explanation: '旧方向先不执行。我们先重新确认新的目标和范围。',
+        })),
+      };
+    },
+  });
+
+  const answer = await service.submit(request({
+    instruction: '等等，先不要按这个做，我要重新整理方向。',
+    existingProjectId: PROJECT_ID,
+  }));
+  const stream = conversation.read_stream({ project_id: PROJECT_ID });
+
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(transportInputs.length, 1);
+  const briefItem = stream.conversation.items.find((item) => item.item_kind === 'task_brief_updated');
+  assert.notEqual(briefItem, undefined);
+  assert.equal(briefItem.brief.status, 'discussing');
+  assert.equal(briefItem.brief.contextual_build_ready, false);
+  assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'absent');
+});
+
 test('does not record ordinary read-only answers into the task capsule store', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-capsule-no-recording-main-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));

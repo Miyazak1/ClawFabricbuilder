@@ -88,6 +88,16 @@ test('creates and sanitizes working brief and task capsule facts without authori
   assert.equal(brief.approved_plan, null);
   assert.equal(brief.use_when_instruction_is_contextual, true);
 
+  const discussingBrief = createBuilderWorkingBrief(workingBrief({
+    use_when_instruction_is_contextual: false,
+  }));
+  const discussingCapsule = createBuilderTaskCapsule(taskCapsule({
+    status: 'discussing',
+    current_brief: discussingBrief,
+  }));
+  assert.equal(discussingCapsule.status, 'discussing');
+  assert.equal(discussingCapsule.current_brief.use_when_instruction_is_contextual, false);
+
   const capsule = createBuilderTaskCapsule(taskCapsule({ current_brief: brief }));
   assert.equal(Object.isFrozen(capsule), true);
   assert.equal(Object.isFrozen(capsule.current_brief), true);
@@ -137,11 +147,13 @@ test('records deterministic task capsule update evidence without dispatching bui
 test('fails closed on malformed brief and capsule inputs', () => {
   for (const invalid of [
     workingBrief({ approved_plan: { state: 'approved' } }),
-    workingBrief({ use_when_instruction_is_contextual: false }),
+    workingBrief({ use_when_instruction_is_contextual: null }),
     workingBrief({ source: 'approved_plan' }),
     workingBrief({ latest_user_goal: 'Read C:\\Users\\Admin\\secret.txt' }),
     workingBrief({ assistant_proposal: 'api_key: secret-value' }),
     taskCapsule({ status: 'building' }),
+    taskCapsule({ status: 'ready', current_brief: workingBrief({ use_when_instruction_is_contextual: false }) }),
+    taskCapsule({ status: 'discussing' }),
     taskCapsule({ current_brief: workingBrief({ brief_version: 'builder-working-brief.v2' }) }),
   ]) {
     if (Object.hasOwn(invalid, 'brief_version')) {
@@ -162,6 +174,12 @@ test('fails closed on malformed brief and capsule inputs', () => {
   })));
   assertCapsuleError(() => createBuilderTaskCapsuleUpdate(updateInput({
     task_capsule: taskCapsule({ status: 'discussing' }),
+  })));
+  assertCapsuleError(() => createBuilderTaskCapsuleUpdate(updateInput({
+    task_capsule: taskCapsule({
+      status: 'discussing',
+      current_brief: workingBrief({ use_when_instruction_is_contextual: false }),
+    }),
   })));
 });
 

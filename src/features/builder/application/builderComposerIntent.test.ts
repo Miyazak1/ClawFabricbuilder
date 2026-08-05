@@ -96,6 +96,27 @@ describe('routeBuilderComposerIntent', () => {
   });
 
   it.each([
+    '等等，先不要按这个做，我要重新整理方向。',
+    '先别按这个方案做，方向我要再确认一下',
+    'Scratch that, do not implement that plan yet.',
+  ])('routes brief correction %s to update_brief without build admission', (instruction) => {
+    expect(decideBuilderComposerIntent(instruction, {
+      hasPriorBuildContext: true,
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'update_brief',
+      confidence: 'high',
+      matchedSignals: ['brief_correction'],
+      downgradedFrom: null,
+      downgradeReason: null,
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'brief_update',
+    });
+  });
+
+  it.each([
     '进入目标模式，一直帮我改到完成为止',
     '给你一个目标：持续完善这个项目直到完成或阻塞',
     '设定一个长期目标，自己执行验证直到 done',

@@ -1546,6 +1546,57 @@ test('records update-brief turns as durable task capsule context without creatin
   }
 });
 
+test('records brief corrections as not-ready task capsule context without creating a draft', () => {
+  const item = fixture();
+  try {
+    const context = item.service.begin_question({
+      project_id: PROJECT_ID,
+      question: '等等，先不要按这个做，我要重新整理方向。',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'update_brief',
+        confidence: 'high',
+        matched_signals: ['brief_correction'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'brief_update',
+      },
+    });
+
+    const terminal = item.service.complete_explanation({
+      context,
+      assistant_text: '旧方向先不执行。我们先重新确认新的目标和范围。',
+    });
+    assert.deepEqual(terminal.events.slice(-3).map((event) => event.event_type), [
+      'run_completed',
+      'task_brief_updated',
+      'turn_completed',
+    ]);
+    const briefEvent = terminal.events.at(-2);
+    assert.equal(briefEvent.payload.task_capsule.status, 'discussing');
+    assert.equal(
+      briefEvent.payload.task_capsule.current_brief.use_when_instruction_is_contextual,
+      false,
+    );
+    assert.equal(terminal.snapshot.turns[0].task, null);
+    assert.equal(terminal.snapshot.turns[0].runs[0].candidate_result, null);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.items[3].item_kind, 'task_brief_updated');
+    assert.equal(stream.conversation.items[3].brief.status, 'discussing');
+    assert.equal(stream.conversation.items[3].brief.contextual_build_ready, false);
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /route_decision|candidate_digest|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission|provider|credential|source_tree/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
 test('records task capsule source message ids in run context snapshots', () => {
   const item = fixture();
   try {

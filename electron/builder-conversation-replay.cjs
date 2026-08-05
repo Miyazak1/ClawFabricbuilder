@@ -575,7 +575,6 @@ function applyTaskBriefUpdated(state, payload) {
     || turn.route_decision.message_id !== payload.message_id
     || payload.task_capsule.last_route_decision_id !== turn.route_decision.decision_id
     || payload.task_capsule.project_id !== state.projectId
-    || payload.task_capsule.status !== 'ready'
     || state.taskIds.has(payload.task_capsule.task_id)
     || run === null
     || run.run_id !== payload.run_id

@@ -505,6 +505,12 @@ until a later ready brief, approved plan, or candidate restores build context.
 The Task Capsule store fallback is only admissible when the current Task Stream
 state is unknown; it must not revive an older ready brief over a newer visible
 correction, proposed plan, or rejection.
+Current correction-recording checkpoint: messages such as `等等，先不要按这个做`
+classify as `update_brief` with `brief_correction`, append a not-ready
+`task_brief_updated` conversation fact, and project as `contextual_build_ready:
+false`. This fact is not provider dispatch, source mutation, Git mutation,
+permission grant, Review, Revision, or Save authority, and it is not recorded
+into the ready Task Capsule store fallback.
 
 ## Route Decision Evidence
 

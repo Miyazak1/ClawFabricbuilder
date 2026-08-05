@@ -403,24 +403,29 @@ function shouldRecordTaskBrief(context) {
     && routeDecision.dispatch === 'brief_update';
 }
 
+function isTaskBriefCorrection(context) {
+  return routeDecisionFromContext(context).matched_signals.includes('brief_correction');
+}
+
 function taskBriefCapsule(context, assistantText, updatedAtMs) {
   const routeDecision = routeDecisionFromContext(context);
   const latestUserGoal = compactTaskBriefText(userMessageTextFromContext(context));
   const assistantProposal = compactTaskBriefText(assistantText, 2_000);
+  const ready = !isTaskBriefCorrection(context);
   return freezeDeep({
     capsule_version: 'builder-task-capsule.v1',
     task_id: taskBriefIdForMessage(context.ids.message_id),
     project_id: context.project.project_id,
     title: 'Current project brief',
     goal: latestUserGoal,
-    status: 'ready',
+    status: ready ? 'ready' : 'discussing',
     current_brief: {
       brief_version: 'builder-working-brief.v1',
       source: 'task_capsule_update',
       latest_user_goal: latestUserGoal,
       assistant_proposal: assistantProposal,
       approved_plan: null,
-      use_when_instruction_is_contextual: true,
+      use_when_instruction_is_contextual: ready,
     },
     last_route_decision_id: routeDecision.decision_id,
     updated_at_ms: updatedAtMs,

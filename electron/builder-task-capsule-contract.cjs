@@ -229,28 +229,32 @@ function createBuilderWorkingBrief(rawInput) {
   if (
     valueAt(rawInput, 'brief_version') !== BUILDER_WORKING_BRIEF_VERSION
     || valueAt(rawInput, 'approved_plan') !== null
-    || valueAt(rawInput, 'use_when_instruction_is_contextual') !== true
+    || typeof valueAt(rawInput, 'use_when_instruction_is_contextual') !== 'boolean'
   ) fail();
+  const contextual = valueAt(rawInput, 'use_when_instruction_is_contextual');
   return freezeDeep({
     brief_version: BUILDER_WORKING_BRIEF_VERSION,
     source: safeEnum(valueAt(rawInput, 'source'), WORKING_BRIEF_SOURCES),
     latest_user_goal: safeText(valueAt(rawInput, 'latest_user_goal'), 1_024, 4_096, true),
     assistant_proposal: safeText(valueAt(rawInput, 'assistant_proposal'), 2_048, 8_192, true),
     approved_plan: null,
-    use_when_instruction_is_contextual: true,
+    use_when_instruction_is_contextual: contextual,
   });
 }
 
 function createBuilderTaskCapsule(rawInput) {
   exactObject(rawInput, TASK_CAPSULE_KEYS);
+  const status = safeEnum(valueAt(rawInput, 'status'), TASK_CAPSULE_STATUSES);
+  const currentBrief = createBuilderWorkingBrief(valueAt(rawInput, 'current_brief'));
+  if ((status === 'ready') !== (currentBrief.use_when_instruction_is_contextual === true)) fail();
   return freezeDeep({
     capsule_version: safeEnum(valueAt(rawInput, 'capsule_version'), [BUILDER_TASK_CAPSULE_VERSION]),
     task_id: safeTaskId(valueAt(rawInput, 'task_id')),
     project_id: safeProjectId(valueAt(rawInput, 'project_id')),
     title: safeText(valueAt(rawInput, 'title'), 160, 1_024, false),
     goal: safeText(valueAt(rawInput, 'goal'), 1_024, 4_096, true),
-    status: safeEnum(valueAt(rawInput, 'status'), TASK_CAPSULE_STATUSES),
-    current_brief: createBuilderWorkingBrief(valueAt(rawInput, 'current_brief')),
+    status,
+    current_brief: currentBrief,
     last_route_decision_id: safeRouteDecisionId(valueAt(rawInput, 'last_route_decision_id')),
     updated_at_ms: safeTimestamp(valueAt(rawInput, 'updated_at_ms')),
   });

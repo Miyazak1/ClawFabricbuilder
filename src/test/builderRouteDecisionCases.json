@@ -118,6 +118,29 @@
       }
     },
     {
+      "name": "brief correction updates context without execution readiness",
+      "instruction": "等等，先不要按这个做，我要重新整理方向。",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "update_brief",
+        "dispatch": "brief_update",
+        "matchedSignals": ["brief_correction"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "update_brief",
+        "dispatch": "brief_update",
+        "matchedSignals": ["brief_correction"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
       "name": "plan request is explicit plan in renderer and read-only fallback in submit",
       "instruction": "帮我先做下方案",
       "context": {

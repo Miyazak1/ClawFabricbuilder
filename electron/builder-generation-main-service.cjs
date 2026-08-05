@@ -162,6 +162,11 @@ const EXPLICIT_BRIEF_INTENT_PATTERNS = Object.freeze([
   /^(?:save|remember|record|keep)\s+(?:this|that|the current).*(?:brief|goal|requirement|direction|plan|context)?/u,
   /^(?:use|treat)\s+this\s+as\s+(?:the\s+)?(?:brief|current brief|goal|plan|requirements)\b/u,
 ]);
+const BRIEF_CORRECTION_INTENT_PATTERNS = Object.freeze([
+  /^(?:等一下|等等|先等等|先别|先不要|不要|别).{0,64}(?:按|照|做|写|执行|实现|开始|这个|刚才|方案|计划|方向|目标|需求).*/u,
+  /(?:撤回|推翻|作废|不要了|不算了|先不做|先别做|先不要做|别按|不要按|别照|不要照|重新整理|重新确认|换个方向|改方向)/u,
+  /^(?:wait|hold on|actually|scratch that|not that|pause|do not|don'?t).{0,96}(?:brief|plan|direction|approach|that|it|execute|implement|build)/u,
+]);
 const GOAL_MODE_INTENT_PATTERNS = Object.freeze([
   /(?:目标模式|goal\s*mode|persistent\s+goal|持续目标|长期目标)/u,
   /(?:设定|设置|创建|建立|给你|交给你).{0,24}(?:目标|goal).{0,48}(?:持续|一直|自动|连续|自己|直到|完成为止|做完|阻塞|blocked|done)/u,
@@ -354,6 +359,14 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
   if (CASUAL_CHAT_INTENT_PATTERN.test(text)) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(GOAL_MODE_INTENT_PATTERNS, text)) return goalModeSubmitFallbackDecisionHint();
   if (matchesAny(EXPLICIT_PLAN_INTENT_PATTERNS, text)) return explicitPlanSubmitFallbackDecisionHint();
+  if (matchesAny(BRIEF_CORRECTION_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'update_brief',
+      confidence: 'high',
+      matchedSignals: ['brief_correction'],
+      dispatch: 'brief_update',
+    });
+  }
   if (matchesAny(EXPLICIT_BRIEF_INTENT_PATTERNS, text)) {
     return routeDecisionHint({
       route: 'update_brief',
@@ -2399,6 +2412,7 @@ function createBuilderGenerationMainService(rawOptions) {
       && !utilTypes.isProxy(event)
       && valueAt(event, 'event_type') === 'task_brief_updated'
       && valueAt(event, 'sequence') > conversationContext.start_head.sequence
+      && valueAt(valueAt(valueAt(event, 'payload'), 'task_capsule'), 'status') === 'ready'
     ));
     if (targets.length === 0) return;
     if (targets.length !== 1) fail();
