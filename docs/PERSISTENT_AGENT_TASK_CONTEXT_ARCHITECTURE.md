@@ -431,6 +431,15 @@ Exit criteria:
   exposing brief text through renderer projections;
 - tests prove unrelated task messages are excluded.
 
+Current checkpoint: run context snapshots now fail closed when the embedded
+RouteDecision is for a different Project, user message, or low-level run task,
+while preserving the existing "chat first, execute later" path where a prior
+Task Capsule brief can have a different low-level `task_id` from the later work
+Run. The current conversation `task_id` is still an execution fact, not the
+final product-level Task Address, so full unrelated-task exclusion must be
+implemented with Session/Task Address scope rules instead of by overloading the
+low-level id.
+
 ### Slice C - Agent Profile Store
 
 Introduce local Agent definitions before full autonomous Agents.

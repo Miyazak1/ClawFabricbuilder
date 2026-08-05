@@ -608,7 +608,14 @@ Evidence requirements:
   tree, Git receipt, Save authority, raw prompt, or Project Revision evidence.
   This creates the first durable "why this run had context" receipt while still
   granting no read/write/command/network permission and exposing no snapshot read
-  IPC/preload surface;
+  IPC/preload surface. The current route-identity checkpoint also makes the
+  snapshot contract fail closed when the embedded RouteDecision belongs to a
+  different Project, user message, or low-level run task. Prior Task Capsule
+  brief references may still carry a different low-level `task_id` because the
+  current Builder uses those ids as execution facts, not the final product-level
+  Session/Task Address boundary. Product-level unrelated-task exclusion remains
+  tied to the Session/Task Address rollout instead of overloading the current
+  conversation `task_id`;
 - the current route-signal contract checkpoint moves `matched_signals` from a
   broad formatted string into the fixed public Builder route-signal vocabulary.
   Conversation records, main-owned route hints, and prompt snapshots all share

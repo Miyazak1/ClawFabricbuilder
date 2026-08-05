@@ -402,6 +402,20 @@ function createBuilderRunContextSnapshot(input) {
     'dispatch',
     'decided_at_ms',
   ]);
+  const projectId = safePattern(valueAt(source, 'project_id'), PROJECT_ID_PATTERN);
+  const taskId = nullable(valueAt(source, 'task_id'), (item) => safePattern(item, TASK_ID_PATTERN));
+  const messageId = safePattern(valueAt(source, 'message_id'), MESSAGE_ID_PATTERN);
+  const routeDecisionProjectId = safePattern(valueAt(routeDecisionSource, 'project_id'), PROJECT_ID_PATTERN);
+  const routeDecisionMessageId = safePattern(valueAt(routeDecisionSource, 'message_id'), MESSAGE_ID_PATTERN);
+  const routeDecisionTaskId = nullable(
+    valueAt(routeDecisionSource, 'task_id'),
+    (item) => safePattern(item, TASK_ID_PATTERN),
+  );
+  if (
+    routeDecisionProjectId !== projectId
+    || routeDecisionMessageId !== messageId
+    || routeDecisionTaskId !== taskId
+  ) fail();
   const routeDecision = sanitizeRouteDecision({
     decision_id: valueAt(routeDecisionSource, 'decision_id'),
     route: valueAt(routeDecisionSource, 'route'),
@@ -415,16 +429,15 @@ function createBuilderRunContextSnapshot(input) {
   const sourceMessageId = taskCapsuleReference === null
     ? null
     : safePattern(valueAt(taskCapsuleReference, 'message_id'), MESSAGE_ID_PATTERN);
-  const messageId = safePattern(valueAt(source, 'message_id'), MESSAGE_ID_PATTERN);
   const includedMessageIds = [messageId];
   if (sourceMessageId !== null && sourceMessageId !== messageId) includedMessageIds.push(sourceMessageId);
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
-    project_id: valueAt(source, 'project_id'),
+    project_id: projectId,
     conversation_id: valueAt(source, 'conversation_id'),
     turn_id: valueAt(source, 'turn_id'),
     run_id: valueAt(source, 'run_id'),
-    task_id: valueAt(source, 'task_id'),
+    task_id: taskId,
     included_message_ids: includedMessageIds,
     route_decision: routeDecision,
     brief_reference: taskCapsule === null ? {

@@ -14,6 +14,7 @@ const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
 const TURN_ID = `builder-turn:${UUID}`;
 const TASK_ID = `builder-task:${UUID}`;
+const OTHER_TASK_ID = 'builder-task:33333333-3333-4333-8333-333333333333';
 const RUN_ID = `builder-run:${UUID}`;
 const MESSAGE_ID = `builder-message:${UUID}`;
 const BRIEF_MESSAGE_ID = 'builder-message:22222222-2222-4222-8222-222222222222';
@@ -65,6 +66,16 @@ function latestTaskCapsule() {
     message_id: BRIEF_MESSAGE_ID,
     task_capsule: {
       task_id: TASK_ID,
+      last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
+    },
+  };
+}
+
+function priorBriefTaskCapsule() {
+  return {
+    message_id: BRIEF_MESSAGE_ID,
+    task_capsule: {
+      task_id: OTHER_TASK_ID,
       last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
     },
   };
@@ -152,6 +163,38 @@ test('binds a task capsule source message without including brief text', () => {
   assert.doesNotMatch(
     JSON.stringify(snapshot),
     /assistant_proposal|latest_user_goal|current_brief|credential|provider|source_tree|prompt/iu,
+  );
+});
+
+test('keeps prior brief task ids while rejecting mismatched route identities', () => {
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    latest_task_capsule: priorBriefTaskCapsule(),
+  }));
+
+  assert.equal(snapshot.task_id, TASK_ID);
+  assert.deepEqual(snapshot.included_message_ids, [MESSAGE_ID, BRIEF_MESSAGE_ID]);
+  assert.equal(snapshot.brief_reference.task_id, OTHER_TASK_ID);
+  assert.equal(snapshot.brief_reference.source_message_id, BRIEF_MESSAGE_ID);
+  assert.equal(snapshot.brief_reference.contextual_build_ready, true);
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      route_decision: routeDecision({ task_id: OTHER_TASK_ID }),
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      route_decision: routeDecision({ message_id: BRIEF_MESSAGE_ID }),
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      route_decision: routeDecision({
+        project_id: 'builder-project:33333333-3333-4333-8333-333333333333',
+      }),
+    })),
+    BuilderRunContextSnapshotError,
   );
 });
 
