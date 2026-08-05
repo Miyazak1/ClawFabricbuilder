@@ -125,5 +125,18 @@ the mirror is regenerated or marked stale.
 6. Delete Project with active-run checks and full scoped cleanup.
 7. Optional maintenance command for WAL checkpoint and vacuum.
 
+Current checkpoint: Builder now has a pure main-side storage lifecycle report
+contract, `builder-storage-lifecycle-report.v1`. It accepts only sanitized
+project-level counts, active-run summaries, dependency counts, derived-storage
+byte totals, and retention policy values supplied by a future main-owned
+repository reader. It returns deterministic read-only recommendations for
+export, archive, delete preflight, derived cleanup, and SQLite maintenance. The
+report deliberately performs no SQLite delete, VACUUM, derived cleanup, export
+materialization, provider dispatch, source mutation, Git mutation, renderer
+authority, or credential access. Active runs block destructive recommendations,
+saved-version conversation dependencies block conversation deletion, and project
+deletion remains an explicit future confirmation path rather than automatic
+cleanup.
+
 The first destructive delete feature must ship with replay, foreign-key,
 active-run, export-before-delete, and package/canary evidence.
