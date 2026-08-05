@@ -93,8 +93,16 @@ const {
 const {
   createBuilderToolSourceContextCollector,
 } = require('./builder-tool-source-context-collector.cjs');
+const {
+  createBuilderTaskCapsuleStore,
+} = require('./builder-task-capsule-store.cjs');
+const {
+  createBuilderTaskCapsuleRecordingService,
+} = require('./builder-task-capsule-recording-service.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
+const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
+const TASK_CAPSULE_DATABASE = 'task-capsules.sqlite';
 const OPTION_KEYS = Object.freeze([
   'fetchImpl',
   'grantPermissionForExplicitApproval',
@@ -997,6 +1005,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   const options = safeOptions(rawOptions);
   let providerConfigRepository = null;
   let permissionFactStore = null;
+  let taskCapsuleStore = null;
   let projectMainAuthority = null;
   let service;
   let adapter;
@@ -1041,6 +1050,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const permissionRoot = path.join(options.userDataPath, PERMISSION_DIRECTORY);
     fs.mkdirSync(permissionRoot, { recursive: true, mode: 0o700 });
     permissionFactStore = createBuilderPermissionFactStore(path.join(permissionRoot, PERMISSION_DATABASE));
+    const taskCapsuleRoot = path.join(options.userDataPath, TASK_CAPSULE_DIRECTORY);
+    fs.mkdirSync(taskCapsuleRoot, { recursive: true, mode: 0o700 });
+    taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(taskCapsuleRoot, TASK_CAPSULE_DATABASE));
+    const taskCapsuleRecordingService = createBuilderTaskCapsuleRecordingService({
+      task_capsule_store: taskCapsuleStore,
+    });
     const permissionEvaluator = permissionFactStore.create_evaluator();
     const permissionAdmission = createBuilderToolPermissionAdmission({
       actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
@@ -1069,6 +1084,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       conversationService,
       gitAuthority: projectMainAuthority.git_authority,
       sourceContextCollector,
+      taskCapsuleRecordingService,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
         const started = generationStartedEvent(event);
@@ -1654,6 +1670,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
+    try { taskCapsuleStore?.close(); } catch { /* fixed failure below */ }
     try { permissionFactStore?.close(); } catch { /* fixed failure below */ }
     try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
     fail();
@@ -1757,6 +1774,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
   }
 
+  function closeTaskCapsuleStore() {
+    if (taskCapsuleStore === null) return true;
+    try {
+      taskCapsuleStore.close();
+      taskCapsuleStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return Object.freeze({
     runtime_version: BUILDER_GENERATION_IPC_RUNTIME_VERSION,
     channels: Object.freeze(handlers.map(({ channel }) => channel)),
@@ -1772,18 +1800,20 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return true;
       } catch {
         const removed = removeInstalledHandlers();
-        const permissionsClosed = closePermissionFactStore();
+        const taskCapsulesClosed = closeTaskCapsuleStore();
+        const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        state = removed && permissionsClosed && closed ? 'disposed' : 'cleanup_required';
+        state = removed && taskCapsulesClosed && permissionsClosed && closed ? 'disposed' : 'cleanup_required';
         fail();
       }
     },
     dispose() {
       if (state === 'disposed') return false;
       if (state === 'idle') {
-        const permissionsClosed = closePermissionFactStore();
+        const taskCapsulesClosed = closeTaskCapsuleStore();
+        const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        if (!permissionsClosed || !closed) {
+        if (!taskCapsulesClosed || !permissionsClosed || !closed) {
           state = 'cleanup_required';
           fail();
         }
@@ -1792,9 +1822,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       const cancelled = cancelActiveRequests();
       const removed = removeInstalledHandlers();
-      const permissionsClosed = cancelled ? closePermissionFactStore() : false;
+      const taskCapsulesClosed = cancelled ? closeTaskCapsuleStore() : false;
+      const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
       const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-      if (!cancelled || !removed || !permissionsClosed || !closed) {
+      if (!cancelled || !removed || !taskCapsulesClosed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();
       }
@@ -1810,6 +1841,8 @@ module.exports = Object.freeze({
   GIT_RUNTIME_DIRECTORY,
   METADATA_DIRECTORY,
   METADATA_DATABASE,
+  TASK_CAPSULE_DIRECTORY,
+  TASK_CAPSULE_DATABASE,
   BuilderGenerationIpcRuntimeError,
   ANSWER_DRAFT_CHANNEL,
   createBuilderGenerationIpcRuntime,

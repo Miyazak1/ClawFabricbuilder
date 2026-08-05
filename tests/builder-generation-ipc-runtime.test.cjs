@@ -217,9 +217,42 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.conversationService, context.__conversationService);
             assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
             assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
+            assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
+          },
+        };
+      }
+      if (specifier === './builder-task-capsule-store.cjs') {
+        return {
+          createBuilderTaskCapsuleStore: (databasePath) => {
+            probes.taskCapsuleDatabasePath = databasePath;
+            context.__taskCapsuleStore = {
+              closed: false,
+              store_version: 'builder-task-capsule-store.v1',
+              record_task_capsule_update() {},
+              read_task_capsule_update() {},
+              read_latest_task_capsule() {},
+              close() {
+                this.closed = true;
+                return true;
+              },
+            };
+            return context.__taskCapsuleStore;
+          },
+        };
+      }
+      if (specifier === './builder-task-capsule-recording-service.cjs') {
+        return {
+          createBuilderTaskCapsuleRecordingService: (options) => {
+            probes.taskCapsuleRecordingOptions = options;
+            assert.equal(options.task_capsule_store, context.__taskCapsuleStore);
+            context.__taskCapsuleRecordingService = {
+              service_version: 'builder-task-capsule-recording-service.v1',
+              record_task_capsule_from_conversation() {},
+            };
+            return context.__taskCapsuleRecordingService;
           },
         };
       }
@@ -689,6 +722,7 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-config-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-permissions-v1', 'permissions.sqlite')), true);
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite')), true);
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
   assert.deepEqual([...ipcMain.handlers.keys()], runtime.channels);
@@ -1829,10 +1863,12 @@ test('closes project main authority when generation channel registration fails',
   });
 
   assert.equal(harness.context.__projectMainAuthority.closed, false);
+  assert.equal(harness.context.__taskCapsuleStore.closed, false);
   assert.throws(() => runtime.register(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.deepEqual([...ipcMain.handlers.keys()], []);
+  assert.equal(harness.context.__taskCapsuleStore.closed, true);
   assert.equal(harness.context.__projectMainAuthority.closed, true);
   assert.equal(runtime.dispose(), false);
 });
@@ -1860,12 +1896,18 @@ test('composes project main authority and closes it on dispose', (t) => {
 
   assert.equal(probes.projectMainAuthorityOptions.userDataPath, userDataPath);
   assert.deepEqual(Object.keys(probes.projectMainAuthorityOptions), ['userDataPath']);
+  assert.equal(probes.taskCapsuleDatabasePath,
+    path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite'));
+  assert.equal(probes.taskCapsuleRecordingOptions.task_capsule_store,
+    runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(probes.serviceOptions.conversationService,
     runtimeModule.context.__conversationService);
   assert.equal(probes.serviceOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
+  assert.equal(probes.serviceOptions.taskCapsuleRecordingService,
+    runtimeModule.context.__taskCapsuleRecordingService);
   assert.equal(probes.saveOptions.generationDrafts, service);
   assert.equal(probes.saveOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
@@ -1879,6 +1921,7 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__conversationService);
   assert.equal(typeof runtimeModule.context.__conversationService.read_stream, 'function');
   assert.equal(runtime.dispose(), false);
+  assert.equal(runtimeModule.context.__taskCapsuleStore.closed, true);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
 });
 
@@ -2859,6 +2902,8 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.doesNotMatch(source, /createBuilderProductMetadataDatabase/u);
   assert.doesNotMatch(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
+  assert.match(source, /createBuilderTaskCapsuleStore/u);
+  assert.match(source, /createBuilderTaskCapsuleRecordingService/u);
   assert.match(source, /createBuilderTaskStreamIpcAdapter/u);
   assert.match(source, /createBuilderPlanReviewIpcAdapter/u);
   assert.match(source, /channel:\s*READ_TASK_STREAM_CHANNEL/u);

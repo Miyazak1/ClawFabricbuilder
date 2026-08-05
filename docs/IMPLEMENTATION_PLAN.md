@@ -561,6 +561,14 @@ Evidence requirements:
   provider/model/tool dispatch, build admission, source/Git mutation,
   permission grant, Review, Revision, Artifact, command execution, network
   access, credential handling, or community/social surface;
+- the current generation IPC runtime checkpoint creates the local
+  `builder-task-capsules-v1/task-capsules.sqlite` store under app user data,
+  composes the recording service, passes it into generation main, and closes the
+  store on registration failure or runtime dispose. This makes real desktop
+  answer turns use the same main-owned Task Capsule durability path without
+  adding a renderer channel, preload surface, provider/tool dispatch,
+  source/Git mutation, permission grant, Review, Revision, Artifact, command
+  execution, network access, credential handling, or community/social surface;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current

@@ -610,7 +610,9 @@ Revision, Artifact, command execution, network access, or credential handling.
 Generation main can now receive that service as a main-owned optional
 dependency and, after a read-only answer completes, record only the newly
 appended `task_brief_updated` event into the store. Ordinary read-only answers
-and old historical task-brief events are ignored by this recording path.
+and old historical task-brief events are ignored by this recording path. The
+desktop IPC runtime now creates that store under app user data and injects the
+recording service into generation main without exposing a renderer command.
 Selecting a workspace does not turn exploratory product discussion into work
 admission, and must not request current-project write permission. The renderer
 dispatches these turns through the answer path; generation main performs its own

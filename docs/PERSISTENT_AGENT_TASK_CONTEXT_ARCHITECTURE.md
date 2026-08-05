@@ -411,7 +411,10 @@ command execution, network access, or credential handling. Generation main now
 has an optional main-owned integration that calls this recording service only
 after a read-only answer actually appends a new `task_brief_updated` event, so
 the Task Capsule store starts following real Builder answer turns without
-turning ordinary chat into durable work context.
+turning ordinary chat into durable work context. The desktop IPC runtime now
+creates and closes the local Task Capsule store as part of its main-owned
+runtime composition, so this durability path exists in real packaged runtime
+assembly rather than only in contract tests.
 
 ### Slice B - Context Snapshot Records
 
