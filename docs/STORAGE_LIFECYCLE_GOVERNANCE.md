@@ -12,10 +12,10 @@ archive, export, or inspect.
   facts.
 - Git remains the durable code authority for source trees and saved project
   versions.
-- JSONL, Markdown, exported bundles, static previews, logs, and session-tree
-  mirrors are derived projections. They can improve transparency, portability,
-  recovery, and Pi-like session tree ergonomics, but they must never become a
-  second product authority.
+- JSONL, Markdown, Work Capsule manifests, exported bundles, static previews,
+  logs, and session-tree mirrors are derived projections. They can improve
+  transparency, portability, recovery, reuse, and Pi-like session tree
+  ergonomics, but they must never become a second product authority.
 - Compaction is context assembly for model prompting. It is not data deletion,
   retention, archival, or legal cleanup.
 
@@ -120,16 +120,31 @@ Pi-like JSONL session trees are useful as a user-readable and repairable layer:
 They are still mirrors. If a JSONL file conflicts with SQLite, SQLite wins, and
 the mirror is regenerated or marked stale.
 
+## Work Capsule Lifecycle
+
+Work Capsule starts as a local derived manifest over saved and reviewed work. It
+summarizes Project Revision, Artifact Preview, Review Decision, verification,
+public summary, remix metadata, and Session/Task Address references without
+copying private source trees, credentials, provider envelopes, raw prompts, or
+unredacted logs into a share surface.
+
+A local capsule manifest may be regenerated from Git and SQLite authority. An
+exported capsule package is user-owned output and needs explicit path, overwrite,
+privacy, and stale-reference rules before materialization. Capsule cleanup must
+therefore distinguish local derived manifests from exported files the user chose
+to create.
+
 ## Delivery Order
 
 1. Read-only export from SQLite replay to JSONL/Markdown.
-2. Archive Conversation and Archive Project UI filters.
-3. Mirror repair/regeneration command.
-4. Retention report listing caches, failed drafts, archived items, and estimated
+2. Local Work Capsule manifest contract over saved reviewed results.
+3. Archive Conversation and Archive Project UI filters.
+4. Mirror and local capsule repair/regeneration command.
+5. Retention report listing caches, failed drafts, archived items, and estimated
    reclaimable space.
-5. Delete Conversation with dependency checks.
-6. Delete Project with active-run checks and full scoped cleanup.
-7. Optional maintenance command for WAL checkpoint and vacuum.
+6. Delete Conversation with dependency checks.
+7. Delete Project with active-run checks and full scoped cleanup.
+8. Optional maintenance command for WAL checkpoint and vacuum.
 
 Current checkpoint: Builder now has a pure main-side storage lifecycle report
 contract, `builder-storage-lifecycle-report.v1`, and the product metadata
@@ -154,6 +169,11 @@ internal provider/source details from the exported surface. It does not write th
 mirror to disk, mutate SQLite or Git, materialize an export bundle, or grant
 renderer export authority. A later main-owned export service may persist these
 derived mirrors after adding path, overwrite, active-run, and package evidence.
+
+The next Work Capsule slice should follow the same read-only posture: define a
+pure main-side manifest contract that references existing Git and SQLite facts,
+produces no file, publishes nothing, and grants no renderer, network, source,
+Git, Save, delete, or community authority.
 
 The first destructive delete feature must ship with replay, foreign-key,
 active-run, export-before-delete, and package/canary evidence.

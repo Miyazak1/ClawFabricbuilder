@@ -19,6 +19,12 @@ priority ahead of the Codex-like personal workbench, and they must not be
 described as shipped until their own gates have package, provider, restart,
 permission, and review evidence.
 
+Work Capsule is the bridge from trusted personal work to later sharing and
+community. It starts as a local reviewed result manifest bound to Revision,
+Artifact, Review, verification, and Session/Task Address facts; it is not a
+social feed item, raw transcript export, source zip, autonomous experiment
+branch, or publish action.
+
 ## Verified Starting Point
 
 The standalone Builder has a dedicated desktop shell, encrypted provider
@@ -180,7 +186,13 @@ retry, draft continuation, and approved-plan continuation do not create a new
 Session/Task Address; they remain later binding work because they must attach to
 an existing product Task Address rather than silently fork a new one. The
 conversation-scoped Address store lookup is now the main-only read prerequisite
-for that later binding work, but generation main does not consume it yet.
+for that later binding work. The current queued-follow-up Task Address binding
+checkpoint adds a read-only binding service and wires generation main/runtime so
+queued follow-up build work must reconnect to the current product Task Address
+before provider dispatch. It still opens no IPC/preload surface, records no new
+Session/Task Address, appends no Conversation event, grants no permission, and
+does not bind retry, draft continuation, approved-plan continuation, or subagent
+delegation.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 
@@ -1681,11 +1693,43 @@ Evidence requirements:
 
 ### Track C - Publish and Community
 
+#### Gate C0 - Local Work Capsule Manifest Contract
+
+Define the local Work Capsule manifest before any public sharing surface. A Work
+Capsule is a reviewed portable work package bound to an existing saved result,
+not an attention-feed post or autonomous experiment branch.
+
+Evidence requirements:
+
+- the first checkpoint is the independent Work Capsule architecture decision
+  document;
+- the next code slice is a pure main-side Local Work Capsule Manifest contract;
+- the manifest references existing Project Revision, Artifact Preview, Review
+  Decision, verification summary, public summary, remix metadata placeholder,
+  and Session/Task Address facts;
+- invalid, stale, cross-project, private, or unreviewed references fail closed;
+- the contract copies no credentials, provider envelopes, raw prompts, private
+  source trees, unredacted logs, or conversation internals into the public
+  surface;
+- no renderer IPC/preload surface, network, upload, publish, community UI,
+  autonomous run, source mutation, Git mutation, Save authority, delete
+  authority, or token-running experiment branch is introduced.
+
+Delivery order:
+
+```text
+Work Capsule architecture decision
+-> Local Work Capsule Manifest contract
+-> Exportable Capsule package
+-> Shareable Capsule candidate
+-> Community Remix
+```
+
 #### Gate C1 - Local Share Candidate and Export
 
 Create a user-confirmed, content-addressed share candidate or export package
-bound to an immutable Revision/Artifact. It is not a publication and has no
-public URL.
+bound to an immutable Revision/Artifact, preferably through the Work Capsule
+manifest shape. It is not a publication and has no public URL.
 
 #### Gate C2 - Publication, Explore, and Reuse
 

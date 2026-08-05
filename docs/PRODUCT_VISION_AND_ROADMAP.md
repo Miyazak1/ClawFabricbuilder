@@ -25,9 +25,11 @@ long-term system has six connected experiences:
 These experiences are layers, not four or six equal products to build at once.
 The trusted programming loop is the engine. Git, Review, Permission, Revision,
 and Artifact facts are the trusted workbench floor. Agents are long-running
-workers on that floor. Community is a reusable work network. Playful exploration
-and expression may make the product feel alive, but they must stay low-risk and
-cannot bypass review, permission, save, publish, or delete boundaries.
+workers on that floor. Work Capsules are reviewed portable result packages that
+bridge local trusted work into later export, sharing, and remix. Community is a
+reusable work network. Playful exploration and expression may make the product
+feel alive, but they must stay low-risk and cannot bypass review, permission,
+save, publish, or delete boundaries.
 
 The trusted foundation is shared across all six experiences: Git-backed code
 version facts, Project Revision receipts, Workflow Version, Goal, Task, Run,
@@ -42,6 +44,10 @@ facts, but the user-visible unit for continuing work, fork/clone/handoff,
 archive/delete, cross-session references, and subagent boundaries is a Builder
 Session with addressable Tasks. The model is defined in
 [Builder Session and Task Address Architecture](BUILDER_SESSION_TASK_ADDRESS_ARCHITECTURE.md).
+
+Reusable work must also have a result-centered package shape before it becomes a
+community object. The Work Capsule model is defined in
+[Work Capsule Architecture](WORK_CAPSULE_ARCHITECTURE.md).
 
 In this roadmap, a **Goal** is not a plan, todo title, working brief, or single
 build instruction. It is the persistent-agent contract: the agent keeps moving
@@ -210,6 +216,10 @@ Required facts:
 - storage lifecycle operations are explicit: export and archive arrive before
   destructive delete, destructive delete must fail closed on active or pending
   Runs, and cache cleanup is separate from deleting authoritative facts.
+- local Work Capsule manifests may summarize a saved, reviewed Project Revision
+  with its Artifact, Review, verification, public summary, and Session/Task
+  Address references. They are local derived projections, not publish actions,
+  social posts, autonomous experiment branches, or source authority.
 
 This stage spans common foundation Gates F0-F7 in the implementation plan;
 individual Git kernel, SQLite metadata, conversation, History, Version, and provider improvements may ship
@@ -493,8 +503,15 @@ Run, Artifact, Permission, or Review.
 The first Community object should be a Work Capsule: an immutable project
 version, template, artifact, or Agent workflow package with provenance,
 verification, compatibility, and remix lineage. Raw chat transcripts, attention
-feed items, personality posts, and unreviewed Agent output are not Work
-Capsules.
+feed items, personality posts, autonomous experiment branches, and unreviewed
+Agent output are not Work Capsules.
+
+Work Capsule should not wait for the full community to exist. The product path
+is local first: `Local Work Capsule Manifest -> Exportable Capsule -> Shareable
+Capsule -> Community Remix`. Local capsules are reviewed result summaries bound
+to Project Revision, Artifact, Review, verification, and Session/Task Address
+facts; publishing remains a later explicit gate. These names are stable product
+language, not temporary community UI labels.
 
 Publishing is always explicit. The first local Share experience may only create
 a safe proof or export package; public links, profiles, ranking, moderation,
