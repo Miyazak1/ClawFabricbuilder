@@ -1134,6 +1134,75 @@ test('includes a bounded prior conversation brief for context-grounded plan prom
   );
 });
 
+test('keeps queued follow-up messages in the bounded conversation brief', () => {
+  const rawRequest = request({ instruction: 'What should happen next?', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderExplanationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: [
+      {
+        event_type: 'turn_submitted',
+        payload: {
+          turn_id: 'builder-turn:active-work',
+          mode: 'work',
+          message: { text: 'Build a small project dashboard.' },
+        },
+      },
+      {
+        event_type: 'turn_followup_queued',
+        payload: {
+          turn_id: 'builder-turn:active-work',
+          run_id: 'builder-run:active-work',
+          message: { text: 'After this, make the summary shorter.' },
+        },
+      },
+      {
+        event_type: 'turn_submitted',
+        payload: {
+          turn_id: 'builder-turn:current',
+          mode: 'question',
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174098',
+            text: rawRequest.instruction,
+          },
+          task: null,
+          route_decision: promptRouteDecision({
+            route: 'answer',
+            dispatch: 'reply',
+            required_permissions: [],
+            permission_result: 'not_required',
+          }),
+        },
+      },
+      {
+        event_type: 'run_started',
+        payload: {
+          turn_id: 'builder-turn:current',
+          input_digest: rawRequest.request_digest,
+        },
+      },
+    ],
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.deepEqual(context.conversation_brief.entries, [
+    {
+      role: 'user',
+      kind: 'work',
+      text: 'Build a small project dashboard.',
+    },
+    {
+      role: 'user',
+      kind: 'queued_followup',
+      text: 'After this, make the summary shorter.',
+    },
+  ]);
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /builder-turn:|builder-run:|builder-message:|sha256:|request_digest|provider|credential|api[_-]?key|Bearer/iu,
+  );
+});
+
 test('includes verified source text for existing-project revision prompts', () => {
   const rawRequest = request({ existingProjectId: PROJECT_ID, instruction: 'Add keyboard shortcuts.' });
   const base = sourceTree([

@@ -1516,6 +1516,32 @@ function addSteeringMessage(evidence) {
   return replaceTaskStreamItems(evidence, items);
 }
 
+function addQueuedFollowupMessage(evidence) {
+  const items = [...evidence.task_stream.conversation.items];
+  let runStartedIndex = -1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index].item_kind === 'run_started' && items[index].task_id !== null) {
+      runStartedIndex = index;
+      break;
+    }
+  }
+  if (runStartedIndex < 0) throw new Error('missing candidate run');
+  const started = items[runStartedIndex];
+  items.splice(runStartedIndex + 1, 0, {
+    item_kind: 'user_message',
+    sequence: 0,
+    turn_id: started.turn_id,
+    message: {
+      message_id: 'builder-message:31313131-3131-4131-8131-313131313131',
+      text: 'After this finishes, make the summary shorter.',
+    },
+    message_kind: 'queued_followup',
+    mode: null,
+    task: null,
+  });
+  return replaceTaskStreamItems(evidence, items);
+}
+
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
     bridgeVersion: 'builder-preload.v20',
@@ -3044,6 +3070,35 @@ test('accepts active-run steering messages without changing candidate or revisio
   });
   assert.doesNotMatch(
     JSON.stringify(assertReadEvidence(steered).task_stream),
+    /request_digest|provider|credential|source_tree|commit_oid|tree_oid|save_evidence/iu,
+  );
+});
+
+test('accepts active-run queued follow-ups without changing candidate or revision authority', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const firstRevision = bridgeEvidence(projectId, true, 1).current.product_revision_receipt;
+  const queued = addQueuedFollowupMessage(bridgeEvidence(projectId, true, 1, 2, 0));
+  const facts = assertTaskStreamPendingCandidateFacts(queued, firstRevision, 2);
+
+  assert.deepEqual(facts, {
+    answer_count: 0,
+    accepted_review_count: 1,
+    candidate_ready_count: 2,
+    candidate_reviewed_count: 1,
+    candidate_result_count: 2,
+    explanation_result_count: 0,
+    head_sequence: 10,
+    item_count: 10,
+    latest_candidate_review: 'pending',
+    latest_candidate_distinct_from_saved_revision: true,
+    run_progress_count: 0,
+    saved_revision_number: 1,
+    source_availability: 'not_loaded',
+    tool_request_count: 0,
+    tool_result_count: 0,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(assertReadEvidence(queued).task_stream),
     /request_digest|provider|credential|source_tree|commit_oid|tree_oid|save_evidence/iu,
   );
 });

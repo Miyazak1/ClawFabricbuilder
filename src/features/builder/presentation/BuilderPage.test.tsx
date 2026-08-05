@@ -470,6 +470,37 @@ async function progressActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function queuedFollowupActivity() {
+  const wire = createProgressTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 7,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 7,
+      },
+      items: [
+        ...wire.conversation.items,
+        {
+          item_kind: 'user_message',
+          sequence: 7,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+            text: 'After this, make the summary shorter.',
+          },
+          message_kind: 'queued_followup',
+          mode: null,
+          task: null,
+        },
+      ],
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function agentStepProgressActivity() {
   const wire = createTaskStreamWire();
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
@@ -3273,6 +3304,28 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-activity-card="Preparing result"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /provider_request_started|provider_response_received|result_preparing|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
+    );
+  });
+
+  it('renders queued active-run follow-ups as a distinct user message', async () => {
+    const { saved } = await snapshots();
+    const activity = await queuedFollowupActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const queued = container.querySelector('[data-builder-activity-card="You queued a follow-up"]');
+    expect(queued).not.toBeNull();
+    expect(queued?.getAttribute('data-builder-activity-role')).toBe('user');
+    expect(queued?.textContent).toContain('After this, make the summary shorter.');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /builder-run:|builder-message:|sha256:|provider|credential|source_tree|receipt|running|live/iu,
     );
   });
 

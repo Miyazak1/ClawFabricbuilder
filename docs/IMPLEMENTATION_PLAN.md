@@ -645,13 +645,23 @@ Evidence requirements:
   text inside the provider/tool loop. The current desktop composer calls it only
   after live work has been bound to a Project Conversation and presents the
   action as adding context, not as changing the already-issued provider request;
+- the current main-only queued-follow-up fact checkpoint records a bounded user
+  follow-up message against the same trusted active Run context and exposes only
+  the renderer-safe `turn_followup_queued` / `message_kind: queued_followup`
+  projection through the read-only Task Stream. It is a durable conversation
+  fact for "run this after the current work", not an executor: it registers no
+  IPC/preload command, starts no second Run, mutates no issued provider/tool
+  request, reads or writes no source, creates no Git candidate, grants no
+  permission, and creates no Save, Review, Project Revision, branch, or
+  compaction fact;
 - the current active-answer admission checkpoint keeps explicit build/change
   commands out of the steering path while a read-only answer is running. The
-  renderer still permits ordinary steering context during active work, but when
-  the active status is `answering` and the intent router classifies the new
-  message as `build`, the composer records local route evidence, clears the
-  accepted input, shows a queued-build notice, and dispatches it only after the
-  read-only answer has terminally left the active path. The queued dispatch then
+  renderer prefers queued follow-up route evidence for non-cancel input during
+  active work; when the active status is `answering` and the intent router
+  classifies the new message as `build`, the composer records local route
+  evidence, clears the accepted input, shows a queued-build notice, and
+  dispatches it only after the read-only answer has terminally left the active
+  path. The queued dispatch then
   re-enters the normal route, workspace, and current-project write permission
   checks before any `submit`, provider, Git, SQLite, Save, Review, command, or
   permission authority can run;

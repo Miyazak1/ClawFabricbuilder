@@ -751,6 +751,48 @@ describe('Builder conversation snapshot', () => {
     expect(Object.isFrozen(snapshot.conversation.items[2])).toBe(true);
   });
 
+  it('accepts a queued active-run follow-up without treating it as a submitted turn', () => {
+    const wire = candidateWire();
+    const runStarted = wire.conversation.items[1]!;
+    wire.conversation.head_sequence = 3;
+    wire.conversation.recorded_active_turn_id = runStarted.turn_id;
+    wire.conversation.window.last_sequence = 3;
+    wire.conversation.items = [
+      wire.conversation.items[0]!,
+      runStarted,
+      {
+        item_kind: 'user_message',
+        sequence: 3,
+        turn_id: runStarted.turn_id,
+        message: {
+          message_id: id('message', 40),
+          text: 'After this, make the summary shorter.',
+        },
+        message_kind: 'queued_followup',
+        mode: null,
+        task: null,
+      },
+    ];
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.recorded_active_turn_id).toBe(runStarted.turn_id);
+    expect(snapshot.conversation.items[2]).toEqual({
+      item_kind: 'user_message',
+      sequence: 3,
+      turn_id: runStarted.turn_id,
+      message: {
+        message_id: id('message', 40),
+        text: 'After this, make the summary shorter.',
+      },
+      message_kind: 'queued_followup',
+      mode: null,
+      task: null,
+    });
+  });
+
   it('accepts a durable task brief update after a question explanation', () => {
     const snapshot = sanitizeBuilderConversationSnapshot(taskBriefWire());
 

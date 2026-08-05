@@ -3289,7 +3289,11 @@ function sanitizeTaskStreamUserMessage(source, sequence) {
   const messageKind = source.message_kind;
   const mode = source.mode;
   const task = sanitizeTaskStreamTask(source.task);
-  if (messageKind !== 'submitted' && messageKind !== 'steering') fail('canary_evidence_failed');
+  if (
+    messageKind !== 'submitted'
+    && messageKind !== 'steering'
+    && messageKind !== 'queued_followup'
+  ) fail('canary_evidence_failed');
   if (messageKind === 'submitted') {
     if ((mode !== 'question' && mode !== 'work') || ((mode === 'work') !== (task !== null))) {
       fail('canary_evidence_failed');
@@ -3680,6 +3684,7 @@ function taskStreamItemCounts(items) {
     tool_result_failed_count: 0,
     tool_result_succeeded_count: 0,
     turn_completed_count: 0,
+    queued_followup_message_count: 0,
     steering_message_count: 0,
     submitted_message_count: 0,
     user_message_count: 0,
@@ -3713,7 +3718,11 @@ function taskStreamItemCounts(items) {
         }
         userMessageByTurnId.set(item.turn_id, item);
       } else {
-        counts.steering_message_count += 1;
+        if (item.message_kind === 'steering') {
+          counts.steering_message_count += 1;
+        } else {
+          counts.queued_followup_message_count += 1;
+        }
         const activeRun = activeRunByTurnId.get(item.turn_id) ?? null;
         if (activeRun === null || activeRun.sequence >= item.sequence) fail('canary_evidence_failed');
       }
@@ -4357,9 +4366,11 @@ function expectedTaskStreamItemCount(
   const expectedBaseItemCount = expectedTurnCount * 4
     + expectedAcceptedReviews
     + planOptions.planReviews;
-  const expectedUserMessageCount = expectedTurnCount + counts.steering_message_count;
+  const expectedActiveRunMessageCount =
+    counts.steering_message_count + counts.queued_followup_message_count;
+  const expectedUserMessageCount = expectedTurnCount + expectedActiveRunMessageCount;
   const expectedItemCount = expectedBaseItemCount
-    + counts.steering_message_count
+    + expectedActiveRunMessageCount
     + counts.run_context_snapshot_count
     + counts.run_progress_count
     + counts.task_brief_update_count

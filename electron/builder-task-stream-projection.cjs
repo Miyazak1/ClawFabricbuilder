@@ -191,6 +191,16 @@ function itemFromEvent(event, progressStagesByRun) {
         mode: null,
         task: null,
       };
+    case 'turn_followup_queued':
+      return {
+        item_kind: 'user_message',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        message: messageProjection(payload.message),
+        message_kind: 'queued_followup',
+        mode: null,
+        task: null,
+      };
     case 'task_brief_updated': {
       const capsule = payload.task_capsule;
       return {

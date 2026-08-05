@@ -661,8 +661,10 @@ Deliverables:
 Current checkpoint: renderer and main fallback routing share the same public
 matched-signal vocabulary for current Builder routes, including
 `local_file_artifact` for Markdown/README/notes/text artifact writes and
-`active_run_followup` for the current renderer-only safe queued follow-up
-surface. Main
+`active_run_followup` for the current safe queued follow-up surface. A main-only
+Conversation fact now exists for `turn_followup_queued` / `queued_followup`
+Task Stream projection, but the renderer has not yet received an IPC/preload
+queue command and this fact does not start a second Run. Main
 `submit` now dispatches from the resolved `RouteDecision` instead of a second
 boolean answer/build classifier, so workspace admission, write permission, and
 provider route selection cannot silently diverge.

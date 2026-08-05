@@ -142,6 +142,7 @@ const PAYLOAD_KEYS = Object.freeze({
     'message', 'turn_id', 'mode', 'task', 'base_revision', 'route_decision',
   ]),
   turn_steered: Object.freeze(['turn_id', 'run_id', 'message']),
+  turn_followup_queued: Object.freeze(['turn_id', 'run_id', 'message']),
   task_brief_updated: Object.freeze(['turn_id', 'run_id', 'message_id', 'task_capsule']),
   run_context_snapshot_recorded: Object.freeze(['turn_id', 'run_id', 'snapshot']),
   candidate_rejected: Object.freeze([
@@ -680,6 +681,12 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
       return {
         turn_id: safeTurnId(valueAt(value, 'turn_id')),
         run_id: nullable(valueAt(value, 'run_id'), safeRunId),
+        message: sanitizeMessage(valueAt(value, 'message')),
+      };
+    case 'turn_followup_queued':
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
         message: sanitizeMessage(valueAt(value, 'message')),
       };
     case 'task_brief_updated':

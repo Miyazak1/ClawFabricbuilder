@@ -595,6 +595,30 @@ test('keeps an active turn reconstructible before terminal events arrive', () =>
   assert.equal(replay.turns[0].messages.at(-1).kind, 'steering');
 });
 
+test('replays queued follow-ups only while the current run is active', () => {
+  const active = completeHistory().slice(0, 5);
+  const queued = append(active, 'turn_followup_queued', {
+    turn_id: id('turn', 1),
+    run_id: id('run', 2),
+    message: { message_id: id('message', 30), text: 'After this, make the summary shorter.' },
+  }, 30);
+  const replay = replayBuilderConversation(queued);
+  assert.deepEqual(replay.turns[0].messages.map((message) => message.kind), [
+    'submitted',
+    'run_result',
+    'steering',
+    'queued_followup',
+  ]);
+  assert.equal(replay.turns[0].messages.at(-1).text, 'After this, make the summary shorter.');
+
+  const controlled = completeHistory().slice(0, 6);
+  assert.throws(() => replayBuilderConversation(append(controlled, 'turn_followup_queued', {
+    turn_id: id('turn', 1),
+    run_id: id('run', 2),
+    message: { message_id: id('message', 31), text: 'This should not queue after control.' },
+  }, 31)), assertReplayError);
+});
+
 test('replays durable task brief updates only after an update-brief explanation completes', () => {
   let events = [];
   events = append(events, 'turn_submitted', {
@@ -1422,7 +1446,7 @@ test('contains all transition rules in replay and none in the SQLite persistence
     require.resolve('../electron/builder-product-metadata-database.cjs'), 'utf8',
   );
   for (const eventType of [
-    'turn_submitted', 'turn_steered', 'run_started', 'run_interrupt_requested',
+    'turn_submitted', 'turn_steered', 'turn_followup_queued', 'run_started', 'run_interrupt_requested',
     'run_cancel_requested', 'tool_call_requested', 'tool_call_result_recorded', 'candidate_rejected',
     'run_completed', 'turn_completed',
   ]) {

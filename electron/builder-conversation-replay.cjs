@@ -155,13 +155,21 @@ function applyTurnSubmitted(state, payload) {
   state.activeTurnId = payload.turn_id;
 }
 
-function applyTurnSteered(state, payload) {
+function applyActiveRunUserMessage(state, payload, kind) {
   const turn = requireActiveTurn(state, payload.turn_id);
   const run = turn.runs.at(-1) ?? null;
   if (run === null ? payload.run_id !== null
     : payload.run_id !== run.run_id || run.status !== 'running'
       || run.interrupt_request_id !== null || run.cancel_request_id !== null) fail();
-  turn.messages.push(addMessage(state, payload.message, 'user', 'steering'));
+  turn.messages.push(addMessage(state, payload.message, 'user', kind));
+}
+
+function applyTurnSteered(state, payload) {
+  applyActiveRunUserMessage(state, payload, 'steering');
+}
+
+function applyTurnFollowupQueued(state, payload) {
+  applyActiveRunUserMessage(state, payload, 'queued_followup');
 }
 
 function applyRunStarted(state, payload) {
@@ -575,6 +583,7 @@ function applyTurnCompleted(state, payload) {
 const TRANSITIONS = Object.freeze({
   turn_submitted: applyTurnSubmitted,
   turn_steered: applyTurnSteered,
+  turn_followup_queued: applyTurnFollowupQueued,
   candidate_rejected: applyCandidateReviewed,
   candidate_accepted: applyCandidateReviewed,
   plan_reviewed: applyPlanReviewed,

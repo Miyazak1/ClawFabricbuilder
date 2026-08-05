@@ -511,14 +511,20 @@ function conversationBriefFromEvents(events, requestDigest) {
     if (typeof turnId === 'string' && currentTurnIds.has(turnId)) continue;
     const runKey = conversationRunKey(turnId, optionalOwnValue(payload, 'run_id'));
 
-    if (eventType === 'turn_submitted' || eventType === 'turn_steered') {
+    if (
+      eventType === 'turn_submitted'
+      || eventType === 'turn_steered'
+      || eventType === 'turn_followup_queued'
+    ) {
       const message = optionalOwnValue(payload, 'message');
       const text = safeConversationBriefText(optionalOwnValue(message, 'text'));
       appendConversationBriefEntry(entries, {
         role: 'user',
         kind: eventType === 'turn_steered'
           ? 'steer'
-          : conversationBriefKind(optionalOwnValue(payload, 'mode'), 'message'),
+          : eventType === 'turn_followup_queued'
+            ? 'queued_followup'
+            : conversationBriefKind(optionalOwnValue(payload, 'mode'), 'message'),
         text,
       });
       continue;

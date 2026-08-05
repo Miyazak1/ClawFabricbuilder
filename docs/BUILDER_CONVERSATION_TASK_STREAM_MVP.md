@@ -145,9 +145,9 @@ Permission, Run, Review, or Artifact authority.
 ### Turn
 
 A Turn binds one user request, the Project and base Revision visible when the
-request was submitted, and any bounded steering that follows before the Turn is
-terminal. A Turn can end with an explanation, a proposed plan, a candidate,
-cancellation, interruption, or a fixed failure.
+request was submitted, and any bounded steering or queued follow-up recorded
+before the Turn is terminal. A Turn can end with an explanation, a proposed
+plan, a candidate, cancellation, interruption, or a fixed failure.
 
 Turn continuity is not source continuity. Resuming a Conversation does not
 silently restore an obsolete base Revision, and changing direction does not
@@ -172,8 +172,10 @@ records progress and a terminal result. Retry creates a new Run; it never edits
 the prior attempt.
 
 Runs are interruptible. A new user message may steer a pending Run only through
-an explicit steering event; it may not mutate an already-issued provider or tool
-request. Interrupt, cancel, failure, and success remain distinct terminal facts.
+an explicit steering event, or be recorded as a queued follow-up for after the
+active Run becomes terminal; neither may mutate an already-issued provider or
+tool request. Interrupt, cancel, failure, and success remain distinct terminal
+facts.
 
 ### Task Stream
 
@@ -183,7 +185,7 @@ The Task Stream is an ordered projection of append-only facts such as:
 turn.submitted
 plan.proposed | plan.revised | plan.approved
 task.created | task.updated
-run.started | run.progress.recorded | run.steered | run.interrupted | run.completed
+run.started | run.progress.recorded | run.steered | run.followup.queued | run.interrupted | run.completed
 tool.call.requested
 candidate.created | candidate.accepted | candidate.rejected
 verification.started | verification.completed
@@ -396,7 +398,7 @@ Included:
 
 - one local Project Conversation per Project;
 - append-only human and assistant Messages;
-- Turn identity with bounded steering and interruption;
+- Turn identity with bounded steering, queued follow-up, and interruption;
 - question/explanation and change-request outcomes;
 - one active foreground Task/Run at a time;
 - cancel, deliberate retry, candidate preview, reject, and explicit Save;

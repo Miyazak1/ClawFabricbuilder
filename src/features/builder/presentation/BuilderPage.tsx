@@ -671,7 +671,9 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
 
 function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') {
-    return item.message_kind === 'steering' ? 'You added context' : 'You';
+    if (item.message_kind === 'steering') return 'You added context';
+    if (item.message_kind === 'queued_followup') return 'You queued a follow-up';
+    return 'You';
   }
   if (item.item_kind === 'run_started') return 'Assistant is working';
   if (item.item_kind === 'run_context_snapshot_recorded') return 'Why this ran';

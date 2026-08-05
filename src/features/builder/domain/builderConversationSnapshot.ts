@@ -140,7 +140,7 @@ export type BuilderConversationItem =
     sequence: number;
     turn_id: string;
     message: BuilderConversationMessage;
-    message_kind: 'submitted' | 'steering';
+    message_kind: 'submitted' | 'steering' | 'queued_followup';
     mode: 'question' | 'work' | null;
     task: BuilderConversationTask | null;
   }>
@@ -897,7 +897,11 @@ function sanitizeUserMessage(
   const messageKind = source.message_kind;
   const mode = source.mode;
   const task = sanitizeTask(source.task);
-  if (messageKind !== 'submitted' && messageKind !== 'steering') throw unavailable();
+  if (
+    messageKind !== 'submitted'
+    && messageKind !== 'steering'
+    && messageKind !== 'queued_followup'
+  ) throw unavailable();
   if (messageKind === 'submitted') {
     if (
       (mode !== 'question' && mode !== 'work')

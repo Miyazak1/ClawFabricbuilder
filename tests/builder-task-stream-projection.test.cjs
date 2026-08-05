@@ -768,6 +768,53 @@ test('projects canonical events into bounded renderer-safe activity items', () =
   assert.equal(Object.isFrozen(stream.conversation.items[2].candidate), true);
 });
 
+test('projects queued active-run follow-ups as bounded user messages', () => {
+  const events = [];
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 66), text: 'Build a calmer dashboard.' },
+    turn_id: id('turn', 60),
+    mode: 'work',
+    task: { task_id: id('task', 61), title: 'Build dashboard' },
+    base_revision: null,
+  }, 66);
+  append(events, 'run_started', {
+    turn_id: id('turn', 60),
+    run_id: id('run', 62),
+    task_id: id('task', 61),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 67);
+  append(events, 'turn_followup_queued', {
+    turn_id: id('turn', 60),
+    run_id: id('run', 62),
+    message: {
+      message_id: id('message', 68),
+      text: 'After this, make the summary shorter.',
+    },
+  }, 68);
+
+  const stream = projectBuilderTaskStream(input(events));
+
+  assert.equal(stream.conversation.recorded_active_turn_id, id('turn', 60));
+  assert.deepEqual(stream.conversation.items[2], {
+    item_kind: 'user_message',
+    sequence: 3,
+    turn_id: id('turn', 60),
+    message: {
+      message_id: id('message', 68),
+      text: 'After this, make the summary shorter.',
+    },
+    message_kind: 'queued_followup',
+    mode: null,
+    task: null,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /provider|credential|git_candidate_receipt|commit_oid|tree_oid|source_tree|save_admission|running|live|input_digest/iu,
+  );
+});
+
 test('projects task brief updates as compact renderer-safe context items', () => {
   const events = [];
   append(events, 'turn_submitted', {

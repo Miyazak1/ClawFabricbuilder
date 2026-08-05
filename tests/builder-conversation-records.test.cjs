@@ -491,6 +491,45 @@ test('supports command payloads with exact run attempt and terminal result evide
   assert.deepEqual(Object.keys(terminal.payload).sort(), ['outcome', 'run_id', 'turn_id']);
 });
 
+test('supports active-run queued follow-up payloads without execution evidence', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Build a timer.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Create focus timer' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const queued = create('turn_followup_queued', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    message: { message_id: typedId('message', 2), text: 'Then make the summary shorter.' },
+  }, started, 3);
+
+  assert.equal(queued.event_type, 'turn_followup_queued');
+  assert.equal(queued.payload.run_id, typedId('run', 1));
+  assert.equal(queued.payload.message.text, 'Then make the summary shorter.');
+  assert.doesNotMatch(
+    JSON.stringify(queued),
+    /provider|credential|git_candidate_receipt|commit_oid|tree_oid|source_tree|terminal_result|dispatch_result|save_admission/iu,
+  );
+
+  for (const drift of [
+    { ...queued, payload: { ...queued.payload, run_id: null } },
+    { ...queued, payload: { ...queued.payload, source_tree: [] } },
+    { ...queued, payload: { ...queued.payload, message: { ...queued.payload.message, text: 'api_key=sk-abcdefghijklmnop' } } },
+  ]) {
+    assert.throws(() => sanitizeBuilderConversationEvent(drift), assertRecordError());
+  }
+});
+
 test('supports durable task brief updates without source or execution authority', () => {
   const submitted = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: '我想先聊一下这个作品集首页怎么做。' },

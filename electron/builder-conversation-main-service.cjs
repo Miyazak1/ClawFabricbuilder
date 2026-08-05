@@ -688,7 +688,7 @@ function sanitizeQuestionRequest(value) {
   });
 }
 
-function sanitizeSteeringRequest(value) {
+function sanitizeActiveRunMessageRequest(value) {
   exactObject(value, ['context', 'message']);
   return freezeDeep({
     context: trustedContext(valueAt(value, 'context')),
@@ -2357,7 +2357,7 @@ function createBuilderConversationMainService(rawOptions) {
   }
 
   function recordSteering(rawRequest) {
-    const request = sanitizeSteeringRequest(rawRequest);
+    const request = sanitizeActiveRunMessageRequest(rawRequest);
     const context = request.context;
     if (context.run_terminal_failure_code !== null || context.cancel_requested) fail();
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
@@ -2391,6 +2391,43 @@ function createBuilderConversationMainService(rawOptions) {
     });
     TRUSTED_CONTEXTS.add(steeredContext);
     return steeredContext;
+  }
+
+  function recordQueuedFollowup(rawRequest) {
+    const request = sanitizeActiveRunMessageRequest(rawRequest);
+    const context = request.context;
+    if (context.run_terminal_failure_code !== null || context.cancel_requested) fail();
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const queued = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'turn_followup_queued',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        message: {
+          message_id: newId(options.createUuid, 'builder-message'),
+          text: request.message,
+        },
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [queued],
+      recordedAtMs,
+    });
+    const queuedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(queuedContext);
+    return queuedContext;
   }
 
   function completeFailure(rawRequest) {
@@ -2853,6 +2890,7 @@ function createBuilderConversationMainService(rawOptions) {
     select_tool_adapter: selectToolAdapter,
     admit_tool_runtime_invocation: admitToolRuntimeInvocation,
     record_steering: recordSteering,
+    record_queued_followup: recordQueuedFollowup,
     request_cancel: requestCancel,
     verify_candidate: verifyCandidate,
     read_candidate_draft: readCandidateDraft,
@@ -2873,6 +2911,7 @@ function createBuilderConversationMainService(rawOptions) {
       run_progress_recording: 'main_only_fixed_stage_event',
       agent_step_progress_recording: 'main_only_admitted_progress_event',
       run_steering_recording: 'main_only_active_run_message_no_provider_mutation',
+      run_followup_queue_recording: 'main_only_active_run_message_no_provider_mutation',
       tool_call_recording: 'main_only_pre_dispatch_event',
       tool_result_recording: 'main_only_fixed_code_event',
       tool_dispatch_admission: 'main_only_open_call_no_dispatch',
