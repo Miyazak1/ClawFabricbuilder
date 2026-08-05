@@ -125,6 +125,12 @@ rebuildable projections, not reverse authority. A Git candidate without a
 selected SQLite receipt is an invisible orphan candidate. A selected receipt
 whose Git commit evidence is missing is an integrity failure. Branch or
 working-tree drift is repaired from SQLite and cannot rewrite SQLite truth.
+This SQLite-first authority model must include product lifecycle governance:
+Archive, Export, Delete, Retention, and maintenance are first-class capabilities,
+not ad hoc table cleanup. JSONL or Markdown session mirrors may improve
+transparency and Pi-like session tree ergonomics, but they are derived from
+SQLite replay and cannot become a second authority. The lifecycle rules are
+defined in [Storage Lifecycle Governance](STORAGE_LIFECYCLE_GOVERNANCE.md).
 
 Development-stage Builder does not read old projects, old v1 JSON revisions,
 old APIs, or old renderer contracts. Compatibility and migration are not goals
@@ -167,6 +173,9 @@ Required facts:
   receipt or Run;
 - Activity is a read model derived from those facts, not a second source of
   truth.
+- storage lifecycle operations are explicit: export and archive arrive before
+  destructive delete, destructive delete must fail closed on active or pending
+  Runs, and cache cleanup is separate from deleting authoritative facts.
 
 This stage spans common foundation Gates F0-F7 in the implementation plan;
 individual Git kernel, SQLite metadata, conversation, History, Version, and provider improvements may ship
