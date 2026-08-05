@@ -1354,6 +1354,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     readActivityAfterTerminal,
   ]);
 
+  const refreshActiveConversation = useCallback(async (commandEpoch: number) => {
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    const live = liveOutputRef.current;
+    const projectId = visibleConversationProjectId(projectSnapshotRef.current) ?? live?.project_id ?? null;
+    if (projectId === null) return;
+    if (conversation.snapshot.project_id === projectId) {
+      await conversation.refresh().catch(() => undefined);
+    } else {
+      await conversation.load(projectId).catch(() => undefined);
+    }
+  }, [conversation]);
+
   useEffect(() => {
     const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
     if (target === null) return;
@@ -1390,13 +1402,26 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setIdea(submittedIdea);
       return;
     }
-    const projectId = visibleConversationProjectId(projectSnapshotRef.current) ?? live.project_id;
-    if (conversation.snapshot.project_id === projectId) {
-      await conversation.refresh().catch(() => undefined);
-    } else {
-      await conversation.load(projectId).catch(() => undefined);
-    }
-  }, [conversation, idea, project]);
+    await refreshActiveConversation(commandEpoch);
+  }, [idea, project, refreshActiveConversation]);
+
+  const queueActiveRunFollowupInstruction = useCallback(async (
+    submittedIdea: string,
+    routeEvidence: BuilderComposerRouteDecisionEvidence,
+  ) => {
+    const commandEpoch = workspaceEpochRef.current;
+    const queued = await project.queueFollowup(submittedIdea);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    if (!queued) return;
+    await refreshActiveConversation(commandEpoch);
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    publishQueuedActiveRunFollowup(Object.freeze({
+      epoch: commandEpoch,
+      instruction: submittedIdea,
+      messageId: routeEvidence.messageId,
+    }));
+    setIdea('');
+  }, [project, publishQueuedActiveRunFollowup, refreshActiveConversation]);
 
   const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
     if (planReviewInFlightRef.current !== null) return;
@@ -1791,27 +1816,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       if (decision.dispatch === 'queue_followup') {
-        const queued = await project.queueFollowup(submittedIdea);
-        if (!queued) return;
-        publishQueuedActiveRunFollowup(Object.freeze({
-          epoch: workspaceEpochRef.current,
-          instruction: submittedIdea,
-          messageId: routeEvidence.messageId,
-        }));
-        setIdea('');
+        await queueActiveRunFollowupInstruction(submittedIdea, routeEvidence);
         return;
       }
       if (decision.dispatch === 'reply') {
         return;
       }
-      const queued = await project.queueFollowup(submittedIdea);
-      if (!queued) return;
-      publishQueuedActiveRunFollowup(Object.freeze({
-        epoch: workspaceEpochRef.current,
-        instruction: submittedIdea,
-        messageId: routeEvidence.messageId,
-      }));
-      setIdea('');
+      await queueActiveRunFollowupInstruction(submittedIdea, routeEvidence);
       return;
     }
     await submitInstructionText(idea);
@@ -1819,7 +1830,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     idea,
     createComposerRouteEvidence,
     project,
-    publishQueuedActiveRunFollowup,
+    queueActiveRunFollowupInstruction,
     readActivityAfterTerminal,
     steerInstruction,
     submitInstructionText,

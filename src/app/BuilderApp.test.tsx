@@ -209,6 +209,7 @@ async function setup(options: Readonly<{
   recordedFirstAnswerAfterFailedPublicResult?: boolean;
   recordedAnswerAfterFailedPublicResult?: boolean;
   failGenerate?: boolean;
+  failQueueFollowup?: boolean;
   failApprovedPlanGenerateOnce?: boolean;
   failPlanReview?: boolean;
   failTaskStreamAfterPlanReview?: boolean;
@@ -525,7 +526,7 @@ async function setup(options: Readonly<{
   }));
   const queueFollowup = vi.fn(async (request: unknown) => ({
     request_id: (request as { request_id: string }).request_id,
-    queued: true,
+    queued: options.failQueueFollowup === true ? false : true,
   }));
   const reviewPlan = vi.fn(async (request: unknown) => {
     const result = {
@@ -745,7 +746,11 @@ async function setup(options: Readonly<{
                   : options.pendingAfterRevisionView === true && loadRevisionCalls > 0
                     ? pendingCandidateTaskStreamWire('proposed')
                     : options.runningActivity === true
-                      ? runningTaskStreamWire()
+                      ? runningTaskStreamWire(
+                        queueFollowup.mock.calls.length > 0
+                          ? ((queueFollowup.mock.calls.at(-1)?.[0] as { message?: string } | undefined)?.message)
+                          : undefined,
+                      )
                       : options.pendingActivity === true
                         ? pendingCandidateTaskStreamWire('proposed')
                         : createTaskStreamWire();
@@ -1218,19 +1223,34 @@ function pendingCandidateTaskStreamWire(state: 'accepted' | 'proposed' | 'reject
   };
 }
 
-function runningTaskStreamWire() {
+function runningTaskStreamWire(queuedFollowupText?: string) {
   const wire = createTaskStreamWire();
+  const items: unknown[] = wire.conversation.items.slice(0, 2);
+  if (queuedFollowupText !== undefined) {
+    items.push({
+      item_kind: 'user_message',
+      sequence: 3,
+      turn_id: TURN_ID,
+      message: {
+        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+        text: queuedFollowupText,
+      },
+      message_kind: 'queued_followup',
+      mode: null,
+      task: null,
+    });
+  }
   return {
     ...wire,
     conversation: {
       ...wire.conversation,
-      head_sequence: 2,
+      head_sequence: queuedFollowupText === undefined ? 2 : 3,
       recorded_active_turn_id: TURN_ID,
       window: {
         ...wire.conversation.window,
-        last_sequence: 2,
+        last_sequence: queuedFollowupText === undefined ? 2 : 3,
       },
-      items: wire.conversation.items.slice(0, 2),
+      items,
     },
   };
 }
@@ -3359,6 +3379,11 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')?.textContent)
         .toContain('will run after the current step finishes');
     });
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-activity-card="You queued a follow-up"]')?.textContent)
+        .toContain('Make it responsive.');
+    });
     const activeComposer = container.querySelector('[data-builder-composer="true"]');
     expect(activeComposer?.getAttribute('data-builder-route')).toBe('queue_followup');
     expect(activeComposer?.getAttribute('data-builder-route-dispatch')).toBe('queue_followup');
@@ -3387,6 +3412,66 @@ describe('BuilderApp v2', () => {
       });
     });
     expect(steer).not.toHaveBeenCalled();
+  });
+
+  it('keeps active-run follow-up input when the durable queue record is not accepted', async () => {
+    const {
+      container,
+      emitGenerationStarted,
+      queueFollowup,
+      readTaskStream,
+      resolveGenerate,
+      steer,
+      submit,
+    } = await setup({
+      deferredGenerate: true,
+      failQueueFollowup: true,
+      initiallySaved: true,
+      runningActivity: true,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    setComposerInstruction(container, 'Make a timer.');
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    });
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
+      expect(container.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
+    });
+    readTaskStream.mockClear();
+
+    setComposerInstruction(container, 'Make it responsive.');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-submit-turn="true"]')?.getAttribute('aria-label'))
+        .toBe('Add context');
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+        request_id: expected.request_digest,
+        message: 'Make it responsive.',
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-activity-card="You queued a follow-up"]')).toBeNull();
+    expect(readTaskStream).not.toHaveBeenCalled();
+    expect(textarea.value).toBe('Make it responsive.');
+    expect(steer).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+    expect(submit).toHaveBeenCalledOnce();
   });
 
   it('queues a build command as an active-run follow-up while an answer is active', async () => {
