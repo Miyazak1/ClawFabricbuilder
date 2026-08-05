@@ -33,6 +33,7 @@ import type {
   BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
 } from '../features/builder/application/builderPorts';
+import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
 import {
   BuilderDesktopProjectWorkspacePortError,
@@ -420,16 +421,19 @@ type PendingBuildAfterWorkspace = Readonly<{
   epoch: number;
   instruction: string;
   messageId: string;
+  queuedFollowup: BuilderQueuedFollowupReference | null;
 }>;
 
 type QueuedActiveRunFollowup = Readonly<{
   epoch: number;
   instruction: string;
   messageId: string;
+  queuedFollowup: BuilderQueuedFollowupReference;
 }>;
 
 type SubmitInstructionTextOptions = Readonly<{
   existingMessageId?: string | null;
+  queuedFollowup?: BuilderQueuedFollowupReference | null;
 }>;
 
 type SubmitInstructionText = (
@@ -441,6 +445,7 @@ type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
   project_id: string;
   instruction: string;
   message_id: string;
+  queuedFollowup: BuilderQueuedFollowupReference | null;
   state: 'pending' | 'approving' | 'failed';
 }>;
 
@@ -1028,6 +1033,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       publishQueuedActiveRunFollowup(null);
       void submitInstructionTextRef.current?.(queued.instruction, {
         existingMessageId: queued.messageId,
+        queuedFollowup: queued.queuedFollowup,
       });
     };
     const initialHandle = window.setTimeout(dispatchQueuedFollowup, 0);
@@ -1312,6 +1318,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           project_id: visibleProjectId,
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
+          queuedFollowup: pendingBuild.queuedFollowup,
           state: 'pending' as const,
         });
         currentProjectWriteApprovalRef.current = prompt;
@@ -1335,7 +1342,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setComposerRouteDecision(routeEvidence);
       setIdea('');
       setLiveOutput(null);
-      const buildResult = await project.submit(submittedIdea);
+      const buildResult = await project.submit(submittedIdea, pendingBuild.queuedFollowup);
       if (workspaceEpochRef.current !== commandEpoch) return;
       if (!shouldClearSubmittedIdea(buildResult)) setIdea(submittedIdea);
       await readActivityAfterTerminal(buildResult, commandEpoch);
@@ -1412,13 +1419,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const commandEpoch = workspaceEpochRef.current;
     const queued = await project.queueFollowup(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
-    if (!queued) return;
+    if (queued === null) return;
+    if (queued.queued_followup === null) return;
     await refreshActiveConversation(commandEpoch);
     if (workspaceEpochRef.current !== commandEpoch) return;
     publishQueuedActiveRunFollowup(Object.freeze({
       epoch: commandEpoch,
       instruction: submittedIdea,
       messageId: routeEvidence.messageId,
+      queuedFollowup: queued.queued_followup,
     }));
     setIdea('');
   }, [project, publishQueuedActiveRunFollowup, refreshActiveConversation]);
@@ -1626,6 +1635,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,
         messageId: routeEvidence.messageId,
+        queuedFollowup: options.queuedFollowup ?? null,
       });
       setWorkspacePickerRequest((request) => request + 1);
       return;
@@ -1638,6 +1648,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           project_id: projectId,
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
+          queuedFollowup: options.queuedFollowup ?? null,
           state: 'pending' as const,
         });
         currentProjectWriteApprovalRef.current = prompt;
@@ -1702,6 +1713,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             project_id: projectId,
             instruction: submittedIdea,
             message_id: routeEvidence.messageId,
+            queuedFollowup: options.queuedFollowup ?? null,
             state: 'pending' as const,
           });
           currentProjectWriteApprovalRef.current = prompt;
@@ -1735,8 +1747,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setLiveOutput(null);
       const shouldSubmitToConversationWorkPath = decision.dispatch === 'build';
       const result = shouldSubmitToConversationWorkPath
-        ? await project.submit(submittedIdea)
-        : await project.answer(submittedIdea);
+        ? await project.submit(submittedIdea, options.queuedFollowup ?? null)
+        : await project.answer(submittedIdea, options.queuedFollowup ?? null);
       if (workspaceEpochRef.current !== commandEpoch) return;
       const answerTerminalProjectId = shouldSubmitToConversationWorkPath
         ? null
@@ -1886,6 +1898,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         setIdea('');
         void submitInstructionTextRef.current?.(prompt.instruction, {
           existingMessageId: prompt.message_id,
+          queuedFollowup: prompt.queuedFollowup,
         });
       }
     } catch {
@@ -1972,7 +1985,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         routeTaskId,
       ));
       setIdea('');
-      const result = await project.submit(prompt.instruction);
+      const result = await project.submit(prompt.instruction, prompt.queuedFollowup);
       if (workspaceEpochRef.current !== commandEpoch) return;
       if (!shouldClearSubmittedIdea(result)) setIdea(prompt.instruction);
       await readActivityAfterTerminal(result, commandEpoch);

@@ -234,6 +234,8 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(typeof options.onTaskStreamChanged, 'function');
             context.__conversationService = {
               begin_work() {},
+              begin_queued_followup_work() {},
+              begin_queued_followup_question() {},
               complete_candidate() {},
               complete_failure() {},
               record_retryable_failure() {},
@@ -1171,7 +1173,7 @@ test('selects only currently supported plan context resources from the saved sou
     reject_draft() { throw new Error('unexpected reject'); },
     cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
     steer() { return { request_id: hostRequestDigest(), steered: false }; },
-    queue_followup() { return { request_id: hostRequestDigest(), queued: false }; },
+    queue_followup() { return { request_id: hostRequestDigest(), queued: false, queued_followup: null }; },
     availability() {
       return {
         version: 'builder-generation-availability.v1',
@@ -1255,7 +1257,7 @@ test('prepares and records bounded plan source-read approval without renderer re
     reject_draft() { throw new Error('unexpected reject'); },
     cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
     steer() { return { request_id: hostRequestDigest(), steered: false }; },
-    queue_followup() { return { request_id: hostRequestDigest(), queued: false }; },
+    queue_followup() { return { request_id: hostRequestDigest(), queued: false, queued_followup: null }; },
     availability() {
       return {
         version: 'builder-generation-availability.v1',
@@ -1461,6 +1463,60 @@ test('requires explicit current-project write approval before build-side generat
   );
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0].existing_project_id, PROJECT_ID);
+  runtime.dispose();
+});
+
+test('carries queued follow-up references through selected-project submit IPC', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const queuedSubmits = [];
+  const service = {
+    submit() { throw new Error('unexpected plain submit'); },
+    submit_queued_followup(body) {
+      queuedSubmits.push(body);
+      return Promise.resolve({ request_id: body.request.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const harness = runtimeWithService(service, {
+    permissionDecision() { return 'allowed'; },
+  });
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, harness.context),
+  );
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      instruction: "Create the improved page.",
+      queued_followup: {
+        turn_id: "builder-turn:123e4567-e89b-42d3-a456-426614174000",
+        run_id: "builder-run:123e4567-e89b-42d3-a456-426614174002",
+        message_id: "builder-message:123e4567-e89b-42d3-a456-426614174088"
+      }
+    })`, harness.context),
+  );
+
+  assert.equal(queuedSubmits.length, 1);
+  assert.equal(queuedSubmits[0].request.instruction, 'Create the improved page.');
+  assert.equal(queuedSubmits[0].request.existing_project_id, PROJECT_ID);
+  assert.equal(queuedSubmits[0].queued_followup.message_id, 'builder-message:123e4567-e89b-42d3-a456-426614174088');
+  assert.doesNotMatch(
+    JSON.stringify(queuedSubmits[0]),
+    /source_tree|credential|provider|git_candidate_receipt|tree_oid/iu,
+  );
   runtime.dispose();
 });
 

@@ -527,6 +527,13 @@ async function setup(options: Readonly<{
   const queueFollowup = vi.fn(async (request: unknown) => ({
     request_id: (request as { request_id: string }).request_id,
     queued: options.failQueueFollowup === true ? false : true,
+    queued_followup: options.failQueueFollowup === true
+      ? null
+      : {
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+        message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+      },
   }));
   const reviewPlan = vi.fn(async (request: unknown) => {
     const result = {
@@ -3546,7 +3553,14 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).toBeNull();
     });
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: change });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({
+        instruction: change,
+        queued_followup: {
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+        },
+      });
     });
     expect(steer).not.toHaveBeenCalled();
   });
@@ -3613,7 +3627,14 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).toBeNull();
     });
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: contextualExecution });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({
+        instruction: contextualExecution,
+        queued_followup: {
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+        },
+      });
     });
     expect(steer).not.toHaveBeenCalled();
   });

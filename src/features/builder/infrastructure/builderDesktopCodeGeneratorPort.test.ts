@@ -490,6 +490,57 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('forwards queued follow-up references only as bounded submit receipts', async () => {
+    const request = await createBuilderGenerationRequest('Create the improved page.', PROJECT_ID);
+    const draft = await createGenerationDraft(request);
+    const queuedFollowup = Object.freeze({
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+    });
+    const submit = vi.fn(async (payload: unknown) => {
+      expect(payload).toBeDefined();
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: draft,
+      };
+    });
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit,
+      generateApprovedPlan: async () => null,
+      continueDraft: async () => null,
+      proposePlan: async () => null,
+      preparePlanSourceReadApproval: async () => null,
+      approvePlanSourceRead: async () => null,
+      prepareCurrentProjectWriteApproval: async () => null,
+      approveCurrentProjectWrite: async () => null,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      answerDraft: async () => null,
+      restoreDraft: async () => null,
+      restoreRevisionAsDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      queueFollowup: async () => null,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    await port.submit({ ...request, queued_followup: queuedFollowup });
+
+    expect(submit).toHaveBeenCalledExactlyOnceWith({
+      instruction: request.instruction,
+      queued_followup: queuedFollowup,
+    });
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('existing_project_id');
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('request_digest');
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('source_tree');
+  });
+
   it('subscribes to started hints without accepting malformed renderer events', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const listeners: Array<(event: unknown) => void> = [];
@@ -1010,9 +1061,15 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
 
   it('forwards only request id and message when queueing an active follow-up', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
+    const queuedFollowup = Object.freeze({
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+    });
     const queueFollowup = vi.fn(async (request: unknown) => ({
       request_id: (request as { request_id: string }).request_id,
       queued: true,
+      queued_followup: queuedFollowup,
     }));
     const port = createBuilderDesktopCodeGeneratorPort({
       submit: async () => null,
@@ -1050,7 +1107,11 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('instruction');
     expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('source_tree');
     expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('project_id');
-    expect(result).toEqual({ request_id: request.request_digest, queued: true });
+    expect(result).toEqual({
+      request_id: request.request_digest,
+      queued: true,
+      queued_followup: queuedFollowup,
+    });
     expect(Object.isFrozen(result)).toBe(true);
   });
 

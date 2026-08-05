@@ -112,11 +112,11 @@ export function useBuilderProjectController(
     [controller],
   );
   const submit = useCallback<BuilderProjectController['submit']>(
-    (instruction) => controller.submit(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
+    (instruction, queuedFollowup) => controller.submit(instruction, queuedFollowup).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
   const answer = useCallback<BuilderProjectController['answer']>(
-    (instruction) => controller.answer(instruction).catch(() => UNAVAILABLE_SNAPSHOT),
+    (instruction, queuedFollowup) => controller.answer(instruction, queuedFollowup).catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
   const proposePlan = useCallback<BuilderProjectController['proposePlan']>(
@@ -168,7 +168,7 @@ export function useBuilderProjectController(
     [controller],
   );
   const queueFollowup = useCallback<BuilderProjectController['queueFollowup']>(
-    (message) => controller.queueFollowup(message).catch(() => false),
+    (message) => controller.queueFollowup(message).catch(() => null),
     [controller],
   );
   return useMemo(

@@ -155,9 +155,9 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('saveDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toContain('loadRevision(request: Readonly<{ project_id: string; revision_receipt_digest: string }>)');
     expect(ports).toContain('listHistory(request: Readonly<{ project_id: string; limit: number }>)');
-    expect(ports).toContain('submit(request: BuilderGenerationRequest)');
+    expect(ports).toContain('submit(request: BuilderGenerationTurnRequest)');
     expect(ports).toContain('continueDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
-    expect(ports).toContain('answer(request: BuilderGenerationRequest)');
+    expect(ports).toContain('answer(request: BuilderGenerationTurnRequest)');
     expect(ports).toContain('answerDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
     expect(ports).toMatch(/preparePlanSourceReadApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
     expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);

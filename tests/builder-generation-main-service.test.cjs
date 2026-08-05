@@ -526,6 +526,8 @@ function conversationService(options = {}) {
     approvedPlanWork: [],
     approvedPlanContinuation: [],
     draftContinuationWork: [],
+    queuedFollowupWork: [],
+    queuedFollowupQuestion: [],
   };
   let progressCommand = 10_000;
   function nextProgressCommandId() {
@@ -718,6 +720,10 @@ function conversationService(options = {}) {
         },
       };
     },
+    begin_queued_followup_work(input) {
+      calls.queuedFollowupWork.push(input);
+      return this.begin_work(input);
+    },
     begin_question(input) {
       calls.question.push(input);
       generation += 1;
@@ -797,6 +803,10 @@ function conversationService(options = {}) {
           run_id: runId,
         },
       };
+    },
+    begin_queued_followup_question(input) {
+      calls.queuedFollowupQuestion.push(input);
+      return this.begin_question(input);
     },
     complete_candidate(input) {
       calls.candidate.push(input);
@@ -1335,6 +1345,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
     run_steering: 'request_id_only_main_conversation_fact',
     run_followup_queue: 'request_id_only_main_conversation_fact',
+    run_followup_consumption: 'main_conversation_replay_verified',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
@@ -3741,13 +3752,15 @@ test('records queued follow-up intent on an active run without cancelling provid
   const generation = service.generate(attemptedRequest);
   while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(service.queue_followup({
+  const queuedResult = service.queue_followup({
     request_id: attemptedRequest.request_digest,
     message: 'After this, make the timer responsive.',
-  }), {
-    request_id: attemptedRequest.request_digest,
-    queued: true,
   });
+  assert.equal(queuedResult.request_id, attemptedRequest.request_digest);
+  assert.equal(queuedResult.queued, true);
+  assert.match(queuedResult.queued_followup.turn_id, /^builder-turn:/u);
+  assert.match(queuedResult.queued_followup.run_id, /^builder-run:/u);
+  assert.match(queuedResult.queued_followup.message_id, /^builder-message:/u);
   assert.equal(activeSignal.aborted, false);
   assert.equal(lifecycle.calls.queuedFollowup.length, 1);
   assert.equal(lifecycle.calls.queuedFollowup[0].message, 'After this, make the timer responsive.');
@@ -3782,6 +3795,7 @@ test('keeps queued follow-up request-id bound and inert when no active run exist
   }), {
     request_id: requestId,
     queued: false,
+    queued_followup: null,
   });
   assert.equal(lifecycle.calls.queuedFollowup.length, 0);
   assert.throws(
@@ -3934,13 +3948,15 @@ test('records queued follow-up intent on an active answer run without creating G
   const answer = service.answer(question);
   while (answerSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(service.queue_followup({
+  const queuedResult = service.queue_followup({
     request_id: question.request_digest,
     message: 'After this, turn that into an implementation.',
-  }), {
-    request_id: question.request_digest,
-    queued: true,
   });
+  assert.equal(queuedResult.request_id, question.request_digest);
+  assert.equal(queuedResult.queued, true);
+  assert.match(queuedResult.queued_followup.turn_id, /^builder-turn:/u);
+  assert.match(queuedResult.queued_followup.run_id, /^builder-run:/u);
+  assert.match(queuedResult.queued_followup.message_id, /^builder-message:/u);
   releaseTransport();
   const result = await answer;
 
@@ -3952,6 +3968,124 @@ test('records queued follow-up intent on an active answer run without creating G
     true,
   );
   assert.equal(git.receipts.length, 0);
+});
+
+test('starts queued follow-up build through the replay-verified work gate', async () => {
+  const firstWork = request({ instruction: 'Make a timer.', existingProjectId: PROJECT_ID });
+  const followupInstruction = 'Create the improved page.';
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let releaseFirstWork;
+  let transportCall = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+    }),
+    transport: async () => {
+      transportCall += 1;
+      if (transportCall === 1) {
+        return new Promise((resolve) => {
+          releaseFirstWork = () => resolve({
+            transport_version: 'builder-openai-compatible-transport.v1',
+            generated_text: JSON.stringify(providerOutput()),
+          });
+        });
+      }
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+  const generation = service.generate(firstWork);
+  while (releaseFirstWork === undefined) await new Promise((resolve) => setImmediate(resolve));
+  const queued = service.queue_followup({
+    request_id: firstWork.request_digest,
+    message: followupInstruction,
+  });
+  releaseFirstWork();
+  await generation;
+  const receiptsBeforeFollowup = git.receipts.length;
+
+  const result = await service.submit_queued_followup({
+    request: request({ instruction: followupInstruction, existingProjectId: PROJECT_ID }),
+    queued_followup: queued.queued_followup,
+  });
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(lifecycle.calls.queuedFollowupWork.length, 1);
+  assert.deepEqual(lifecycle.calls.queuedFollowupWork[0].queued_followup, queued.queued_followup);
+  assert.equal(lifecycle.calls.queuedFollowupWork[0].route_decision_hint.route, 'build');
+  assert.deepEqual(lifecycle.calls.queuedFollowupWork[0].route_decision_hint.matched_signals, [
+    'active_run_followup',
+    'clear_build',
+  ]);
+  assert.equal(git.receipts.length, receiptsBeforeFollowup + 1);
+  assert.doesNotMatch(
+    JSON.stringify(lifecycle.calls.queuedFollowupWork[0]),
+    /credential|source_tree|git_candidate_receipt|tree_oid/iu,
+  );
+});
+
+test('starts queued follow-up answer through the replay-verified question gate', async () => {
+  const firstWork = request({ instruction: 'Make a timer.', existingProjectId: PROJECT_ID });
+  const followupQuestion = 'Also explain the tradeoffs.';
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let releaseFirstWork;
+  let transportCall = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+    }),
+    transport: async () => {
+      transportCall += 1;
+      if (transportCall === 1) {
+        return new Promise((resolve) => {
+          releaseFirstWork = () => resolve({
+            transport_version: 'builder-openai-compatible-transport.v1',
+            generated_text: JSON.stringify(providerOutput()),
+          });
+        });
+      }
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation()),
+      };
+    },
+  });
+  const generation = service.generate(firstWork);
+  while (releaseFirstWork === undefined) await new Promise((resolve) => setImmediate(resolve));
+  const queued = service.queue_followup({
+    request_id: firstWork.request_digest,
+    message: followupQuestion,
+  });
+  releaseFirstWork();
+  await generation;
+  const receiptsBeforeFollowup = git.receipts.length;
+
+  const result = await service.answer_queued_followup({
+    request: request({ instruction: followupQuestion, existingProjectId: PROJECT_ID }),
+    queued_followup: queued.queued_followup,
+  });
+
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(lifecycle.calls.queuedFollowupQuestion.length, 1);
+  assert.deepEqual(lifecycle.calls.queuedFollowupQuestion[0].queued_followup, queued.queued_followup);
+  assert.equal(lifecycle.calls.queuedFollowupQuestion[0].route_decision_hint.route, 'answer');
+  assert.deepEqual(lifecycle.calls.queuedFollowupQuestion[0].route_decision_hint.matched_signals, [
+    'active_run_followup',
+    'chat_default',
+  ]);
+  assert.equal(git.receipts.length, receiptsBeforeFollowup);
 });
 
 test('rejects same-digest cross-route concurrency before creating a second conversation context', async () => {

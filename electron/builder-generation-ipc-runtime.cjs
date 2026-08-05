@@ -119,6 +119,7 @@ const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[
 const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MESSAGE_ID_PATTERN = /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 const MAX_PLAN_CONTEXT_RESOURCES = 8;
 const MAX_PROJECT_RESOURCE_ID_LENGTH = 128;
@@ -245,18 +246,46 @@ function denseDataArray(value, maximum) {
 }
 
 function publicInstruction(rawRequest) {
+  return publicInstructionRequest(rawRequest).instruction;
+}
+
+function queuedFollowupReference(rawReference) {
+  const descriptors = exactDataDescriptors(rawReference, ['turn_id', 'run_id', 'message_id']);
+  if (
+    typeof descriptors.turn_id.value !== 'string'
+    || !TURN_ID_PATTERN.test(descriptors.turn_id.value)
+    || typeof descriptors.run_id.value !== 'string'
+    || !RUN_ID_PATTERN.test(descriptors.run_id.value)
+    || typeof descriptors.message_id.value !== 'string'
+    || !MESSAGE_ID_PATTERN.test(descriptors.message_id.value)
+  ) fail();
+  return Object.freeze({
+    turn_id: descriptors.turn_id.value,
+    run_id: descriptors.run_id.value,
+    message_id: descriptors.message_id.value,
+  });
+}
+
+function publicInstructionRequest(rawRequest) {
   try {
     if (!isPlainObject(rawRequest)) throw new Error();
     const ownKeys = Reflect.ownKeys(rawRequest);
+    const hasQueuedFollowup = ownKeys.includes('queued_followup');
     if (
-      ownKeys.length !== 1
-      || ownKeys[0] !== 'instruction'
+      ownKeys.length !== (hasQueuedFollowup ? 2 : 1)
+      || !ownKeys.includes('instruction')
+      || (hasQueuedFollowup && !ownKeys.includes('queued_followup'))
     ) throw new Error();
     const descriptor = Object.getOwnPropertyDescriptor(rawRequest, 'instruction');
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
       throw new Error();
     }
-    return descriptor.value;
+    return Object.freeze({
+      instruction: descriptor.value,
+      queued_followup: hasQueuedFollowup
+        ? queuedFollowupReference(Object.getOwnPropertyDescriptor(rawRequest, 'queued_followup')?.value)
+        : null,
+    });
   } catch {
     throw new BuilderGenerationKernelError('builder_generation_request_invalid');
   }
@@ -1086,17 +1115,25 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       if (decision.decision !== 'allowed') failGenerationProjectWritePermissionRequired();
     }
 
-    function trackedGenerationOperation(rawRequest, method) {
+    function trackedGenerationOperation(rawRequest, method, queuedMethod = null) {
       if (selectionPending) fail();
+      const instructionRequest = publicInstructionRequest(rawRequest);
+      if (instructionRequest.queued_followup !== null && typeof queuedMethod !== 'function') fail();
       const request = createBuilderGenerationRequest({
-        instruction: publicInstruction(rawRequest),
+        instruction: instructionRequest.instruction,
         existing_project_id: selectedProjectId,
       });
       const requestId = request.request_digest;
       activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
       let operation;
       try {
-        operation = Promise.resolve(Reflect.apply(method, service, [request]));
+        if (instructionRequest.queued_followup !== null && typeof queuedMethod !== 'function') fail();
+        operation = Promise.resolve(instructionRequest.queued_followup === null
+          ? Reflect.apply(method, service, [request])
+          : Reflect.apply(queuedMethod, service, [{
+            request,
+            queued_followup: instructionRequest.queued_followup,
+          }]));
       } catch (error) {
         const remaining = (activeRequests.get(requestId) ?? 1) - 1;
         if (remaining === 0) activeRequests.delete(requestId);
@@ -1324,11 +1361,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
 
     async function trackedSubmit(rawRequest) {
-      publicInstruction(rawRequest);
+      publicInstructionRequest(rawRequest);
       if (selectionPending) fail();
       if (selectedProjectId === null) failGenerationProjectWorkspaceRequired();
       await assertSelectedProjectWriteAllowed(selectedProjectId);
-      return trackedGenerationOperation(rawRequest, service.submit);
+      return trackedGenerationOperation(rawRequest, service.submit, service.submit_queued_followup);
     }
 
     async function trackedRetryGenerate(rawRequest) {
@@ -1341,8 +1378,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
 
     function trackedAnswer(rawRequest) {
       if (selectionPending) fail();
+      const instructionRequest = publicInstructionRequest(rawRequest);
       const request = createBuilderGenerationRequest({
-        instruction: publicInstruction(rawRequest),
+        instruction: instructionRequest.instruction,
         existing_project_id: selectedProjectId ?? selectedConversationProjectId,
       });
       const requestId = request.request_digest;
@@ -1350,7 +1388,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       activeAnswerRequests.add(requestId);
       let operation;
       try {
-        operation = Promise.resolve(Reflect.apply(service.answer, service, [request]));
+        operation = Promise.resolve(instructionRequest.queued_followup === null
+          ? Reflect.apply(service.answer, service, [request])
+          : Reflect.apply(service.answer_queued_followup, service, [{
+            request,
+            queued_followup: instructionRequest.queued_followup,
+          }]));
       } catch (error) {
         const remaining = (activeRequests.get(requestId) ?? 1) - 1;
         if (remaining === 0) activeRequests.delete(requestId);

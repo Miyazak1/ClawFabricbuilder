@@ -6,10 +6,12 @@ import {
   sanitizeBuilderRevisionRestoreGenerationDraft,
   sanitizeRestoredBuilderGenerationDraft,
   sanitizeBuilderGenerationDraft,
+  sanitizeBuilderQueuedFollowupReference,
   type BuilderApprovedPlanGenerationRequest,
   type BuilderGenerationRequest,
   type BuilderGenerationAnswer,
   type BuilderGenerationDraft,
+  type BuilderQueuedFollowupReference,
 } from './builderGeneration';
 import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
@@ -17,6 +19,7 @@ import {
   trustedBuilderGenerationDiagnosticCode,
   type BuilderCodeGeneratorPort,
   type BuilderGenerationDiagnosticCode,
+  type BuilderQueuedFollowupResult,
   type BuilderProjectWorkspacePort,
 } from './builderPorts';
 import {
@@ -102,8 +105,14 @@ export type BuilderProjectController = Readonly<{
   clearWorkspaceSelection(): BuilderProjectControllerSnapshot;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
   createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot>;
-  submit(instruction: string): Promise<BuilderProjectControllerSnapshot>;
-  answer(instruction: string): Promise<BuilderProjectControllerSnapshot>;
+  submit(
+    instruction: string,
+    queuedFollowup?: BuilderQueuedFollowupReference | null,
+  ): Promise<BuilderProjectControllerSnapshot>;
+  answer(
+    instruction: string,
+    queuedFollowup?: BuilderQueuedFollowupReference | null,
+  ): Promise<BuilderProjectControllerSnapshot>;
   proposePlan(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<BuilderProjectControllerSnapshot>;
@@ -118,7 +127,7 @@ export type BuilderProjectController = Readonly<{
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
   cancel(): Promise<BuilderProjectControllerSnapshot>;
   steer(message: string): Promise<boolean>;
-  queueFollowup(message: string): Promise<boolean>;
+  queueFollowup(message: string): Promise<BuilderQueuedFollowupResult | null>;
   save(): Promise<BuilderProjectControllerSnapshot>;
   dispose(): void;
 }>;
@@ -156,7 +165,7 @@ const LOCAL_PROJECT_SELECTION_RESULT_KEYS = Object.freeze([
 const SOURCE_FOLDER_SELECTION_KEYS = Object.freeze(['name', 'status']);
 const CANCEL_RESULT_KEYS = Object.freeze(['request_id', 'cancelled']);
 const STEER_RESULT_KEYS = Object.freeze(['request_id', 'steered']);
-const QUEUE_FOLLOWUP_RESULT_KEYS = Object.freeze(['request_id', 'queued']);
+const QUEUE_FOLLOWUP_RESULT_KEYS = Object.freeze(['request_id', 'queued', 'queued_followup']);
 const REJECT_RESULT_KEYS = Object.freeze([
   'result_version',
   'draft_id',
@@ -310,10 +319,18 @@ function sanitizeSteerResult(value: unknown, requestId: string): boolean {
   return source.steered;
 }
 
-function sanitizeQueuedFollowupResult(value: unknown, requestId: string): boolean {
+function sanitizeQueuedFollowupResult(value: unknown, requestId: string): BuilderQueuedFollowupResult {
   const source = exactRecord(value, QUEUE_FOLLOWUP_RESULT_KEYS);
   if (source.request_id !== requestId || typeof source.queued !== 'boolean') throw new Error();
-  return source.queued;
+  const queuedFollowup = source.queued_followup === null
+    ? null
+    : sanitizeBuilderQueuedFollowupReference(source.queued_followup);
+  if (source.queued !== (queuedFollowup !== null)) throw new Error();
+  return Object.freeze({
+    request_id: requestId,
+    queued: source.queued,
+    queued_followup: queuedFollowup,
+  });
 }
 
 function sanitizeSaveResult(value: unknown, draft: BuilderGenerationDraft) {
@@ -853,7 +870,10 @@ export function createBuilderProjectController(
     });
   }
 
-  async function answer(instruction: string): Promise<BuilderProjectControllerSnapshot> {
+  async function answer(
+    instruction: string,
+    queuedFollowup: BuilderQueuedFollowupReference | null = null,
+  ): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
       || current.busy
@@ -909,7 +929,9 @@ export function createBuilderProjectController(
         });
         const answered = await sanitizeBuilderGenerationAnswer(
           retainedDraft === null
-            ? await dependencies.generator.answer(request)
+            ? await dependencies.generator.answer(queuedFollowup === null
+              ? request
+              : { ...request, queued_followup: queuedFollowup })
             : await dependencies.generator.answerDraft({
               draft_id: retainedDraft.draft_id,
               instruction: request.instruction,
@@ -956,7 +978,10 @@ export function createBuilderProjectController(
     });
   }
 
-  async function submit(instruction: string): Promise<BuilderProjectControllerSnapshot> {
+  async function submit(
+    instruction: string,
+    queuedFollowup: BuilderQueuedFollowupReference | null = null,
+  ): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
       || current.busy
@@ -1012,7 +1037,9 @@ export function createBuilderProjectController(
           requestId,
         });
         const result = retainedDraft === null
-          ? await dependencies.generator.submit(request)
+          ? await dependencies.generator.submit(queuedFollowup === null
+            ? request
+            : { ...request, queued_followup: queuedFollowup })
           : await dependencies.generator.continueDraft({
             draft_id: retainedDraft.draft_id,
             instruction: request.instruction,
@@ -1654,7 +1681,7 @@ export function createBuilderProjectController(
     }
   }
 
-  async function queueFollowup(message: string): Promise<boolean> {
+  async function queueFollowup(message: string): Promise<BuilderQueuedFollowupResult | null> {
     const target = activeGeneration;
     const text = message.trim();
     if (
@@ -1663,14 +1690,15 @@ export function createBuilderProjectController(
       || target.requestId === null
       || text.length === 0
       || !['answering', 'generating', 'submitting'].includes(current.status)
-    ) return false;
+    ) return null;
     try {
-      return sanitizeQueuedFollowupResult(
+      const result = sanitizeQueuedFollowupResult(
         await dependencies.generator.queueFollowup({ request_id: target.requestId, message: text }),
         target.requestId,
       );
+      return result.queued ? result : null;
     } catch {
-      return false;
+      return null;
     }
   }
 

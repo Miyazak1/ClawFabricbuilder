@@ -177,6 +177,11 @@ function setup(options: {
   const queueFollowup = vi.fn(options.queueFollowup ?? (async (request) => ({
     request_id: request.request_id,
     queued: true,
+    queued_followup: {
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+    },
   })));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
@@ -1184,7 +1189,12 @@ describe('Builder project controller v2', () => {
 
     const queued = await controller.queueFollowup('  Make it responsive next.  ');
 
-    expect(queued).toBe(true);
+    expect(queued?.queued).toBe(true);
+    expect(queued?.queued_followup).toEqual({
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+    });
     expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
       request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       message: 'Make it responsive next.',
@@ -1202,7 +1212,7 @@ describe('Builder project controller v2', () => {
   it('does not queue follow-ups when there is no active generation request', async () => {
     const { controller, queueFollowup } = setup();
 
-    await expect(controller.queueFollowup('Make it blue.')).resolves.toBe(false);
+    await expect(controller.queueFollowup('Make it blue.')).resolves.toBeNull();
 
     expect(queueFollowup).not.toHaveBeenCalled();
   });

@@ -1,6 +1,8 @@
 import type {
   BuilderApprovedPlanGenerationRequest,
+  BuilderGenerationTurnRequest,
   BuilderGenerationRequest,
+  BuilderQueuedFollowupReference,
 } from './builderGeneration';
 
 export type BuilderGenerationStartedEvent = Readonly<{
@@ -18,6 +20,12 @@ export type BuilderGenerationOutputEvent = Readonly<{
   task_id: string | null;
   run_id: string;
   display_delta_text: string;
+}>;
+
+export type BuilderQueuedFollowupResult = Readonly<{
+  request_id: string;
+  queued: boolean;
+  queued_followup: BuilderQueuedFollowupReference | null;
 }>;
 
 export type BuilderPlanSourceReadApprovalStatus = Readonly<{
@@ -127,7 +135,7 @@ export function trustedBuilderGenerationDiagnosticCode(
 }
 
 export interface BuilderCodeGeneratorPort {
-  submit(request: BuilderGenerationRequest): Promise<unknown>;
+  submit(request: BuilderGenerationTurnRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
   continueDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<unknown>;
@@ -145,7 +153,7 @@ export interface BuilderCodeGeneratorPort {
     request: Readonly<{ project_id: string }>,
   ): Promise<BuilderCurrentProjectWriteApprovalResult>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
-  answer(request: BuilderGenerationRequest): Promise<unknown>;
+  answer(request: BuilderGenerationTurnRequest): Promise<unknown>;
   answerDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;
   restoreDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   restoreRevisionAsDraft(

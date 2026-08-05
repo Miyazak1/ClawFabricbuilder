@@ -667,6 +667,15 @@ Evidence requirements:
   single replay-verified event chain. This gate is main-only, has no IPC/preload
   command, grants no permission, reads or writes no source, dispatches no
   provider/tool, and does not run queued follow-ups automatically after restart;
+- the current queued-follow-up dispatch receipt checkpoint makes successful
+  `queueFollowup` return only a bounded main-recorded reference
+  (`turn_id`/`run_id`/`message_id`). When the renderer later re-enters the normal
+  submit/answer path after active work becomes terminal, that reference can be
+  carried through workspace and write-permission admission and consumed by main
+  before the new provider request starts. Main still reclassifies the user text,
+  enforces selected-project/write gates, and lets Conversation replay verify the
+  queued message; draft-to-draft continuation consumption remains a separate
+  future gate rather than being disguised as a normal work turn;
 - the current active-answer admission checkpoint keeps explicit build/change
   commands out of the steering path while a read-only answer is running. The
   renderer prefers queued follow-up route evidence for non-cancel input during

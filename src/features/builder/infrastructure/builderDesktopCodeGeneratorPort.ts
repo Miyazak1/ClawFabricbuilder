@@ -6,6 +6,10 @@ import {
   type BuilderGenerationStartedEvent,
   type BuilderGenerationDiagnosticCode as ApplicationBuilderGenerationDiagnosticCode,
 } from '../application/builderPorts';
+import {
+  sanitizeBuilderQueuedFollowupReference,
+  type BuilderQueuedFollowupReference,
+} from '../application/builderGeneration';
 
 export const BuilderDesktopCodeGeneratorPortError = BuilderGenerationDiagnosticError;
 export type BuilderGenerationDiagnosticCode = ApplicationBuilderGenerationDiagnosticCode;
@@ -80,6 +84,8 @@ const TASK_ID_PATTERN =
   /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN =
   /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MESSAGE_ID_PATTERN =
+  /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 
 function portError(
@@ -455,18 +461,53 @@ function unwrapSteerResult(value: unknown, expectedRequestId: string): Readonly<
 function unwrapQueuedFollowupResult(value: unknown, expectedRequestId: string): Readonly<{
   request_id: string;
   queued: boolean;
+  queued_followup: BuilderQueuedFollowupReference | null;
 }> {
-  const result = exactDataRecord(value, ['request_id', 'queued']);
+  const result = exactDataRecord(value, ['request_id', 'queued', 'queued_followup']);
   if (
     result.request_id !== expectedRequestId
     || typeof result.request_id !== 'string'
     || !DIGEST_PATTERN.test(result.request_id)
     || typeof result.queued !== 'boolean'
   ) throw portError();
+  let queuedFollowup: BuilderQueuedFollowupReference | null;
+  try {
+    queuedFollowup = result.queued_followup === null
+      ? null
+      : sanitizeBuilderQueuedFollowupReference(result.queued_followup);
+  } catch {
+    throw portError();
+  }
+  if (result.queued !== (queuedFollowup !== null)) throw portError();
   return Object.freeze({
     request_id: result.request_id,
     queued: result.queued,
+    queued_followup: queuedFollowup,
   });
+}
+
+function queuedFollowupPayload(value: BuilderQueuedFollowupReference | null | undefined) {
+  if (value === undefined || value === null) return undefined;
+  if (
+    !TURN_ID_PATTERN.test(value.turn_id)
+    || !RUN_ID_PATTERN.test(value.run_id)
+    || !MESSAGE_ID_PATTERN.test(value.message_id)
+  ) throw portError();
+  return Object.freeze({
+    turn_id: value.turn_id,
+    run_id: value.run_id,
+    message_id: value.message_id,
+  });
+}
+
+function instructionRequestPayload(
+  instruction: string,
+  queuedFollowup: BuilderQueuedFollowupReference | null | undefined,
+) {
+  const queued = queuedFollowupPayload(queuedFollowup);
+  return queued === undefined
+    ? { instruction }
+    : { instruction, queued_followup: queued };
 }
 
 function sanitizeStartedEvent(value: unknown): BuilderGenerationStartedEvent {
@@ -606,9 +647,9 @@ export function createBuilderDesktopCodeGeneratorPort(
       ));
     },
     submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
-      return callBridge(bridge, bridge.submit, [{
-        instruction: request.instruction,
-      }]).then(unwrapGenerationEnvelope);
+      return callBridge(bridge, bridge.submit, [
+        instructionRequestPayload(request.instruction, request.queued_followup),
+      ]).then(unwrapGenerationEnvelope);
     },
     retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
       return callBridge(bridge, bridge.retry, [{
@@ -616,9 +657,9 @@ export function createBuilderDesktopCodeGeneratorPort(
       }]).then(unwrapGenerationEnvelope);
     },
     answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
-      return callBridge(bridge, bridge.answer, [{
-        instruction: request.instruction,
-      }]).then(unwrapGenerationEnvelope);
+      return callBridge(bridge, bridge.answer, [
+        instructionRequestPayload(request.instruction, request.queued_followup),
+      ]).then(unwrapGenerationEnvelope);
     },
     answerDraft(request: Parameters<BuilderCodeGeneratorPort['answerDraft']>[0]) {
       return callBridge(bridge, bridge.answerDraft, [{

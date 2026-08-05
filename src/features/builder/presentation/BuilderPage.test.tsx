@@ -190,7 +190,15 @@ async function snapshots() {
         return { request_id: request.request_id, steered: true };
       },
       async queueFollowup(request) {
-        return { request_id: request.request_id, queued: true };
+        return {
+          request_id: request.request_id,
+          queued: true,
+          queued_followup: {
+            turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+            run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+          },
+        };
       },
     },
     workspace: {
@@ -316,7 +324,15 @@ async function workingProjectSnapshot() {
         return { request_id: request.request_id, steered: true };
       },
       async queueFollowup(request) {
-        return { request_id: request.request_id, queued: true };
+        return {
+          request_id: request.request_id,
+          queued: true,
+          queued_followup: {
+            turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+            run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+          },
+        };
       },
     },
     workspace: {
@@ -1214,7 +1230,15 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
         return { request_id: steerRequest.request_id, steered: true };
       },
       async queueFollowup(queueRequest) {
-        return { request_id: queueRequest.request_id, queued: true };
+        return {
+          request_id: queueRequest.request_id,
+          queued: true,
+          queued_followup: {
+            turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+            run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+          },
+        };
       },
     },
     workspace: {
@@ -1347,7 +1371,15 @@ async function inspectedHistorySnapshot() {
         return { request_id: request.request_id, steered: true };
       },
       async queueFollowup(request) {
-        return { request_id: request.request_id, queued: true };
+        return {
+          request_id: request.request_id,
+          queued: true,
+          queued_followup: {
+            turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+            run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174002',
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+          },
+        };
       },
     },
     workspace: {

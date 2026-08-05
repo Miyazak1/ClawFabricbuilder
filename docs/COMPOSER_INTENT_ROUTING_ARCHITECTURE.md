@@ -673,10 +673,14 @@ starts. The Conversation main service can now start a main-only queued
 follow-up work/question turn by appending
 `turn_submitted -> turn_followup_consumed -> run_started` in one replay-checked
 event chain; this is still not exposed through IPC/preload and is not an
-auto-dispatch executor. Main `submit` now dispatches from the resolved
-`RouteDecision` instead of a second boolean answer/build classifier, so
-workspace admission, write permission, and provider route selection cannot
-silently diverge.
+auto-dispatch executor. Successful `queueFollowup` calls now return only a
+bounded main-recorded queued reference, and the existing submit/answer path can
+carry that reference through normal route, workspace, and permission admission
+before main consumes it through the replay-verified begin gate. Draft
+continuation consumption remains a later explicit gate. Main `submit` now
+dispatches from the resolved `RouteDecision` instead of a second boolean
+answer/build classifier, so workspace admission, write permission, and provider
+route selection cannot silently diverge.
 
 ### Slice 3 - Task Capsule And Working Brief
 

@@ -75,6 +75,7 @@ const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const MESSAGE_ID_PATTERN = new RegExp(`^builder-message:${UUID_SOURCE}$`, 'u');
 const EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
@@ -242,6 +243,20 @@ function routeDecisionHint({
     required_permissions: [...requiredPermissions],
     permission_result: permissionResult,
     dispatch,
+  });
+}
+
+function withRouteDecisionMatchedSignal(hint, signal) {
+  if (hint.matched_signals.includes(signal)) return hint;
+  return routeDecisionHint({
+    route: hint.route,
+    confidence: hint.confidence,
+    matchedSignals: [signal, ...hint.matched_signals],
+    downgradedFrom: hint.downgraded_from,
+    downgradeReason: hint.downgrade_reason,
+    requiredPermissions: hint.required_permissions,
+    permissionResult: hint.permission_result,
+    dispatch: hint.dispatch,
   });
 }
 
@@ -682,6 +697,38 @@ function safeHead(value) {
 function safePattern(value, pattern, maximum) {
   if (typeof value !== 'string' || value.length > maximum || !pattern.test(value)) fail();
   return value;
+}
+
+function safeMessageId(value) {
+  return safePattern(value, MESSAGE_ID_PATTERN, 80);
+}
+
+function sanitizeQueuedFollowupReference(value) {
+  exactObject(value, ['turn_id', 'run_id', 'message_id']);
+  return freezeDeep({
+    turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN, 80),
+    run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN, 80),
+    message_id: safeMessageId(valueAt(value, 'message_id')),
+  });
+}
+
+function queuedFollowupReferenceFromEvent(event) {
+  if (event.event_type !== 'turn_followup_queued') fail();
+  const payload = valueAt(event, 'payload');
+  const message = valueAt(payload, 'message');
+  return freezeDeep({
+    turn_id: safePattern(valueAt(payload, 'turn_id'), TURN_ID_PATTERN, 80),
+    run_id: safePattern(valueAt(payload, 'run_id'), RUN_ID_PATTERN, 80),
+    message_id: safeMessageId(valueAt(message, 'message_id')),
+  });
+}
+
+function sanitizeQueuedFollowupTurnRequest(value) {
+  exactObject(value, ['request', 'queued_followup']);
+  return freezeDeep({
+    request: sanitizeBuilderGenerationRequest(valueAt(value, 'request')),
+    queued_followup: sanitizeQueuedFollowupReference(valueAt(value, 'queued_followup')),
+  });
 }
 
 function safeLiveDisplayText(value) {
@@ -1302,6 +1349,8 @@ function createBuilderGenerationMainService(rawOptions) {
     : ownMethod(options.projectIdentityAuthority, 'load_project_identity');
   const beginConversationQuestion = ownMethod(options.conversationService, 'begin_question');
   const beginConversationWork = ownMethod(options.conversationService, 'begin_work');
+  const beginQueuedFollowupQuestion = ownMethod(options.conversationService, 'begin_queued_followup_question');
+  const beginQueuedFollowupWork = ownMethod(options.conversationService, 'begin_queued_followup_work');
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
   const completeConversationPlan = ownMethod(options.conversationService, 'complete_plan');
@@ -1340,6 +1389,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const retryableContexts = new Map();
   const pendingRetryContexts = new Map();
   const pendingGenerateRouteDecisionHints = new Map();
+  const pendingGenerateQueuedFollowups = new Map();
   const generationContexts = new WeakMap();
   const draftContinuationContexts = new WeakMap();
   const pendingDraftContinuationContexts = new Map();
@@ -1348,6 +1398,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const liveOutputContextsByRunId = new Map();
   const pendingDraftAnswerContexts = new Map();
   const pendingAnswerRouteDecisionHints = new Map();
+  const pendingAnswerQueuedFollowups = new Map();
   const pendingApprovedPlanEditContexts = new Map();
   const pendingPlanRequests = new Map();
   const planContexts = new WeakMap();
@@ -1728,6 +1779,7 @@ function createBuilderGenerationMainService(rawOptions) {
       const existingProjectId = request.existing_project_id;
       const routeDecisionHint = pendingGenerateRouteDecisionHints.get(key)
         ?? buildRouteDecisionHint(['clear_build']);
+      const queuedFollowup = pendingGenerateQueuedFollowups.get(key) ?? null;
       const projectId = existingProjectId === null
         ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
         : existingProjectId;
@@ -1744,17 +1796,29 @@ function createBuilderGenerationMainService(rawOptions) {
           options.projectReadAuthority,
           options.projectIdentityAuthority,
         );
-      let conversationContext = Reflect.apply(
-        beginConversationWork,
-        options.conversationService,
-        [{
-          project_id: projectId,
-          instruction: request.instruction,
-          request_digest: request.request_digest,
-          base_revision: base.base_revision,
-          route_decision_hint: routeDecisionHint,
-        }],
-      );
+      const beginRequest = {
+        project_id: projectId,
+        instruction: request.instruction,
+        request_digest: request.request_digest,
+        base_revision: base.base_revision,
+        route_decision_hint: queuedFollowup === null
+          ? routeDecisionHint
+          : withRouteDecisionMatchedSignal(routeDecisionHint, 'active_run_followup'),
+      };
+      let conversationContext = queuedFollowup === null
+        ? Reflect.apply(
+          beginConversationWork,
+          options.conversationService,
+          [beginRequest],
+        )
+        : Reflect.apply(
+          beginQueuedFollowupWork,
+          options.conversationService,
+          [{
+            ...beginRequest,
+            queued_followup: queuedFollowup,
+          }],
+        );
       conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
@@ -1820,8 +1884,10 @@ function createBuilderGenerationMainService(rawOptions) {
       const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
       const routeDecisionHint = pendingAnswerRouteDecisionHints.get(key)
         ?? answerRouteDecisionHint(['read_only']);
+      const queuedFollowup = pendingAnswerQueuedFollowups.get(key) ?? null;
       const draftAnswerContext = pendingDraftAnswerContexts.get(key);
       if (draftAnswerContext !== undefined) {
+        if (queuedFollowup !== null) fail();
         pendingDraftAnswerContexts.delete(key);
         if (
           request.existing_project_id !== draftAnswerContext.project_id
@@ -1871,17 +1937,29 @@ function createBuilderGenerationMainService(rawOptions) {
           options.projectReadAuthority,
           options.projectIdentityAuthority,
         );
-      let conversationContext = Reflect.apply(
-        beginConversationQuestion,
-        options.conversationService,
-        [{
-          project_id: projectId,
-          question: request.instruction,
-          request_digest: request.request_digest,
-          base_revision: base.base_revision,
-          route_decision_hint: routeDecisionHint,
-        }],
-      );
+      const beginRequest = {
+        project_id: projectId,
+        question: request.instruction,
+        request_digest: request.request_digest,
+        base_revision: base.base_revision,
+        route_decision_hint: queuedFollowup === null
+          ? routeDecisionHint
+          : withRouteDecisionMatchedSignal(routeDecisionHint, 'active_run_followup'),
+      };
+      let conversationContext = queuedFollowup === null
+        ? Reflect.apply(
+          beginConversationQuestion,
+          options.conversationService,
+          [beginRequest],
+        )
+        : Reflect.apply(
+          beginQueuedFollowupQuestion,
+          options.conversationService,
+          [{
+            ...beginRequest,
+            queued_followup: queuedFollowup,
+          }],
+        );
       conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(ANSWER_OPERATION_PREFIX, request.request_digest),
@@ -2369,14 +2447,16 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function startGenerate(request, retryableContext, routeDecisionHint = null) {
+  function startGenerate(request, retryableContext, routeDecisionHint = null, queuedFollowup = null) {
     const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
     const routeConflict = rejectIfOtherRouteInFlight(GENERATE_OPERATION_PREFIX, request.request_digest);
     if (routeConflict) return routeConflict;
+    if (retryableContext !== null && queuedFollowup !== null) fail();
     if (retryableContext !== null) pendingRetryContexts.set(key, retryableContext);
     if (routeDecisionHint !== null) pendingGenerateRouteDecisionHints.set(key, routeDecisionHint);
+    if (queuedFollowup !== null) pendingGenerateQueuedFollowups.set(key, queuedFollowup);
     const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
       const conversationContext = latestConversationContext(context, generationContexts.get(context));
@@ -2451,6 +2531,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }).finally(() => {
       pendingRetryContexts.delete(key);
       pendingGenerateRouteDecisionHints.delete(key);
+      pendingGenerateQueuedFollowups.delete(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -2677,6 +2758,31 @@ function createBuilderGenerationMainService(rawOptions) {
       : startGenerate(request, null, routeDecision);
   }
 
+  async function submitQueuedFollowup(rawRequest) {
+    let request;
+    let queuedFollowup;
+    try {
+      const sanitized = sanitizeQueuedFollowupTurnRequest(rawRequest);
+      request = sanitized.request;
+      queuedFollowup = sanitized.queued_followup;
+      if (request.existing_project_id === null) fail();
+    } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    const hasContextualBuildContext = hasContextualBuildContextForRequest(request);
+    const routeDecision = withRouteDecisionMatchedSignal(
+      classifySubmitRouteDecision(
+        request.instruction,
+        hasContextualBuildContext,
+      ),
+      'active_run_followup',
+    );
+    const shouldAnswer = routeDecision.route !== 'build';
+    return shouldAnswer
+      ? startAnswer(request, routeDecision, queuedFollowup)
+      : startGenerate(request, null, routeDecision, queuedFollowup);
+  }
+
   async function retryGenerate(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -2691,7 +2797,7 @@ function createBuilderGenerationMainService(rawOptions) {
     return startGenerate(request, retryableContext);
   }
 
-  function startAnswer(request, routeDecisionHint = null) {
+  function startAnswer(request, routeDecisionHint = null, queuedFollowup = null) {
     const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
@@ -2701,6 +2807,7 @@ function createBuilderGenerationMainService(rawOptions) {
       key,
       routeDecisionHint ?? answerRouteDecisionHint(['read_only']),
     );
+    if (queuedFollowup !== null) pendingAnswerQueuedFollowups.set(key, queuedFollowup);
     const localReply = localReadOnlyReply(request);
     const operation = Promise.resolve(localReply === null
       ? host.explain(request)
@@ -2724,6 +2831,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }).finally(() => {
       pendingDraftAnswerContexts.delete(key);
       pendingAnswerRouteDecisionHints.delete(key);
+      pendingAnswerQueuedFollowups.delete(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -2742,6 +2850,30 @@ function createBuilderGenerationMainService(rawOptions) {
         request.instruction,
         hasContextualBuildContextForRequest(request),
       ),
+    );
+  }
+
+  async function answerQueuedFollowup(rawRequest) {
+    let request;
+    let queuedFollowup;
+    try {
+      const sanitized = sanitizeQueuedFollowupTurnRequest(rawRequest);
+      request = sanitized.request;
+      queuedFollowup = sanitized.queued_followup;
+      if (request.existing_project_id === null) fail();
+    } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    return startAnswer(
+      request,
+      withRouteDecisionMatchedSignal(
+        classifyReadOnlyAnswerRouteDecision(
+          request.instruction,
+          hasContextualBuildContextForRequest(request),
+        ),
+        'active_run_followup',
+      ),
+      queuedFollowup,
     );
   }
 
@@ -2868,6 +3000,7 @@ function createBuilderGenerationMainService(rawOptions) {
       operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
     let queued = false;
+    let queuedFollowup = null;
     for (const key of keys) {
       const context = activeContexts.get(key);
       if (context === undefined) continue;
@@ -2883,9 +3016,10 @@ function createBuilderGenerationMainService(rawOptions) {
       }
       activeContexts.set(key, queuedContext);
       liveOutputContextsByRunId.set(queuedContext.ids.run_id, queuedContext);
+      queuedFollowup = queuedFollowupReferenceFromEvent(queuedContext.events.at(-1));
       queued = true;
     }
-    return Object.freeze({ request_id: requestId, queued });
+    return Object.freeze({ request_id: requestId, queued, queued_followup: queuedFollowup });
   }
 
   async function baseRevisionEvidenceForRestoredDraft(proof) {
@@ -3105,7 +3239,9 @@ function createBuilderGenerationMainService(rawOptions) {
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     submit,
+    submit_queued_followup: submitQueuedFollowup,
     answer,
+    answer_queued_followup: answerQueuedFollowup,
     answer_draft: answerDraft,
     propose_plan: proposePlan,
     generate,
@@ -3140,6 +3276,7 @@ function createBuilderGenerationMainService(rawOptions) {
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
       run_followup_queue: 'request_id_only_main_conversation_fact',
+      run_followup_consumption: 'main_conversation_replay_verified',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,

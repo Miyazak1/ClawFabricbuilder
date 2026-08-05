@@ -18,6 +18,16 @@ export type BuilderGenerationRequest = Readonly<{
   request_digest: string;
 }>;
 
+export type BuilderQueuedFollowupReference = Readonly<{
+  turn_id: string;
+  run_id: string;
+  message_id: string;
+}>;
+
+export type BuilderGenerationTurnRequest = BuilderGenerationRequest & Readonly<{
+  queued_followup?: BuilderQueuedFollowupReference | null;
+}>;
+
 export type BuilderApprovedPlanGenerationRequest = Readonly<{
   project_id: string;
   conversation_id: string;
@@ -226,6 +236,8 @@ const TURN_ID_PATTERN =
   /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN =
   /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MESSAGE_ID_PATTERN =
+  /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
@@ -233,6 +245,7 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const MAX_INSTRUCTION_CODE_POINTS = 4000;
 const MAX_INSTRUCTION_UTF8_BYTES = 16 * 1024;
+const QUEUED_FOLLOWUP_REFERENCE_KEYS = Object.freeze(['turn_id', 'run_id', 'message_id']);
 
 function invalid(code: BuilderGenerationErrorCode): BuilderGenerationError {
   return new BuilderGenerationError(code);
@@ -355,6 +368,13 @@ function safeRunId(value: unknown): string {
   return value;
 }
 
+function safeMessageId(value: unknown): string {
+  if (typeof value !== 'string' || !MESSAGE_ID_PATTERN.test(value)) {
+    throw invalid('invalid_generation_request');
+  }
+  return value;
+}
+
 function safeDraftId(value: unknown): string {
   if (typeof value !== 'string' || !DRAFT_ID_PATTERN.test(value)) {
     throw invalid('invalid_generated_draft');
@@ -447,6 +467,21 @@ export async function sanitizeBuilderGenerationRequest(
     || await sha256Canonical(unsigned) !== requestDigest
   ) throw invalid('invalid_generation_request');
   return deepFreeze({ ...unsigned, request_digest: requestDigest });
+}
+
+export function sanitizeBuilderQueuedFollowupReference(
+  value: unknown,
+): BuilderQueuedFollowupReference {
+  const source = exactRecord(
+    value,
+    QUEUED_FOLLOWUP_REFERENCE_KEYS,
+    'invalid_generation_request',
+  );
+  return deepFreeze({
+    turn_id: safeTurnId(source.turn_id),
+    run_id: safeRunId(source.run_id),
+    message_id: safeMessageId(source.message_id),
+  });
 }
 
 export function sanitizeBuilderApprovedPlanGenerationRequest(
