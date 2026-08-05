@@ -140,5 +140,14 @@ saved-version conversation dependencies block conversation deletion, and project
 deletion remains an explicit future confirmation path rather than automatic
 cleanup.
 
+Builder also has a pure read-only conversation export contract,
+`builder-conversation-export.v1`. It accepts a `conversation_loaded` result from
+the metadata authority, replays the canonical events, and produces in-memory
+JSONL plus Markdown text as derived mirrors. It strips Git candidate receipts and
+internal provider/source details from the exported surface. It does not write the
+mirror to disk, mutate SQLite or Git, materialize an export bundle, or grant
+renderer export authority. A later main-owned export service may persist these
+derived mirrors after adding path, overwrite, active-run, and package evidence.
+
 The first destructive delete feature must ship with replay, foreign-key,
 active-run, export-before-delete, and package/canary evidence.
