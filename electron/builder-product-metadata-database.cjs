@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const { types: utilTypes } = require('node:util');
 
 const {
   BuilderGitReceiptContractError,
@@ -25,6 +26,10 @@ const {
   BuilderConversationReplayError,
   replayBuilderConversation,
 } = require('./builder-conversation-replay.cjs');
+const {
+  BuilderStorageLifecycleReportError,
+  createBuilderStorageLifecycleReport,
+} = require('./builder-storage-lifecycle-report.cjs');
 const {
   BUILDER_PRODUCT_METADATA_RESULT_VERSION,
   BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
@@ -58,6 +63,25 @@ const ERROR_MESSAGES = Object.freeze({
   builder_product_metadata_resource_exceeded: 'Builder product metadata limits were reached.',
   builder_product_metadata_unavailable: 'Builder product metadata storage is unavailable.',
 });
+const STORAGE_LIFECYCLE_REQUEST_KEYS = Object.freeze([
+  'project_id',
+  'generated_at_ms',
+  'derived_storage',
+  'retention_policy',
+]);
+const STORAGE_DERIVED_KEYS = Object.freeze([
+  'preview_cache_bytes',
+  'static_snapshot_bytes',
+  'task_stream_projection_cache_bytes',
+  'temporary_draft_bytes',
+  'mirror_bytes',
+  'old_log_bytes',
+]);
+const STORAGE_RETENTION_KEYS = Object.freeze([
+  'archive_inactive_project_after_days',
+  'delete_failed_unsaved_draft_after_days',
+  'saved_versions',
+]);
 
 class BuilderProductMetadataDatabaseError extends Error {
   constructor(code = 'builder_product_metadata_invalid') {
@@ -83,6 +107,40 @@ function frozen(value) {
   return value;
 }
 
+function isPlainObject(value) {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || utilTypes.isProxy(value)
+  ) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function exactObject(value, keys) {
+  if (!isPlainObject(value)) fail('builder_product_metadata_invalid');
+  const actual = Reflect.ownKeys(value);
+  if (
+    actual.length !== keys.length
+    || actual.some((key) => typeof key !== 'string' || !keys.includes(key))
+  ) fail('builder_product_metadata_invalid');
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      fail('builder_product_metadata_invalid');
+    }
+  }
+}
+
+function valueAt(value, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+    fail('builder_product_metadata_invalid');
+  }
+  return descriptor.value;
+}
+
 function hasControlCharacter(value) {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -102,6 +160,60 @@ function safeDatabasePath(value) {
     || path.resolve(value) !== value
   ) fail('builder_product_metadata_invalid');
   return value;
+}
+
+function safeProjectId(value) {
+  if (typeof value !== 'string' || value.length > 64 || !PROJECT_ID_PATTERN.test(value)) {
+    fail('builder_product_metadata_invalid');
+  }
+  return value;
+}
+
+function safeTimestamp(value) {
+  if (!Number.isSafeInteger(value) || value < 0) fail('builder_product_metadata_invalid');
+  return value;
+}
+
+function safeLifecycleByteCount(value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 1024 * 1024 * 1024 * 1024) {
+    fail('builder_product_metadata_invalid');
+  }
+  return value;
+}
+
+function safeRetentionDays(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 3650) {
+    fail('builder_product_metadata_invalid');
+  }
+  return value;
+}
+
+function sanitizeStorageDerivedRequest(value) {
+  exactObject(value, STORAGE_DERIVED_KEYS);
+  const derived = {};
+  for (const key of STORAGE_DERIVED_KEYS) derived[key] = safeLifecycleByteCount(valueAt(value, key));
+  return frozen(derived);
+}
+
+function sanitizeStorageRetentionPolicy(value) {
+  exactObject(value, STORAGE_RETENTION_KEYS);
+  const savedVersions = valueAt(value, 'saved_versions');
+  if (savedVersions !== 'retain_until_project_delete') fail('builder_product_metadata_invalid');
+  return frozen({
+    archive_inactive_project_after_days: safeRetentionDays(valueAt(value, 'archive_inactive_project_after_days')),
+    delete_failed_unsaved_draft_after_days: safeRetentionDays(valueAt(value, 'delete_failed_unsaved_draft_after_days')),
+    saved_versions: savedVersions,
+  });
+}
+
+function sanitizeStorageLifecycleReportRequest(value) {
+  exactObject(value, STORAGE_LIFECYCLE_REQUEST_KEYS);
+  return frozen({
+    project_id: safeProjectId(valueAt(value, 'project_id')),
+    generated_at_ms: safeTimestamp(valueAt(value, 'generated_at_ms')),
+    derived_storage: sanitizeStorageDerivedRequest(valueAt(value, 'derived_storage')),
+    retention_policy: sanitizeStorageRetentionPolicy(valueAt(value, 'retention_policy')),
+  });
 }
 
 function assertParentDirectory(filePath) {
@@ -1418,6 +1530,138 @@ function listProjectRevisions(db, rawRequest) {
   return historyResult(db, receipts, current);
 }
 
+function storageConversationRows(db, projectId) {
+  return all(
+    db,
+    `SELECT project_id, conversation_id
+      FROM conversations
+      WHERE project_id = ?
+      ORDER BY conversation_id`,
+    [projectId],
+  );
+}
+
+function activeRunSummary(conversationId, turn, run) {
+  return {
+    conversation_id: conversationId,
+    turn_id: turn.turn_id,
+    run_id: run.run_id,
+    mode: turn.mode === 'work' ? 'work' : turn.mode === 'plan' ? 'plan' : 'question',
+    status: run.cancel_request_id !== null
+      ? 'cancelling'
+      : run.interrupt_request_id !== null
+        ? 'interrupting'
+        : 'running',
+  };
+}
+
+function summarizeStorageConversation(state) {
+  const summary = {
+    active_runs: [],
+    failed_unsaved_draft_count: 0,
+    pending_candidate_count: 0,
+    pending_review_count: 0,
+  };
+  if (state.snapshot === null) return summary;
+  for (const turn of state.snapshot.turns) {
+    for (const run of turn.runs) {
+      if (run.terminal_status === null) {
+        summary.active_runs.push(activeRunSummary(state.conversation.conversation_id, turn, run));
+        continue;
+      }
+      if (
+        turn.mode === 'work'
+        && run.terminal_status === 'failed'
+        && run.result_kind === 'failure'
+      ) {
+        summary.failed_unsaved_draft_count += 1;
+      }
+      if (
+        turn.mode === 'work'
+        && run.terminal_status === 'succeeded'
+        && run.result_kind === 'candidate'
+        && run.candidate_result !== null
+        && run.candidate_review === null
+      ) {
+        summary.pending_candidate_count += 1;
+        summary.pending_review_count += 1;
+      }
+    }
+  }
+  return summary;
+}
+
+function readStorageLifecycleReport(db, rawRequest) {
+  const request = sanitizeStorageLifecycleReportRequest(rawRequest);
+  const project = projectRow(db, request.project_id);
+  if (!project) fail('builder_product_metadata_not_found');
+  const conversationRows = storageConversationRows(db, request.project_id);
+  let conversationEventCount = 0;
+  let failedUnsavedDraftCount = 0;
+  let pendingCandidateCount = 0;
+  let pendingReviewCount = 0;
+  const activeRuns = [];
+  for (const row of conversationRows) {
+    const state = loadConversationState(
+      db,
+      row.project_id,
+      row.conversation_id,
+      'builder_product_metadata_integrity_failed',
+    );
+    conversationEventCount += state.events.length;
+    const summary = summarizeStorageConversation(state);
+    activeRuns.push(...summary.active_runs);
+    failedUnsavedDraftCount += summary.failed_unsaved_draft_count;
+    pendingCandidateCount += summary.pending_candidate_count;
+    pendingReviewCount += summary.pending_review_count;
+  }
+  const savedRevisionCount = Number(one(
+    db,
+    'SELECT COUNT(*) AS count FROM project_revisions WHERE project_id = ?',
+    [request.project_id],
+  )?.count);
+  const savedRevisionConversationCount = Number(one(
+    db,
+    `SELECT COUNT(DISTINCT conversation_id) AS count
+      FROM project_revisions
+      WHERE project_id = ?`,
+    [request.project_id],
+  )?.count);
+  const reportInput = {
+    project_id: request.project_id,
+    generated_at_ms: request.generated_at_ms,
+    counts: {
+      conversation_count: conversationRows.length,
+      archived_conversation_count: 0,
+      conversation_event_count: conversationEventCount,
+      saved_revision_count: savedRevisionCount,
+      pending_candidate_count: pendingCandidateCount,
+      failed_unsaved_draft_count: failedUnsavedDraftCount,
+      mirror_file_count: 0,
+    },
+    active_runs: activeRuns,
+    dependencies: {
+      saved_revision_conversation_count: savedRevisionConversationCount,
+      pending_review_count: pendingReviewCount,
+      pending_permission_request_count: 0,
+    },
+    derived_storage: request.derived_storage,
+    retention_policy: request.retention_policy,
+  };
+  const report = createBuilderStorageLifecycleReport(reportInput);
+  return frozen({
+    result_version: BUILDER_PRODUCT_METADATA_RESULT_VERSION,
+    operation: 'storage_lifecycle_report_read',
+    report,
+    metadata_evidence: {
+      schema_fingerprint_digest: sha256Canonical(collectSchemaFingerprint(db)),
+      schema_version: BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      storage_authority: DATABASE_ID,
+      transaction: 'storage_lifecycle_report_readback',
+    },
+  });
+}
+
 function ownErrorField(error, key) {
   if (!error || typeof error !== 'object') return null;
   const descriptor = Object.getOwnPropertyDescriptor(error, key);
@@ -1439,6 +1683,9 @@ function normalizeOperationError(error) {
     || error instanceof BuilderConversationReplayError
   ) {
     return new BuilderProductMetadataDatabaseError('builder_product_metadata_invalid');
+  }
+  if (error instanceof BuilderStorageLifecycleReportError) {
+    return new BuilderProductMetadataDatabaseError('builder_product_metadata_integrity_failed');
   }
   if (error instanceof BuilderGitReceiptContractError) {
     return new BuilderProductMetadataDatabaseError('builder_product_metadata_invalid');
@@ -1547,6 +1794,12 @@ function createBuilderProductMetadataDatabase(databasePath) {
 
     list_project_revisions(rawRequest) {
       try { return listProjectRevisions(db, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    read_storage_lifecycle_report(rawRequest) {
+      try { return readStorageLifecycleReport(db, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

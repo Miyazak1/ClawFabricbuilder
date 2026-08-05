@@ -213,6 +213,27 @@ function appendConversationRequest(events, expectedHead = null) {
   };
 }
 
+function storageReportRequest(overrides = {}) {
+  return {
+    project_id: PROJECT_ID,
+    generated_at_ms: 1234,
+    derived_storage: {
+      preview_cache_bytes: 10,
+      static_snapshot_bytes: 20,
+      task_stream_projection_cache_bytes: 30,
+      temporary_draft_bytes: 40,
+      mirror_bytes: 50,
+      old_log_bytes: 60,
+    },
+    retention_policy: {
+      archive_inactive_project_after_days: 90,
+      delete_failed_unsaved_draft_after_days: 30,
+      saved_versions: 'retain_until_project_delete',
+    },
+    ...overrides,
+  };
+}
+
 function oid(index) {
   return String(index).padStart(40, '0');
 }
@@ -655,6 +676,98 @@ test('records monotonic Project Revision receipts and restores current after res
     current_revision_number: 2,
   });
   restarted.close();
+});
+
+test('reads storage lifecycle report from saved revision dependencies without deleting facts', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  metadata.record_project_revision_receipt(request());
+
+  const reportResult = metadata.read_storage_lifecycle_report(storageReportRequest());
+
+  assert.equal(reportResult.result_version, BUILDER_PRODUCT_METADATA_RESULT_VERSION);
+  assert.equal(reportResult.operation, 'storage_lifecycle_report_read');
+  assert.equal(reportResult.metadata_evidence.transaction, 'storage_lifecycle_report_readback');
+  assert.equal(reportResult.metadata_evidence.storage_authority, 'builder-product-metadata-database.v3');
+  assert.equal(reportResult.report.project_id, PROJECT_ID);
+  assert.equal(reportResult.report.counts.conversation_count, 1);
+  assert.equal(reportResult.report.counts.conversation_event_count, 0);
+  assert.equal(reportResult.report.counts.saved_revision_count, 1);
+  assert.equal(reportResult.report.dependencies.saved_revision_conversation_count, 1);
+  assert.equal(reportResult.report.derived_storage_total_bytes, 210);
+  assert.equal(reportResult.report.recommendations.export_project, 'available_read_only');
+  assert.equal(reportResult.report.recommendations.delete_conversation, 'blocked_saved_revision_dependency');
+  assert.equal(
+    reportResult.report.recommendations.delete_project,
+    'requires_explicit_project_delete_confirmation',
+  );
+  assert.equal(reportResult.report.lifecycle.sqlite_delete, 'not_performed');
+  assert.equal(reportResult.report.lifecycle.sqlite_vacuum, 'not_performed');
+  assert.equal(reportResult.report.lifecycle.derived_cleanup, 'not_performed');
+  assert.doesNotMatch(
+    JSON.stringify(reportResult),
+    /"project_root_path"|"commit_oid"|"tree_oid"|"candidate_digest"|"verification_receipt"|"source_tree"|"provider_payload"|"credential_storage":"(?!not_present")/iu,
+  );
+  assert.equal(
+    metadata.load_current_project_revision({ project_id: PROJECT_ID }).receipt.revision_number,
+    1,
+  );
+  metadata.close();
+});
+
+test('reads active-run lifecycle report from conversation replay and blocks destructive actions', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  const initial = initialConversationEvents();
+  metadata.append_conversation_events(appendConversationRequest(initial));
+
+  const report = metadata.read_storage_lifecycle_report(storageReportRequest()).report;
+
+  assert.equal(report.counts.conversation_count, 1);
+  assert.equal(report.counts.conversation_event_count, 2);
+  assert.equal(report.counts.saved_revision_count, 0);
+  assert.deepEqual(report.active_runs, [{
+    conversation_id: CONVERSATION_ID,
+    turn_id: initial[0].payload.turn_id,
+    run_id: initial[1].payload.run_id,
+    mode: 'work',
+    status: 'running',
+  }]);
+  assert.equal(report.recommendations.archive_project, 'available_with_active_run_notice');
+  assert.equal(report.recommendations.delete_conversation, 'blocked_active_run');
+  assert.equal(report.recommendations.delete_project, 'blocked_active_run');
+  assert.equal(report.recommendations.sqlite_maintenance, 'defer_checkpoint_and_vacuum_until_idle');
+  assert.equal(report.lifecycle.sqlite_delete, 'not_performed');
+  metadata.close();
+});
+
+test('reports pending unsaved candidates before any review or saved revision dependency', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  const initial = initialConversationEvents();
+  const terminal = candidateTerminalConversationEvents(initial);
+  const appended = metadata.append_conversation_events(appendConversationRequest(initial));
+  metadata.append_conversation_events(appendConversationRequest(terminal, appended.current_head));
+
+  const report = metadata.read_storage_lifecycle_report(storageReportRequest()).report;
+
+  assert.equal(report.counts.conversation_count, 1);
+  assert.equal(report.counts.conversation_event_count, 4);
+  assert.equal(report.counts.saved_revision_count, 0);
+  assert.equal(report.counts.pending_candidate_count, 1);
+  assert.equal(report.dependencies.pending_review_count, 1);
+  assert.equal(report.dependencies.saved_revision_conversation_count, 0);
+  assert.equal(report.recommendations.delete_conversation, 'eligible_after_export');
+  assert.equal(report.recommendations.delete_project, 'blocked_pending_work_or_review');
+  assert.equal(report.recommendations.cleanup_derived_storage, 'eligible_without_authoritative_fact_delete');
+  assert.equal(
+    metadata.load_conversation({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }).current_head.sequence,
+    4,
+  );
+  metadata.close();
 });
 
 test('binds a logical project to one local workspace root without creating a revision', (t) => {
@@ -1545,6 +1658,32 @@ test('rejects retired v2 metadata and fails closed on proxy, accessor, and symbo
   const metadata = createBuilderProductMetadataDatabase(filePath);
   let traps = 0;
   assert.throws(
+    () => metadata.read_storage_lifecycle_report(storageReportRequest({
+      project_id: OTHER_PROJECT_ID,
+    })),
+    assertDatabaseError('builder_product_metadata_not_found'),
+  );
+  assert.throws(
+    () => metadata.read_storage_lifecycle_report(new Proxy(storageReportRequest(), {
+      ownKeys() {
+        traps += 1;
+        return [];
+      },
+    })),
+    assertDatabaseError('builder_product_metadata_invalid'),
+  );
+  assert.equal(traps, 0);
+  const reportWithAccessor = storageReportRequest();
+  Object.defineProperty(reportWithAccessor.derived_storage, 'preview_cache_bytes', {
+    enumerable: true,
+    get: () => { throw new Error('credential-marker'); },
+  });
+  assert.throws(
+    () => metadata.read_storage_lifecycle_report(reportWithAccessor),
+    assertDatabaseError('builder_product_metadata_invalid', ['credential-marker']),
+  );
+
+  assert.throws(
     () => metadata.record_project_revision_receipt(new Proxy(request(), {
       ownKeys() {
         traps += 1;
@@ -1590,6 +1729,7 @@ test('exposes only exact frozen redacted APIs and no old project or source autho
     'load_project_identity',
     'load_project_revision',
     'load_project_workspace',
+    'read_storage_lifecycle_report',
     'record_project_revision_receipt',
   ]);
   assert.equal(Object.isFrozen(metadata), true);

@@ -126,14 +126,16 @@ the mirror is regenerated or marked stale.
 7. Optional maintenance command for WAL checkpoint and vacuum.
 
 Current checkpoint: Builder now has a pure main-side storage lifecycle report
-contract, `builder-storage-lifecycle-report.v1`. It accepts only sanitized
-project-level counts, active-run summaries, dependency counts, derived-storage
-byte totals, and retention policy values supplied by a future main-owned
-repository reader. It returns deterministic read-only recommendations for
-export, archive, delete preflight, derived cleanup, and SQLite maintenance. The
-report deliberately performs no SQLite delete, VACUUM, derived cleanup, export
-materialization, provider dispatch, source mutation, Git mutation, renderer
-authority, or credential access. Active runs block destructive recommendations,
+contract, `builder-storage-lifecycle-report.v1`, and the product metadata
+database exposes a read-only `read_storage_lifecycle_report` method that derives
+its counts from SQLite project rows, revision receipts, and canonical
+conversation replay. It accepts only sanitized derived-storage byte totals and
+retention policy values from the caller, then returns deterministic read-only
+recommendations for export, archive, delete preflight, derived cleanup, and
+SQLite maintenance. The report deliberately performs no SQLite delete, VACUUM,
+derived cleanup, export materialization, provider dispatch, source mutation, Git
+mutation, renderer authority, or credential access. Active runs block
+destructive recommendations, pending unsaved candidates block project deletion,
 saved-version conversation dependencies block conversation deletion, and project
 deletion remains an explicit future confirmation path rather than automatic
 cleanup.
