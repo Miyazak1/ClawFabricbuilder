@@ -35,6 +35,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   rejectDraft: BuilderProjectController['rejectDraft'];
   cancel: BuilderProjectController['cancel'];
   steer: BuilderProjectController['steer'];
+  queueFollowup: BuilderProjectController['queueFollowup'];
   save: BuilderProjectController['save'];
 }>;
 
@@ -166,6 +167,10 @@ export function useBuilderProjectController(
     (message) => controller.steer(message).catch(() => false),
     [controller],
   );
+  const queueFollowup = useCallback<BuilderProjectController['queueFollowup']>(
+    (message) => controller.queueFollowup(message).catch(() => false),
+    [controller],
+  );
   return useMemo(
     () => Object.freeze({
       snapshot,
@@ -185,6 +190,7 @@ export function useBuilderProjectController(
       rejectDraft,
       cancel,
       steer,
+      queueFollowup,
       save,
     }),
     [
@@ -205,6 +211,7 @@ export function useBuilderProjectController(
       rejectDraft,
       cancel,
       steer,
+      queueFollowup,
       save,
     ],
   );

@@ -518,6 +518,7 @@ function conversationService(options = {}) {
     retry: [],
     cancel: [],
     steering: [],
+    queuedFollowup: [],
     readCandidate: [],
     rejectCandidate: [],
     readStream: [],
@@ -599,6 +600,27 @@ function conversationService(options = {}) {
         run_id: context.ids.run_id,
         message: {
           message_id: `builder-message:${UUIDS[(generation + 8) % UUIDS.length]}`,
+          text: message,
+        },
+      },
+      authority: { ...CONVERSATION_AUTHORITY },
+    });
+  }
+  function queuedFollowupEvent(context, message) {
+    return createBuilderConversationEvent({
+      record_version: CONVERSATION_EVENT_VERSION,
+      record_kind: CONVERSATION_EVENT_KIND,
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      command_id: nextProgressCommandId(),
+      event_type: 'turn_followup_queued',
+      previous_event: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        message: {
+          message_id: `builder-message:${UUIDS[(generation + 9) % UUIDS.length]}`,
           text: message,
         },
       },
@@ -903,6 +925,15 @@ function conversationService(options = {}) {
     record_steering(input) {
       calls.steering.push(input);
       const event = steeringEvent(input.context, input.message);
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
+      };
+    },
+    record_queued_followup(input) {
+      calls.queuedFollowup.push(input);
+      const event = queuedFollowupEvent(input.context, input.message);
       return {
         ...input.context,
         start_head: eventHead(event),
@@ -1303,6 +1334,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     draft_answer_generation: 'main_only_pending_candidate_source_explanation_no_mutation',
     history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
     run_steering: 'request_id_only_main_conversation_fact',
+    run_followup_queue: 'request_id_only_main_conversation_fact',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
@@ -3689,6 +3721,75 @@ test('keeps steering request-id bound and inert when no active run exists', () =
   );
 });
 
+test('records queued follow-up intent on an active run without cancelling provider work', async () => {
+  const attemptedRequest = request();
+  const lifecycle = conversationService();
+  let activeSignal;
+  let releaseTransport;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async (_input, options) => {
+      activeSignal = options.signal;
+      return new Promise((resolve) => {
+        releaseTransport = () => resolve({
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerOutput()),
+        });
+      });
+    },
+  });
+  const generation = service.generate(attemptedRequest);
+  while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(service.queue_followup({
+    request_id: attemptedRequest.request_digest,
+    message: 'After this, make the timer responsive.',
+  }), {
+    request_id: attemptedRequest.request_digest,
+    queued: true,
+  });
+  assert.equal(activeSignal.aborted, false);
+  assert.equal(lifecycle.calls.queuedFollowup.length, 1);
+  assert.equal(lifecycle.calls.queuedFollowup[0].message, 'After this, make the timer responsive.');
+  assert.equal(lifecycle.calls.cancel.length, 0);
+  assert.equal(lifecycle.calls.steering.length, 0);
+
+  releaseTransport();
+  const result = await generation;
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(
+    lifecycle.calls.candidate[0].context.events.some((event) => event.event_type === 'turn_followup_queued'),
+    true,
+  );
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 8);
+  assert.doesNotMatch(
+    JSON.stringify(lifecycle.calls.queuedFollowup[0]),
+    /credential|source_tree|git_candidate_receipt|tree_oid/iu,
+  );
+});
+
+test('keeps queued follow-up request-id bound and inert when no active run exists', () => {
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+  });
+  const requestId = request().request_digest;
+
+  assert.deepEqual(service.queue_followup({
+    request_id: requestId,
+    message: 'After this, use a quieter layout.',
+  }), {
+    request_id: requestId,
+    queued: false,
+  });
+  assert.equal(lifecycle.calls.queuedFollowup.length, 0);
+  assert.throws(
+    () => service.queue_followup({ request_id: requestId, message: ' leading space' }),
+    { code: 'builder_generation_request_invalid' },
+  );
+});
+
 test('fails closed when steering cannot be recorded and does not abort provider work', async () => {
   const attemptedRequest = request();
   const lifecycle = conversationService();
@@ -3717,6 +3818,47 @@ test('fails closed when steering cannot be recorded and does not abort provider 
     () => service.steer({
       request_id: attemptedRequest.request_digest,
       message: 'Please make the timer quieter.',
+    }),
+    (error) => error.code === 'builder_generation_service_unavailable'
+      && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
+  );
+  assert.equal(activeSignal.aborted, false);
+  assert.equal(lifecycle.calls.cancel.length, 0);
+
+  releaseTransport();
+  const result = await generation;
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+});
+
+test('fails closed when queued follow-up cannot be recorded and does not abort provider work', async () => {
+  const attemptedRequest = request();
+  const lifecycle = conversationService();
+  lifecycle.record_queued_followup = (input) => {
+    lifecycle.calls.queuedFollowup.push(input);
+    throw new Error(PRIVATE_MARKER);
+  };
+  let activeSignal;
+  let releaseTransport;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async (_input, options) => {
+      activeSignal = options.signal;
+      return new Promise((resolve) => {
+        releaseTransport = () => resolve({
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerOutput()),
+        });
+      });
+    },
+  });
+  const generation = service.generate(attemptedRequest);
+  while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  assert.throws(
+    () => service.queue_followup({
+      request_id: attemptedRequest.request_digest,
+      message: 'Please make the timer responsive after this.',
     }),
     (error) => error.code === 'builder_generation_service_unavailable'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
@@ -3766,6 +3908,47 @@ test('records steering intent on an active answer run without creating Git evide
   assert.equal(lifecycle.calls.explanation.length, 1);
   assert.equal(
     lifecycle.calls.explanation[0].context.events.some((event) => event.event_type === 'turn_steered'),
+    true,
+  );
+  assert.equal(git.receipts.length, 0);
+});
+
+test('records queued follow-up intent on an active answer run without creating Git evidence', async () => {
+  const question = request({ instruction: 'What does this project do?' });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  let answerSignal;
+  let releaseTransport;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle, gitAuthority: git }),
+    transport: async (_input, options) => {
+      answerSignal = options.signal;
+      return new Promise((resolve) => {
+        releaseTransport = () => resolve({
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerExplanation()),
+        });
+      });
+    },
+  });
+  const answer = service.answer(question);
+  while (answerSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(service.queue_followup({
+    request_id: question.request_digest,
+    message: 'After this, turn that into an implementation.',
+  }), {
+    request_id: question.request_digest,
+    queued: true,
+  });
+  releaseTransport();
+  const result = await answer;
+
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(
+    lifecycle.calls.explanation[0].context.events.some((event) => event.event_type === 'turn_followup_queued'),
     true,
   );
   assert.equal(git.receipts.length, 0);

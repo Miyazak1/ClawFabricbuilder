@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -20,6 +20,7 @@ const {
   ANSWER_DRAFT_CHANNEL,
   CANCEL_CHANNEL,
   STEER_CHANNEL,
+  QUEUE_FOLLOWUP_CHANNEL,
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
@@ -106,6 +107,10 @@ function adapter(overrides = {}) {
       calls.push(['steer', request]);
       return { steered: true };
     },
+    queueFollowup: (request) => {
+      calls.push(['queueFollowup', request]);
+      return { queued: true };
+    },
     availability: () => {
       calls.push(['availability']);
       return { available: true };
@@ -121,6 +126,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   const request = Object.freeze({ request_digest: `sha256:${'a'.repeat(64)}` });
   const cancellation = Object.freeze({ request_id: request.request_digest });
   const steering = Object.freeze({ request_id: request.request_digest, message: 'Keep going.' });
+  const followup = Object.freeze({ request_id: request.request_digest, message: 'Run this next.' });
 
   assert.equal(value.adapter_id, 'builder_code_generation.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'builderCodeGenerator');
@@ -143,6 +149,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'rejectDraft',
     'cancel',
     'steer',
+    'queueFollowup',
     'availability',
   ]);
   assert.deepEqual(
@@ -165,6 +172,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       REJECT_DRAFT_CHANNEL,
       CANCEL_CHANNEL,
       STEER_CHANNEL,
+      QUEUE_FOLLOWUP_CHANNEL,
       AVAILABILITY_CHANNEL,
     ],
   );
@@ -310,6 +318,10 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     { steered: true },
   );
   assert.deepEqual(
+    await value.channels.queueFollowup.invoke({ sender: windowRef.webContents }, followup),
+    { queued: true },
+  );
+  assert.deepEqual(
     await value.channels.availability.invoke({ sender: windowRef.webContents }),
     { available: true },
   );
@@ -340,6 +352,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['rejectDraft', { draft_id: `builder-generation-draft:${'c'.repeat(64)}` }],
     ['cancel', cancellation],
     ['steer', steering],
+    ['queueFollowup', followup],
     ['availability'],
   ]);
   assert.deepEqual(value.authority, {
@@ -499,6 +512,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       rejectDraft: () => { throw modified; },
       cancel: () => ({}),
       steer: () => ({}),
+      queueFollowup: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -640,6 +654,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     steer: () => {
       throw new Error('steer-private-marker');
     },
+    queueFollowup: () => ({}),
     availability: () => {
       const error = new Error('getter-private-marker');
       Object.defineProperty(error, 'code', {
@@ -763,6 +778,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       error.code = 'builder_generation_provider_http_error';
       throw error;
     },
+    queueFollowup: () => ({}),
     availability: () => {
       const error = new Error('control-private-marker');
       error.code = 'builder_generation_static_preview_contract_rejected';
@@ -809,7 +825,8 @@ test('keeps cancellation and other control failures as rejected generate invocat
       return { cancelled: true };
     },
     steer: () => ({}),
-    availability: () => ({}),
+    queueFollowup: () => ({}),
+      availability: () => ({}),
     mainWindowRef: () => windowRef,
   });
   const generationRejection = assert.rejects(
@@ -849,6 +866,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
       rejectDraft: async () => ({}),
       cancel: () => ({}),
       steer: () => ({}),
+      queueFollowup: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -891,6 +909,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       rejectDraft: async () => result,
       cancel: () => ({}),
       steer: () => ({}),
+      queueFollowup: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -948,6 +967,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       rejectDraft: async () => result,
       cancel: () => ({}),
       steer: () => ({}),
+      queueFollowup: () => ({}),
       availability: () => ({}),
       mainWindowRef: () => windowRef,
     });
@@ -982,7 +1002,8 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     rejectDraft: async () => ({}),
     cancel: () => ({}),
     steer: () => ({}),
-    availability: () => ({}),
+    queueFollowup: () => ({}),
+      availability: () => ({}),
     mainWindowRef: activeWindow,
   };
   const accessor = { ...valid };

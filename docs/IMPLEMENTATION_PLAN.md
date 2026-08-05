@@ -649,10 +649,11 @@ Evidence requirements:
   follow-up message against the same trusted active Run context and exposes only
   the renderer-safe `turn_followup_queued` / `message_kind: queued_followup`
   projection through the read-only Task Stream. It is a durable conversation
-  fact for "run this after the current work", not an executor: it registers no
-  IPC/preload command, starts no second Run, mutates no issued provider/tool
-  request, reads or writes no source, creates no Git candidate, grants no
-  permission, and creates no Save, Review, Project Revision, branch, or
+  fact for "run this after the current work", not an executor: the renderer can
+  record it only through a controlled request-id-only IPC/preload
+  `queueFollowup` command, and it starts no second Run, mutates no issued
+  provider/tool request, reads or writes no source, creates no Git candidate,
+  grants no permission, and creates no Save, Review, Project Revision, branch, or
   compaction fact;
 - the current active-answer admission checkpoint keeps explicit build/change
   commands out of the steering path while a read-only answer is running. The

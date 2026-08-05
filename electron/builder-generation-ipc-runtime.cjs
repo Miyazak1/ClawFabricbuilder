@@ -20,6 +20,7 @@ const {
   PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
+  QUEUE_FOLLOWUP_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
@@ -1420,6 +1421,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       rejectDraft: service.reject_draft,
       cancel: service.cancel,
       steer: service.steer,
+      queueFollowup: service.queue_followup,
       availability: service.availability,
       mainWindowRef: options.mainWindowRef,
     });
@@ -1647,6 +1649,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: REJECT_DRAFT_CHANNEL, invoke: adapter.channels.rejectDraft.invoke }),
     Object.freeze({ channel: CANCEL_CHANNEL, invoke: adapter.channels.cancel.invoke }),
     Object.freeze({ channel: STEER_CHANNEL, invoke: adapter.channels.steer.invoke }),
+    Object.freeze({ channel: QUEUE_FOLLOWUP_CHANNEL, invoke: adapter.channels.queueFollowup.invoke }),
     Object.freeze({ channel: AVAILABILITY_CHANNEL, invoke: adapter.channels.availability.invoke }),
     Object.freeze({ channel: OPEN_PROJECT_CHANNEL, invoke: workspaceAdapter.channels.open.invoke }),
     Object.freeze({ channel: OPEN_PROJECT_LOCATION_CHANNEL, invoke: workspaceAdapter.channels.openLocation.invoke }),

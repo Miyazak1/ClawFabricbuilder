@@ -9,7 +9,7 @@ export type BuilderDesktopBridgeRoot = Readonly<{
   windowControls: unknown;
 }>;
 
-export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v20';
+export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v21';
 
 const ROOT_KEYS = new Set([
   'bridgeVersion',

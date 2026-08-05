@@ -315,6 +315,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  queueFollowup(request: Parameters<BuilderCodeGeneratorPort['queueFollowup']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
     void listener;
     return () => undefined;
@@ -939,6 +943,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       steer(request: Parameters<BuilderCodeGeneratorPort['steer']>[0]) {
         return ports.generator.steer(request);
+      },
+      queueFollowup(request: Parameters<BuilderCodeGeneratorPort['queueFollowup']>[0]) {
+        return ports.generator.queueFollowup(request);
       },
       subscribeStarted(listener: (event: BuilderGenerationStartedEvent) => void) {
         return ports.generator.subscribeStarted?.(listener) ?? (() => undefined);
@@ -1784,6 +1791,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       if (decision.dispatch === 'queue_followup') {
+        const queued = await project.queueFollowup(submittedIdea);
+        if (!queued) return;
         publishQueuedActiveRunFollowup(Object.freeze({
           epoch: workspaceEpochRef.current,
           instruction: submittedIdea,
@@ -1795,6 +1804,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       if (decision.dispatch === 'reply') {
         return;
       }
+      const queued = await project.queueFollowup(submittedIdea);
+      if (!queued) return;
       publishQueuedActiveRunFollowup(Object.freeze({
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,

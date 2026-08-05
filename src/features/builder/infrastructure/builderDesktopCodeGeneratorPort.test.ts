@@ -46,6 +46,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -90,6 +91,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -144,6 +146,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -198,6 +201,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -282,6 +286,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -363,6 +368,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -421,6 +427,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -467,6 +474,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -504,6 +512,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted(listener: (event: unknown) => void) {
         listeners.push(listener);
@@ -564,6 +573,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput(listener: (event: unknown) => void) {
@@ -652,6 +662,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -701,6 +712,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -758,6 +770,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -798,6 +811,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -841,6 +855,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -895,6 +910,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -931,6 +947,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -969,6 +986,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -987,6 +1005,52 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(steer.mock.calls[0][0]).not.toHaveProperty('source_tree');
     expect(steer.mock.calls[0][0]).not.toHaveProperty('project_id');
     expect(result).toEqual({ request_id: request.request_digest, steered: true });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('forwards only request id and message when queueing an active follow-up', async () => {
+    const request = await createBuilderGenerationRequest('Make a timer.');
+    const queueFollowup = vi.fn(async (request: unknown) => ({
+      request_id: (request as { request_id: string }).request_id,
+      queued: true,
+    }));
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      continueDraft: async () => null,
+      proposePlan: async () => null,
+      preparePlanSourceReadApproval: async () => null,
+      approvePlanSourceRead: async () => null,
+      prepareCurrentProjectWriteApproval: async () => null,
+      approveCurrentProjectWrite: async () => null,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      answerDraft: async () => null,
+      restoreDraft: async () => null,
+      restoreRevisionAsDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      queueFollowup,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    const result = await port.queueFollowup({
+      request_id: request.request_digest,
+      message: 'After this, make it responsive.',
+    });
+
+    expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+      request_id: request.request_digest,
+      message: 'After this, make it responsive.',
+    });
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('project_id');
+    expect(result).toEqual({ request_id: request.request_digest, queued: true });
     expect(Object.isFrozen(result)).toBe(true);
   });
 
@@ -1016,6 +1080,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -1057,6 +1122,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async () => null,
       cancel: async () => null,
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -1108,6 +1174,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       rejectDraft: async (): Promise<unknown> => null,
       cancel: async (): Promise<unknown> => null,
       steer: async (): Promise<unknown> => null,
+      queueFollowup: async (): Promise<unknown> => null,
       availability: async (): Promise<unknown> => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -1147,7 +1214,8 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         rejectDraft: async (): Promise<unknown> => null,
         cancel: async (): Promise<unknown> => null,
         steer: async (): Promise<unknown> => null,
-        availability: async (): Promise<unknown> => null,
+        queueFollowup: async (): Promise<unknown> => null,
+      availability: async (): Promise<unknown> => null,
         subscribeStarted: () => () => undefined,
         subscribeOutput: () => () => undefined,
       });
@@ -1181,6 +1249,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         provider: 'private',
       }),
       steer: async () => null,
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -1215,6 +1284,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         steered: true,
         provider: 'private',
       }),
+      queueFollowup: async () => null,
       availability: async () => null,
       subscribeStarted: () => () => undefined,
       subscribeOutput: () => () => undefined,
@@ -1223,6 +1293,42 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     await expect(port.steer({
       request_id: request.request_digest,
       message: 'Keep going.',
+    })).rejects.toBeInstanceOf(BuilderDesktopCodeGeneratorPortError);
+  });
+
+  it('rejects malformed queued follow-up results without exposing bridge details', async () => {
+    const request = await createBuilderGenerationRequest('Make a timer.');
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      continueDraft: async () => null,
+      proposePlan: async () => null,
+      preparePlanSourceReadApproval: async () => null,
+      approvePlanSourceRead: async () => null,
+      prepareCurrentProjectWriteApproval: async () => null,
+      approveCurrentProjectWrite: async () => null,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      answerDraft: async () => null,
+      restoreDraft: async () => null,
+      restoreRevisionAsDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      queueFollowup: async () => ({
+        request_id: `sha256:${'9'.repeat(64)}`,
+        queued: true,
+        provider: 'private',
+      }),
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    await expect(port.queueFollowup({
+      request_id: request.request_digest,
+      message: 'Queue this after the active run.',
     })).rejects.toBeInstanceOf(BuilderDesktopCodeGeneratorPortError);
   });
 });

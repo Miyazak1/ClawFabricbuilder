@@ -504,6 +504,6 @@ test('source remains a thin wrapper over the packaged canary authority', () => {
   assert.match(source, /deepseek-v4-pro/u);
   assert.doesNotMatch(
     source,
-    /safeStorage|ipcMain|ipcRenderer|BrowserWindow|fetch\s*\(|Authorization|Bearer|providerSettings\.replaceCurrent|codeGenerator\.(?:generate|continueDraft|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer)/iu,
+    /safeStorage|ipcMain|ipcRenderer|BrowserWindow|fetch\s*\(|Authorization|Bearer|providerSettings\.replaceCurrent|codeGenerator\.(?:generate|continueDraft|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)/iu,
   );
 });

@@ -3106,12 +3106,12 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v20'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v21'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.plan_review_namespace.value !== 'review_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v20',
+    bridge_version: 'builder-preload.v21',
     legacy_namespaces_absent: true,
     plan_review_namespace: 'review_method_only',
   });

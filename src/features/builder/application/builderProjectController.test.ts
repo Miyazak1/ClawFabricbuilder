@@ -80,6 +80,7 @@ function setup(options: {
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
   cancel?: BuilderCodeGeneratorPort['cancel'];
   steer?: BuilderCodeGeneratorPort['steer'];
+  queueFollowup?: BuilderCodeGeneratorPort['queueFollowup'];
   subscribeStarted?: NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>;
   open?: BuilderProjectWorkspacePort['open'];
   createLocalProject?: BuilderProjectWorkspacePort['createLocalProject'];
@@ -173,6 +174,10 @@ function setup(options: {
     request_id: request.request_id,
     steered: true,
   })));
+  const queueFollowup = vi.fn(options.queueFollowup ?? (async (request) => ({
+    request_id: request.request_id,
+    queued: true,
+  })));
   const saveDraft = vi.fn(options.saveDraft ?? (async () => {
     throw new Error('save not configured');
   }));
@@ -230,6 +235,7 @@ function setup(options: {
       rejectDraft,
       cancel,
       steer,
+      queueFollowup,
       ...(options.subscribeStarted === undefined
         ? {}
         : { subscribeStarted: options.subscribeStarted }),
@@ -250,6 +256,7 @@ function setup(options: {
     submit,
     retry,
     steer,
+    queueFollowup,
     loadCurrent,
     loadRevision,
     open,
@@ -1157,6 +1164,47 @@ describe('Builder project controller v2', () => {
     await expect(controller.steer('Make it blue.')).resolves.toBe(false);
 
     expect(steer).not.toHaveBeenCalled();
+  });
+
+  it('queues an active follow-up by request id and bounded message only', async () => {
+    let resolveGenerate!: (value: unknown) => void;
+    const pending = new Promise<unknown>((resolve) => {
+      resolveGenerate = resolve;
+    });
+    const { controller, generate, queueFollowup, saveDraft } = setup({
+      generate: async () => pending,
+    });
+    await controller.open(PROJECT_ID);
+    const generation = controller.generate('Make a timer.');
+    expect(controller.getSnapshot().status).toBe('generating');
+    for (let attempt = 0; attempt < 20 && generate.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(generate).toHaveBeenCalledOnce();
+
+    const queued = await controller.queueFollowup('  Make it responsive next.  ');
+
+    expect(queued).toBe(true);
+    expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+      request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      message: 'Make it responsive next.',
+    });
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('project_id');
+    expect(controller.getSnapshot().status).toBe('generating');
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    resolveGenerate(await createGenerationDraft(generate.mock.calls[0][0]));
+    await generation;
+  });
+
+  it('does not queue follow-ups when there is no active generation request', async () => {
+    const { controller, queueFollowup } = setup();
+
+    await expect(controller.queueFollowup('Make it blue.')).resolves.toBe(false);
+
+    expect(queueFollowup).not.toHaveBeenCalled();
   });
 
   it('rejects a generated draft that is based on stale project revision evidence', async () => {

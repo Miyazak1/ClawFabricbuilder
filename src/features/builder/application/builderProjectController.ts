@@ -118,6 +118,7 @@ export type BuilderProjectController = Readonly<{
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
   cancel(): Promise<BuilderProjectControllerSnapshot>;
   steer(message: string): Promise<boolean>;
+  queueFollowup(message: string): Promise<boolean>;
   save(): Promise<BuilderProjectControllerSnapshot>;
   dispose(): void;
 }>;
@@ -155,6 +156,7 @@ const LOCAL_PROJECT_SELECTION_RESULT_KEYS = Object.freeze([
 const SOURCE_FOLDER_SELECTION_KEYS = Object.freeze(['name', 'status']);
 const CANCEL_RESULT_KEYS = Object.freeze(['request_id', 'cancelled']);
 const STEER_RESULT_KEYS = Object.freeze(['request_id', 'steered']);
+const QUEUE_FOLLOWUP_RESULT_KEYS = Object.freeze(['request_id', 'queued']);
 const REJECT_RESULT_KEYS = Object.freeze([
   'result_version',
   'draft_id',
@@ -306,6 +308,12 @@ function sanitizeSteerResult(value: unknown, requestId: string): boolean {
   const source = exactRecord(value, STEER_RESULT_KEYS);
   if (source.request_id !== requestId || typeof source.steered !== 'boolean') throw new Error();
   return source.steered;
+}
+
+function sanitizeQueuedFollowupResult(value: unknown, requestId: string): boolean {
+  const source = exactRecord(value, QUEUE_FOLLOWUP_RESULT_KEYS);
+  if (source.request_id !== requestId || typeof source.queued !== 'boolean') throw new Error();
+  return source.queued;
 }
 
 function sanitizeSaveResult(value: unknown, draft: BuilderGenerationDraft) {
@@ -1646,6 +1654,26 @@ export function createBuilderProjectController(
     }
   }
 
+  async function queueFollowup(message: string): Promise<boolean> {
+    const target = activeGeneration;
+    const text = message.trim();
+    if (
+      disposed
+      || target === null
+      || target.requestId === null
+      || text.length === 0
+      || !['answering', 'generating', 'submitting'].includes(current.status)
+    ) return false;
+    try {
+      return sanitizeQueuedFollowupResult(
+        await dependencies.generator.queueFollowup({ request_id: target.requestId, message: text }),
+        target.requestId,
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function rejectDraft(): Promise<BuilderProjectControllerSnapshot> {
     if (disposed || current.busy || current.draft === null) return current;
     const retained = current.savedProject;
@@ -1803,6 +1831,7 @@ export function createBuilderProjectController(
     rejectDraft,
     cancel,
     steer,
+    queueFollowup,
     save,
     dispose() {
       if (disposed) return;

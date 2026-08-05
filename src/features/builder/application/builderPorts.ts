@@ -154,6 +154,7 @@ export interface BuilderCodeGeneratorPort {
   rejectDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   cancel(request: Readonly<{ request_id: string }>): Promise<unknown>;
   steer(request: Readonly<{ request_id: string; message: string }>): Promise<unknown>;
+  queueFollowup(request: Readonly<{ request_id: string; message: string }>): Promise<unknown>;
   subscribeStarted?(listener: (event: BuilderGenerationStartedEvent) => void): () => void;
   subscribeOutput?(listener: (event: BuilderGenerationOutputEvent) => void): () => void;
 }

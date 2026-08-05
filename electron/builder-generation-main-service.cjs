@@ -1315,6 +1315,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const beginApprovedPlanWork = ownMethod(options.conversationService, 'begin_approved_plan_work');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
   const recordConversationSteering = ownMethod(options.conversationService, 'record_steering');
+  const recordConversationQueuedFollowup = ownMethod(options.conversationService, 'record_queued_followup');
   const readConversationCandidateDraft = ownMethod(options.conversationService, 'read_candidate_draft');
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
   const readApprovedPlan = ownMethod(options.conversationService, 'read_approved_plan');
@@ -2828,6 +2829,7 @@ function createBuilderGenerationMainService(rawOptions) {
     const keys = [
       operationKey(GENERATE_OPERATION_PREFIX, requestId),
       operationKey(ANSWER_OPERATION_PREFIX, requestId),
+      operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
     let steered = false;
     for (const key of keys) {
@@ -2848,6 +2850,42 @@ function createBuilderGenerationMainService(rawOptions) {
       steered = true;
     }
     return Object.freeze({ request_id: requestId, steered });
+  }
+
+  function queueFollowup(rawRequest) {
+    let requestId;
+    let message;
+    try {
+      exactObject(rawRequest, ['request_id', 'message']);
+      requestId = safeDigest(valueAt(rawRequest, 'request_id'));
+      message = safeText(valueAt(rawRequest, 'message'), 12_000, 48_000);
+    } catch {
+      throw new BuilderGenerationMainServiceError('builder_generation_request_invalid');
+    }
+    const keys = [
+      operationKey(GENERATE_OPERATION_PREFIX, requestId),
+      operationKey(ANSWER_OPERATION_PREFIX, requestId),
+      operationKey(PLAN_OPERATION_PREFIX, requestId),
+    ];
+    let queued = false;
+    for (const key of keys) {
+      const context = activeContexts.get(key);
+      if (context === undefined) continue;
+      let queuedContext;
+      try {
+        queuedContext = Reflect.apply(
+          recordConversationQueuedFollowup,
+          options.conversationService,
+          [{ context, message }],
+        );
+      } catch {
+        throw new BuilderGenerationMainServiceError();
+      }
+      activeContexts.set(key, queuedContext);
+      liveOutputContextsByRunId.set(queuedContext.ids.run_id, queuedContext);
+      queued = true;
+    }
+    return Object.freeze({ request_id: requestId, queued });
   }
 
   async function baseRevisionEvidenceForRestoredDraft(proof) {
@@ -3077,6 +3115,7 @@ function createBuilderGenerationMainService(rawOptions) {
     prepare_approved_plan_edit_context: prepareApprovedPlanEditContext,
     cancel,
     steer,
+    queue_followup: queueFollowup,
     availability: host.availability,
     restore_revision_as_draft: restoreRevisionAsDraft,
     restore_draft: restoreDraft,
@@ -3100,6 +3139,7 @@ function createBuilderGenerationMainService(rawOptions) {
       draft_answer_generation: 'main_only_pending_candidate_source_explanation_no_mutation',
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
       run_steering: 'request_id_only_main_conversation_fact',
+      run_followup_queue: 'request_id_only_main_conversation_fact',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,

@@ -59,7 +59,7 @@ class FakePage {
 
   async evaluate() {
     return {
-      bridgeVersion: 'builder-preload.v20',
+      bridgeVersion: 'builder-preload.v21',
       codeGenerator: 'function',
       projectWorkspace: 'function',
       providerSettings: 'function',
@@ -189,6 +189,6 @@ test('CLI is zero-input and the source stays out of provider or generation autho
   );
   assert.doesNotMatch(
     source,
-    /providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|answer|answerDraft|retry|steer)|Authorization|Bearer|api[_-]?key/iu,
+    /providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|answer|answerDraft|retry|steer|queueFollowup)|Authorization|Bearer|api[_-]?key/iu,
   );
 });

@@ -523,6 +523,10 @@ async function setup(options: Readonly<{
     request_id: (request as { request_id: string }).request_id,
     steered: true,
   }));
+  const queueFollowup = vi.fn(async (request: unknown) => ({
+    request_id: (request as { request_id: string }).request_id,
+    queued: true,
+  }));
   const reviewPlan = vi.fn(async (request: unknown) => {
     const result = {
       result_version: 'builder-conversation-plan-review-result.v1',
@@ -867,6 +871,7 @@ async function setup(options: Readonly<{
       rejectDraft,
       cancel,
       steer,
+      queueFollowup,
       availability: async () => null,
       subscribeStarted(listener: (event: unknown) => void) {
         generationStartedListeners.add(listener);
@@ -952,6 +957,7 @@ async function setup(options: Readonly<{
     submit,
     retry,
     steer,
+    queueFollowup,
     listHistory,
     loadRevision,
     listCurrent,
@@ -3299,6 +3305,7 @@ describe('BuilderApp v2', () => {
       container,
       continueDraft,
       emitGenerationStarted,
+      queueFollowup,
       readTaskStream,
       resolveGenerate,
       steer,
@@ -3357,6 +3364,13 @@ describe('BuilderApp v2', () => {
     expect(activeComposer?.getAttribute('data-builder-route-dispatch')).toBe('queue_followup');
     expect(activeComposer?.getAttribute('data-builder-route-active-run-input')).toBe('queued_followup');
     expect(activeComposer?.getAttribute('data-builder-route-signals')).toBe('active_run_followup');
+    expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+      request_id: expected.request_digest,
+      message: 'Make it responsive.',
+    });
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('instruction');
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(queueFollowup.mock.calls[0][0]).not.toHaveProperty('project_id');
     expect(steer).not.toHaveBeenCalled();
     expect(submit).toHaveBeenCalledOnce();
     expect(continueDraft).not.toHaveBeenCalled();
@@ -3380,6 +3394,7 @@ describe('BuilderApp v2', () => {
       answer,
       container,
       emitGenerationStarted,
+      queueFollowup,
       resolveAnswer,
       steer,
       submit,
@@ -3433,6 +3448,10 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('queue_followup');
     expect(composer?.getAttribute('data-builder-route-active-run-input')).toBe('queued_followup');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('active_run_followup');
+    expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+      request_id: expected.request_digest,
+      message: change,
+    });
 
     await act(async () => {
       await resolveAnswer();
@@ -3452,6 +3471,7 @@ describe('BuilderApp v2', () => {
       answer,
       container,
       emitGenerationStarted,
+      queueFollowup,
       resolveAnswer,
       steer,
       submit,
@@ -3494,6 +3514,10 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-active-run-input')).toBe('queued_followup');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('active_run_followup');
     expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
+    expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+      request_id: expected.request_digest,
+      message: contextualExecution,
+    });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
 
     await act(async () => {
@@ -3515,6 +3539,7 @@ describe('BuilderApp v2', () => {
       container,
       emitGenerationStarted,
       prepareCurrentProjectWriteApproval,
+      queueFollowup,
       resolveAnswer,
       steer,
       submit,
@@ -3554,6 +3579,10 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-active-run-followup-queued="true"]')).not.toBeNull();
+    });
+    expect(queueFollowup).toHaveBeenCalledExactlyOnceWith({
+      request_id: expected.request_digest,
+      message: change,
     });
     expect(steer).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();

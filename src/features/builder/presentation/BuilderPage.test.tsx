@@ -189,6 +189,9 @@ async function snapshots() {
       async steer(request) {
         return { request_id: request.request_id, steered: true };
       },
+      async queueFollowup(request) {
+        return { request_id: request.request_id, queued: true };
+      },
     },
     workspace: {
       async open(request) {
@@ -311,6 +314,9 @@ async function workingProjectSnapshot() {
       },
       async steer(request) {
         return { request_id: request.request_id, steered: true };
+      },
+      async queueFollowup(request) {
+        return { request_id: request.request_id, queued: true };
       },
     },
     workspace: {
@@ -1136,6 +1142,9 @@ async function draftSnapshotFromSourceTrees(baseTree: SourceTree, draftTree: Sou
       async steer(steerRequest) {
         return { request_id: steerRequest.request_id, steered: true };
       },
+      async queueFollowup(queueRequest) {
+        return { request_id: queueRequest.request_id, queued: true };
+      },
     },
     workspace: {
       async open() {
@@ -1265,6 +1274,9 @@ async function inspectedHistorySnapshot() {
       },
       async steer(request) {
         return { request_id: request.request_id, steered: true };
+      },
+      async queueFollowup(request) {
+        return { request_id: request.request_id, queued: true };
       },
     },
     workspace: {
@@ -1951,6 +1963,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
@@ -2022,6 +2035,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
@@ -2093,6 +2107,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -2173,6 +2188,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -2241,6 +2257,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async (request) => ({ request_id: request.request_id, cancelled: true }),
         steer: async (request) => ({ request_id: request.request_id, steered: true }),
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async (request) => (request.project_id === null ? null : readWire),
@@ -2335,6 +2352,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async () => readWire,
@@ -4360,6 +4378,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async () => null,
@@ -4423,6 +4442,7 @@ describe('BuilderPage v2', () => {
         rejectDraft: async () => null,
         cancel: async () => null,
         steer: async () => null,
+        queueFollowup: async () => null,
       },
       workspace: {
         open: async (request) => {
