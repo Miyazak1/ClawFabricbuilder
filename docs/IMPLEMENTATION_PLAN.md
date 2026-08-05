@@ -616,6 +616,13 @@ Evidence requirements:
   build prompt context still comes from replayed Conversation events and the
   generated build-context snapshot remains prompt context only, not permission,
   source, Git, Review, Revision, or renderer authority;
+- the current contextual readiness checkpoint keeps that fallback from becoming
+  stale route authority. Main-owned Task Stream admission now follows the latest
+  relevant brief/plan/candidate fact: a newer corrected brief with
+  `contextual_build_ready: false`, a proposed plan, or a rejected plan downgrades
+  short phrases such as "按刚才方案做" to clarify until later facts restore
+  explicit execution context. This protects the chat-first loop where users can
+  revise direction before asking the AI to act;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current

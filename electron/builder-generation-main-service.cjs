@@ -552,14 +552,13 @@ function taskStreamRunKey(item) {
 function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
   try {
     const items = taskStreamItemsForSubmitContext(value, expectedProjectId);
-    let latestPlan = null;
-    let hasCandidateContext = false;
+    let latestBuildContext = false;
     const planTextsByRun = new Map();
     for (const item of items) {
       const itemKind = optionalValueAt(item, 'item_kind');
       if (itemKind === 'task_brief_updated') {
         const brief = optionalValueAt(item, 'brief');
-        if (optionalValueAt(brief, 'contextual_build_ready') === true) return true;
+        latestBuildContext = optionalValueAt(brief, 'contextual_build_ready') === true;
         continue;
       }
       if (itemKind === 'run_completed') {
@@ -567,13 +566,13 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
         const text = messageTextFromTaskStreamItem(item, 'assistant_message');
         const runKey = taskStreamRunKey(item);
         if (resultKind === 'candidate' && optionalValueAt(item, 'candidate') !== null) {
-          hasCandidateContext = true;
+          latestBuildContext = true;
           continue;
         }
         if (resultKind === 'plan') {
           if (runKey !== null && text !== null) {
             planTextsByRun.set(runKey, text);
-            latestPlan = { state: 'proposed', text };
+            latestBuildContext = false;
           }
           continue;
         }
@@ -587,12 +586,11 @@ function hasContextualBuildContextInTaskStream(value, expectedProjectId) {
           && planTextsByRun.has(runKey)
           && (decision === 'approved' || decision === 'rejected')
         ) {
-          latestPlan = { state: decision, text: planTextsByRun.get(runKey) };
+          latestBuildContext = decision === 'approved';
         }
       }
     }
-    if (latestPlan !== null) return latestPlan.state === 'approved';
-    return hasCandidateContext;
+    return latestBuildContext;
   } catch {
     return false;
   }

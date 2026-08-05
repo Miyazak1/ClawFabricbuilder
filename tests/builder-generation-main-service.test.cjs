@@ -468,6 +468,72 @@ function taskBriefReadyTaskStream(projectId = PROJECT_ID) {
   ]);
 }
 
+function taskBriefCorrectedTaskStream(projectId = PROJECT_ID) {
+  const turnId = `builder-turn:${UUIDS[1]}`;
+  const correctionTurnId = `builder-turn:${UUIDS[6]}`;
+  const runId = `builder-run:${UUIDS[2]}`;
+  const correctionRunId = `builder-run:${UUIDS[7]}`;
+  const taskId = `builder-task:${UUIDS[5]}`;
+  return taskStreamWithItems(projectId, [
+    {
+      item_kind: 'user_message',
+      sequence: 1,
+      turn_id: turnId,
+      message: {
+        message_id: `builder-message:${UUIDS[3]}`,
+        text: '我想先聊一下这个作品集首页怎么做，目标是星空背景、鼠标视差和三维卡片。',
+      },
+      message_kind: 'submitted',
+      mode: 'question',
+      task: null,
+    },
+    {
+      item_kind: 'task_brief_updated',
+      sequence: 2,
+      turn_id: turnId,
+      run_id: runId,
+      task: {
+        task_id: taskId,
+        title: 'Current project brief',
+      },
+      brief: {
+        status: 'ready',
+        summary: '先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+        contextual_build_ready: true,
+      },
+      recorded_state: 'updated',
+    },
+    {
+      item_kind: 'user_message',
+      sequence: 3,
+      turn_id: correctionTurnId,
+      message: {
+        message_id: `builder-message:${UUIDS[8]}`,
+        text: '等等，先不要按这个做，我要重新整理方向。',
+      },
+      message_kind: 'submitted',
+      mode: 'question',
+      task: null,
+    },
+    {
+      item_kind: 'task_brief_updated',
+      sequence: 4,
+      turn_id: correctionTurnId,
+      run_id: correctionRunId,
+      task: {
+        task_id: taskId,
+        title: 'Current project brief',
+      },
+      brief: {
+        status: 'discussing',
+        summary: '用户撤回了旧方向，正在重新整理作品集方向。',
+        contextual_build_ready: false,
+      },
+      recorded_state: 'updated',
+    },
+  ]);
+}
+
 function candidateReadyTaskStream(projectId = PROJECT_ID) {
   const turnId = `builder-turn:${UUIDS[1]}`;
   const runId = `builder-run:${UUIDS[2]}`;
@@ -3120,6 +3186,55 @@ test('allows contextual composer submit only with main-owned build context', asy
   assert.deepEqual(lifecycle.calls.begin[1].route_decision_hint.matched_signals, ['contextual_build']);
   assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 2);
+});
+
+test('downgrades contextual submit after a newer task brief correction removes readiness', async () => {
+  const lifecycle = conversationService({ readStreamResult: taskBriefCorrectedTaskStream() });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const git = gitAuthority();
+  const transportInputs = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation({
+          title: 'Need clarification',
+          explanation: '旧方向已经撤回，需要先确认新的方案再开始做。',
+        })),
+      };
+    },
+  });
+
+  const answer = await service.submit(request({
+    instruction: '按刚才方案做',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(answer.version, 'builder-generation-result.v2');
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.admissions.draft, 'not_created');
+  assert.equal(lifecycle.calls.begin.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.question.length, 1);
+  assert.equal(lifecycle.calls.explanation.length, 1);
+  assert.equal(transportInputs.length, 1);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
+  assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 0);
 });
 
 test('keeps Chinese rewrite shortcuts read-only without main-owned build context', async () => {

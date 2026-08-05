@@ -497,6 +497,12 @@ correct brief state through a future Task/Logs or memory disclosure surface.
 Any correction removes contextual-build readiness for that task without deleting
 the underlying conversation.
 
+Current checkpoint: main-owned contextual submit admission now evaluates the
+latest relevant Task Stream fact, not the first historical ready brief. A newer
+`task_brief_updated` event with `contextual_build_ready: false`, a proposed
+plan, or a rejected plan downgrades short execution phrases back to `clarify`
+until a later ready brief, approved plan, or candidate restores build context.
+
 ## Route Decision Evidence
 
 Each submitted message should record a route decision object.
