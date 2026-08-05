@@ -444,7 +444,10 @@ The Session/Task Address store checkpoint gives those future scope rules a
 main-only durable home before wiring them into Builder run admission. Task
 Address facts can now be stored and recovered only after their Session Address
 exists, but current Builder messages and runs are not yet migrated or bound to
-those product-level addresses.
+those product-level addresses. The desktop generation runtime now creates and
+closes this store with its other main-owned local stores, so later Agent-facing
+context assembly can depend on a runtime-owned product address store instead of
+inventing a renderer or prompt-side memory surface.
 
 ### Slice C - Agent Profile Store
 

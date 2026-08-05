@@ -160,7 +160,12 @@ validation, project-scoped reads, and a foreign-key requirement that Task
 Address facts attach to an existing Session Address. It still creates no
 renderer/preload IPC, no automatic migration from existing Conversation rows,
 no fork/archive/delete/export materialization, no provider/tool dispatch, no
-source/Git mutation, and no permission grant.
+source/Git mutation, and no permission grant. The current runtime composition
+checkpoint creates and closes this local store under
+`builder-session-task-addresses-v1/session-task-addresses.sqlite` in the desktop
+generation runtime, including registration-failure cleanup and dispose cleanup,
+but still does not pass address facts into run admission or expose a renderer
+lookup channel.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 

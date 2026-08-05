@@ -99,10 +99,15 @@ const {
 const {
   createBuilderTaskCapsuleRecordingService,
 } = require('./builder-task-capsule-recording-service.cjs');
+const {
+  createBuilderSessionTaskAddressStore,
+} = require('./builder-session-task-address-store.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
 const TASK_CAPSULE_DATABASE = 'task-capsules.sqlite';
+const SESSION_TASK_ADDRESS_DIRECTORY = 'builder-session-task-addresses-v1';
+const SESSION_TASK_ADDRESS_DATABASE = 'session-task-addresses.sqlite';
 const OPTION_KEYS = Object.freeze([
   'fetchImpl',
   'grantPermissionForExplicitApproval',
@@ -1006,6 +1011,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let providerConfigRepository = null;
   let permissionFactStore = null;
   let taskCapsuleStore = null;
+  let sessionTaskAddressStore = null;
   let projectMainAuthority = null;
   let service;
   let adapter;
@@ -1056,6 +1062,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const taskCapsuleRecordingService = createBuilderTaskCapsuleRecordingService({
       task_capsule_store: taskCapsuleStore,
     });
+    const sessionTaskAddressRoot = path.join(options.userDataPath, SESSION_TASK_ADDRESS_DIRECTORY);
+    fs.mkdirSync(sessionTaskAddressRoot, { recursive: true, mode: 0o700 });
+    sessionTaskAddressStore = createBuilderSessionTaskAddressStore(
+      path.join(sessionTaskAddressRoot, SESSION_TASK_ADDRESS_DATABASE),
+    );
     const permissionEvaluator = permissionFactStore.create_evaluator();
     const permissionAdmission = createBuilderToolPermissionAdmission({
       actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
@@ -1671,6 +1682,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
+    try { sessionTaskAddressStore?.close(); } catch { /* fixed failure below */ }
     try { taskCapsuleStore?.close(); } catch { /* fixed failure below */ }
     try { permissionFactStore?.close(); } catch { /* fixed failure below */ }
     try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
@@ -1786,6 +1798,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
   }
 
+  function closeSessionTaskAddressStore() {
+    if (sessionTaskAddressStore === null) return true;
+    try {
+      sessionTaskAddressStore.close();
+      sessionTaskAddressStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return Object.freeze({
     runtime_version: BUILDER_GENERATION_IPC_RUNTIME_VERSION,
     channels: Object.freeze(handlers.map(({ channel }) => channel)),
@@ -1801,20 +1824,24 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return true;
       } catch {
         const removed = removeInstalledHandlers();
-        const taskCapsulesClosed = closeTaskCapsuleStore();
+        const addressesClosed = closeSessionTaskAddressStore();
+        const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        state = removed && taskCapsulesClosed && permissionsClosed && closed ? 'disposed' : 'cleanup_required';
+        state = removed && addressesClosed && taskCapsulesClosed && permissionsClosed && closed
+          ? 'disposed'
+          : 'cleanup_required';
         fail();
       }
     },
     dispose() {
       if (state === 'disposed') return false;
       if (state === 'idle') {
-        const taskCapsulesClosed = closeTaskCapsuleStore();
+        const addressesClosed = closeSessionTaskAddressStore();
+        const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        if (!taskCapsulesClosed || !permissionsClosed || !closed) {
+        if (!addressesClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
           state = 'cleanup_required';
           fail();
         }
@@ -1823,10 +1850,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       const cancelled = cancelActiveRequests();
       const removed = removeInstalledHandlers();
-      const taskCapsulesClosed = cancelled ? closeTaskCapsuleStore() : false;
+      const addressesClosed = cancelled ? closeSessionTaskAddressStore() : false;
+      const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
       const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
       const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-      if (!cancelled || !removed || !taskCapsulesClosed || !permissionsClosed || !closed) {
+      if (!cancelled || !removed || !addressesClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();
       }

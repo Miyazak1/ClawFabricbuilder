@@ -257,6 +257,26 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-session-task-address-store.cjs') {
+        return {
+          createBuilderSessionTaskAddressStore: (databasePath) => {
+            probes.sessionTaskAddressDatabasePath = databasePath;
+            context.__sessionTaskAddressStore = {
+              closed: false,
+              store_version: 'builder-session-task-address-store.v1',
+              record_session_address() {},
+              record_task_address() {},
+              read_session_address() {},
+              read_task_address() {},
+              close() {
+                this.closed = true;
+                return true;
+              },
+            };
+            return context.__sessionTaskAddressStore;
+          },
+        };
+      }
       if (specifier === './builder-conversation-main-service.cjs') {
         return {
           createBuilderConversationMainService: (options) => {
@@ -724,6 +744,10 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-provider-secrets-v1')), false);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-permissions-v1', 'permissions.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite')), true);
+  assert.equal(
+    fs.existsSync(path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite')),
+    true,
+  );
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
   assert.deepEqual([...ipcMain.handlers.keys()], runtime.channels);
@@ -1865,10 +1889,12 @@ test('closes project main authority when generation channel registration fails',
 
   assert.equal(harness.context.__projectMainAuthority.closed, false);
   assert.equal(harness.context.__taskCapsuleStore.closed, false);
+  assert.equal(harness.context.__sessionTaskAddressStore.closed, false);
   assert.throws(() => runtime.register(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.deepEqual([...ipcMain.handlers.keys()], []);
+  assert.equal(harness.context.__sessionTaskAddressStore.closed, true);
   assert.equal(harness.context.__taskCapsuleStore.closed, true);
   assert.equal(harness.context.__projectMainAuthority.closed, true);
   assert.equal(runtime.dispose(), false);
@@ -1899,6 +1925,8 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.deepEqual(Object.keys(probes.projectMainAuthorityOptions), ['userDataPath']);
   assert.equal(probes.taskCapsuleDatabasePath,
     path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite'));
+  assert.equal(probes.sessionTaskAddressDatabasePath,
+    path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite'));
   assert.equal(probes.taskCapsuleRecordingOptions.task_capsule_store,
     runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.serviceOptions.projectReadAuthority,
@@ -1924,6 +1952,7 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__conversationService);
   assert.equal(typeof runtimeModule.context.__conversationService.read_stream, 'function');
   assert.equal(runtime.dispose(), false);
+  assert.equal(runtimeModule.context.__sessionTaskAddressStore.closed, true);
   assert.equal(runtimeModule.context.__taskCapsuleStore.closed, true);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
 });
@@ -2907,6 +2936,7 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.match(source, /createBuilderGenerationMainService/u);
   assert.match(source, /createBuilderTaskCapsuleStore/u);
   assert.match(source, /createBuilderTaskCapsuleRecordingService/u);
+  assert.match(source, /createBuilderSessionTaskAddressStore/u);
   assert.match(source, /createBuilderTaskStreamIpcAdapter/u);
   assert.match(source, /createBuilderPlanReviewIpcAdapter/u);
   assert.match(source, /channel:\s*READ_TASK_STREAM_CHANNEL/u);

@@ -229,6 +229,14 @@ fact layer: it does not migrate existing Conversation rows, expose renderer or
 preload IPC, implement fork/archive/delete/export, dispatch providers or tools,
 mutate source or Git, grant permissions, or materialize public bundles.
 
+Current runtime checkpoint: `electron/builder-generation-ipc-runtime.cjs`
+creates that store in the real desktop main lifecycle at
+`builder-session-task-addresses-v1/session-task-addresses.sqlite` and closes it
+on registration failure or runtime dispose. This proves the address store is
+part of the main-owned runtime composition while still withholding migration,
+run binding, renderer lookup, archive/delete/fork/export, provider/tool
+dispatch, source/Git mutation, and permission authority.
+
 ## Non-Goals For The Current Builder MVP
 
 - No unrestricted cross-session source reads.
