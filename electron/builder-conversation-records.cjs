@@ -21,6 +21,9 @@ const {
 const {
   sanitizeBuilderAgentStepProgressConversationAdmission,
 } = require('./builder-agent-step-progress-conversation-admission.cjs');
+const {
+  sanitizeBuilderTaskCapsule,
+} = require('./builder-task-capsule-contract.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -76,18 +79,6 @@ const TASK_KEYS = Object.freeze(['task_id', 'title']);
 const ASSISTANT_MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const REVISION_REFERENCE_KEYS = Object.freeze(['revision_receipt_digest', 'revision_number']);
-const WORKING_BRIEF_VERSION = 'builder-working-brief.v1';
-const WORKING_BRIEF_KEYS = Object.freeze([
-  'brief_version', 'source', 'latest_user_goal', 'assistant_proposal',
-  'approved_plan', 'use_when_instruction_is_contextual',
-]);
-const WORKING_BRIEF_SOURCES = Object.freeze(['task_capsule_update']);
-const TASK_CAPSULE_VERSION = 'builder-task-capsule.v1';
-const TASK_CAPSULE_KEYS = Object.freeze([
-  'capsule_version', 'task_id', 'project_id', 'title', 'goal', 'status',
-  'current_brief', 'last_route_decision_id', 'updated_at_ms',
-]);
-const TASK_CAPSULE_STATUSES = Object.freeze(['discussing', 'ready']);
 const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
 const ROUTE_DECISION_KEYS = Object.freeze([
   'decision_id', 'decision_version', 'project_id', 'message_id', 'task_id',
@@ -467,38 +458,14 @@ function sanitizeRevisionReference(value) {
   };
 }
 
-function sanitizeWorkingBrief(value) {
-  assertExactObject(value, WORKING_BRIEF_KEYS);
-  if (
-    valueAt(value, 'brief_version') !== WORKING_BRIEF_VERSION
-    || valueAt(value, 'approved_plan') !== null
-    || valueAt(value, 'use_when_instruction_is_contextual') !== true
-  ) fail();
-  return {
-    brief_version: WORKING_BRIEF_VERSION,
-    source: safeEnum(valueAt(value, 'source'), WORKING_BRIEF_SOURCES),
-    latest_user_goal: safeText(valueAt(value, 'latest_user_goal'), 1_024, 4_096, true),
-    assistant_proposal: safeText(valueAt(value, 'assistant_proposal'), 2_048, 8_192, true),
-    approved_plan: null,
-    use_when_instruction_is_contextual: true,
-  };
-}
-
-function sanitizeTaskCapsule(value, projectId) {
-  assertExactObject(value, TASK_CAPSULE_KEYS);
-  const project = safeProjectId(valueAt(value, 'project_id'));
-  if (project !== projectId || valueAt(value, 'capsule_version') !== TASK_CAPSULE_VERSION) fail();
-  return {
-    capsule_version: TASK_CAPSULE_VERSION,
-    task_id: safeTaskId(valueAt(value, 'task_id')),
-    project_id: project,
-    title: safeText(valueAt(value, 'title'), 160, 1_024, false),
-    goal: safeText(valueAt(value, 'goal'), 1_024, 4_096, true),
-    status: safeEnum(valueAt(value, 'status'), TASK_CAPSULE_STATUSES),
-    current_brief: sanitizeWorkingBrief(valueAt(value, 'current_brief')),
-    last_route_decision_id: safeRouteDecisionId(valueAt(value, 'last_route_decision_id')),
-    updated_at_ms: safeTimestamp(valueAt(value, 'updated_at_ms')),
-  };
+function sanitizeConversationTaskCapsule(value, projectId) {
+  try {
+    const capsule = sanitizeBuilderTaskCapsule(value);
+    if (capsule.project_id !== projectId) fail();
+    return capsule;
+  } catch {
+    fail();
+  }
 }
 
 function sanitizeCandidateResult(value, turnId, runId, resultDigest) {
@@ -705,7 +672,7 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         turn_id: safeTurnId(valueAt(value, 'turn_id')),
         run_id: safeRunId(valueAt(value, 'run_id')),
         message_id: safeMessageId(valueAt(value, 'message_id')),
-        task_capsule: sanitizeTaskCapsule(valueAt(value, 'task_capsule'), projectId),
+        task_capsule: sanitizeConversationTaskCapsule(valueAt(value, 'task_capsule'), projectId),
       };
     case 'run_context_snapshot_recorded': {
       const turnId = safeTurnId(valueAt(value, 'turn_id'));

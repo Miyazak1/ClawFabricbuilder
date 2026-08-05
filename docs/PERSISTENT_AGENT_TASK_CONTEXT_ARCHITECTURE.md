@@ -389,6 +389,14 @@ Exit criteria:
 - contextual build phrases require a task brief or approved plan;
 - task brief survives restart.
 
+Current checkpoint: Builder has a pure main-side Task Capsule contract for
+`builder-working-brief.v1`, `builder-task-capsule.v1`, and
+`builder-task-capsule-update.v1`. It preserves the existing Conversation payload
+shape while giving later stores, route decisions, and Agent context snapshots a
+shared verifier. The update record is evidence only: it does not append a
+Conversation event, write SQLite, dispatch a provider, mutate source or Git,
+grant permission, create Review/Revision facts, or expose renderer authority.
+
 ### Slice B - Context Snapshot Records
 
 Record what context was used for important Agent responses and build runs.

@@ -529,6 +529,13 @@ Evidence requirements:
   not Git evidence, not a Project Revision, and not provider/source authority;
   the renderer receives only a compact task-brief projection and cannot forge or
   promote route decisions;
+- the current task-capsule contract checkpoint extracts those bounded brief
+  shapes into a shared main-side verifier and adds a pure
+  `builder-task-capsule-update.v1` evidence record. This keeps Conversation,
+  future SQLite stores, route decisions, and Agent context snapshots aligned
+  without creating a new IPC/preload surface, Conversation append command,
+  SQLite write, provider dispatch, source/Git mutation, permission grant,
+  Review, Revision, or renderer authority;
 - the current build-context snapshot checkpoint adds a prompt-safe derived
   `builder-build-context-snapshot.v1` to code-generation prompts. It is
   recomputed only from the already-bound Conversation event window and current
