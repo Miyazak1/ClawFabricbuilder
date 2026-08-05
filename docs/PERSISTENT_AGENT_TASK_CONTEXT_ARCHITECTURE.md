@@ -440,6 +440,12 @@ final product-level Task Address, so full unrelated-task exclusion must be
 implemented with Session/Task Address scope rules instead of by overloading the
 low-level id.
 
+The Session/Task Address store checkpoint gives those future scope rules a
+main-only durable home before wiring them into Builder run admission. Task
+Address facts can now be stored and recovered only after their Session Address
+exists, but current Builder messages and runs are not yet migrated or bound to
+those product-level addresses.
+
 ### Slice C - Agent Profile Store
 
 Introduce local Agent definitions before full autonomous Agents.

@@ -152,7 +152,15 @@ Current address checkpoint: `builder-session-address.v1` and
 `builder-task-address.v1` exist as pure main-side contracts only. They validate
 future Session/Task product address facts without SQLite persistence, IPC,
 preload exposure, migration, fork, archive, delete, provider dispatch, source
-mutation, Git mutation, permission grants, or export materialization.
+mutation, Git mutation, permission grants, or export materialization. The
+current address-store checkpoint adds a separate main-only
+`builder-session-task-address-store.v1` SQLite store for those already-validated
+facts, with idempotent record/replay, restart recovery, schema fingerprint
+validation, project-scoped reads, and a foreign-key requirement that Task
+Address facts attach to an existing Session Address. It still creates no
+renderer/preload IPC, no automatic migration from existing Conversation rows,
+no fork/archive/delete/export materialization, no provider/tool dispatch, no
+source/Git mutation, and no permission grant.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 

@@ -220,6 +220,15 @@ authority. It does not create IDs, write SQLite, bind existing conversations,
 expose IPC/preload APIs, fork, archive, delete, export files, or migrate old
 facts.
 
+Current store checkpoint: `electron/builder-session-task-address-store.cjs`
+persists those already-validated Session/Task Address facts in a main-only
+SQLite store. It supports idempotent replay, restart recovery, schema
+fingerprint validation, project-scoped reads, and a foreign-key dependency from
+Task Address to Session Address. This is still only the durable product address
+fact layer: it does not migrate existing Conversation rows, expose renderer or
+preload IPC, implement fork/archive/delete/export, dispatch providers or tools,
+mutate source or Git, grant permissions, or materialize public bundles.
+
 ## Non-Goals For The Current Builder MVP
 
 - No unrestricted cross-session source reads.
