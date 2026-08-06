@@ -13,6 +13,11 @@ const {
   BuilderSessionTaskAddressStoreError,
 } = require('./builder-session-task-address-store.cjs');
 const {
+  BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_READ_RESULT_VERSION,
+  BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_VERSION,
+  BuilderContextCompactionSummaryStoreError,
+} = require('./builder-context-compaction-summary-store.cjs');
+const {
   BuilderWorkingContextStateError,
   createBuilderWorkingContextState,
 } = require('./builder-working-context-state.cjs');
@@ -27,6 +32,12 @@ const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const SERVICE_KEYS = Object.freeze(['task_capsule_store']);
 const SERVICE_WITH_ADDRESS_KEYS = Object.freeze(['task_capsule_store', 'session_task_address_store']);
+const SERVICE_WITH_COMPACTION_KEYS = Object.freeze(['task_capsule_store', 'context_compaction_summary_store']);
+const SERVICE_WITH_ADDRESS_AND_COMPACTION_KEYS = Object.freeze([
+  'task_capsule_store',
+  'session_task_address_store',
+  'context_compaction_summary_store',
+]);
 const REQUEST_KEYS = Object.freeze([
   'project_id',
   'session_id',
@@ -72,14 +83,18 @@ const RESULT_KEYS = Object.freeze([
   'conversation_id',
   'working_context_state',
   'latest_task_capsule',
+  'latest_context_compaction_summary',
   'evidence',
 ]);
 const LATEST_TASK_CAPSULE_KEYS = Object.freeze(['status', 'update_id']);
+const LATEST_COMPACTION_SUMMARY_KEYS = Object.freeze(['status', 'summary_id']);
 const EVIDENCE_KEYS = Object.freeze([
   'service_authority',
   'working_context_contract_authority',
   'task_capsule_store_authority',
   'task_capsule_store_operation',
+  'context_compaction_summary_store_authority',
+  'context_compaction_summary_store_operation',
   'renderer_authority',
   'ipc_authority',
   'sqlite_write',
@@ -215,13 +230,36 @@ function safeAddressStore(value) {
   });
 }
 
+function safeCompactionStore(value) {
+  if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) fail();
+  const version = Object.getOwnPropertyDescriptor(value, 'store_version');
+  if (
+    !version
+    || !Object.hasOwn(version, 'value')
+    || version.value !== BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_VERSION
+  ) fail();
+  return freezeDeep({
+    store_version: BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_VERSION,
+    read_latest_context_compaction_summary: method(value, 'read_latest_context_compaction_summary'),
+  });
+}
+
 function safeServices(rawServices) {
-  const keys = exactObjectOneOf(rawServices, [SERVICE_KEYS, SERVICE_WITH_ADDRESS_KEYS]);
-  const hasAddressStore = keys === SERVICE_WITH_ADDRESS_KEYS;
+  const keys = exactObjectOneOf(rawServices, [
+    SERVICE_KEYS,
+    SERVICE_WITH_ADDRESS_KEYS,
+    SERVICE_WITH_COMPACTION_KEYS,
+    SERVICE_WITH_ADDRESS_AND_COMPACTION_KEYS,
+  ]);
+  const hasAddressStore = keys.includes('session_task_address_store');
+  const hasCompactionStore = keys.includes('context_compaction_summary_store');
   return freezeDeep({
     task_capsule_store: safeStore(valueAt(rawServices, 'task_capsule_store')),
     session_task_address_store: hasAddressStore
       ? safeAddressStore(valueAt(rawServices, 'session_task_address_store'))
+      : null,
+    context_compaction_summary_store: hasCompactionStore
+      ? safeCompactionStore(valueAt(rawServices, 'context_compaction_summary_store'))
       : null,
   });
 }
@@ -268,12 +306,16 @@ function safeConversationRequest(rawRequest) {
   });
 }
 
-function evidence(storeOperation) {
+function evidence(taskCapsuleStoreOperation, compactionStoreOperation) {
   return freezeDeep({
     service_authority: 'main_working_context_state_projection_service_v1',
     working_context_contract_authority: 'main_working_context_state_contract_v1',
     task_capsule_store_authority: 'main_owned_task_capsule_store',
-    task_capsule_store_operation: storeOperation,
+    task_capsule_store_operation: taskCapsuleStoreOperation,
+    context_compaction_summary_store_authority: compactionStoreOperation === 'not_configured'
+      ? 'not_configured'
+      : 'main_owned_context_compaction_summary_store',
+    context_compaction_summary_store_operation: compactionStoreOperation,
     renderer_authority: 'not_present',
     ipc_authority: 'not_present',
     sqlite_write: 'not_performed',
@@ -307,6 +349,16 @@ function normalizeOperationError(error) {
     );
   }
   if (error instanceof BuilderSessionTaskAddressStoreError) {
+    if (/_unavailable$/u.test(error.code)) {
+      return new BuilderWorkingContextStateServiceError(
+        'builder_working_context_state_service_unavailable',
+      );
+    }
+    return new BuilderWorkingContextStateServiceError(
+      'builder_working_context_state_service_invalid',
+    );
+  }
+  if (error instanceof BuilderContextCompactionSummaryStoreError) {
     if (/_unavailable$/u.test(error.code)) {
       return new BuilderWorkingContextStateServiceError(
         'builder_working_context_state_service_unavailable',
@@ -365,6 +417,77 @@ function safeStoreOperation(evidenceValue) {
   return transaction;
 }
 
+function safeLatestCompactionResult(value, conversationId, taskAddressId) {
+  if (value === null) {
+    return freezeDeep({
+      status: 'absent',
+      summary_id: null,
+      compaction_ref: null,
+      operation: 'not_configured',
+    });
+  }
+  exactObject(value, [
+    'result_version',
+    'compaction_summary_authority',
+    'status',
+    'context_compaction_summary',
+    'evidence',
+  ]);
+  if (
+    valueAt(value, 'result_version') !== BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_READ_RESULT_VERSION
+    || valueAt(value, 'compaction_summary_authority') !== 'main_owned_context_compaction_summary_store'
+  ) fail();
+  const status = valueAt(value, 'status');
+  const operation = safeCompactionStoreOperation(valueAt(value, 'evidence'));
+  if (status === 'absent') {
+    if (valueAt(value, 'context_compaction_summary') !== null) fail();
+    return freezeDeep({
+      status: 'absent',
+      summary_id: null,
+      compaction_ref: null,
+      operation,
+    });
+  }
+  if (status !== 'ready') fail();
+  const wrapper = valueAt(value, 'context_compaction_summary');
+  exactObject(wrapper, ['context_compaction_summary']);
+  const summary = valueAt(wrapper, 'context_compaction_summary');
+  if (
+    !isPlainObject(summary)
+    || valueAt(summary, 'conversation_id') !== conversationId
+    || valueAt(summary, 'task_address_id') !== taskAddressId
+  ) fail();
+  return freezeDeep({
+    status: 'ready',
+    summary_id: valueAt(summary, 'summary_id'),
+    compaction_ref: {
+      summary_digest: valueAt(summary, 'digest'),
+      source_range_digest: valueAt(summary, 'source_range_digest'),
+      compacted_at_ms: valueAt(summary, 'created_at_ms'),
+    },
+    operation,
+  });
+}
+
+function safeCompactionStoreOperation(evidenceValue) {
+  if (!isPlainObject(evidenceValue)) fail();
+  const transaction = valueAt(evidenceValue, 'transaction');
+  if (
+    transaction !== 'latest_context_compaction_summary_ready_read'
+    && transaction !== 'latest_context_compaction_summary_absent_read'
+  ) fail();
+  return transaction;
+}
+
+function mergeCompactionRefs(baseRefs, latestCompaction) {
+  if (latestCompaction.compaction_ref === null) return baseRefs;
+  if (baseRefs.some((ref) => (
+    ref.summary_digest === latestCompaction.compaction_ref.summary_digest
+    && ref.source_range_digest === latestCompaction.compaction_ref.source_range_digest
+  ))) return baseRefs;
+  return [...baseRefs, latestCompaction.compaction_ref];
+}
+
 function safeCurrentAddressResult(value, projectId, conversationId) {
   exactObject(value, ['result_version', 'status', 'session_address', 'task_address', 'address_evidence']);
   if (valueAt(value, 'result_version') !== BUILDER_SESSION_TASK_ADDRESS_STORE_READ_RESULT_VERSION) fail();
@@ -400,6 +523,13 @@ function safeServiceResult(value) {
     (latestStatus === 'absent' && valueAt(latest, 'update_id') !== null)
     || (latestStatus === 'ready' && typeof valueAt(latest, 'update_id') !== 'string')
   ) fail();
+  const latestCompaction = valueAt(value, 'latest_context_compaction_summary');
+  exactObject(latestCompaction, LATEST_COMPACTION_SUMMARY_KEYS);
+  const compactionStatus = valueAt(latestCompaction, 'status');
+  if (
+    (compactionStatus === 'absent' && valueAt(latestCompaction, 'summary_id') !== null)
+    || (compactionStatus === 'ready' && typeof valueAt(latestCompaction, 'summary_id') !== 'string')
+  ) fail();
   const evidenceValue = valueAt(value, 'evidence');
   exactObject(evidenceValue, EVIDENCE_KEYS);
   return value;
@@ -411,8 +541,19 @@ function readCurrentWorkingContextState(services, rawRequest) {
     services.task_capsule_store.read_latest_task_capsule({ project_id: request.project_id }),
     request.project_id,
   );
+  const latestCompaction = safeLatestCompactionResult(
+    services.context_compaction_summary_store === null
+      ? null
+      : services.context_compaction_summary_store.read_latest_context_compaction_summary({
+        conversation_id: request.conversation_id,
+        task_address_id: request.task_address_id,
+      }),
+    request.conversation_id,
+    request.task_address_id,
+  );
   const state = createBuilderWorkingContextState({
     ...request,
+    compaction_refs: mergeCompactionRefs(request.compaction_refs, latestCompaction),
     latest_task_capsule: latest.task_capsule,
   });
   return freezeDeep(safeServiceResult({
@@ -429,7 +570,11 @@ function readCurrentWorkingContextState(services, rawRequest) {
       status: latest.status,
       update_id: latest.update_id,
     },
-    evidence: evidence(latest.operation),
+    latest_context_compaction_summary: {
+      status: latestCompaction.status,
+      summary_id: latestCompaction.summary_id,
+    },
+    evidence: evidence(latest.operation, latestCompaction.operation),
   }));
 }
 

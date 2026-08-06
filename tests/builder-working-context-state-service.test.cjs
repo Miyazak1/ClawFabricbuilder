@@ -11,6 +11,13 @@ const {
   createBuilderTaskCapsuleStore,
 } = require('../electron/builder-task-capsule-store.cjs');
 const {
+  createBuilderContextCompactionSummary,
+} = require('../electron/builder-context-compaction-summary.cjs');
+const {
+  BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_VERSION,
+  createBuilderContextCompactionSummaryStore,
+} = require('../electron/builder-context-compaction-summary-store.cjs');
+const {
   createBuilderSessionAddress,
   createBuilderTaskAddress,
 } = require('../electron/builder-session-task-address.cjs');
@@ -45,6 +52,7 @@ const ROUTE_DECISION_ID = 'builder-route-decision:123e4567-e89b-42d3-a456-426614
 function temporaryDatabase() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-working-context-'));
   return {
+    compactionDatabasePath: path.join(root, 'context-compaction.sqlite'),
     taskCapsuleDatabasePath: path.join(root, 'task-capsules.sqlite'),
     addressDatabasePath: path.join(root, 'session-task-addresses.sqlite'),
     root,
@@ -61,6 +69,10 @@ function sourceRef(overrides = {}) {
     source_digest: digest('a'),
     ...overrides,
   };
+}
+
+function eventId(char) {
+  return `builder-conversation-event:${char.repeat(64)}`;
 }
 
 function workingBrief(overrides = {}) {
@@ -101,6 +113,32 @@ function taskCapsuleUpdate(overrides = {}) {
     route_decision_id: capsule.last_route_decision_id,
     task_capsule: capsule,
     updated_at_ms: capsule.updated_at_ms,
+  });
+}
+
+function compactionSummary(overrides = {}) {
+  return createBuilderContextCompactionSummary({
+    conversation_id: CONVERSATION_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    source_event_start_id: eventId('1'),
+    source_event_end_id: eventId('2'),
+    source_event_count: 8,
+    token_budget_before: 64_000,
+    token_budget_after: 12_000,
+    summary: 'Compacted discussion says the user wants the same portfolio homepage direction.',
+    durable_decisions: ['Keep the gallery-first direction.'],
+    unresolved_questions: [],
+    omitted_large_outputs: [{
+      source_kind: 'tool_output',
+      source_digest: digest('c'),
+      reason: 'Large tool output omitted; digest retained.',
+    }],
+    source_refs: [
+      { source_kind: 'user_message', source_digest: digest('d') },
+      { source_kind: 'assistant_message', source_digest: digest('e') },
+    ],
+    created_at_ms: 1_250,
+    ...overrides,
   });
 }
 
@@ -182,6 +220,25 @@ function fixture(t) {
   };
 }
 
+function compactionFixture(t) {
+  const temp = temporaryDatabase();
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
+  const compactionStore = createBuilderContextCompactionSummaryStore(temp.compactionDatabasePath);
+  t.after(() => {
+    taskCapsuleStore.close();
+    compactionStore.close();
+    fs.rmSync(temp.root, { force: true, recursive: true });
+  });
+  return {
+    taskCapsuleStore,
+    compactionStore,
+    service: createBuilderWorkingContextStateService({
+      task_capsule_store: taskCapsuleStore,
+      context_compaction_summary_store: compactionStore,
+    }),
+  };
+}
+
 function addressedFixture(t) {
   const temp = temporaryDatabase();
   const taskCapsuleStore = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
@@ -233,6 +290,9 @@ test('projects the latest task capsule store fact into ready Working Context Sta
   assert.equal(result.evidence.working_context_contract_authority, 'main_working_context_state_contract_v1');
   assert.equal(result.evidence.task_capsule_store_authority, 'main_owned_task_capsule_store');
   assert.equal(result.evidence.task_capsule_store_operation, 'latest_task_capsule_ready_read');
+  assert.equal(result.latest_context_compaction_summary.status, 'absent');
+  assert.equal(result.evidence.context_compaction_summary_store_authority, 'not_configured');
+  assert.equal(result.evidence.context_compaction_summary_store_operation, 'not_configured');
   assert.equal(result.evidence.sqlite_write, 'not_performed');
   assert.equal(result.evidence.conversation_append, false);
   assert.equal(result.evidence.provider_dispatch, false);
@@ -277,6 +337,45 @@ test('does not turn compaction-only context into executable readiness when the s
   assert.equal(result.working_context_state.compaction_refs[0].summary_digest, digest('b'));
   assert.equal(result.working_context_state.handoff_refs[0].packet_digest, digest('d'));
   assert.equal(result.evidence.task_capsule_store_operation, 'latest_task_capsule_absent_read');
+});
+
+test('projects latest compaction summary refs without changing readiness authority', (t) => {
+  const item = compactionFixture(t);
+  const compacted = compactionSummary();
+  item.compactionStore.record_context_compaction_summary({ context_compaction_summary: compacted });
+
+  const result = item.service.read_current_working_context_state(request({
+    objective_summary: null,
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: null,
+    source_refs: [sourceRef({ source_kind: 'compaction_summary', source_digest: compacted.digest })],
+  }));
+
+  assert.equal(result.status, 'empty');
+  assert.equal(result.latest_task_capsule.status, 'absent');
+  assert.deepEqual(result.latest_context_compaction_summary, {
+    status: 'ready',
+    summary_id: compacted.summary_id,
+  });
+  assert.deepEqual(result.working_context_state.compaction_refs, [{
+    summary_digest: compacted.digest,
+    source_range_digest: compacted.source_range_digest,
+    compacted_at_ms: compacted.created_at_ms,
+  }]);
+  assert.equal(
+    result.evidence.context_compaction_summary_store_authority,
+    'main_owned_context_compaction_summary_store',
+  );
+  assert.equal(
+    result.evidence.context_compaction_summary_store_operation,
+    'latest_context_compaction_summary_ready_read',
+  );
+  assert.equal(result.evidence.provider_dispatch, false);
+  assert.equal(result.evidence.source_mutation, false);
+  assert.equal(result.evidence.git_mutation, false);
+  assert.equal(result.evidence.permission_grant, false);
 });
 
 test('projects approved plan and stale correction state without writing to the task capsule store', (t) => {
@@ -469,6 +568,13 @@ test('fails closed for malformed requests, forged stores, and hostile read resul
       read_current_session_task_for_conversation: 'nope',
     },
   }));
+  assertServiceError(() => createBuilderWorkingContextStateService({
+    task_capsule_store: item.store,
+    context_compaction_summary_store: {
+      store_version: BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_VERSION,
+      read_latest_context_compaction_summary: 'nope',
+    },
+  }));
   assertServiceError(() => createBuilderWorkingContextStateService(new Proxy({
     task_capsule_store: item.store,
   }, {})));
@@ -511,6 +617,7 @@ test('source remains a main-only read projection service without runtime authori
 
   assert.match(source, /builder-working-context-state-service\.v1/u);
   assert.match(source, /read_latest_task_capsule/u);
+  assert.match(source, /read_latest_context_compaction_summary/u);
   assert.match(source, /read_current_session_task_for_conversation/u);
   assert.doesNotMatch(
     source,
