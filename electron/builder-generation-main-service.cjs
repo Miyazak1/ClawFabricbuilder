@@ -1711,6 +1711,8 @@ function createBuilderGenerationMainService(rawOptions) {
           open_questions: [],
           latest_user_intent: instruction,
           source_refs: [],
+          compaction_refs: [],
+          handoff_refs: [],
           approved_plan_ref: null,
           base_revision_ref: null,
           invalidated_by: null,

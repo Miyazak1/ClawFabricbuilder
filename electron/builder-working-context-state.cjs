@@ -32,6 +32,8 @@ const INPUT_KEYS = Object.freeze([
   'open_questions',
   'latest_user_intent',
   'source_refs',
+  'compaction_refs',
+  'handoff_refs',
   'latest_task_capsule',
   'approved_plan_ref',
   'base_revision_ref',
@@ -52,6 +54,8 @@ const STATE_KEYS = Object.freeze([
   'open_questions',
   'latest_user_intent',
   'source_refs',
+  'compaction_refs',
+  'handoff_refs',
   'task_capsule_ref',
   'approved_plan_ref',
   'base_revision_ref',
@@ -60,6 +64,8 @@ const STATE_KEYS = Object.freeze([
   'authority',
 ]);
 const SOURCE_REF_KEYS = Object.freeze(['source_kind', 'source_digest']);
+const COMPACTION_REF_KEYS = Object.freeze(['summary_digest', 'source_range_digest', 'compacted_at_ms']);
+const HANDOFF_REF_KEYS = Object.freeze(['packet_digest', 'inserted_at_ms', 'adopted_at_ms']);
 const TASK_CAPSULE_REF_KEYS = Object.freeze(['task_id', 'status', 'update_digest', 'updated_at_ms']);
 const APPROVED_PLAN_REF_KEYS = Object.freeze(['plan_result_digest', 'conversation_head_digest', 'approved_at_ms']);
 const BASE_REVISION_REF_KEYS = Object.freeze(['revision_receipt_digest']);
@@ -308,6 +314,64 @@ function sanitizeSourceRefs(value) {
   return freezeDeep(refs);
 }
 
+function sanitizeCompactionRef(value, updatedAtMs) {
+  exactObject(value, COMPACTION_REF_KEYS);
+  const compactedAtMs = safeTimestamp(valueAt(value, 'compacted_at_ms'));
+  if (compactedAtMs > updatedAtMs) fail();
+  return freezeDeep({
+    summary_digest: safeDigest(valueAt(value, 'summary_digest')),
+    source_range_digest: safeDigest(valueAt(value, 'source_range_digest')),
+    compacted_at_ms: compactedAtMs,
+  });
+}
+
+function sanitizeCompactionRefs(value, updatedAtMs) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > 4) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) fail();
+  const refs = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const ref = sanitizeCompactionRef(descriptor.value, updatedAtMs);
+    const key = `${ref.summary_digest}:${ref.source_range_digest}`;
+    if (seen.has(key)) fail();
+    seen.add(key);
+    refs.push(ref);
+  }
+  return freezeDeep(refs);
+}
+
+function sanitizeHandoffRef(value, updatedAtMs) {
+  exactObject(value, HANDOFF_REF_KEYS);
+  const insertedAtMs = safeTimestamp(valueAt(value, 'inserted_at_ms'));
+  const adoptedAtMs = safeTimestamp(valueAt(value, 'adopted_at_ms'));
+  if (insertedAtMs > updatedAtMs || adoptedAtMs > updatedAtMs || adoptedAtMs < insertedAtMs) fail();
+  return freezeDeep({
+    packet_digest: safeDigest(valueAt(value, 'packet_digest')),
+    inserted_at_ms: insertedAtMs,
+    adopted_at_ms: adoptedAtMs,
+  });
+}
+
+function sanitizeHandoffRefs(value, updatedAtMs) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > 4) fail();
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) fail();
+  const refs = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const ref = sanitizeHandoffRef(descriptor.value, updatedAtMs);
+    if (seen.has(ref.packet_digest)) fail();
+    seen.add(ref.packet_digest);
+    refs.push(ref);
+  }
+  return freezeDeep(refs);
+}
+
 function sanitizeTaskCapsuleRef(value, projectId) {
   if (value === null) return null;
   const taskCapsule = sanitizeBuilderTaskCapsule(value);
@@ -395,6 +459,8 @@ function createBuilderWorkingContextState(rawInput) {
   const openQuestions = safeTextArray(valueAt(rawInput, 'open_questions'), 8, 512, 2_048);
   const latestUserIntent = safeNullableText(valueAt(rawInput, 'latest_user_intent'), 512, 2_048, true);
   const sourceRefs = sanitizeSourceRefs(valueAt(rawInput, 'source_refs'));
+  const compactionRefs = sanitizeCompactionRefs(valueAt(rawInput, 'compaction_refs'), updatedAtMs);
+  const handoffRefs = sanitizeHandoffRefs(valueAt(rawInput, 'handoff_refs'), updatedAtMs);
   const taskCapsuleRef = sanitizeTaskCapsuleRef(valueAt(rawInput, 'latest_task_capsule'), projectId);
   const approvedPlanRef = sanitizeApprovedPlanRef(valueAt(rawInput, 'approved_plan_ref'), updatedAtMs);
   const baseRevisionRef = sanitizeBaseRevisionRef(valueAt(rawInput, 'base_revision_ref'));
@@ -421,6 +487,8 @@ function createBuilderWorkingContextState(rawInput) {
     open_questions: openQuestions,
     latest_user_intent: latestUserIntent,
     source_refs: sourceRefs,
+    compaction_refs: compactionRefs,
+    handoff_refs: handoffRefs,
     task_capsule_ref: taskCapsuleRef,
     approved_plan_ref: approvedPlanRef,
     base_revision_ref: baseRevisionRef,
@@ -451,6 +519,8 @@ function sanitizeBuilderWorkingContextState(value) {
   const openQuestions = safeTextArray(valueAt(value, 'open_questions'), 8, 512, 2_048);
   const latestUserIntent = safeNullableText(valueAt(value, 'latest_user_intent'), 512, 2_048, true);
   const sourceRefs = sanitizeSourceRefs(valueAt(value, 'source_refs'));
+  const compactionRefs = sanitizeCompactionRefs(valueAt(value, 'compaction_refs'), updatedAtMs);
+  const handoffRefs = sanitizeHandoffRefs(valueAt(value, 'handoff_refs'), updatedAtMs);
   const taskCapsuleRef = sanitizeTaskCapsuleRefFromState(valueAt(value, 'task_capsule_ref'));
   const approvedPlanRef = sanitizeApprovedPlanRef(valueAt(value, 'approved_plan_ref'), updatedAtMs);
   const invalidatedBy = sanitizeInvalidationRef(valueAt(value, 'invalidated_by'), updatedAtMs);
@@ -479,6 +549,8 @@ function sanitizeBuilderWorkingContextState(value) {
     open_questions: openQuestions,
     latest_user_intent: latestUserIntent,
     source_refs: sourceRefs,
+    compaction_refs: compactionRefs,
+    handoff_refs: handoffRefs,
     task_capsule_ref: taskCapsuleRef,
     approved_plan_ref: approvedPlanRef,
     base_revision_ref: sanitizeBaseRevisionRef(valueAt(value, 'base_revision_ref')),

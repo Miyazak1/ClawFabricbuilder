@@ -159,6 +159,8 @@ function request(overrides = {}) {
     open_questions: [],
     latest_user_intent: 'Use the current direction.',
     source_refs: [sourceRef()],
+    compaction_refs: [],
+    handoff_refs: [],
     approved_plan_ref: null,
     base_revision_ref: null,
     invalidated_by: null,
@@ -256,12 +258,24 @@ test('does not turn compaction-only context into executable readiness when the s
     open_questions: [],
     latest_user_intent: null,
     source_refs: [sourceRef({ source_kind: 'compaction_summary', source_digest: digest('b') })],
+    compaction_refs: [{
+      summary_digest: digest('b'),
+      source_range_digest: digest('c'),
+      compacted_at_ms: 1_240,
+    }],
+    handoff_refs: [{
+      packet_digest: digest('d'),
+      inserted_at_ms: 1_230,
+      adopted_at_ms: 1_250,
+    }],
   }));
 
   assert.equal(result.status, 'empty');
   assert.equal(result.latest_task_capsule.status, 'absent');
   assert.equal(result.latest_task_capsule.update_id, null);
   assert.equal(result.working_context_state.task_capsule_ref, null);
+  assert.equal(result.working_context_state.compaction_refs[0].summary_digest, digest('b'));
+  assert.equal(result.working_context_state.handoff_refs[0].packet_digest, digest('d'));
   assert.equal(result.evidence.task_capsule_store_operation, 'latest_task_capsule_absent_read');
 });
 
@@ -339,6 +353,8 @@ test('resolves current Session and Task Address before projecting conversation c
     open_questions: [],
     latest_user_intent: 'Use the current direction.',
     source_refs: [sourceRef()],
+    compaction_refs: [],
+    handoff_refs: [],
     approved_plan_ref: null,
     base_revision_ref: null,
     invalidated_by: null,
@@ -373,6 +389,8 @@ test('fails closed when conversation address resolution is unavailable or absent
     open_questions: [],
     latest_user_intent: 'Use the current direction.',
     source_refs: [sourceRef()],
+    compaction_refs: [],
+    handoff_refs: [],
     approved_plan_ref: null,
     base_revision_ref: null,
     invalidated_by: null,
@@ -391,6 +409,8 @@ test('fails closed when conversation address resolution is unavailable or absent
     open_questions: [],
     latest_user_intent: 'Use the current direction.',
     source_refs: [sourceRef()],
+    compaction_refs: [],
+    handoff_refs: [],
     approved_plan_ref: null,
     base_revision_ref: null,
     invalidated_by: null,
@@ -417,6 +437,8 @@ test('fails closed when resolved task is not the session current task', (t) => {
     open_questions: [],
     latest_user_intent: 'Use the current direction.',
     source_refs: [sourceRef()],
+    compaction_refs: [],
+    handoff_refs: [],
     approved_plan_ref: null,
     base_revision_ref: null,
     invalidated_by: null,

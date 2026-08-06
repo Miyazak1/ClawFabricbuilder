@@ -76,6 +76,8 @@ function input(overrides = {}) {
     open_questions: [],
     latest_user_intent: 'Use the direction we discussed.',
     source_refs: [sourceRef()],
+    compaction_refs: [],
+    handoff_refs: [],
     latest_task_capsule: taskCapsule(),
     approved_plan_ref: null,
     base_revision_ref: null,
@@ -180,11 +182,18 @@ test('keeps compaction summaries separate from execution readiness', () => {
     open_questions: [],
     latest_user_intent: null,
     source_refs: [sourceRef({ source_kind: 'compaction_summary', source_digest: digest('f') })],
+    compaction_refs: [{
+      summary_digest: digest('f'),
+      source_range_digest: digest('9'),
+      compacted_at_ms: 1_250,
+    }],
     latest_task_capsule: null,
     approved_plan_ref: null,
     invalidated_by: null,
   }));
   assert.equal(compactedOnly.state, 'empty');
+  assert.equal(compactedOnly.compaction_refs.length, 1);
+  assert.equal(compactedOnly.compaction_refs[0].summary_digest, digest('f'));
 
   const discussing = createBuilderWorkingContextState(input({
     objective_summary: 'Discussing a possible landing page.',
@@ -196,6 +205,33 @@ test('keeps compaction summaries separate from execution readiness', () => {
     approved_plan_ref: null,
   }));
   assert.equal(discussing.state, 'discussing');
+});
+
+test('records adopted handoff refs without granting readiness or authority', () => {
+  const handoffOnly = createBuilderWorkingContextState(input({
+    objective_summary: null,
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: null,
+    source_refs: [],
+    handoff_refs: [{
+      packet_digest: digest('7'),
+      inserted_at_ms: 1_210,
+      adopted_at_ms: 1_240,
+    }],
+    latest_task_capsule: null,
+    approved_plan_ref: null,
+  }));
+
+  assert.equal(handoffOnly.state, 'empty');
+  assert.deepEqual(handoffOnly.handoff_refs, [{
+    packet_digest: digest('7'),
+    inserted_at_ms: 1_210,
+    adopted_at_ms: 1_240,
+  }]);
+  assert.equal(handoffOnly.authority.permission_grant, 'not_performed');
+  assert.equal(handoffOnly.authority.provider_dispatch, 'not_performed');
 });
 
 test('fails closed on malformed input, stale timestamps, accessors, and forged state output', () => {
@@ -226,6 +262,20 @@ test('fails closed on malformed input, stale timestamps, accessors, and forged s
       approved_at_ms: 1_250,
     },
     open_questions: ['Should this still run?'],
+  })));
+  assertStateError(() => createBuilderWorkingContextState(input({
+    compaction_refs: [{
+      summary_digest: digest('f'),
+      source_range_digest: digest('9'),
+      compacted_at_ms: 9_999,
+    }],
+  })));
+  assertStateError(() => createBuilderWorkingContextState(input({
+    handoff_refs: [{
+      packet_digest: digest('7'),
+      inserted_at_ms: 1_260,
+      adopted_at_ms: 1_240,
+    }],
   })));
   assertStateError(() => createBuilderWorkingContextState(new Proxy(input(), {})));
 
