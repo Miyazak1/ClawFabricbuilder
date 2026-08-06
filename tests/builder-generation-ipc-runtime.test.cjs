@@ -622,6 +622,7 @@ function runtimeWithService(service, probes = {}) {
               service_version: 'builder-provider-context-disclosure-status-service.v1',
               record_current_provider_context_disclosure_status() {},
               read_current_provider_context_disclosure_status_for_conversation() {},
+              read_current_provider_context_disclosure_request_preparation_for_conversation() {},
               clear_current_provider_context_disclosure_status_for_conversation() {},
             };
             return context.__providerContextDisclosureStatusService;
@@ -2109,6 +2110,10 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__providerContextDisclosureStatusService);
   assert.equal(probes.serviceOptions.providerContextDisclosureStatusService,
     runtimeModule.context.__providerContextDisclosureStatusService);
+  assert.equal(
+    runtime.readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime(),
+    runtimeModule.context.__providerContextDisclosureStatusService,
+  );
   assert.equal(probes.providerContextDisclosureDecisionOptions.actor_id,
     'builder-user:00000000-0000-4000-8000-000000000001');
   assert.equal(typeof probes.providerContextDisclosureDecisionOptions.evaluate_permission, 'function');

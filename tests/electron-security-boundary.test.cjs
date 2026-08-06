@@ -37,6 +37,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /createBuilderProviderSettingsIpcRuntime/u);
   assert.match(main, /createBuilderPermissionIpcRuntime/u);
   assert.match(main, /createBuilderGenerationIpcRuntime/u);
+  assert.match(main, /createBuilderProviderContextDisclosureApprovalIpcRuntime/u);
   assert.match(main, /createBuilderWindowControlsIpcRuntime/u);
   assert.match(main, /mainWindowRef:\s*\(\)\s*=>\s*mainWindow/u);
   assert.match(main, /const userDataPath = app\.getPath\(['"]userData['"]\)/u);

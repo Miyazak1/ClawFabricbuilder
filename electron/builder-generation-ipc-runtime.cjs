@@ -1046,6 +1046,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let workspaceAdapter;
   let taskStreamAdapter;
   let planReviewAdapter;
+  let providerContextDisclosureStatusService = null;
   let selectedProjectId = null;
   let selectedConversationProjectId = null;
   let selectionEpoch = 0;
@@ -1142,7 +1143,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       },
       now_ms: () => Date.now(),
     });
-    const providerContextDisclosureStatusService = createBuilderProviderContextDisclosureStatusService();
+    providerContextDisclosureStatusService = createBuilderProviderContextDisclosureStatusService();
     const conversationService = createBuilderConversationMainService({
       metadataAuthority: projectMainAuthority.metadata_authority,
       createUuid: randomUUID,
@@ -1911,6 +1912,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   return Object.freeze({
     runtime_version: BUILDER_GENERATION_IPC_RUNTIME_VERSION,
     channels: Object.freeze(handlers.map(({ channel }) => channel)),
+    readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime() {
+      if (providerContextDisclosureStatusService === null || state === 'disposed') fail();
+      return providerContextDisclosureStatusService;
+    },
     register() {
       if (state === 'registered') return false;
       if (state !== 'idle') fail();

@@ -887,8 +887,11 @@ Evidence requirements:
   gate, the main-side approval service, a supplied main-only status service, and
   a supplied explicit permission grant function. It has no storage of its own,
   no provider dispatch, no prompt bridge, no source/Git mutation, no preload
-  exposure, and no Revision authority; wiring it to the generation runtime's
-  shared status service remains a later desktop integration checkpoint. The renderer now
+  exposure, and no Revision authority. Desktop main now wires this runtime to
+  the generation runtime's main-only shared disclosure status service through a
+  main-only accessor and the existing permission runtime grant function, while
+  still exposing no preload/UI method and still leaving prompt/provider bridging
+  closed. The renderer now
   gives that main-owned status
   precedence in the composer context chip while it is present, using only the
   safe label and next-action hint and never exposing request ids, context

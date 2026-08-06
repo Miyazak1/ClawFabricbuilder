@@ -22,6 +22,7 @@ async function executeMain({
   windowConstructionFails,
 }) {
   const calls = {
+    createApprovalRuntime: 0,
     createGenerationRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
@@ -38,6 +39,7 @@ async function executeMain({
   const dialogCalls = [];
   let sessionCreated = sessionDataExists;
   let permissionGrantForExplicitApproval = null;
+  let providerContextDisclosureStatusService = null;
   const events = new Map();
   const generationRuntimeOptions = [];
   function runtime(index) {
@@ -172,7 +174,25 @@ async function executeMain({
             assert.equal(options.grantPermissionForExplicitApproval, permissionGrantForExplicitApproval);
             assert.equal(typeof options.showOpenDialog, 'function');
             generationRuntimeOptions.push(options);
-            return runtime(2);
+            const value = runtime(2);
+            providerContextDisclosureStatusService = Object.freeze({
+              service_version: 'builder-provider-context-disclosure-status-service.v1',
+            });
+            value.readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime =
+              () => providerContextDisclosureStatusService;
+            return value;
+          },
+        };
+      }
+      if (specifier === './builder-provider-context-disclosure-approval-ipc-runtime.cjs') {
+        return {
+          createBuilderProviderContextDisclosureApprovalIpcRuntime(options) {
+            calls.createApprovalRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(options.grantPermissionForExplicitApproval, permissionGrantForExplicitApproval);
+            assert.equal(options.providerContextDisclosureStatusService, providerContextDisclosureStatusService);
+            return runtime(3);
           },
         };
       }
@@ -182,7 +202,7 @@ async function executeMain({
             calls.createWindowControlsRuntime += 1;
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
-            return runtime(3);
+            return runtime(4);
           },
         };
       }
@@ -215,6 +235,7 @@ test('a second application instance exits before registering Builder authorities
     windowConstructionFails: false,
   });
   assert.deepEqual(calls, {
+    createApprovalRuntime: 0,
     createGenerationRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
@@ -235,14 +256,15 @@ test('window startup failure disposes registered handlers and quits', async () =
     windowConstructionFails: true,
   });
   assert.deepEqual(calls, {
+    createApprovalRuntime: 1,
     createGenerationRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,
-    dispose: 4,
+    dispose: 5,
     mkdir: 0,
     quit: 1,
-    register: 4,
+    register: 5,
     setPath: [],
     whenReady: 1,
   });
@@ -295,6 +317,7 @@ test('runtime registration failure rolls back previously registered handlers and
     failRegisterIndex: 2,
   });
   assert.deepEqual(calls, {
+    createApprovalRuntime: 1,
     createGenerationRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,

@@ -148,8 +148,12 @@ authority. A dedicated IPC runtime can register that one fixed channel by
 composing the adapter with the current gate, approval service, supplied
 main-only status service, and supplied explicit permission grant function. The
 runtime owns no storage, provider dispatch, prompt bridge, preload exposure,
-source/Git mutation, or Revision authority; connecting it to the generation
-runtime's shared disclosure status service is a later desktop integration step.
+source/Git mutation, or Revision authority. Desktop main now connects that
+runtime to the generation runtime's main-only shared disclosure status service
+through a main-only accessor plus the existing permission runtime grant
+function; this registers the fixed main handler but still adds no preload method,
+visible UI control, prompt bridge, provider dispatch, or provider-context body
+exposure.
 
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but
