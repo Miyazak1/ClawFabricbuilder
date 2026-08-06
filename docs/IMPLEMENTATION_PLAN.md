@@ -815,8 +815,12 @@ Evidence requirements:
   which summarizes purpose, segment kinds/counts, budget, and permission gate
   for a future approval UI without raw context text, source files, assembly ids,
   digests, provider-context body, permission grant, provider dispatch, or IPC.
-  It performs no provider dispatch, tool dispatch, Git/source
-  mutation, permission grant, IPC/preload registration, or renderer projection;
+  `builder-provider-context-disclosure-request-preparation.v1` then binds that
+  request surface to a verified provider-context projection: blocked projection
+  prepares a local request, ready projection returns no request, and any
+  projection/assembly drift fails closed. It performs no provider dispatch,
+  tool dispatch, Git/source mutation, permission grant, prompt bridge,
+  IPC/preload registration, storage write, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

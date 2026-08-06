@@ -555,6 +555,12 @@ Current checkpoint:
   segment kinds/counts, budget, and permission gate, but includes no raw context
   text, source files, assembly ids, digests, provider-context body, permission
   grant, provider dispatch, or IPC/preload path.
+- `builder-provider-context-disclosure-request-preparation.v1` binds that
+  request surface to a verified provider-context projection. It prepares a
+  local request only when the projection is `blocked`, returns no request when
+  projection is already `ready`, and fails closed on projection/assembly drift.
+  It still performs no permission grant, provider dispatch, prompt bridge, IPC,
+  storage write, or renderer projection.
 
 ### 5. Frontend Projection
 
