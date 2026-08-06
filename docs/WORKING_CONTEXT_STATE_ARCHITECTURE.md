@@ -512,6 +512,8 @@ Assembler behavior:
 - refuses side-effecting assembly when context is `stale` or
   `needs_clarification`;
 - emits snapshot refs before provider dispatch.
+- must not be sent to the provider until a separate disclosure/projection gate
+  confirms the user-authorized provider context surface.
 
 Current checkpoint:
 
@@ -526,6 +528,11 @@ Current checkpoint:
 - Generation main now creates this assembly for run-snapshot audit when a
   selected Working Context State is available, and the snapshot records only
   `assembly_id`, `context_digest`, and `assembled_at_ms`.
+- `builder-provider-context-projection.v1` exists as a pure main-side gate for
+  provider disclosure. Without an explicit local-user disclosure decision for
+  the same purpose, it returns `blocked` and no provider-sendable context. When
+  approved, it projects only segment kind/text, budget, and permission-gate
+  status, while keeping assembly ids and digests outside the provider context.
 - It is not yet consumed by the provider prompt path; current provider prompt
   assembly still uses the older generation context path.
 

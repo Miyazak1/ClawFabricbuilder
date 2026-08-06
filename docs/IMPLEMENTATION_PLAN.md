@@ -791,10 +791,14 @@ Evidence requirements:
   current context is stale, unclear, missing a workspace, or denied write
   permission. Generation main now records the assembly as a safe
   `assembly_id` / `context_digest` / `assembled_at_ms` Run Snapshot ref when a
-  selected Working Context State is available. It does not yet replace the
-  generation provider prompt path, and it performs no provider dispatch, tool
-  dispatch, SQLite write, Git/source mutation, permission grant, IPC/preload
-  registration, or renderer projection;
+  selected Working Context State is available. The provider disclosure
+  checkpoint adds `builder-provider-context-projection.v1`, a pure main-side
+  gate that defaults to `blocked` unless a local-user disclosure decision
+  approves sending context to the configured provider for the same purpose. Its
+  approved provider context strips assembly ids, digests, source refs, and
+  timestamps. It does not yet replace the generation provider prompt path, and
+  it performs no provider dispatch, tool dispatch, SQLite write, Git/source
+  mutation, permission grant, IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works
