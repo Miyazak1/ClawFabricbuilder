@@ -3175,6 +3175,7 @@ test('proposes and approves a saved-project plan before creating a draft', async
   assert.deepEqual(draft, {
     approved_plan_continued: true,
     approved_plan_task_stream_verified: true,
+    composer_status_text: 'Ready to execute current direction',
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
     unsaved_draft_observed: true,
@@ -3220,6 +3221,7 @@ test('approves current-project write prompt after approving a plan', async (t) =
   assert.deepEqual(draft, {
     approved_plan_continued: true,
     approved_plan_task_stream_verified: true,
+    composer_status_text: 'Ready to execute current direction',
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
     unsaved_draft_observed: true,
@@ -4522,6 +4524,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     restart_continuation: {
       approved_plan_continued: true,
       approved_plan_task_stream_verified: true,
+      composer_status_text: 'Ready to execute current direction',
       previous_revision_verified_before_save: true,
       review_diff: reviewDiffEvidence(),
       unsaved_draft_observed: true,

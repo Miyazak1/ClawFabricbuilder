@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v19';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v20';
 const CANARY_INITIAL_CHAT_QUESTION = 'What can you help me with before I choose a project folder?';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
@@ -2760,6 +2760,7 @@ async function approvePlanViaUi(
     const outcome = await Promise.race([draftReady, alert]);
     if (outcome !== 'draft_ready') fail('canary_plan_review_failed');
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    await expectComposerStatus(page, 'Ready to execute current direction');
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
@@ -2783,6 +2784,7 @@ async function approvePlanViaUi(
     return Object.freeze({
       approved_plan_continued: true,
       approved_plan_task_stream_verified: true,
+      composer_status_text: await readComposerStatus(page),
       previous_revision_verified_before_save: true,
       review_diff: draftReviewDiff,
       unsaved_draft_observed: true,
