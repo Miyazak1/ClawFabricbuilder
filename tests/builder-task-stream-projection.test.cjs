@@ -758,6 +758,42 @@ function contextStatusProjection(overrides = {}) {
   };
 }
 
+function providerContextDisclosureStatusProjection(overrides = {}) {
+  const base = {
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: {
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function assertProjectionError(error) {
   assert.equal(error instanceof BuilderTaskStreamProjectionError, true);
   assert.equal(error.code, 'builder_task_stream_unavailable');
@@ -1548,6 +1584,25 @@ test('carries optional renderer-safe context status projection without exposing 
   );
 });
 
+test('carries optional renderer-safe provider context disclosure status without exposing request authority', () => {
+  const stream = projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    provider_context_disclosure_status_projection: providerContextDisclosureStatusProjection(),
+  });
+
+  assert.equal(
+    stream.provider_context_disclosure_status_projection.label,
+    'Allow AI to use current context',
+  );
+  assert.equal(stream.provider_context_disclosure_status_projection.needs_user_approval, true);
+  assert.equal(stream.provider_context_disclosure_status_projection.can_use_provider_context, false);
+  assert.equal(stream.provider_context_disclosure_status_projection.request_available, true);
+  assert.doesNotMatch(
+    JSON.stringify(stream.provider_context_disclosure_status_projection),
+    /builder-provider-context-disclosure-request|builder-context-assembly|builder-task-address:|builder-conversation:|sha256:|"provider_context":|api[_-]?key|credential|source_tree/iu,
+  );
+});
+
 test('rejects forged optional context status projection before exposing it', () => {
   assert.throws(() => projectBuilderTaskStream({
     ...input(candidateEvents()),
@@ -1561,6 +1616,24 @@ test('rejects forged optional context status projection before exposing it', () 
     context_status_projection: contextStatusProjection({
       authority: {
         source_read: 'allowed',
+      },
+    }),
+  }), assertProjectionError);
+});
+
+test('rejects forged optional provider context disclosure status projection before exposing it', () => {
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    provider_context_disclosure_status_projection: providerContextDisclosureStatusProjection({
+      can_use_provider_context: true,
+    }),
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    provider_context_disclosure_status_projection: providerContextDisclosureStatusProjection({
+      authority: {
+        permission_grant: true,
       },
     }),
   }), assertProjectionError);
@@ -1606,7 +1679,7 @@ test('rejects forged input with one fixed redacted error', () => {
   assert.doesNotMatch(assertProjectionError.toString(), /private-marker/u);
 });
 
-test('stays pure and cannot read SQLite, Git, IPC, renderer, provider, or source files', () => {
+test('stays pure and cannot read SQLite, Git, IPC, renderer, provider material, or source files', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'electron', 'builder-task-stream-projection.cjs'),
     'utf8',
@@ -1617,6 +1690,6 @@ test('stays pure and cannot read SQLite, Git, IPC, renderer, provider, or source
   assert.doesNotMatch(source, /events\.map\(itemFromEvent\)/u);
   assert.doesNotMatch(
     source,
-    /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
+    /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider_(?:secret|config|envelope|dispatch|context_body)|credential|source_tree/iu,
   );
 });

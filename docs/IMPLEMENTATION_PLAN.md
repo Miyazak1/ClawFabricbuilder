@@ -826,7 +826,13 @@ Evidence requirements:
   prepares a local request, ready projection returns no request, and any
   projection/assembly drift fails closed. It performs no provider dispatch,
   tool dispatch, Git/source mutation, permission grant, prompt bridge,
-  IPC/preload registration, storage write, or renderer projection;
+  IPC/preload registration, storage write, or renderer projection.
+  `builder-provider-context-disclosure-status-projection.v1` adds a
+  renderer-safe status surface for that prepared result and task stream can
+  optionally carry it as `Allow AI to use current context`, `AI context not
+  allowed`, or `AI context allowed`, without request ids, raw context text,
+  assembly ids, digests, provider-context body, permission grants, or provider
+  dispatch;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

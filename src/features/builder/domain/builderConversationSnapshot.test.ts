@@ -106,6 +106,7 @@ type MutableWire = {
   stream_version: string;
   project_id: string;
   context_status_projection?: unknown;
+  provider_context_disclosure_status_projection?: unknown;
   conversation: {
     conversation_id: string;
     created_at_ms: number;
@@ -147,6 +148,44 @@ function contextStatusProjection(overrides: Record<string, unknown> = {}): Recor
       source_read: 'not_present',
       source_write: 'not_present',
       git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...((overrides.authority as Record<string, unknown> | undefined) ?? {}),
+    },
+  };
+}
+
+function providerContextDisclosureStatusProjection(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const base = {
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: {
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
       permission_grant: false,
       revision_admission: 'not_created',
       secret_access: 'not_present',
@@ -965,6 +1004,27 @@ describe('Builder conversation snapshot', () => {
       .not.toMatch(/WorkingContext|Task Capsule|builder-handoff-packet|builder-task-address:|sha256:|provider_(?:secret|config|envelope)|credential|source_tree/iu);
   });
 
+  it('keeps optional provider context disclosure status as a safe top-level renderer fact', () => {
+    const wire = candidateWire();
+    wire.provider_context_disclosure_status_projection =
+      providerContextDisclosureStatusProjection();
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    expect(snapshot.provider_context_disclosure_status_projection?.label)
+      .toBe('Allow AI to use current context');
+    expect(snapshot.provider_context_disclosure_status_projection?.needs_user_approval)
+      .toBe(true);
+    expect(snapshot.provider_context_disclosure_status_projection?.can_use_provider_context)
+      .toBe(false);
+    expect(snapshot.provider_context_disclosure_status_projection?.request_available)
+      .toBe(true);
+    expect(Object.isFrozen(snapshot.provider_context_disclosure_status_projection)).toBe(true);
+    expect(JSON.stringify(snapshot.provider_context_disclosure_status_projection))
+      .not.toMatch(/builder-provider-context-disclosure-request|builder-context-assembly|builder-task-address:|sha256:|"provider_context":|api[_-]?key|credential|source_tree/iu);
+  });
+
   it('rejects forged context status projection before it reaches the renderer snapshot', () => {
     const forgedLabel = candidateWire();
     forgedLabel.context_status_projection = contextStatusProjection({
@@ -980,6 +1040,28 @@ describe('Builder conversation snapshot', () => {
         renderer_authority: 'trusted',
       },
     });
+    expect(() => sanitizeBuilderConversationSnapshot(forgedAuthority)).toThrowError(
+      BuilderConversationSnapshotError,
+    );
+  });
+
+  it('rejects forged provider context disclosure status before it reaches the renderer snapshot', () => {
+    const forgedCapability = candidateWire();
+    forgedCapability.provider_context_disclosure_status_projection =
+      providerContextDisclosureStatusProjection({
+        can_use_provider_context: true,
+      });
+    expect(() => sanitizeBuilderConversationSnapshot(forgedCapability)).toThrowError(
+      BuilderConversationSnapshotError,
+    );
+
+    const forgedAuthority = candidateWire();
+    forgedAuthority.provider_context_disclosure_status_projection =
+      providerContextDisclosureStatusProjection({
+        authority: {
+          permission_grant: true,
+        },
+      });
     expect(() => sanitizeBuilderConversationSnapshot(forgedAuthority)).toThrowError(
       BuilderConversationSnapshotError,
     );

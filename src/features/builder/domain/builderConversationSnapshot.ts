@@ -2,6 +2,10 @@ import {
   sanitizeBuilderContextStatusProjectionWire,
   type BuilderContextStatusProjectionWire,
 } from './builderContextStatusProjection';
+import {
+  sanitizeBuilderProviderContextDisclosureStatusProjectionWire,
+  type BuilderProviderContextDisclosureStatusProjectionWire,
+} from './builderProviderContextDisclosureStatusProjection';
 
 export const BUILDER_TASK_STREAM_READ_RESULT_VERSION =
   'builder-task-stream-read-result.v1' as const;
@@ -307,6 +311,9 @@ export type BuilderConversationReadySnapshot = Readonly<{
   stream_version: typeof BUILDER_TASK_STREAM_READ_RESULT_VERSION;
   project_id: string;
   context_status_projection?: BuilderContextStatusProjectionWire | null;
+  provider_context_disclosure_status_projection?:
+    | BuilderProviderContextDisclosureStatusProjectionWire
+    | null;
   conversation: Readonly<{
     conversation_id: string;
     created_at_ms: number;
@@ -327,6 +334,9 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
   stream_version: typeof BUILDER_TASK_STREAM_READ_RESULT_VERSION;
   project_id: string;
   context_status_projection?: BuilderContextStatusProjectionWire | null;
+  provider_context_disclosure_status_projection?:
+    | BuilderProviderContextDisclosureStatusProjectionWire
+    | null;
   conversation: null;
   authority: BuilderConversationAuthority;
 }>;
@@ -365,7 +375,10 @@ const TOP_LEVEL_KEYS = Object.freeze([
   'conversation',
   'authority',
 ]);
-const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze(['context_status_projection']);
+const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze([
+  'context_status_projection',
+  'provider_context_disclosure_status_projection',
+]);
 const AUTHORITY_KEYS = Object.freeze([
   'conversation',
   'project_source',
@@ -747,6 +760,19 @@ function optionalContextStatusProjection(
   const value = source.context_status_projection;
   if (value === null) return null;
   const projection = sanitizeBuilderContextStatusProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
+}
+
+function optionalProviderContextDisclosureStatusProjection(
+  source: Record<string, unknown>,
+): BuilderProviderContextDisclosureStatusProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'provider_context_disclosure_status_projection')) {
+    return undefined;
+  }
+  const value = source.provider_context_disclosure_status_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderProviderContextDisclosureStatusProjectionWire(value);
   if (projection === null) throw unavailable();
   return projection;
 }
@@ -2735,6 +2761,8 @@ export function sanitizeBuilderConversationSnapshot(
     const projectId = safeProjectId(source.project_id);
     const authority = sanitizeAuthority(source.authority);
     const contextStatusProjection = optionalContextStatusProjection(source);
+    const providerContextDisclosureStatusProjection =
+      optionalProviderContextDisclosureStatusProjection(source);
     if (source.conversation === null) {
       const absent = {
         state: 'absent' as const,
@@ -2743,6 +2771,12 @@ export function sanitizeBuilderConversationSnapshot(
         ...(contextStatusProjection === undefined
           ? {}
           : { context_status_projection: contextStatusProjection }),
+        ...(providerContextDisclosureStatusProjection === undefined
+          ? {}
+          : {
+            provider_context_disclosure_status_projection:
+              providerContextDisclosureStatusProjection,
+          }),
         conversation: null,
         authority,
       };
@@ -2791,6 +2825,12 @@ export function sanitizeBuilderConversationSnapshot(
       ...(contextStatusProjection === undefined
         ? {}
         : { context_status_projection: contextStatusProjection }),
+      ...(providerContextDisclosureStatusProjection === undefined
+        ? {}
+        : {
+          provider_context_disclosure_status_projection:
+            providerContextDisclosureStatusProjection,
+        }),
       conversation: {
         conversation_id: conversationId,
         created_at_ms: createdAtMs,

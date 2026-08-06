@@ -11,6 +11,9 @@ const {
 const {
   sanitizeBuilderContextStatusProjection,
 } = require('./builder-context-status-projection.cjs');
+const {
+  sanitizeBuilderProviderContextDisclosureStatusProjection,
+} = require('./builder-provider-context-disclosure-status-projection.cjs');
 
 const BUILDER_TASK_STREAM_VERSION = 'builder-task-stream-read-result.v1';
 const MAX_PUBLIC_ITEMS = 128;
@@ -470,27 +473,50 @@ function safeOptionalContextStatusProjection(rawInput) {
   return sanitizeBuilderContextStatusProjection(value);
 }
 
-function withOptionalContextStatusProjection(result, contextStatusProjection) {
-  if (contextStatusProjection === undefined) return result;
+function safeOptionalProviderContextDisclosureStatusProjection(rawInput) {
+  if (!Object.hasOwn(rawInput, 'provider_context_disclosure_status_projection')) return undefined;
+  const value = valueAt(rawInput, 'provider_context_disclosure_status_projection');
+  if (value === null) return null;
+  return sanitizeBuilderProviderContextDisclosureStatusProjection(value);
+}
+
+function withOptionalStatusProjections(
+  result,
+  contextStatusProjection,
+  providerContextDisclosureStatusProjection,
+) {
   return {
     ...result,
-    context_status_projection: contextStatusProjection,
+    ...(contextStatusProjection === undefined
+      ? {}
+      : { context_status_projection: contextStatusProjection }),
+    ...(providerContextDisclosureStatusProjection === undefined
+      ? {}
+      : {
+        provider_context_disclosure_status_projection:
+          providerContextDisclosureStatusProjection,
+      }),
   };
 }
 
 function projectBuilderTaskStream(rawInput) {
   try {
-    exactObjectWithOptional(rawInput, ['project_id', 'conversation'], ['context_status_projection']);
+    exactObjectWithOptional(rawInput, ['project_id', 'conversation'], [
+      'context_status_projection',
+      'provider_context_disclosure_status_projection',
+    ]);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
     const contextStatusProjection = safeOptionalContextStatusProjection(rawInput);
+    const providerContextDisclosureStatusProjection =
+      safeOptionalProviderContextDisclosureStatusProjection(rawInput);
     const rawConversation = valueAt(rawInput, 'conversation');
     if (rawConversation === null) {
-      return boundResult(withOptionalContextStatusProjection({
+      return boundResult(withOptionalStatusProjections({
         stream_version: BUILDER_TASK_STREAM_VERSION,
         project_id: projectId,
         conversation: null,
         authority: authority(),
-      }, contextStatusProjection));
+      }, contextStatusProjection, providerContextDisclosureStatusProjection));
     }
 
     exactObject(rawConversation, ['conversation_id', 'created_at_ms', 'events']);
@@ -511,7 +537,7 @@ function projectBuilderTaskStream(rawInput) {
     for (let index = firstVisibleIndex; index < events.length; index += 1) {
       visibleItems.push(itemFromEvent(events[index], progressStagesByRun));
     }
-    return boundResult(withOptionalContextStatusProjection({
+    return boundResult(withOptionalStatusProjections({
       stream_version: BUILDER_TASK_STREAM_VERSION,
       project_id: projectId,
       conversation: {
@@ -527,7 +553,7 @@ function projectBuilderTaskStream(rawInput) {
         items: visibleItems,
       },
       authority: authority(),
-    }, contextStatusProjection));
+    }, contextStatusProjection, providerContextDisclosureStatusProjection));
   } catch (error) {
     if (error instanceof BuilderTaskStreamProjectionError) throw error;
     fail();

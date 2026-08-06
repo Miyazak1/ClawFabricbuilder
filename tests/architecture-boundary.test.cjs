@@ -192,7 +192,7 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   );
   assert.doesNotMatch(
     taskStream,
-    /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
+    /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider_(?:secret|config|envelope|dispatch|context_body)|credential|source_tree/iu,
   );
   assert.doesNotMatch(
     taskStreamAdapter,
