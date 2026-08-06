@@ -129,7 +129,11 @@ surface. The permission policy includes a narrow `context.disclose` action on a
 an explicit local-user fact before any assembled Working Context can become
 provider-sendable context. The current decision adapter and projection gate do
 not dispatch a provider, grant permissions, expose IPC/preload commands, mutate
-source/Git, write SQLite, or replace the existing prompt path.
+source/Git, write SQLite, or replace the existing prompt path. A separate
+main-side disclosure approval service can admit a grant only from a verified
+prepared disclosure request and returns no request ids, permission ids, provider
+context, source refs, IPC/preload channel, UI control, provider dispatch, prompt
+bridge, source/Git mutation, SQLite write, or Revision authority.
 
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but

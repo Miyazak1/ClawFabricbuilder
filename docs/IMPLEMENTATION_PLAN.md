@@ -856,7 +856,16 @@ Evidence requirements:
   main-only status service and gives it to generation writes and conversation
   read_stream reads, so packaged desktop has the same in-process projection path
   without adding storage, provider dispatch, permission grant, IPC/preload
-  channel, or prompt bridge. The renderer now gives that main-owned status
+  channel, or prompt bridge.
+  `builder-provider-context-disclosure-approval-service.v1` adds the first
+  main-side grant admission contract for this path: it accepts only a verified
+  disclosure request preparation, derives the fixed `context.disclose` provider
+  resource from that preparation, calls the main-owned explicit permission grant
+  function, and returns only `approval_recorded` or `already_approved`. It does
+  not expose request ids, permission ids, provider-context bodies, source refs,
+  IPC/preload channels, UI controls, provider dispatch, prompt bridge, source
+  mutation, Git mutation, SQLite writes, or revision admission. The renderer now
+  gives that main-owned status
   precedence in the composer context chip while it is present, using only the
   safe label and next-action hint and never exposing request ids, context
   assembly ids, digests, provider-context body, permission facts, or an approval
