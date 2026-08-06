@@ -8,6 +8,11 @@ const {
   BuilderTaskCapsuleStoreError,
 } = require('./builder-task-capsule-store.cjs');
 const {
+  BUILDER_SESSION_TASK_ADDRESS_STORE_READ_RESULT_VERSION,
+  BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION,
+  BuilderSessionTaskAddressStoreError,
+} = require('./builder-session-task-address-store.cjs');
+const {
   BuilderWorkingContextStateError,
   createBuilderWorkingContextState,
 } = require('./builder-working-context-state.cjs');
@@ -21,10 +26,25 @@ const SESSION_ID_PATTERN = new RegExp(`^builder-session:${UUID_SOURCE}$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const SERVICE_KEYS = Object.freeze(['task_capsule_store']);
+const SERVICE_WITH_ADDRESS_KEYS = Object.freeze(['task_capsule_store', 'session_task_address_store']);
 const REQUEST_KEYS = Object.freeze([
   'project_id',
   'session_id',
   'task_address_id',
+  'conversation_id',
+  'objective_summary',
+  'confirmed_constraints',
+  'rejected_constraints',
+  'open_questions',
+  'latest_user_intent',
+  'source_refs',
+  'approved_plan_ref',
+  'base_revision_ref',
+  'invalidated_by',
+  'updated_at_ms',
+]);
+const CONVERSATION_REQUEST_KEYS = Object.freeze([
+  'project_id',
   'conversation_id',
   'objective_summary',
   'confirmed_constraints',
@@ -121,6 +141,21 @@ function exactObject(value, keys) {
   }
 }
 
+function exactObjectOneOf(value, keySets) {
+  if (!isPlainObject(value)) fail();
+  const actual = Reflect.ownKeys(value);
+  const match = keySets.find((keys) => (
+    actual.length === keys.length
+    && actual.every((key) => typeof key === 'string' && keys.includes(key))
+  ));
+  if (match === undefined) fail();
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return match;
+}
+
 function valueAt(value, key) {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
@@ -164,10 +199,26 @@ function safeStore(value) {
   });
 }
 
+function safeAddressStore(value) {
+  if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) fail();
+  const version = Object.getOwnPropertyDescriptor(value, 'store_version');
+  if (!version || !Object.hasOwn(version, 'value') || version.value !== BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION) {
+    fail();
+  }
+  return freezeDeep({
+    store_version: BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION,
+    read_current_session_task_for_conversation: method(value, 'read_current_session_task_for_conversation'),
+  });
+}
+
 function safeServices(rawServices) {
-  exactObject(rawServices, SERVICE_KEYS);
+  const keys = exactObjectOneOf(rawServices, [SERVICE_KEYS, SERVICE_WITH_ADDRESS_KEYS]);
+  const hasAddressStore = keys === SERVICE_WITH_ADDRESS_KEYS;
   return freezeDeep({
     task_capsule_store: safeStore(valueAt(rawServices, 'task_capsule_store')),
+    session_task_address_store: hasAddressStore
+      ? safeAddressStore(valueAt(rawServices, 'session_task_address_store'))
+      : null,
   });
 }
 
@@ -177,6 +228,24 @@ function safeRequest(rawRequest) {
     project_id: safeProjectId(valueAt(rawRequest, 'project_id')),
     session_id: safeSessionId(valueAt(rawRequest, 'session_id')),
     task_address_id: safeTaskAddressId(valueAt(rawRequest, 'task_address_id')),
+    conversation_id: safeConversationId(valueAt(rawRequest, 'conversation_id')),
+    objective_summary: valueAt(rawRequest, 'objective_summary'),
+    confirmed_constraints: valueAt(rawRequest, 'confirmed_constraints'),
+    rejected_constraints: valueAt(rawRequest, 'rejected_constraints'),
+    open_questions: valueAt(rawRequest, 'open_questions'),
+    latest_user_intent: valueAt(rawRequest, 'latest_user_intent'),
+    source_refs: valueAt(rawRequest, 'source_refs'),
+    approved_plan_ref: valueAt(rawRequest, 'approved_plan_ref'),
+    base_revision_ref: valueAt(rawRequest, 'base_revision_ref'),
+    invalidated_by: valueAt(rawRequest, 'invalidated_by'),
+    updated_at_ms: valueAt(rawRequest, 'updated_at_ms'),
+  });
+}
+
+function safeConversationRequest(rawRequest) {
+  exactObject(rawRequest, CONVERSATION_REQUEST_KEYS);
+  return freezeDeep({
+    project_id: safeProjectId(valueAt(rawRequest, 'project_id')),
     conversation_id: safeConversationId(valueAt(rawRequest, 'conversation_id')),
     objective_summary: valueAt(rawRequest, 'objective_summary'),
     confirmed_constraints: valueAt(rawRequest, 'confirmed_constraints'),
@@ -220,6 +289,16 @@ function normalizeOperationError(error) {
     );
   }
   if (error instanceof BuilderTaskCapsuleStoreError) {
+    if (/_unavailable$/u.test(error.code)) {
+      return new BuilderWorkingContextStateServiceError(
+        'builder_working_context_state_service_unavailable',
+      );
+    }
+    return new BuilderWorkingContextStateServiceError(
+      'builder_working_context_state_service_invalid',
+    );
+  }
+  if (error instanceof BuilderSessionTaskAddressStoreError) {
     if (/_unavailable$/u.test(error.code)) {
       return new BuilderWorkingContextStateServiceError(
         'builder_working_context_state_service_unavailable',
@@ -278,6 +357,32 @@ function safeStoreOperation(evidenceValue) {
   return transaction;
 }
 
+function safeCurrentAddressResult(value, projectId, conversationId) {
+  exactObject(value, ['result_version', 'status', 'session_address', 'task_address', 'address_evidence']);
+  if (valueAt(value, 'result_version') !== BUILDER_SESSION_TASK_ADDRESS_STORE_READ_RESULT_VERSION) fail();
+  if (valueAt(value, 'status') !== 'ready') fail();
+  const sessionWrapper = valueAt(value, 'session_address');
+  const taskWrapper = valueAt(value, 'task_address');
+  exactObject(sessionWrapper, ['session_address']);
+  exactObject(taskWrapper, ['task_address']);
+  const session = valueAt(sessionWrapper, 'session_address');
+  const task = valueAt(taskWrapper, 'task_address');
+  if (
+    !isPlainObject(session)
+    || !isPlainObject(task)
+    || valueAt(session, 'project_id') !== projectId
+    || valueAt(task, 'project_id') !== projectId
+    || valueAt(task, 'conversation_id') !== conversationId
+    || valueAt(task, 'session_id') !== valueAt(session, 'session_id')
+    || valueAt(session, 'current_task_id') === null
+    || valueAt(session, 'current_task_id') !== valueAt(task, 'task_address_id')
+  ) fail();
+  return freezeDeep({
+    session_id: safeSessionId(valueAt(session, 'session_id')),
+    task_address_id: safeTaskAddressId(valueAt(task, 'task_address_id')),
+  });
+}
+
 function safeServiceResult(value) {
   exactObject(value, RESULT_KEYS);
   const latest = valueAt(value, 'latest_task_capsule');
@@ -320,6 +425,24 @@ function readCurrentWorkingContextState(services, rawRequest) {
   }));
 }
 
+function readCurrentWorkingContextStateForConversation(services, rawRequest) {
+  if (services.session_task_address_store === null) fail();
+  const request = safeConversationRequest(rawRequest);
+  const currentAddress = safeCurrentAddressResult(
+    services.session_task_address_store.read_current_session_task_for_conversation({
+      project_id: request.project_id,
+      conversation_id: request.conversation_id,
+    }),
+    request.project_id,
+    request.conversation_id,
+  );
+  return readCurrentWorkingContextState(services, {
+    ...request,
+    session_id: currentAddress.session_id,
+    task_address_id: currentAddress.task_address_id,
+  });
+}
+
 function createBuilderWorkingContextStateService(rawServices) {
   const services = safeServices(rawServices);
   return freezeDeep({
@@ -327,6 +450,12 @@ function createBuilderWorkingContextStateService(rawServices) {
 
     read_current_working_context_state(rawRequest) {
       try { return readCurrentWorkingContextState(services, rawRequest); } catch (error) {
+        throw normalizeOperationError(error);
+      }
+    },
+
+    read_current_working_context_state_for_conversation(rawRequest) {
+      try { return readCurrentWorkingContextStateForConversation(services, rawRequest); } catch (error) {
         throw normalizeOperationError(error);
       }
     },

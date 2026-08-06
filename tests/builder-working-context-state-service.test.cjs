@@ -11,6 +11,14 @@ const {
   createBuilderTaskCapsuleStore,
 } = require('../electron/builder-task-capsule-store.cjs');
 const {
+  createBuilderSessionAddress,
+  createBuilderTaskAddress,
+} = require('../electron/builder-session-task-address.cjs');
+const {
+  BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION,
+  createBuilderSessionTaskAddressStore,
+} = require('../electron/builder-session-task-address-store.cjs');
+const {
   BUILDER_TASK_CAPSULE_VERSION,
   BUILDER_WORKING_BRIEF_VERSION,
   createBuilderTaskCapsuleUpdate,
@@ -28,6 +36,7 @@ const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174202';
 const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174203';
+const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174208';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174204';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174205';
 const MESSAGE_ID = 'builder-message:123e4567-e89b-42d3-a456-426614174206';
@@ -36,7 +45,8 @@ const ROUTE_DECISION_ID = 'builder-route-decision:123e4567-e89b-42d3-a456-426614
 function temporaryDatabase() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-working-context-'));
   return {
-    databasePath: path.join(root, 'task-capsules.sqlite'),
+    taskCapsuleDatabasePath: path.join(root, 'task-capsules.sqlite'),
+    addressDatabasePath: path.join(root, 'session-task-addresses.sqlite'),
     root,
   };
 }
@@ -94,6 +104,49 @@ function taskCapsuleUpdate(overrides = {}) {
   });
 }
 
+function sessionAddress(overrides = {}) {
+  return createBuilderSessionAddress({
+    session_id: SESSION_ID,
+    project_id: PROJECT_ID,
+    display_id: 'S-A1B2C3',
+    title: 'Portfolio work line',
+    status: 'active',
+    root_conversation_id: CONVERSATION_ID,
+    current_task_id: TASK_ADDRESS_ID,
+    parent_session_id: null,
+    forked_from_session_id: null,
+    forked_from_revision_receipt_digest: null,
+    created_by: 'local-user',
+    created_at_ms: 1_000,
+    updated_at_ms: 1_100,
+    archived_at_ms: null,
+    ...overrides,
+  });
+}
+
+function taskAddress(overrides = {}) {
+  return createBuilderTaskAddress({
+    task_address_id: TASK_ADDRESS_ID,
+    session_id: SESSION_ID,
+    project_id: PROJECT_ID,
+    agent_id: AGENT_ID,
+    parent_task_address_id: null,
+    conversation_id: CONVERSATION_ID,
+    title: 'Build portfolio homepage',
+    goal: 'Create the portfolio homepage from the current discussion.',
+    status: 'planned',
+    current_brief_id: digest('1'),
+    current_plan_id: null,
+    base_revision_receipt_digest: null,
+    produced_revision_receipt_digest: null,
+    created_by: 'local-user',
+    created_at_ms: 1_000,
+    updated_at_ms: 1_100,
+    closed_at_ms: null,
+    ...overrides,
+  });
+}
+
 function request(overrides = {}) {
   return {
     project_id: PROJECT_ID,
@@ -116,7 +169,7 @@ function request(overrides = {}) {
 
 function fixture(t) {
   const temp = temporaryDatabase();
-  const store = createBuilderTaskCapsuleStore(temp.databasePath);
+  const store = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
   t.after(() => {
     store.close();
     fs.rmSync(temp.root, { force: true, recursive: true });
@@ -124,6 +177,25 @@ function fixture(t) {
   return {
     store,
     service: createBuilderWorkingContextStateService({ task_capsule_store: store }),
+  };
+}
+
+function addressedFixture(t) {
+  const temp = temporaryDatabase();
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
+  const addressStore = createBuilderSessionTaskAddressStore(temp.addressDatabasePath);
+  t.after(() => {
+    taskCapsuleStore.close();
+    addressStore.close();
+    fs.rmSync(temp.root, { force: true, recursive: true });
+  });
+  return {
+    taskCapsuleStore,
+    addressStore,
+    service: createBuilderWorkingContextStateService({
+      task_capsule_store: taskCapsuleStore,
+      session_task_address_store: addressStore,
+    }),
   };
 }
 
@@ -233,12 +305,12 @@ test('projects approved plan and stale correction state without writing to the t
 
 test('restores projection after task capsule store restart', (t) => {
   const temp = temporaryDatabase();
-  const store = createBuilderTaskCapsuleStore(temp.databasePath);
+  const store = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
   const update = taskCapsuleUpdate();
   store.record_task_capsule_update({ task_capsule_update: update });
   store.close();
 
-  const restarted = createBuilderTaskCapsuleStore(temp.databasePath);
+  const restarted = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
   t.after(() => {
     restarted.close();
     fs.rmSync(temp.root, { force: true, recursive: true });
@@ -249,6 +321,107 @@ test('restores projection after task capsule store restart', (t) => {
   assert.equal(result.status, 'ready');
   assert.equal(result.latest_task_capsule.update_id, update.update_id);
   assert.equal(result.working_context_state.task_capsule_ref.status, 'ready');
+});
+
+test('resolves current Session and Task Address before projecting conversation context', (t) => {
+  const item = addressedFixture(t);
+  const update = taskCapsuleUpdate();
+  item.taskCapsuleStore.record_task_capsule_update({ task_capsule_update: update });
+  item.addressStore.record_session_address({ session_address: sessionAddress() });
+  item.addressStore.record_task_address({ task_address: taskAddress() });
+
+  const result = item.service.read_current_working_context_state_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    objective_summary: 'Build a focused photographer portfolio homepage.',
+    confirmed_constraints: ['Use a gallery.'],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: 'Use the current direction.',
+    source_refs: [sourceRef()],
+    approved_plan_ref: null,
+    base_revision_ref: null,
+    invalidated_by: null,
+    updated_at_ms: 1_300,
+  });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.working_context_state.session_id, SESSION_ID);
+  assert.equal(result.working_context_state.task_address_id, TASK_ADDRESS_ID);
+  assert.equal(result.working_context_state.conversation_id, CONVERSATION_ID);
+  assert.equal(result.latest_task_capsule.update_id, update.update_id);
+  assert.equal(result.evidence.task_capsule_store_operation, 'latest_task_capsule_ready_read');
+  assert.equal(
+    item.addressStore.read_current_session_task_for_conversation({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }).status,
+    'ready',
+  );
+});
+
+test('fails closed when conversation address resolution is unavailable or absent', (t) => {
+  const item = addressedFixture(t);
+  item.taskCapsuleStore.record_task_capsule_update({ task_capsule_update: taskCapsuleUpdate() });
+
+  assertServiceError(() => item.service.read_current_working_context_state_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    objective_summary: 'Build a focused photographer portfolio homepage.',
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: 'Use the current direction.',
+    source_refs: [sourceRef()],
+    approved_plan_ref: null,
+    base_revision_ref: null,
+    invalidated_by: null,
+    updated_at_ms: 1_300,
+  }));
+
+  const noAddressService = createBuilderWorkingContextStateService({
+    task_capsule_store: item.taskCapsuleStore,
+  });
+  assertServiceError(() => noAddressService.read_current_working_context_state_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    objective_summary: 'Build a focused photographer portfolio homepage.',
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: 'Use the current direction.',
+    source_refs: [sourceRef()],
+    approved_plan_ref: null,
+    base_revision_ref: null,
+    invalidated_by: null,
+    updated_at_ms: 1_300,
+  }));
+});
+
+test('fails closed when resolved task is not the session current task', (t) => {
+  const item = addressedFixture(t);
+  item.taskCapsuleStore.record_task_capsule_update({ task_capsule_update: taskCapsuleUpdate() });
+  item.addressStore.record_session_address({
+    session_address: sessionAddress({
+      current_task_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174299',
+    }),
+  });
+  item.addressStore.record_task_address({ task_address: taskAddress() });
+
+  assertServiceError(() => item.service.read_current_working_context_state_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    objective_summary: 'Build a focused photographer portfolio homepage.',
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: 'Use the current direction.',
+    source_refs: [sourceRef()],
+    approved_plan_ref: null,
+    base_revision_ref: null,
+    invalidated_by: null,
+    updated_at_ms: 1_300,
+  }));
 });
 
 test('fails closed for malformed requests, forged stores, and hostile read results', (t) => {
@@ -265,6 +438,13 @@ test('fails closed for malformed requests, forged stores, and hostile read resul
     task_capsule_store: {
       store_version: BUILDER_TASK_CAPSULE_STORE_VERSION,
       read_latest_task_capsule: 'nope',
+    },
+  }));
+  assertServiceError(() => createBuilderWorkingContextStateService({
+    task_capsule_store: item.store,
+    session_task_address_store: {
+      store_version: BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION,
+      read_current_session_task_for_conversation: 'nope',
     },
   }));
   assertServiceError(() => createBuilderWorkingContextStateService(new Proxy({
@@ -309,6 +489,7 @@ test('source remains a main-only read projection service without runtime authori
 
   assert.match(source, /builder-working-context-state-service\.v1/u);
   assert.match(source, /read_latest_task_capsule/u);
+  assert.match(source, /read_current_session_task_for_conversation/u);
   assert.doesNotMatch(
     source,
     /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|child_process|execFile|spawn|run_command|CREATE TABLE|INSERT INTO|UPDATE\s+\w+|DELETE FROM|record_task_capsule_update/u,
