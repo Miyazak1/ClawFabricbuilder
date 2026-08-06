@@ -3163,6 +3163,8 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-activity-card="Plan rejected"]')?.textContent)
         .toContain('The plan was rejected. The project has not changed.');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Direction changed');
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -3940,6 +3942,8 @@ describe('BuilderApp v2', () => {
         instruction: '帮我先做下方案',
       });
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Needs confirmation');
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
@@ -4202,6 +4206,8 @@ describe('BuilderApp v2', () => {
       expect(reviewPlan).toHaveBeenCalledOnce();
       expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
         .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Using approved plan');
       expect(generateApprovedPlan).toHaveBeenCalledOnce();
     });
     expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({

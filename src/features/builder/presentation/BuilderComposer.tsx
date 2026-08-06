@@ -35,7 +35,6 @@ type SavedComposerProject = Readonly<{
 
 export type BuilderComposerContextStatus =
   | 'direction_changed'
-  | 'direction_updated'
   | 'needs_confirmation'
   | 'ready_to_execute'
   | 'using_approved_plan'
@@ -115,7 +114,6 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
 
 function composerContextStatusLabel(status: BuilderComposerContextStatus): string | null {
   if (status === 'direction_changed') return 'Direction changed';
-  if (status === 'direction_updated') return 'Direction updated';
   if (status === 'needs_confirmation') return 'Needs confirmation';
   if (status === 'ready_to_execute') return 'Ready to execute current direction';
   if (status === 'using_approved_plan') return 'Using approved plan';
