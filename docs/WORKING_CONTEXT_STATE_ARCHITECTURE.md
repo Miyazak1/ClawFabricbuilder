@@ -55,6 +55,7 @@ collapsed into one summary field.
 ```text
 Raw History
 -> Compaction Summary
+-> Handoff Packet
 -> Working Context State
 -> Approved Plan
 -> Run Context Snapshot
@@ -65,6 +66,7 @@ Raw History
 | --- | --- | --- |
 | Raw History | Conversation messages, tool facts, file-read summaries, task stream facts | Conversation, Task, Run stores |
 | Compaction Summary | Reduce prompt size and preserve narrative continuity | Derived context assembly only |
+| Handoff Packet | Imported context from another task, fork, branch, or delegated agent | Provenance-bound imported facts |
 | Working Context State | Current objective, constraints, rejected directions, ready/not-ready state | Main-owned product facts |
 | Approved Plan | User-reviewed plan that may authorize later execution intent | Plan Review facts |
 | Run Context Snapshot | Evidence of what one execution actually used | Run-bound snapshot facts |
@@ -73,6 +75,108 @@ Raw History
 Compaction is a token and prompt-assembly mechanism. It cannot make a stale
 direction executable. Working Context State is task semantics. It decides
 whether a contextual execution phrase has enough current context to build.
+
+Cross-session handoff is neither raw chat nor compaction. It is imported
+context with provenance. A handoff can explain what another task did, what it
+believes is current, which files or commits it touched, and what it recommends
+next. It cannot silently grant write permission, approve a plan, or override a
+newer correction in the current task.
+
+## Automatic Compaction
+
+Automatic compaction exists to keep long sessions usable when model context is
+limited. It should run as part of context assembly, not as a user-facing mode.
+
+Trigger examples:
+
+- prompt assembly estimates that the next request would exceed a configured
+  context budget;
+- old tool outputs are large enough to crowd out the latest user intent;
+- repeated logs, test output, file listings, or diagnostics can be replaced by
+  a bounded summary plus references;
+- a resumed task needs a compact narrative before model dispatch.
+
+Compaction output should include:
+
+```text
+CompactionSummary
+- conversation_id
+- source_message_range
+- summary
+- durable_decisions[]
+- unresolved_questions[]
+- omitted_large_outputs[]
+- source_refs[]
+- created_at_ms
+```
+
+Rules:
+
+- compaction never changes `WorkingContextState.state`;
+- compaction never marks context `ready`;
+- compaction never approves a plan or grants permission;
+- compaction must preserve references to source turns and omitted outputs;
+- newer raw messages and task facts outrank older compaction summaries;
+- if a compaction summary conflicts with a current Working Context State fact,
+  the Working Context State wins.
+
+The product may later expose a small status such as `Context compressed`, but
+the first version should usually keep this automatic and quiet unless it affects
+latency or recovery.
+
+## Cross-Session Handoff
+
+Builder needs a first-class handoff model for cases where one task inserts
+context into another task: user-directed delegation, forked conversations,
+branch handoff, sub-agent results, or a main task asking another task to
+continue from a checkpoint.
+
+Handoff should be stored as a bounded packet:
+
+```text
+HandoffPacket
+- handoff_id
+- source_thread_id
+- source_session_id
+- source_task_address_id
+- target_thread_id
+- inserted_by
+- inserted_at_ms
+- summary
+- decisions[]
+- open_questions[]
+- changed_files[]
+- commit_refs[]
+- verification_evidence[]
+- requested_next_action
+- authority_claims[]
+- source_refs[]
+```
+
+Ingestion pipeline:
+
+```text
+Inserted handoff message
+-> HandoffPacket fact
+-> provenance and authority classification
+-> candidate Working Context update
+-> current-session reconciliation
+-> renderer-safe status projection
+```
+
+Handoff rules:
+
+- current-session user messages outrank imported handoff text;
+- imported handoff text cannot grant write permission, approve a plan, publish,
+  save, or dispatch providers;
+- handoff may seed `discussing` or `needs_clarification` state immediately;
+- handoff may seed `ready` only when it binds to current Task Address evidence
+  or an approved-plan/current-result fact and there is no newer contradiction;
+- if a handoff conflicts with local context, the UI should show
+  `Needs confirmation` rather than building;
+- handoff summaries should not be re-compacted into anonymous prose that loses
+  `source_thread_id`, commit refs, or verification evidence;
+- run snapshots must record when execution used imported handoff context.
 
 ## Working Context Shape
 
@@ -92,6 +196,8 @@ WorkingContextState
 - open_questions[]
 - latest_user_intent
 - source_refs[]
+- compaction_refs[]
+- handoff_refs[]
 - invalidated_by
 - approved_plan_ref
 - base_revision_ref
@@ -119,6 +225,8 @@ Minimum rules:
 - `按刚才方案做` can build only from `ready` or `approved_plan_ready`;
 - build admission records a Run Context Snapshot that binds the selected state;
 - compaction summaries cannot change `state`;
+- handoff packets can inform `state`, but only after provenance and
+  current-session reconciliation;
 - Project Memory cannot override a newer user correction.
 
 ## Existing Builder Mapping
@@ -134,6 +242,8 @@ Current implementation pieces already approximate the first version:
   approved plan, route purpose, project base, and permission result;
 - approved-plan and draft-continuation paths bind to the current Session/Task
   Address before provider dispatch.
+- cloned, forked, delegated, or manually inserted task context should be treated
+  as handoff input with explicit source refs rather than as ordinary chat text.
 
 Those pieces are enough to keep improving the Builder loop, but the long-term
 architecture should not leave the meaning scattered across Task Capsule,
@@ -237,20 +347,28 @@ User approves plan
 
 1. **Architecture docs**: record this decision and update composer/frontend
    docs so Brief is internal Working Context State.
-2. **UI cleanup**: remove `Brief` from the `+` menu. Keep Plan mode and Files
+2. **Auto-compaction contract**: add a bounded Compaction Summary fact and
+   prompt-assembly rules that preserve references but cannot change readiness.
+3. **Handoff contract**: add a bounded Handoff Packet fact for cross-session,
+   fork, branch, and delegated-agent context, with provenance and authority
+   classification.
+4. **UI cleanup**: remove `Brief` from the `+` menu. Keep Plan mode and Files
    and folders. Do not remove internal Task Capsule recording.
-3. **Status projection**: add a renderer-safe context-state projection with
+5. **Status projection**: add a renderer-safe context-state projection with
    user-facing labels only.
-4. **Contract unification**: add a pure main-side
+6. **Contract unification**: add a pure main-side
    `builder-working-context-state.v1` contract that reads current facts and
    emits `empty/discussing/ready/stale/approved_plan_ready/needs_clarification`.
-5. **Regression tests**:
+7. **Regression tests**:
    - no user-visible Brief menu item;
    - ordinary chat updates internal context without creating a draft;
    - contextual build works only from current ready state;
    - brief correction makes older ready state stale;
    - approved-plan continuation uses only the current approved head;
-   - compaction summary cannot make a stale context executable.
+   - compaction summary cannot make a stale context executable;
+   - imported handoff context cannot override a newer local correction;
+   - execution that uses handoff context records that dependency in the Run
+     Context Snapshot.
 
 ## Non-Goals
 
@@ -260,3 +378,5 @@ User approves plan
 - No Project Memory overriding current user corrections.
 - No renderer authority to write, clear, or approve Working Context State.
 - No context chip that acts like permission, Save, publish, or delete authority.
+- No handoff packet that silently becomes write permission, approved-plan
+  authority, or current-session user intent.

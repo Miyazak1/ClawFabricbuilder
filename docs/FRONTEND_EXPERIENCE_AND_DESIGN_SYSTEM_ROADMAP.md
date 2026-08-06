@@ -278,6 +278,10 @@ changed`, `Plan ready`, `Using approved plan`, or `Needs clarification`.
 Context compaction remains separate: compaction saves tokens, while Working
 Context State decides task semantics and readiness.
 
+Cross-session handoff is also separate. When another task, fork, branch, or
+delegated agent inserts context, the UI should treat it as imported context with
+provenance, not as the current user's newest instruction.
+
 Status projection should be deliberately small:
 
 | Internal context state | Composer/task chip | User action |
@@ -287,11 +291,27 @@ Status projection should be deliberately small:
 | `stale` | `Direction changed` | Confirm the new direction before build |
 | `approved_plan_ready` | `Using approved plan` | Execute, revise, or reject the plan |
 | `needs_clarification` | `Needs confirmation` | Answer the open question |
+| imported handoff pending | `Handoff received` | Review or continue naturally |
+| imported handoff conflict | `Needs confirmation` | Resolve the conflict before build |
 
 The chip is a read-only explanation. It must not submit, build, approve, clear
 memory, grant permissions, save, publish, or mutate files. A later click target
 may open `Artifact Workspace -> Logs / Task -> Current direction`, but
 correction still happens through natural language.
+
+Handoff display should stay compact:
+
+```text
+Handoff received from another task
+Latest verified: tests passed / commit recorded / needs review
+```
+
+The default composer should not display source thread IDs, digests, receipts,
+provider details, or raw transferred prompts. Those belong in Logs/Task
+inspection. If the handoff asks the current task to execute but local context is
+missing or newer user messages contradict it, the composer should show
+`Needs confirmation` and route short phrases such as `继续` to clarification
+instead of build.
 
 Plan mode can be invoked in two ways:
 

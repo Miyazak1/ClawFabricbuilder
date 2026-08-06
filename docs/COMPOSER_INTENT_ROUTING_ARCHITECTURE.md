@@ -139,6 +139,8 @@ Route context includes:
   supported for the current run;
 - branch/fork origin state when the conversation was cloned from another task
   or alternate direction;
+- imported handoff packets from other tasks, forks, branches, or delegated
+  agents, including provenance and authority classification;
 - recent route decision evidence for recovery and debugging.
 
 ## Route Types

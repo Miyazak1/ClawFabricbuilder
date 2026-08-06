@@ -40,6 +40,11 @@ snapshots, and later project memory. Frontend surfaces may show natural-language
 status chips such as `Direction updated` or `Using approved plan`, but they must
 not expose Brief as a primary composer action. The architecture is recorded in
 [Working Context State Architecture](WORKING_CONTEXT_STATE_ARCHITECTURE.md).
+That architecture also treats automatic compaction and cross-session handoff as
+separate facts: compaction keeps long work inside model context, while handoff
+imports provenance-bound context from another task, fork, branch, or delegated
+agent. Neither can silently grant permission, approve a plan, or override a
+newer current-session correction.
 
 ## Verified Starting Point
 
