@@ -2041,6 +2041,16 @@ test('reads only the current approved plan and rejects stale or rejected plan fa
     assert.equal(approvedWork.start_head.sequence, 9);
     assert.equal(approvedWork.events.at(-2).event_type, 'turn_submitted');
     assert.equal(approvedWork.events.at(-2).previous_event.sequence, 7);
+    assert.equal(approvedWork.events.at(-2).payload.route_decision.route, 'build');
+    assert.equal(approvedWork.events.at(-2).payload.route_decision.dispatch, 'build');
+    assert.deepEqual(
+      approvedWork.events.at(-2).payload.route_decision.matched_signals,
+      ['approved_plan_continuation'],
+    );
+    assert.deepEqual(
+      approvedWork.events.at(-2).payload.route_decision.required_permissions,
+      ['write_project'],
+    );
     assert.equal(approvedWork.events.at(-1).event_type, 'run_started');
     assert.equal(approvedWork.events.at(-1).payload.input_digest, CANDIDATE_DIGEST);
     assert.throws(

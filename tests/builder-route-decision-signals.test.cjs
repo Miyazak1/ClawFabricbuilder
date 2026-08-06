@@ -16,6 +16,7 @@ test('defines the fixed public route-decision signal vocabulary', () => {
     'active_run_followup',
     'active_run_steer',
     'active_run_unsupported',
+    'approved_plan_continuation',
     'brief_correction',
     'capability_question',
     'chat_default',

@@ -1355,7 +1355,16 @@ function createBuilderConversationMainService(rawOptions) {
             taskId: ids.task_id,
             mode: 'work',
             decidedAtMs: recordedAtMs,
-            hint: null,
+            hint: {
+              route: 'build',
+              confidence: 'high',
+              matched_signals: ['approved_plan_continuation'],
+              downgraded_from: null,
+              downgrade_reason: null,
+              required_permissions: ['write_project'],
+              permission_result: 'allowed',
+              dispatch: 'build',
+            },
           }),
         },
       });

@@ -687,8 +687,9 @@ Evidence requirements:
   that allowlist, so renderer-provided hints, test fixtures, provider labels,
   credentials, route-decision ids, receipts, or other internal evidence cannot
   become durable route signal facts or provider prompt context. Existing public
-  routing meaning such as `read_only`, `clear_build`, `exploratory_work`,
-  `contextual_build`, `current_artifact_defect`,
+  routing meaning such as `read_only`, `clear_build`,
+  `approved_plan_continuation`, `exploratory_work`, `contextual_build`,
+  `current_artifact_defect`,
   `current_artifact_direct_change`, `pending_build_confirmation`,
   `composer_mode_plan`, and `goal_mode_request` remains available for tests,
   debugging, task capsules, and later "why this built" diagnostics without
