@@ -427,6 +427,19 @@ describe('BuilderComposer', () => {
     );
     expect(confirmation.querySelector('[data-builder-composer-status="true"]')?.textContent)
       .toContain('Needs confirmation');
+
+    const handoff = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'handoff_received',
+          instruction: '',
+        })}
+      />,
+    );
+    const handoffStatus = handoff.querySelector('[data-builder-composer-status="true"]');
+    expect(handoffStatus?.textContent).toContain('Handoff received');
+    expect(handoffStatus?.getAttribute('data-builder-composer-context-status')).toBe('handoff_received');
+    expect(handoff.textContent).not.toMatch(/builder-handoff-packet|WorkingContext|sha256:|provider|credential/iu);
   });
 
   it('clears the selected workspace from the context bar without touching the footer', () => {

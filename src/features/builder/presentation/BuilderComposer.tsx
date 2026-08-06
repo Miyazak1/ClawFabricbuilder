@@ -24,21 +24,16 @@ import type {
   BuilderProjectCatalogItem,
   BuilderProjectWorkspaceCatalogItem,
 } from '../domain/builderProjectCatalog';
+import type { BuilderComposerContextStatus } from '../domain/builderContextStatusProjection';
 import { BuilderWorkspacePicker } from './BuilderWorkspacePicker';
 
 export type { BuilderComposerApprovalMode } from '../application/builderComposerIntent';
+export type { BuilderComposerContextStatus } from '../domain/builderContextStatusProjection';
 
 type SavedComposerProject = Readonly<{
   revisionNumber: number;
   title: string;
 }>;
-
-export type BuilderComposerContextStatus =
-  | 'direction_changed'
-  | 'needs_confirmation'
-  | 'ready_to_execute'
-  | 'using_approved_plan'
-  | null;
 
 export type BuilderComposerWorkingBrief = Readonly<{
   key: string;
@@ -114,6 +109,7 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
 
 function composerContextStatusLabel(status: BuilderComposerContextStatus): string | null {
   if (status === 'direction_changed') return 'Direction changed';
+  if (status === 'handoff_received') return 'Handoff received';
   if (status === 'needs_confirmation') return 'Needs confirmation';
   if (status === 'ready_to_execute') return 'Ready to execute current direction';
   if (status === 'using_approved_plan') return 'Using approved plan';
