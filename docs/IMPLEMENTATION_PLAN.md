@@ -850,7 +850,11 @@ Evidence requirements:
   Projection objects already snapshotted for the run, then clear the current
   status on terminal completion, failure, or cancel. Status service failures are
   ignored because the Run Snapshot remains the authority and this status is only
-  a current-run UI projection;
+  a current-run UI projection. Generation IPC runtime now creates one shared
+  main-only status service and gives it to generation writes and conversation
+  read_stream reads, so packaged desktop has the same in-process projection path
+  without adding storage, provider dispatch, permission grant, IPC/preload
+  channel, or prompt bridge;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

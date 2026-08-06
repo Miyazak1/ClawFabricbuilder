@@ -94,6 +94,9 @@ const {
   createBuilderProviderContextDisclosureDecisionService,
 } = require('./builder-provider-context-disclosure-decision.cjs');
 const {
+  createBuilderProviderContextDisclosureStatusService,
+} = require('./builder-provider-context-disclosure-status-service.cjs');
+const {
   createBuilderToolSourceContextCollector,
 } = require('./builder-tool-source-context-collector.cjs');
 const {
@@ -1112,13 +1115,6 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       context_compaction_summary_store: contextCompactionSummaryStore,
       handoff_packet_store: handoffPacketStore,
     });
-    const conversationService = createBuilderConversationMainService({
-      metadataAuthority: projectMainAuthority.metadata_authority,
-      createUuid: randomUUID,
-      nowMs: () => Date.now(),
-      onTaskStreamChanged: publishTaskStreamChanged,
-      workingContextStateService,
-    });
     const permissionEvaluator = permissionFactStore.create_evaluator();
     const permissionAdmission = createBuilderToolPermissionAdmission({
       actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
@@ -1146,6 +1142,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       },
       now_ms: () => Date.now(),
     });
+    const providerContextDisclosureStatusService = createBuilderProviderContextDisclosureStatusService();
+    const conversationService = createBuilderConversationMainService({
+      metadataAuthority: projectMainAuthority.metadata_authority,
+      createUuid: randomUUID,
+      nowMs: () => Date.now(),
+      onTaskStreamChanged: publishTaskStreamChanged,
+      workingContextStateService,
+      providerContextDisclosureStatusService,
+    });
     const sourceContextCollector = createBuilderToolSourceContextCollector({
       conversation_service: conversationService,
       permission_admission: permissionAdmission,
@@ -1166,6 +1171,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       sessionTaskAddressBindingService,
       workingContextStateService,
       providerContextDisclosureDecisionService,
+      providerContextDisclosureStatusService,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
         const started = generationStartedEvent(event);

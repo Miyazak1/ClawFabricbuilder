@@ -228,6 +228,10 @@ function runtimeWithService(service, probes = {}) {
               options.providerContextDisclosureDecisionService,
               context.__providerContextDisclosureDecisionService,
             );
+            assert.equal(
+              options.providerContextDisclosureStatusService,
+              context.__providerContextDisclosureStatusService,
+            );
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
@@ -387,6 +391,10 @@ function runtimeWithService(service, probes = {}) {
             );
             assert.equal(typeof options.onTaskStreamChanged, 'function');
             assert.equal(options.workingContextStateService, context.__workingContextStateService);
+            assert.equal(
+              options.providerContextDisclosureStatusService,
+              context.__providerContextDisclosureStatusService,
+            );
             context.__conversationService = {
               begin_work() {},
               begin_queued_followup_work() {},
@@ -602,6 +610,21 @@ function runtimeWithService(service, probes = {}) {
               },
             };
             return context.__providerContextDisclosureDecisionService;
+          },
+        };
+      }
+      if (specifier === './builder-provider-context-disclosure-status-service.cjs') {
+        return {
+          createBuilderProviderContextDisclosureStatusService: () => {
+            probes.providerContextDisclosureStatusCreated =
+              (probes.providerContextDisclosureStatusCreated ?? 0) + 1;
+            context.__providerContextDisclosureStatusService = {
+              service_version: 'builder-provider-context-disclosure-status-service.v1',
+              record_current_provider_context_disclosure_status() {},
+              read_current_provider_context_disclosure_status_for_conversation() {},
+              clear_current_provider_context_disclosure_status_for_conversation() {},
+            };
+            return context.__providerContextDisclosureStatusService;
           },
         };
       }
@@ -2081,6 +2104,11 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__workingContextStateService);
   assert.equal(probes.serviceOptions.providerContextDisclosureDecisionService,
     runtimeModule.context.__providerContextDisclosureDecisionService);
+  assert.equal(probes.providerContextDisclosureStatusCreated, 1);
+  assert.equal(probes.conversationOptions.providerContextDisclosureStatusService,
+    runtimeModule.context.__providerContextDisclosureStatusService);
+  assert.equal(probes.serviceOptions.providerContextDisclosureStatusService,
+    runtimeModule.context.__providerContextDisclosureStatusService);
   assert.equal(probes.providerContextDisclosureDecisionOptions.actor_id,
     'builder-user:00000000-0000-4000-8000-000000000001');
   assert.equal(typeof probes.providerContextDisclosureDecisionOptions.evaluate_permission, 'function');
@@ -3101,7 +3129,9 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.doesNotMatch(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
   assert.match(source, /createBuilderProviderContextDisclosureDecisionService/u);
+  assert.match(source, /createBuilderProviderContextDisclosureStatusService/u);
   assert.match(source, /providerContextDisclosureDecisionService/u);
+  assert.match(source, /providerContextDisclosureStatusService/u);
   assert.match(source, /createBuilderTaskCapsuleStore/u);
   assert.match(source, /createBuilderTaskCapsuleRecordingService/u);
   assert.match(source, /createBuilderSessionTaskAddressStore/u);
