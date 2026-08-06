@@ -3267,6 +3267,7 @@ test('rejects a saved-project plan without creating a draft', async (t) => {
   assert.equal(rejected.task_stream.latest_plan_review, 'rejected');
   assert.equal(rejected.task_stream.plan_reviewed_count, 1);
   assert.equal(rejected.task_stream.plan_approved_count, 0);
+  assert.equal(rejected.task_stream.plan_rejected_count, 1);
   assert.equal(rejected.task_stream.candidate_ready_count, 2);
   assert.equal(rejected.task_stream.revision_unchanged, true);
   assert.deepEqual(
@@ -4682,7 +4683,9 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
         head_sequence: 32,
         item_count: 32,
         latest_plan_review: 'pending',
+        plan_approved_count: 0,
         plan_ready_count: 1,
+        plan_rejected_count: 0,
         plan_result_count: 1,
         plan_reviewed_count: 0,
         revision_unchanged: true,
@@ -4916,6 +4919,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       latest_plan_review: 'approved',
       plan_approved_count: 1,
       plan_ready_count: 1,
+      plan_rejected_count: 0,
       plan_result_count: 1,
       plan_reviewed_count: 1,
       run_progress_count: 0,
