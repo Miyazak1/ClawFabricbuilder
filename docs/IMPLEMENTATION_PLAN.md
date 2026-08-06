@@ -50,6 +50,13 @@ current admitted run or reach a safe review/terminal boundary, then reconcile
 the handoff against current-session facts before any later execution can use it.
 Only explicit user interruption or a verified safety/permission blocker can
 change that schedule.
+The maturity gate for this area is not the presence of summaries alone. Builder
+needs bounded contracts and services for compaction summaries, handoff packets,
+Working Context State assembly, renderer-safe status projection, and Run
+Context Snapshot references before the system should be considered mature.
+The recommended implementation order is: compaction contract, handoff packet
+contract, Working Context State service, Context Assembler, Run Snapshot refs,
+then the default UI projection and inspection surface.
 
 ## Verified Starting Point
 

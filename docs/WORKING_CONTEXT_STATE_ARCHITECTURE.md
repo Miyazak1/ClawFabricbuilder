@@ -310,6 +310,226 @@ route-decision, and snapshot code. A future `builder-working-context-state.v1`
 contract should unify the ready/not-ready/stale decision and produce a bounded
 renderer-safe status projection.
 
+## Maturity Assessment
+
+The current design is a solid v1 foundation, but it is not yet a mature
+context-management system. Mature means every context source has a bounded
+contract, provenance, authority rules, conflict policy, renderer-safe
+projection, run-audit evidence, and regression tests.
+
+| Area | Current maturity | Judgment |
+| --- | --- | --- |
+| Working brief / Task Capsule | Implemented foundation | Usable for v1 contextual build, but should be unified behind Working Context State |
+| Brief correction / stale guard | Implemented foundation | Mature enough to prevent obvious stale ready-state reuse |
+| Approved plan and draft continuation binding | Implemented foundation | Mature enough for current build admission paths |
+| Run Context Snapshot | Implemented foundation | Needs refs to compaction and handoff before it can audit full context assembly |
+| Auto Compaction | Architecture only | Not mature until contract, store, digest, budget, and stale-state tests exist |
+| Handoff Packet | Architecture only | Not mature until inbox, adoption, conflict reconciliation, and run-snapshot refs exist |
+| Context Assembler | Missing center | Highest-priority architecture gap; current logic is still spread across services |
+| User inspection/correction | Partial UI direction | Needs Logs/Task surface for what context will be used and how to correct it |
+
+## Mature Solution Comparison
+
+Builder should copy the separation of concerns from mature tools, not their
+exact UI or storage layout.
+
+| Mature pattern | What it does | Builder decision |
+| --- | --- | --- |
+| Claude Code compaction and memory | Automatically compacts as context fills; persistent project/user memory is stored separately and can be inspected or edited | Compaction is automatic and quiet; durable project/task rules must live outside compressed chat |
+| Cursor chat summarization and file condensation | Summarizes old chat, condenses large files/folders, and separately manages approved project memories | Treat chat compression, file condensation, and durable task memory as three different inputs |
+| Letta memory blocks / context hierarchy | Uses structured, bounded memory blocks plus files, archival memory, and external retrieval depending on importance and scale | Working Context State should be a typed, size-bounded block-like object, not freeform prose |
+| Zep / Graphiti temporal memory | Tracks facts with time and provenance; old facts are invalidated rather than deleted | Corrections and handoffs must preserve history while changing current validity |
+| DeepSeek Context Caching | Reuses stable prompt prefixes to reduce cost and latency | Cache is an optimization only; it never decides ready/stale, permission, or plan approval |
+
+This makes Builder's target architecture:
+
+```text
+Facts and messages
+-> Compaction / condensation for fit
+-> Provenance-bound handoff and memory facts
+-> Deterministic Working Context State
+-> Context Assembler output
+-> Run Context Snapshot before side effects
+```
+
+## Concrete Implementation Architecture
+
+The mature implementation should be split into small main-owned contracts and
+services. Each piece must have tests before renderer UI treats it as reliable.
+
+### 1. Compaction Summary Contract
+
+Add a pure contract:
+
+```text
+builder-context-compaction-summary.v1
+- summary_id
+- conversation_id
+- task_address_id
+- source_event_start_id
+- source_event_end_id
+- source_event_count
+- token_budget_before
+- token_budget_after
+- summary
+- durable_decisions[]
+- unresolved_questions[]
+- omitted_large_outputs[]
+- source_refs[]
+- digest
+- created_at_ms
+```
+
+Service behavior:
+
+- reads raw conversation/task/run facts;
+- writes a bounded summary fact;
+- records source range and digest;
+- never changes `WorkingContextState.state`;
+- never grants permission, approves plan, dispatches provider, or mutates
+  source/Git.
+
+Required tests:
+
+- compaction preserves source range and digest;
+- newer raw correction outranks older compaction;
+- compaction cannot make `stale` become `ready`;
+- context assembly respects a token budget and excludes oversized outputs.
+
+### 2. Handoff Packet Contract
+
+Add a pure contract:
+
+```text
+builder-handoff-packet.v1
+- handoff_id
+- source_thread_id
+- source_task_address_id
+- target_thread_id
+- inserted_by
+- summary
+- decisions[]
+- open_questions[]
+- changed_files[]
+- commit_refs[]
+- verification_evidence[]
+- requested_next_action
+- authority_claims[]
+- source_refs[]
+- digest
+- inserted_at_ms
+```
+
+Service behavior:
+
+- records imported context as pending inbox state;
+- validates source refs and public evidence;
+- classifies authority claims as informational, unsafe, or requiring user
+  confirmation;
+- never inherits write permission or plan approval from the source task.
+
+Required tests:
+
+- handoff inserted during active work remains pending;
+- handoff cannot override a newer local correction;
+- handoff with conflicting plan/result sets `needs_confirmation`;
+- adopted handoff refs appear in the next Run Context Snapshot.
+
+### 3. Working Context State Service
+
+Add a main-owned assembler-facing service:
+
+```text
+builder-working-context-state.v1
+- state_id
+- task_address_id
+- state
+- objective_summary
+- confirmed_constraints[]
+- rejected_constraints[]
+- open_questions[]
+- latest_user_intent_ref
+- task_capsule_ref
+- approved_plan_ref
+- current_result_ref
+- compaction_refs[]
+- handoff_refs[]
+- invalidated_by_ref
+- digest
+- updated_at_ms
+```
+
+Service behavior:
+
+- loads current raw facts, Task Capsule, approved plan head, latest plan
+  rejection, compaction summaries, and pending/adopted handoff packets;
+- applies deterministic precedence: latest current-session user correction,
+  approved plan head, current result, adopted handoff, compaction summary,
+  project memory;
+- emits `empty`, `discussing`, `ready`, `stale`,
+  `approved_plan_ready`, or `needs_clarification`;
+- produces a renderer-safe status projection with no private ids, provider
+  details, source tree, raw prompt, credential, or digest text.
+
+Required tests:
+
+- latest user correction beats compaction, memory, and handoff;
+- rejected plan beats old approved plan until a newer approved head exists;
+- adopted handoff can contribute context but cannot grant execution authority;
+- renderer projection shows only user-language labels.
+
+### 4. Context Assembler
+
+Add the central context assembly service used before model dispatch:
+
+```text
+builder-context-assembler.v1
+inputs:
+- latest user message
+- WorkingContextState
+- approved plan head
+- current result or draft refs
+- selected source summaries
+- compaction summaries
+- adopted handoff packets
+- permission and workspace state
+
+output:
+- model_context_segments[]
+- omitted_refs[]
+- context_budget
+- context_digest
+- run_snapshot_refs
+```
+
+Assembler behavior:
+
+- orders context by authority and recency;
+- enforces token budgets;
+- keeps handoff and compaction provenance in refs;
+- refuses side-effecting assembly when context is `stale` or
+  `needs_clarification`;
+- emits snapshot refs before provider dispatch.
+
+### 5. Frontend Projection
+
+Renderer should consume only a compact projection:
+
+```text
+ContextStatusProjection
+- label
+- tone
+- next_action_hint
+- has_pending_handoff
+- needs_confirmation
+- can_contextual_execute
+```
+
+The projection may show `Direction updated`, `Ready to execute current
+direction`, `Using approved plan`, `Handoff received`, or `Needs confirmation`.
+It must not expose Brief, raw memory, digests, source thread ids, provider
+details, or permission internals in default composer chrome.
+
 ## Frontend Interaction Model
 
 The composer remains a single natural-language input. Users should not pick a
