@@ -12,6 +12,9 @@ const {
 const {
   sanitizeBuilderContextAssembly,
 } = require('./builder-context-assembler.cjs');
+const {
+  sanitizeBuilderProviderContextProjection,
+} = require('./builder-provider-context-projection.cjs');
 
 const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v1';
 const SNAPSHOT_ID_PREFIX = 'builder-run-context-snapshot:';
@@ -28,6 +31,7 @@ const SNAPSHOT_KEYS = Object.freeze([
   'brief_reference',
   'context_refs',
   'context_assembly_ref',
+  'provider_context_projection_ref',
   'base_revision',
   'permissions',
   'capabilities',
@@ -46,6 +50,7 @@ const SNAPSHOT_BODY_KEYS = Object.freeze([
   'brief_reference',
   'context_refs',
   'context_assembly_ref',
+  'provider_context_projection_ref',
   'base_revision',
   'permissions',
   'capabilities',
@@ -75,6 +80,12 @@ const CONTEXT_REFS_KEYS = Object.freeze([
 const COMPACTION_REF_KEYS = Object.freeze(['summary_digest', 'source_range_digest', 'compacted_at_ms']);
 const HANDOFF_REF_KEYS = Object.freeze(['packet_digest', 'inserted_at_ms', 'adopted_at_ms']);
 const CONTEXT_ASSEMBLY_REF_KEYS = Object.freeze(['assembly_id', 'context_digest', 'assembled_at_ms']);
+const PROVIDER_CONTEXT_PROJECTION_REF_KEYS = Object.freeze([
+  'projection_id',
+  'projection_status',
+  'blocked_reason',
+  'projected_at_ms',
+]);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const PERMISSIONS_KEYS = Object.freeze([
   'required_permissions',
@@ -97,6 +108,7 @@ const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[8
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SNAPSHOT_ID_PATTERN = /^builder-run-context-snapshot:[0-9a-f]{64}$/u;
 const CONTEXT_ASSEMBLY_ID_PATTERN = /^builder-context-assembly:[0-9a-f]{64}$/u;
+const PROVIDER_CONTEXT_PROJECTION_ID_PATTERN = /^builder-provider-context-projection:[0-9a-f]{64}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
 const DISPATCHES = Object.freeze(['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked']);
@@ -114,6 +126,7 @@ const CREATE_INPUT_KEYS = Object.freeze([
   'latest_task_capsule',
   'working_context_state',
   'context_assembly',
+  'provider_context_projection',
   'base_revision',
   'created_at_ms',
 ]);
@@ -458,6 +471,59 @@ function contextAssemblyRefFromAssembly(value, projectId, contextRefs) {
   };
 }
 
+function sanitizeProviderContextProjectionRef(value, contextAssemblyRef) {
+  const source = exactObject(value, PROVIDER_CONTEXT_PROJECTION_REF_KEYS);
+  const projectionId = nullable(
+    valueAt(source, 'projection_id'),
+    (item) => safePattern(item, PROVIDER_CONTEXT_PROJECTION_ID_PATTERN),
+  );
+  const projectionStatus = nullable(
+    valueAt(source, 'projection_status'),
+    (item) => safeEnum(item, ['blocked', 'ready']),
+  );
+  const blockedReason = nullable(
+    valueAt(source, 'blocked_reason'),
+    (item) => safeEnum(item, ['context_disclosure_not_approved', 'context_disclosure_denied']),
+  );
+  const projectedAtMs = nullable(valueAt(source, 'projected_at_ms'), safeTimestamp);
+  if (
+    (projectionId === null) !== (projectionStatus === null)
+    || (projectionId === null) !== (projectedAtMs === null)
+    || (projectionId === null && blockedReason !== null)
+    || (projectionStatus === 'ready' && blockedReason !== null)
+    || (projectionStatus === 'blocked' && blockedReason === null)
+    || (projectionId !== null && contextAssemblyRef.assembly_id === null)
+  ) fail();
+  return {
+    projection_id: projectionId,
+    projection_status: projectionStatus,
+    blocked_reason: blockedReason,
+    projected_at_ms: projectedAtMs,
+  };
+}
+
+function providerContextProjectionRefFromProjection(value, contextAssemblyRef) {
+  if (value === null) {
+    return {
+      projection_id: null,
+      projection_status: null,
+      blocked_reason: null,
+      projected_at_ms: null,
+    };
+  }
+  const projection = sanitizeBuilderProviderContextProjection(value);
+  if (
+    projection.source_refs.assembly_id !== contextAssemblyRef.assembly_id
+    || projection.source_refs.context_digest !== contextAssemblyRef.context_digest
+  ) fail();
+  return {
+    projection_id: projection.projection_id,
+    projection_status: projection.projection_status,
+    blocked_reason: projection.blocked_reason,
+    projected_at_ms: projection.projected_at_ms,
+  };
+}
+
 function sanitizeBaseRevision(value) {
   if (value === null) return null;
   const source = exactObject(value, BASE_REVISION_KEYS);
@@ -495,6 +561,11 @@ function snapshotBodyFrom(value) {
   const briefReference = sanitizeBriefReference(valueAt(source, 'brief_reference'));
   const createdAtMs = safeTimestamp(valueAt(source, 'created_at_ms'));
   const contextRefs = sanitizeContextRefs(valueAt(source, 'context_refs'), createdAtMs);
+  const contextAssemblyRef = sanitizeContextAssemblyRef(
+    valueAt(source, 'context_assembly_ref'),
+    createdAtMs,
+    contextRefs,
+  );
   if (
     briefReference.status === 'task_capsule_update'
     && !includedMessageIds.includes(briefReference.source_message_id)
@@ -510,10 +581,10 @@ function snapshotBodyFrom(value) {
     route_decision: sanitizeRouteDecision(valueAt(source, 'route_decision')),
     brief_reference: briefReference,
     context_refs: contextRefs,
-    context_assembly_ref: sanitizeContextAssemblyRef(
-      valueAt(source, 'context_assembly_ref'),
-      createdAtMs,
-      contextRefs,
+    context_assembly_ref: contextAssemblyRef,
+    provider_context_projection_ref: sanitizeProviderContextProjectionRef(
+      valueAt(source, 'provider_context_projection_ref'),
+      contextAssemblyRef,
     ),
     base_revision: sanitizeBaseRevision(valueAt(source, 'base_revision')),
     permissions: sanitizePermissions(valueAt(source, 'permissions')),
@@ -545,6 +616,7 @@ function sanitizeBuilderRunContextSnapshot(value, expected = null) {
     brief_reference: valueAt(source, 'brief_reference'),
     context_refs: valueAt(source, 'context_refs'),
     context_assembly_ref: valueAt(source, 'context_assembly_ref'),
+    provider_context_projection_ref: valueAt(source, 'provider_context_projection_ref'),
     base_revision: valueAt(source, 'base_revision'),
     permissions: valueAt(source, 'permissions'),
     capabilities: valueAt(source, 'capabilities'),
@@ -630,6 +702,11 @@ function createBuilderRunContextSnapshot(input) {
     projectId,
     conversationId,
   );
+  const contextAssemblyRef = contextAssemblyRefFromAssembly(
+    valueAt(source, 'context_assembly'),
+    projectId,
+    contextRefs,
+  );
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
     project_id: projectId,
@@ -653,10 +730,10 @@ function createBuilderRunContextSnapshot(input) {
       contextual_build_ready: true,
     },
     context_refs: contextRefs,
-    context_assembly_ref: contextAssemblyRefFromAssembly(
-      valueAt(source, 'context_assembly'),
-      projectId,
-      contextRefs,
+    context_assembly_ref: contextAssemblyRef,
+    provider_context_projection_ref: providerContextProjectionRefFromProjection(
+      valueAt(source, 'provider_context_projection'),
+      contextAssemblyRef,
     ),
     base_revision: valueAt(source, 'base_revision'),
     permissions: {

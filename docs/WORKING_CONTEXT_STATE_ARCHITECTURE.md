@@ -539,10 +539,11 @@ Current checkpoint:
   separate from `network.request`, so a generic network grant cannot silently
   approve sending Working Context to a configured provider.
 - Generation main can now call the disclosure decision and provider-context
-  projection gate while recording a Run Context Snapshot, then keep the
-  resulting projection main-only. It is still not consumed by the provider
-  prompt path; current provider prompt assembly still uses the older generation
-  context path.
+  projection gate while recording a Run Context Snapshot. The snapshot records
+  only the safe projection ref (`projection_id`, status, blocked reason, and
+  projection time), never the provider-context body. It is still not consumed by
+  the provider prompt path; current provider prompt assembly still uses the
+  older generation context path.
 
 ### 5. Frontend Projection
 

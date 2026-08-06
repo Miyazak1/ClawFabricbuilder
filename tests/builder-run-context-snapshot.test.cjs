@@ -14,6 +14,9 @@ const {
 const {
   createBuilderContextAssembly,
 } = require('../electron/builder-context-assembler.cjs');
+const {
+  createBuilderProviderContextProjection,
+} = require('../electron/builder-provider-context-projection.cjs');
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -78,6 +81,7 @@ function snapshotInput(overrides = {}) {
     latest_task_capsule: null,
     working_context_state: null,
     context_assembly: null,
+    provider_context_projection: null,
     base_revision: BASE_REVISION,
     created_at_ms: 10,
     ...overrides,
@@ -130,6 +134,21 @@ function contextAssembly(working_context_state, overrides = {}) {
       reserved_response_bytes: 1_024,
     },
     assembled_at_ms: 9,
+    ...overrides,
+  });
+}
+
+function providerContextProjection(context_assembly, overrides = {}) {
+  return createBuilderProviderContextProjection({
+    context_assembly,
+    disclosure_decision: {
+      decision: 'denied',
+      approved_by: null,
+      approved_at_ms: null,
+      provider_scope: null,
+      purpose: null,
+    },
+    projected_at_ms: 9,
     ...overrides,
   });
 }
@@ -195,6 +214,12 @@ test('creates a digest-bound run context snapshot without private source authori
     context_digest: null,
     assembled_at_ms: null,
   });
+  assert.deepEqual(snapshot.provider_context_projection_ref, {
+    projection_id: null,
+    projection_status: null,
+    blocked_reason: null,
+    projected_at_ms: null,
+  });
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot), {
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -204,7 +229,7 @@ test('creates a digest-bound run context snapshot without private source authori
   }), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /credential|provider|source_tree|prompt|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
+    /"provider_context":|credential|source_tree|prompt|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
   );
 });
 
@@ -229,7 +254,7 @@ test('records Context Assembly safe refs in the digest-bound snapshot', () => {
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot)), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /model_context_segments|latest_user_message|objective_summary|provider|credential|source_tree|prompt/iu,
+    /"provider_context":|model_context_segments|latest_user_message|objective_summary|credential|source_tree|prompt/iu,
   );
 
   assert.throws(
@@ -245,6 +270,66 @@ test('records Context Assembly safe refs in the digest-bound snapshot', () => {
       context_assembly_ref: {
         ...snapshot.context_assembly_ref,
         context_digest: `sha256:${'1'.repeat(64)}`,
+      },
+    }),
+    BuilderRunContextSnapshotError,
+  );
+});
+
+test('records Provider Context Projection safe refs without provider context body', () => {
+  const state = workingContextState({
+    objective_summary: 'Build a dashboard from the approved plan.',
+    approved_plan_ref: APPROVED_PLAN_REF,
+  });
+  const assembly = contextAssembly(state);
+  const projection = providerContextProjection(assembly);
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    working_context_state: state,
+    context_assembly: assembly,
+    provider_context_projection: projection,
+  }));
+
+  assert.deepEqual(snapshot.provider_context_projection_ref, {
+    projection_id: projection.projection_id,
+    projection_status: 'blocked',
+    blocked_reason: 'context_disclosure_denied',
+    projected_at_ms: 9,
+  });
+  assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot)), snapshot);
+  assert.doesNotMatch(
+    JSON.stringify(snapshot),
+    /"provider_context":|model_context_segments|latest_user_message|objective_summary|credential|source_tree|prompt/iu,
+  );
+
+  const otherAssembly = contextAssembly(state, {
+    context_budget: {
+      max_segments: 8,
+      max_prompt_bytes: 8_192,
+      reserved_response_bytes: 1_024,
+    },
+  });
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      working_context_state: state,
+      context_assembly: assembly,
+      provider_context_projection: providerContextProjection(otherAssembly),
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      working_context_state: null,
+      context_assembly: null,
+      provider_context_projection: projection,
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot({
+      ...snapshot,
+      provider_context_projection_ref: {
+        ...snapshot.provider_context_projection_ref,
+        projection_status: 'ready',
       },
     }),
     BuilderRunContextSnapshotError,
@@ -269,7 +354,7 @@ test('records Working Context safe refs in the digest-bound snapshot', () => {
   assert.match(snapshot.context_refs.working_context_state_id, /^builder-working-context-state:[0-9a-f]{64}$/u);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /objective_summary|confirmed_constraints|handoff_id|requested_next_action|summary_text|provider|credential|source_tree/iu,
+    /objective_summary|confirmed_constraints|handoff_id|requested_next_action|summary_text|"provider_context":|credential|source_tree/iu,
   );
 
   const tampered = structuredClone(snapshot);
@@ -336,7 +421,7 @@ test('binds a task capsule source message without including brief text', () => {
   }), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /assistant_proposal|latest_user_goal|current_brief|credential|provider|source_tree|prompt/iu,
+    /assistant_proposal|latest_user_goal|current_brief|credential|"provider_context":|source_tree|prompt/iu,
   );
 });
 

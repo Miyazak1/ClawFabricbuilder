@@ -735,6 +735,7 @@ function conversationService(options = {}) {
       latest_task_capsule: null,
       working_context_state: workingContextState,
       context_assembly: contextAssembly,
+      provider_context_projection: null,
       base_revision: submitted.payload.base_revision,
       created_at_ms: 99,
     });
@@ -4504,6 +4505,13 @@ test('uses the Working Context State service as contextual submit route evidence
   assert.match(contextSnapshotInputs[0].context_assembly.assembly_id, /^builder-context-assembly:[0-9a-f]{64}$/u);
   assert.equal(contextSnapshotInputs[0].context_assembly.assembly_purpose, 'contextual_build');
   assert.equal(contextSnapshotInputs[0].context_assembly.permission_gate.side_effect_ready, true);
+  assert.equal(contextSnapshotInputs[0].provider_context_projection.projection_status, 'blocked');
+  assert.equal(contextSnapshotInputs[0].provider_context_projection.blocked_reason, 'context_disclosure_denied');
+  assert.deepEqual(contextSnapshotInputs[0].provider_context_projection.source_refs, {
+    assembly_id: contextSnapshotInputs[0].context_assembly.assembly_id,
+    context_digest: contextSnapshotInputs[0].context_assembly.context_digest,
+  });
+  assert.equal(contextSnapshotInputs[0].provider_context_projection.provider_context, null);
   assert.equal(providerDisclosureInputs.length, 1);
   assert.deepEqual(providerDisclosureInputs[0], {
     policy_version: BUILDER_PERMISSION_POLICY_VERSION,

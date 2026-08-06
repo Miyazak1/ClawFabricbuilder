@@ -2112,6 +2112,7 @@ function createBuilderGenerationMainService(rawOptions) {
         context: conversationContext,
         working_context_state: workingContextState,
         context_assembly: contextAssembly,
+        provider_context_projection: providerContextProjection,
       }],
     );
     if (providerContextProjection !== null) {
