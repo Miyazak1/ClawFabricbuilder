@@ -332,17 +332,20 @@ function normalizeSubmitRouteContext(value) {
     return Object.freeze({
       hasContextualBuildContext: value,
       hasPendingBuildConfirmation: false,
+      hasWorkingContextStateEvidence: false,
     });
   }
   if (value !== null && typeof value === 'object') {
     return Object.freeze({
       hasContextualBuildContext: value.hasContextualBuildContext === true,
       hasPendingBuildConfirmation: value.hasPendingBuildConfirmation === true,
+      hasWorkingContextStateEvidence: value.hasWorkingContextStateEvidence === true,
     });
   }
   return Object.freeze({
     hasContextualBuildContext: false,
     hasPendingBuildConfirmation: false,
+    hasWorkingContextStateEvidence: false,
   });
 }
 
@@ -350,6 +353,7 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
   const {
     hasContextualBuildContext,
     hasPendingBuildConfirmation,
+    hasWorkingContextStateEvidence,
   } = normalizeSubmitRouteContext(routeContext);
   const text = normalizedIntentText(instruction);
   if (text.length === 0) return answerRouteDecisionHint(['empty_message']);
@@ -417,7 +421,9 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
   }
   if (matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)) {
     return hasContextualBuildContext
-      ? buildRouteDecisionHint(['current_artifact_defect'])
+      ? buildRouteDecisionHint(hasWorkingContextStateEvidence
+        ? ['working_context_state', 'current_artifact_defect']
+        : ['current_artifact_defect'])
       : routeDecisionHint({
         route: 'clarify',
         confidence: 'medium',
@@ -428,7 +434,9 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
   }
   if (matchesAny(CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS, text)) {
     return hasContextualBuildContext
-      ? buildRouteDecisionHint(['current_artifact_direct_change'])
+      ? buildRouteDecisionHint(hasWorkingContextStateEvidence
+        ? ['working_context_state', 'current_artifact_direct_change']
+        : ['current_artifact_direct_change'])
       : routeDecisionHint({
         route: 'clarify',
         confidence: 'medium',
@@ -439,7 +447,9 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
   }
   if (matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)) {
     return hasContextualBuildContext
-      ? buildRouteDecisionHint(['contextual_build'])
+      ? buildRouteDecisionHint(hasWorkingContextStateEvidence
+        ? ['working_context_state', 'contextual_build']
+        : ['contextual_build'])
       : routeDecisionHint({
         route: 'clarify',
         confidence: 'medium',
@@ -1642,6 +1652,7 @@ function createBuilderGenerationMainService(rawOptions) {
       return Object.freeze({
         hasContextualBuildContext: false,
         hasPendingBuildConfirmation: false,
+        hasWorkingContextStateEvidence: false,
       });
     }
     try {
@@ -1654,28 +1665,33 @@ function createBuilderGenerationMainService(rawOptions) {
       const conversationId = requested.has_contextual_build_context === true
         ? conversationIdInTaskStream(stream, request.existing_project_id)
         : null;
+      const hasWorkingContextStateEvidence = requested.has_contextual_build_context === true
+        && streamContextState === 'unknown'
+        && hasContextualBuildContextInWorkingContextStateService(
+          request.existing_project_id,
+          conversationId,
+          request.instruction,
+        );
       return Object.freeze({
         hasContextualBuildContext: streamContextState === 'ready'
           || (
             requested.has_contextual_build_context === true
             && streamContextState === 'unknown'
             && (
-              hasContextualBuildContextInWorkingContextStateService(
-                request.existing_project_id,
-                conversationId,
-                request.instruction,
-              )
+              hasWorkingContextStateEvidence
               || hasContextualBuildContextInTaskCapsuleStore(request.existing_project_id)
             )
           ),
         hasPendingBuildConfirmation: requested.has_pending_build_confirmation === true
           ? hasPendingBuildConfirmationInTaskStream(stream, request.existing_project_id)
           : false,
+        hasWorkingContextStateEvidence,
       });
     } catch {
       return Object.freeze({
         hasContextualBuildContext: false,
         hasPendingBuildConfirmation: false,
+        hasWorkingContextStateEvidence: false,
       });
     }
   }

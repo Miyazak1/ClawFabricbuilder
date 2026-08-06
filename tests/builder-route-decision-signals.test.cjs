@@ -35,11 +35,13 @@ test('defines the fixed public route-decision signal vocabulary', () => {
     'pending_build_confirmation',
     'read_only',
     'vague_change',
+    'working_context_state',
     'work_discussion',
   ]);
   assert.equal(Object.isFrozen(PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('clear_build'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('read_only'), true);
+  assert.equal(isPublicBuilderRouteDecisionSignal('working_context_state'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('provider:deepseek'), false);
   assert.equal(isPublicBuilderRouteDecisionSignal('credential:secret'), false);
   assert.equal(isPublicBuilderRouteDecisionSignal('builder-route-decision:123'), false);

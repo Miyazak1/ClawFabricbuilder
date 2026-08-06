@@ -24,6 +24,7 @@ const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
   'pending_build_confirmation',
   'read_only',
   'vague_change',
+  'working_context_state',
   'work_discussion',
 ]);
 const PUBLIC_BUILDER_ROUTE_DECISION_SIGNAL_SET = new Set(PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS);

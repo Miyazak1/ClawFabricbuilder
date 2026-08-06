@@ -4449,6 +4449,10 @@ test('uses the Working Context State service as contextual submit route evidence
     use_when_instruction_is_contextual: true,
   });
   assert.equal(providerPrompt.build_context_snapshot.execution_basis, 'task_brief');
+  assert.deepEqual(providerPrompt.build_context_snapshot.matched_signals, [
+    'working_context_state',
+    'contextual_build',
+  ]);
 });
 
 test('does not let stale task capsule store readiness override a newer task stream correction', async (t) => {
