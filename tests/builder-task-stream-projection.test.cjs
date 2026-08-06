@@ -719,6 +719,42 @@ function input(events) {
   };
 }
 
+function contextStatusProjection(overrides = {}) {
+  const base = {
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Handoff received',
+    tone: 'warning',
+    next_action_hint: 'Review the handoff before the next change.',
+    has_pending_handoff: true,
+    pending_handoff_count: 1,
+    needs_confirmation: true,
+    can_contextual_execute: false,
+    authority: {
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'pending_count_only',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function assertProjectionError(error) {
   assert.equal(error instanceof BuilderTaskStreamProjectionError, true);
   assert.equal(error.code, 'builder_task_stream_unavailable');
@@ -1491,6 +1527,40 @@ test('does not expose Git receipts, digests, commands, or provider material', ()
     serialized,
     /git_candidate_receipt|candidate_digest|result_digest|input_digest|event_digest|event_id|command_id|commit_oid|tree_oid|base_revision|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|provider|credential|secret|save_admission/iu,
   );
+});
+
+test('carries optional renderer-safe context status projection without exposing context authority', () => {
+  const stream = projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    context_status_projection: contextStatusProjection(),
+  });
+
+  assert.equal(stream.context_status_projection.label, 'Handoff received');
+  assert.equal(stream.context_status_projection.has_pending_handoff, true);
+  assert.equal(stream.context_status_projection.pending_handoff_count, 1);
+  assert.equal(stream.context_status_projection.can_contextual_execute, false);
+  assert.doesNotMatch(
+    JSON.stringify(stream.context_status_projection),
+    /WorkingContext|Task Capsule|builder-handoff-packet|builder-task-address:|builder-conversation:|sha256:|provider_(?:secret|config|envelope)|credential|source_tree/iu,
+  );
+});
+
+test('rejects forged optional context status projection before exposing it', () => {
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    context_status_projection: contextStatusProjection({
+      label: 'Handoff received sha256:aaaaaaaa',
+    }),
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    context_status_projection: contextStatusProjection({
+      authority: {
+        source_read: 'allowed',
+      },
+    }),
+  }), assertProjectionError);
 });
 
 test('rejects forged input with one fixed redacted error', () => {

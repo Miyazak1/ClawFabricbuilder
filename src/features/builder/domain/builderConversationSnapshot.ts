@@ -1,3 +1,8 @@
+import {
+  sanitizeBuilderContextStatusProjectionWire,
+  type BuilderContextStatusProjectionWire,
+} from './builderContextStatusProjection';
+
 export const BUILDER_TASK_STREAM_READ_RESULT_VERSION =
   'builder-task-stream-read-result.v1' as const;
 
@@ -301,6 +306,7 @@ export type BuilderConversationReadySnapshot = Readonly<{
   state: 'ready';
   stream_version: typeof BUILDER_TASK_STREAM_READ_RESULT_VERSION;
   project_id: string;
+  context_status_projection?: BuilderContextStatusProjectionWire | null;
   conversation: Readonly<{
     conversation_id: string;
     created_at_ms: number;
@@ -320,6 +326,7 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
   state: 'absent';
   stream_version: typeof BUILDER_TASK_STREAM_READ_RESULT_VERSION;
   project_id: string;
+  context_status_projection?: BuilderContextStatusProjectionWire | null;
   conversation: null;
   authority: BuilderConversationAuthority;
 }>;
@@ -358,6 +365,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
   'conversation',
   'authority',
 ]);
+const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze(['context_status_projection']);
 const AUTHORITY_KEYS = Object.freeze([
   'conversation',
   'project_source',
@@ -703,6 +711,44 @@ function exactRecord(value: unknown, keys: readonly string[]): Record<string, un
     ) throw unavailable();
   }
   return value;
+}
+
+function exactRecordWithOptional(
+  value: unknown,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+): Record<string, unknown> {
+  if (!isPlainObject(value)) throw unavailable();
+  const allowedKeys = [...requiredKeys, ...optionalKeys];
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.length < requiredKeys.length
+    || ownKeys.length > allowedKeys.length
+    || ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))
+    || requiredKeys.some((key) => !ownKeys.includes(key))
+  ) throw unavailable();
+  const stringKeys = ownKeys as string[];
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of stringKeys) {
+    const descriptor = descriptors[key];
+    if (
+      !descriptor
+      || !descriptor.enumerable
+      || !Object.hasOwn(descriptor, 'value')
+    ) throw unavailable();
+  }
+  return value;
+}
+
+function optionalContextStatusProjection(
+  source: Record<string, unknown>,
+): BuilderContextStatusProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'context_status_projection')) return undefined;
+  const value = source.context_status_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderContextStatusProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
 }
 
 function denseArray(value: unknown): readonly unknown[] {
@@ -2682,17 +2728,21 @@ export function sanitizeBuilderConversationSnapshot(
   value: unknown,
 ): BuilderConversationSnapshot {
   try {
-    const source = exactRecord(value, TOP_LEVEL_KEYS);
+    const source = exactRecordWithOptional(value, TOP_LEVEL_KEYS, TOP_LEVEL_OPTIONAL_KEYS);
     if (source.stream_version !== BUILDER_TASK_STREAM_READ_RESULT_VERSION) {
       throw unavailable();
     }
     const projectId = safeProjectId(source.project_id);
     const authority = sanitizeAuthority(source.authority);
+    const contextStatusProjection = optionalContextStatusProjection(source);
     if (source.conversation === null) {
       const absent = {
         state: 'absent' as const,
         stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
         project_id: projectId,
+        ...(contextStatusProjection === undefined
+          ? {}
+          : { context_status_projection: contextStatusProjection }),
         conversation: null,
         authority,
       };
@@ -2738,6 +2788,9 @@ export function sanitizeBuilderConversationSnapshot(
       state: 'ready' as const,
       stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
       project_id: projectId,
+      ...(contextStatusProjection === undefined
+        ? {}
+        : { context_status_projection: contextStatusProjection }),
       conversation: {
         conversation_id: conversationId,
         created_at_ms: createdAtMs,

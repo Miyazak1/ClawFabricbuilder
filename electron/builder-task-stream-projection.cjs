@@ -8,6 +8,9 @@ const {
 const {
   replayBuilderConversation,
 } = require('./builder-conversation-replay.cjs');
+const {
+  sanitizeBuilderContextStatusProjection,
+} = require('./builder-context-status-projection.cjs');
 
 const BUILDER_TASK_STREAM_VERSION = 'builder-task-stream-read-result.v1';
 const MAX_PUBLIC_ITEMS = 128;
@@ -54,6 +57,22 @@ function exactObject(value, keys) {
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
   }
   return value;
+}
+
+function exactObjectWithOptional(value, requiredKeys, optionalKeys) {
+  if (!isPlainObject(value)) fail();
+  const allowed = [...requiredKeys, ...optionalKeys];
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.length < requiredKeys.length
+    || ownKeys.length > allowed.length
+    || ownKeys.some((key) => typeof key !== 'string' || !allowed.includes(key))
+    || requiredKeys.some((key) => !ownKeys.includes(key))
+  ) fail();
+  for (const key of ownKeys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
 }
 
 function valueAt(value, key) {
@@ -444,18 +463,34 @@ function boundResult(result) {
   return freezeDeep(result);
 }
 
+function safeOptionalContextStatusProjection(rawInput) {
+  if (!Object.hasOwn(rawInput, 'context_status_projection')) return undefined;
+  const value = valueAt(rawInput, 'context_status_projection');
+  if (value === null) return null;
+  return sanitizeBuilderContextStatusProjection(value);
+}
+
+function withOptionalContextStatusProjection(result, contextStatusProjection) {
+  if (contextStatusProjection === undefined) return result;
+  return {
+    ...result,
+    context_status_projection: contextStatusProjection,
+  };
+}
+
 function projectBuilderTaskStream(rawInput) {
   try {
-    exactObject(rawInput, ['project_id', 'conversation']);
+    exactObjectWithOptional(rawInput, ['project_id', 'conversation'], ['context_status_projection']);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
+    const contextStatusProjection = safeOptionalContextStatusProjection(rawInput);
     const rawConversation = valueAt(rawInput, 'conversation');
     if (rawConversation === null) {
-      return boundResult({
+      return boundResult(withOptionalContextStatusProjection({
         stream_version: BUILDER_TASK_STREAM_VERSION,
         project_id: projectId,
         conversation: null,
         authority: authority(),
-      });
+      }, contextStatusProjection));
     }
 
     exactObject(rawConversation, ['conversation_id', 'created_at_ms', 'events']);
@@ -476,7 +511,7 @@ function projectBuilderTaskStream(rawInput) {
     for (let index = firstVisibleIndex; index < events.length; index += 1) {
       visibleItems.push(itemFromEvent(events[index], progressStagesByRun));
     }
-    return boundResult({
+    return boundResult(withOptionalContextStatusProjection({
       stream_version: BUILDER_TASK_STREAM_VERSION,
       project_id: projectId,
       conversation: {
@@ -492,7 +527,7 @@ function projectBuilderTaskStream(rawInput) {
         items: visibleItems,
       },
       authority: authority(),
-    });
+    }, contextStatusProjection));
   } catch (error) {
     if (error instanceof BuilderTaskStreamProjectionError) throw error;
     fail();

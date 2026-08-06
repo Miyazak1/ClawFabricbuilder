@@ -105,6 +105,7 @@ type MutableConversationItem = {
 type MutableWire = {
   stream_version: string;
   project_id: string;
+  context_status_projection?: unknown;
   conversation: {
     conversation_id: string;
     created_at_ms: number;
@@ -124,6 +125,42 @@ type MutableWire = {
     project_revision: string;
   };
 };
+
+function contextStatusProjection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const base = {
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Handoff received',
+    tone: 'warning',
+    next_action_hint: 'Review the handoff before the next change.',
+    has_pending_handoff: true,
+    pending_handoff_count: 1,
+    needs_confirmation: true,
+    can_contextual_execute: false,
+    authority: {
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'pending_count_only',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...((overrides.authority as Record<string, unknown> | undefined) ?? {}),
+    },
+  };
+}
 
 function id(
   kind: 'message' | 'turn' | 'task' | 'run' | 'run-step' | 'tool-call',
@@ -910,6 +947,41 @@ describe('Builder conversation snapshot', () => {
     });
     expect(JSON.stringify(snapshot)).not.toMatch(
       /route_decision|provider|credential|source_tree|revision_receipt|commit_oid/iu,
+    );
+  });
+
+  it('keeps optional context status projection as a safe top-level renderer fact', () => {
+    const wire = candidateWire();
+    wire.context_status_projection = contextStatusProjection();
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    expect(snapshot.context_status_projection?.label).toBe('Handoff received');
+    expect(snapshot.context_status_projection?.pending_handoff_count).toBe(1);
+    expect(snapshot.context_status_projection?.can_contextual_execute).toBe(false);
+    expect(Object.isFrozen(snapshot.context_status_projection)).toBe(true);
+    expect(JSON.stringify(snapshot.context_status_projection))
+      .not.toMatch(/WorkingContext|Task Capsule|builder-handoff-packet|builder-task-address:|sha256:|provider_(?:secret|config|envelope)|credential|source_tree/iu);
+  });
+
+  it('rejects forged context status projection before it reaches the renderer snapshot', () => {
+    const forgedLabel = candidateWire();
+    forgedLabel.context_status_projection = contextStatusProjection({
+      label: 'Handoff received sha256:aaaaaaaa',
+    });
+    expect(() => sanitizeBuilderConversationSnapshot(forgedLabel)).toThrowError(
+      BuilderConversationSnapshotError,
+    );
+
+    const forgedAuthority = candidateWire();
+    forgedAuthority.context_status_projection = contextStatusProjection({
+      authority: {
+        renderer_authority: 'trusted',
+      },
+    });
+    expect(() => sanitizeBuilderConversationSnapshot(forgedAuthority)).toThrowError(
+      BuilderConversationSnapshotError,
     );
   });
 

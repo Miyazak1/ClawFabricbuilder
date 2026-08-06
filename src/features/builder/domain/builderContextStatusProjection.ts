@@ -6,6 +6,46 @@ export type BuilderComposerContextStatus =
   | 'using_approved_plan'
   | null;
 
+export type BuilderContextStatusProjectionWire = Readonly<{
+  projection_version: 'builder-context-status-projection.v1';
+  label:
+    | 'Direction changed'
+    | 'Direction updated'
+    | 'Handoff received'
+    | 'Needs confirmation'
+    | 'No direction yet'
+    | 'Ready to execute current direction'
+    | 'Using approved plan';
+  tone: 'info' | 'neutral' | 'success' | 'warning';
+  next_action_hint:
+    | 'Answer the open question before I change files.'
+    | 'Ask me to make the change when the direction is ready.'
+    | 'Confirm the new direction before I change files.'
+    | 'Describe what you want to make or change.'
+    | 'Review the handoff before the next change.'
+    | 'You can ask me to apply the approved plan.'
+    | 'You can ask me to make the change.';
+  has_pending_handoff: boolean;
+  pending_handoff_count: number;
+  needs_confirmation: boolean;
+  can_contextual_execute: boolean;
+  authority: Readonly<{
+    projection_authority: 'main_owned_context_status_projection_v1';
+    working_context_state: 'verified_not_exposed';
+    pending_handoff_packets: 'none' | 'pending_count_only';
+    renderer_authority: 'not_present';
+    ipc_authority: 'not_present';
+    provider_dispatch: false;
+    tool_dispatch: false;
+    source_read: 'not_present';
+    source_write: 'not_present';
+    git_mutation: false;
+    permission_grant: false;
+    revision_admission: 'not_created';
+    secret_access: 'not_present';
+  }>;
+}>;
+
 const PROJECTION_VERSION = 'builder-context-status-projection.v1';
 const PROJECTION_KEYS = Object.freeze([
   'projection_version',
@@ -195,8 +235,43 @@ function matchesProjection(value: ProjectionRecord, expected: ExpectedProjection
     && hasExpectedAuthority(valueAt(value, 'authority'), expected.hasPendingHandoff);
 }
 
-export function composerStatusFromContextProjection(value: unknown): BuilderComposerContextStatus {
+export function sanitizeBuilderContextStatusProjectionWire(
+  value: unknown,
+): BuilderContextStatusProjectionWire | null {
   if (!hasExactDataKeys(value, PROJECTION_KEYS)) return null;
   const matched = EXPECTED_PROJECTIONS.find((expected) => matchesProjection(value, expected));
+  if (matched === undefined) return null;
+  const authority = valueAt(value, 'authority') as ProjectionRecord;
+  return {
+    projection_version: PROJECTION_VERSION,
+    label: matched.label,
+    tone: matched.tone,
+    next_action_hint: matched.nextActionHint,
+    has_pending_handoff: matched.hasPendingHandoff,
+    pending_handoff_count: valueAt(value, 'pending_handoff_count') as number,
+    needs_confirmation: matched.needsConfirmation,
+    can_contextual_execute: matched.canContextualExecute,
+    authority: {
+      projection_authority: valueAt(authority, 'projection_authority') as 'main_owned_context_status_projection_v1',
+      working_context_state: valueAt(authority, 'working_context_state') as 'verified_not_exposed',
+      pending_handoff_packets: valueAt(authority, 'pending_handoff_packets') as 'none' | 'pending_count_only',
+      renderer_authority: valueAt(authority, 'renderer_authority') as 'not_present',
+      ipc_authority: valueAt(authority, 'ipc_authority') as 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: valueAt(authority, 'source_read') as 'not_present',
+      source_write: valueAt(authority, 'source_write') as 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: valueAt(authority, 'revision_admission') as 'not_created',
+      secret_access: valueAt(authority, 'secret_access') as 'not_present',
+    },
+  };
+}
+
+export function composerStatusFromContextProjection(value: unknown): BuilderComposerContextStatus {
+  const projection = sanitizeBuilderContextStatusProjectionWire(value);
+  if (projection === null) return null;
+  const matched = EXPECTED_PROJECTIONS.find((expected) => expected.label === projection.label);
   return matched?.status ?? null;
 }
