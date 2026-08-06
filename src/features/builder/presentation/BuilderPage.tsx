@@ -68,6 +68,7 @@ import {
   type BuilderSourceTreeChange,
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
+import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../domain/builderProviderContextDisclosureStatusProjection';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
 import {
   BuilderComposer,
@@ -117,6 +118,7 @@ export type BuilderPageProps = {
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
+  providerContextDisclosureStatus?: BuilderProviderContextDisclosureStatusProjectionWire | null;
   composerMode?: BuilderComposerMode | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
@@ -1935,6 +1937,7 @@ export function BuilderPage({
   instruction,
   composerRouteDecision = null,
   composerContextStatus = null,
+  providerContextDisclosureStatus = null,
   composerMode = null,
   currentProjectWriteApproval = null,
   onApproveCurrentProjectWrite,
@@ -2864,6 +2867,7 @@ export function BuilderPage({
       catalogProjects={catalogProjects}
       catalogWorkspaceProjects={catalogWorkspaceProjects}
       composerContextStatus={viewingHistory ? null : composerContextStatus}
+      providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
       composerMode={composerMode}
       composerRouteDecision={composerRouteDecision}
       hasUnsavedDraft={hasUnsavedDraft}

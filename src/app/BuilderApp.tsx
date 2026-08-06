@@ -74,6 +74,7 @@ import type {
   BuilderComposerWorkingBrief,
 } from '../features/builder/presentation/BuilderComposer';
 import { composerStatusFromContextProjection } from '../features/builder/domain/builderContextStatusProjection';
+import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../features/builder/domain/builderProviderContextDisclosureStatusProjection';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -788,6 +789,20 @@ function composerWorkingContextStatus(
     }
   }
   return latestStatus;
+}
+
+function composerProviderContextDisclosureStatus(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): BuilderProviderContextDisclosureStatusProjectionWire | null {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (
+    visibleProjectId === null
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+  ) return null;
+  return conversationSnapshot.conversation.provider_context_disclosure_status_projection ?? null;
 }
 
 function composerIntentContext(
@@ -2221,6 +2236,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     project.snapshot,
     currentProjectWriteApprovalStatus,
   );
+  const composerProviderContextStatus = composerProviderContextDisclosureStatus(
+    conversation.snapshot,
+    project.snapshot,
+  );
 
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
@@ -2341,6 +2360,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               approvalMode={visibleApprovalMode}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               composerContextStatus={composerContextStatus}
+              providerContextDisclosureStatus={composerProviderContextStatus}
               composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
               currentProjectWriteApproval={currentProjectWriteApproval}

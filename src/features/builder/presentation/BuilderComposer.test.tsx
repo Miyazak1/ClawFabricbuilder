@@ -73,6 +73,37 @@ function changeInput(container: HTMLElement, selector: string, value: string): v
   });
 }
 
+function providerContextDisclosureStatus(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: {
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+    ...overrides,
+  } as const;
+}
+
 function expectSinglePrimaryAction(container: HTMLElement): HTMLButtonElement {
   const actions = container.querySelectorAll<HTMLButtonElement>(
     '.cf-builder-composer-actions [data-builder-composer-primary-action="true"]',
@@ -441,6 +472,27 @@ describe('BuilderComposer', () => {
     expect(handoffStatus?.textContent).toContain('Handoff received');
     expect(handoffStatus?.getAttribute('data-builder-composer-context-status')).toBe('handoff_received');
     expect(handoff.textContent).not.toMatch(/builder-handoff-packet|WorkingContext|sha256:|provider|credential/iu);
+  });
+
+  it('shows provider context disclosure status as the current safe composer status', () => {
+    const container = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'ready_to_execute',
+          instruction: '',
+          providerContextDisclosureStatus: providerContextDisclosureStatus(),
+        })}
+      />,
+    );
+
+    const status = container.querySelector('[data-builder-composer-status="true"]');
+    expect(status?.textContent).toContain('Allow AI to use current context');
+    expect(status?.getAttribute('data-builder-composer-provider-context-status')).toBe('needs_approval');
+    expect(status?.getAttribute('data-builder-composer-context-status')).toBeNull();
+    expect(status?.getAttribute('title')).toBe('Review this before Builder shares the current task context.');
+    expect(container.textContent).not.toContain('Ready to execute current direction');
+    expect(container.textContent)
+      .not.toMatch(/builder-provider-context|builder-context-assembly|sha256:|provider_secret|credential|permission_id/iu);
   });
 
   it('clears the selected workspace from the context bar without touching the footer', () => {

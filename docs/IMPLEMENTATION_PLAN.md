@@ -854,7 +854,11 @@ Evidence requirements:
   main-only status service and gives it to generation writes and conversation
   read_stream reads, so packaged desktop has the same in-process projection path
   without adding storage, provider dispatch, permission grant, IPC/preload
-  channel, or prompt bridge;
+  channel, or prompt bridge. The renderer now gives that main-owned status
+  precedence in the composer context chip while it is present, using only the
+  safe label and next-action hint and never exposing request ids, context
+  assembly ids, digests, provider-context body, permission facts, or an approval
+  control;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

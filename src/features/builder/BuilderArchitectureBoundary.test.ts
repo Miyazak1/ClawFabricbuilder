@@ -19,6 +19,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'domain/builderProjectCatalog.ts',
   'domain/builderProjectHistory.ts',
   'domain/builderProjectSnapshot.ts',
+  'domain/builderProviderContextDisclosureStatusProjection.ts',
   'domain/builderProviderSettings.ts',
   'domain/builderSourceTreeChanges.ts',
   'hooks/useBuilderConversationController.ts',

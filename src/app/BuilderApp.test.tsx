@@ -139,6 +139,34 @@ function createContextualBuildTaskStreamWire() {
   };
 }
 
+function providerContextDisclosureStatusProjection() {
+  return {
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: {
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+}
+
 function createReadOnlyPageQuestionTaskStreamWire() {
   const wire = createAnswerTaskStreamWire();
   return {
@@ -2947,6 +2975,53 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
       .not.toContain('Ready to execute current direction');
     expect(container.textContent).not.toMatch(/WorkingContext|builder-handoff-packet|sha256:|provider_secret|credential/iu);
+  });
+
+  it('uses main-owned provider context disclosure status as the live composer status', async () => {
+    const taskStreamWire = {
+      ...createContextualBuildTaskStreamWire(),
+      context_status_projection: {
+        projection_version: 'builder-context-status-projection.v1',
+        label: 'Ready to execute current direction',
+        tone: 'success',
+        next_action_hint: 'You can ask me to make the change.',
+        has_pending_handoff: false,
+        pending_handoff_count: 0,
+        needs_confirmation: false,
+        can_contextual_execute: true,
+        authority: {
+          projection_authority: 'main_owned_context_status_projection_v1',
+          working_context_state: 'verified_not_exposed',
+          pending_handoff_packets: 'none',
+          renderer_authority: 'not_present',
+          ipc_authority: 'not_present',
+          provider_dispatch: false,
+          tool_dispatch: false,
+          source_read: 'not_present',
+          source_write: 'not_present',
+          git_mutation: false,
+          permission_grant: false,
+          revision_admission: 'not_created',
+          secret_access: 'not_present',
+        },
+      },
+      provider_context_disclosure_status_projection: providerContextDisclosureStatusProjection(),
+    };
+    const { container } = await setup({
+      initiallySaved: true,
+      taskStreamWireOverride: taskStreamWire,
+    });
+    await openSavedProject(container);
+
+    await waitFor(() => {
+      const status = container.querySelector('[data-builder-composer-status="true"]');
+      expect(status?.textContent).toContain('Allow AI to use current context');
+      expect(status?.getAttribute('data-builder-composer-provider-context-status')).toBe('needs_approval');
+      expect(status?.getAttribute('data-builder-composer-context-status')).toBeNull();
+    });
+    expect(container.textContent).not.toContain('Ready to execute current direction');
+    expect(container.textContent)
+      .not.toMatch(/builder-provider-context|builder-context-assembly|sha256:|provider_secret|credential|permission_id/iu);
   });
 
   it('keeps current brief memory hidden before contextual execution', async () => {

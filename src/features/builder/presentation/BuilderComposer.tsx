@@ -25,6 +25,7 @@ import type {
   BuilderProjectWorkspaceCatalogItem,
 } from '../domain/builderProjectCatalog';
 import type { BuilderComposerContextStatus } from '../domain/builderContextStatusProjection';
+import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../domain/builderProviderContextDisclosureStatusProjection';
 import { BuilderWorkspacePicker } from './BuilderWorkspacePicker';
 
 export type { BuilderComposerApprovalMode } from '../application/builderComposerIntent';
@@ -59,6 +60,7 @@ export type BuilderComposerProps = Readonly<{
   catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
   composerRouteDecision?: BuilderComposerRouteDecision | BuilderComposerRouteDecisionEvidence | null;
   composerContextStatus?: BuilderComposerContextStatus;
+  providerContextDisclosureStatus?: BuilderProviderContextDisclosureStatusProjectionWire | null;
   composerMode?: BuilderComposerMode | null;
   hasUnsavedDraft: boolean;
   instruction: string;
@@ -116,6 +118,13 @@ function composerContextStatusLabel(status: BuilderComposerContextStatus): strin
   return null;
 }
 
+function providerContextDisclosureStatusCode(
+  status: BuilderProviderContextDisclosureStatusProjectionWire,
+): 'allowed' | 'denied' | 'needs_approval' {
+  if (status.can_use_provider_context) return 'allowed';
+  return status.needs_user_approval ? 'needs_approval' : 'denied';
+}
+
 export function BuilderComposer({
   activeRunFollowupQueued = false,
   approvalMode = 'ask_before_write',
@@ -132,6 +141,7 @@ export function BuilderComposer({
   composerContextStatus = null,
   composerMode = null,
   composerRouteDecision = null,
+  providerContextDisclosureStatus = null,
   hasUnsavedDraft,
   instruction,
   onCancel,
@@ -200,6 +210,8 @@ export function BuilderComposer({
   const hasWorkspaceSelection = savedProject !== null || workingProject !== null;
   const workspaceOriginLabel = hasWorkspaceSelection ? 'Local' : null;
   const contextStatusLabel = composerContextStatusLabel(composerContextStatus);
+  const providerContextStatusLabel = providerContextDisclosureStatus?.label ?? null;
+  const visibleContextStatusLabel = providerContextStatusLabel ?? contextStatusLabel;
   const canClearWorkspaceSelection = hasWorkspaceSelection
     && !hasUnsavedDraft
     && typeof onClearWorkspaceSelection === 'function';
@@ -527,14 +539,20 @@ export function BuilderComposer({
             ) : null}
             <ChevronDown aria-hidden="true" className="size-3.5" />
           </button>
-          {contextStatusLabel !== null ? (
+          {visibleContextStatusLabel !== null ? (
             <span
               className="cf-builder-composer-context-pill"
-              data-builder-composer-context-status={composerContextStatus}
+              data-builder-composer-context-status={providerContextDisclosureStatus === null
+                ? composerContextStatus
+                : undefined}
+              data-builder-composer-provider-context-status={providerContextDisclosureStatus === null
+                ? undefined
+                : providerContextDisclosureStatusCode(providerContextDisclosureStatus)}
               data-builder-composer-status="true"
               role="status"
+              title={providerContextDisclosureStatus?.next_action_hint}
             >
-              {contextStatusLabel}
+              {visibleContextStatusLabel}
             </span>
           ) : null}
           {canClearWorkspaceSelection ? (
