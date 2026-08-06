@@ -881,7 +881,14 @@ Evidence requirements:
   current Project/Conversation payload only, fixed redacted errors, sanitized
   approval result only, and no direct Electron registration, preload exposure,
   request id, permission fact readback, provider-context body, prompt bridge,
-  provider/tool dispatch, source/Git mutation, or Revision authority. The renderer now
+  provider/tool dispatch, source/Git mutation, or Revision authority.
+  `builder-provider-context-disclosure-approval-ipc-runtime.v1` then registers
+  that single fixed channel by composing the adapter with the current approval
+  gate, the main-side approval service, a supplied main-only status service, and
+  a supplied explicit permission grant function. It has no storage of its own,
+  no provider dispatch, no prompt bridge, no source/Git mutation, no preload
+  exposure, and no Revision authority; wiring it to the generation runtime's
+  shared status service remains a later desktop integration checkpoint. The renderer now
   gives that main-owned status
   precedence in the composer context chip while it is present, using only the
   safe label and next-action hint and never exposing request ids, context

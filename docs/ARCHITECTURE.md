@@ -144,7 +144,12 @@ Project/Conversation IDs and returning a sanitized approval result; the adapter
 itself still performs no direct Electron registration, preload exposure, request
 id exposure, permission fact readback, provider-context body exposure,
 provider/tool dispatch, prompt bridge, source/Git mutation, or Revision
-authority.
+authority. A dedicated IPC runtime can register that one fixed channel by
+composing the adapter with the current gate, approval service, supplied
+main-only status service, and supplied explicit permission grant function. The
+runtime owns no storage, provider dispatch, prompt bridge, preload exposure,
+source/Git mutation, or Revision authority; connecting it to the generation
+runtime's shared disclosure status service is a later desktop integration step.
 
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but
