@@ -832,7 +832,12 @@ Evidence requirements:
   optionally carry it as `Allow AI to use current context`, `AI context not
   allowed`, or `AI context allowed`, without request ids, raw context text,
   assembly ids, digests, provider-context body, permission grants, or provider
-  dispatch;
+  dispatch. Conversation main service can now accept a main-owned optional
+  provider disclosure status reader and pass its sanitized status through
+  read-only task stream output. Missing, throwing, or forged readers are ignored
+  so activity remains available and the conversation lifecycle still imports no
+  provider contract, provider dispatch, prompt bridge, permission grant,
+  storage write, or IPC/preload authority;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

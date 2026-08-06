@@ -185,6 +185,42 @@ function contextStatusProjection(overrides = {}) {
   };
 }
 
+function providerContextDisclosureStatusProjection(overrides = {}) {
+  const base = {
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: {
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function beginQuestion(service, baseRevision = null, question = 'What changed in this project?') {
   return service.begin_question({
     project_id: PROJECT_ID,
@@ -3322,6 +3358,44 @@ test('read_stream carries main-owned Working Context status projection when avai
   }
 });
 
+test('read_stream carries main-owned provider context disclosure status when available', () => {
+  const requests = [];
+  const item = fixture(1, 1_000, {
+    providerContextDisclosureStatusService: {
+      read_current_provider_context_disclosure_status_for_conversation(request) {
+        requests.push(request);
+        return {
+          provider_context_disclosure_status_projection:
+            providerContextDisclosureStatusProjection(),
+        };
+      },
+    },
+  });
+  try {
+    const context = begin(item.service);
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0], {
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+    });
+    assert.equal(
+      stream.provider_context_disclosure_status_projection.label,
+      'Allow AI to use current context',
+    );
+    assert.equal(stream.provider_context_disclosure_status_projection.needs_user_approval, true);
+    assert.equal(stream.provider_context_disclosure_status_projection.can_use_provider_context, false);
+    assert.equal(stream.provider_context_disclosure_status_projection.request_available, true);
+    assert.doesNotMatch(
+      JSON.stringify(stream.provider_context_disclosure_status_projection),
+      /builder-provider-context-disclosure-request|builder-context-assembly|request_id|assembly_id|context_digest|builder-task-address:|builder-conversation:|sha256:|"provider_context":|api[_-]?key|credential|source_tree/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
 test('read_stream keeps activity available when Working Context status projection is absent or invalid', () => {
   let calls = 0;
   const item = fixture(1, 1_000, {
@@ -3347,6 +3421,40 @@ test('read_stream keeps activity available when Working Context status projectio
     assert.equal(calls, 1);
     assert.equal(stream.conversation.head_sequence, 2);
     assert.equal(Object.hasOwn(stream, 'context_status_projection'), false);
+  } finally {
+    item.close();
+  }
+});
+
+test('read_stream keeps activity available when provider context disclosure status is absent or invalid', () => {
+  let calls = 0;
+  const item = fixture(1, 1_000, {
+    providerContextDisclosureStatusService: {
+      read_current_provider_context_disclosure_status_for_conversation() {
+        calls += 1;
+        return {
+          provider_context_disclosure_status_projection:
+            providerContextDisclosureStatusProjection({
+              authority: {
+                permission_grant: true,
+              },
+            }),
+        };
+      },
+    },
+  });
+  try {
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation, null);
+    assert.equal(calls, 0);
+
+    begin(item.service);
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(calls, 1);
+    assert.equal(stream.conversation.head_sequence, 2);
+    assert.equal(
+      Object.hasOwn(stream, 'provider_context_disclosure_status_projection'),
+      false,
+    );
   } finally {
     item.close();
   }

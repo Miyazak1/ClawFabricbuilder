@@ -73,6 +73,7 @@ const OPTION_KEYS = Object.freeze([
   ...REQUIRED_OPTION_KEYS,
   'onTaskStreamChanged',
   'workingContextStateService',
+  'providerContextDisclosureStatusService',
 ]);
 const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
 const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
@@ -567,6 +568,9 @@ function sanitizeOptions(value) {
   const workingContextStateService = keys.includes('workingContextStateService')
     ? valueAt(value, 'workingContextStateService')
     : null;
+  const providerContextDisclosureStatusService = keys.includes('providerContextDisclosureStatusService')
+    ? valueAt(value, 'providerContextDisclosureStatusService')
+    : null;
   if (
     typeof createUuid !== 'function'
     || utilTypes.isProxy(createUuid)
@@ -580,6 +584,13 @@ function sanitizeOptions(value) {
       workingContextStateService !== null
       && (!isPlainObject(workingContextStateService) || utilTypes.isProxy(workingContextStateService))
     )
+    || (
+      providerContextDisclosureStatusService !== null
+      && (
+        !isPlainObject(providerContextDisclosureStatusService)
+        || utilTypes.isProxy(providerContextDisclosureStatusService)
+      )
+    )
   ) fail();
   return Object.freeze({
     metadataAuthority,
@@ -591,9 +602,17 @@ function sanitizeOptions(value) {
     nowMs,
     onTaskStreamChanged,
     workingContextStateService,
+    providerContextDisclosureStatusService,
     readCurrentWorkingContextStateForConversation: workingContextStateService === null
       ? null
       : ownMethod(workingContextStateService, 'read_current_working_context_state_for_conversation'),
+    readCurrentProviderContextDisclosureStatusForConversation:
+      providerContextDisclosureStatusService === null
+        ? null
+        : ownMethod(
+          providerContextDisclosureStatusService,
+          'read_current_provider_context_disclosure_status_for_conversation',
+        ),
   });
 }
 
@@ -907,6 +926,36 @@ function createBuilderConversationMainService(rawOptions) {
         return undefined;
       }
       return sanitizeBuilderContextStatusProjection(descriptor.value);
+    } catch {
+      return undefined;
+    }
+  }
+
+  function currentProviderContextDisclosureStatusProjection(projectId, conversationId) {
+    if (options.readCurrentProviderContextDisclosureStatusForConversation === null) return undefined;
+    try {
+      const result = Reflect.apply(
+        options.readCurrentProviderContextDisclosureStatusForConversation,
+        options.providerContextDisclosureStatusService,
+        [{
+          project_id: projectId,
+          conversation_id: conversationId,
+        }],
+      );
+      if (!isPlainObject(result) || utilTypes.isProxy(result)) return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        result,
+        'provider_context_disclosure_status_projection',
+      );
+      if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+        return undefined;
+      }
+      const projected = projectBuilderTaskStream({
+        project_id: projectId,
+        provider_context_disclosure_status_projection: descriptor.value,
+        conversation: null,
+      });
+      return projected.provider_context_disclosure_status_projection;
     } catch {
       return undefined;
     }
@@ -3000,11 +3049,20 @@ function createBuilderConversationMainService(rawOptions) {
       const contextStatusProjection = state === null
         ? undefined
         : currentContextStatusProjection(projectId, conversationId);
+      const providerContextDisclosureStatusProjection = state === null
+        ? undefined
+        : currentProviderContextDisclosureStatusProjection(projectId, conversationId);
       return projectBuilderTaskStream({
         project_id: projectId,
         ...(contextStatusProjection === undefined
           ? {}
           : { context_status_projection: contextStatusProjection }),
+        ...(providerContextDisclosureStatusProjection === undefined
+          ? {}
+          : {
+            provider_context_disclosure_status_projection:
+              providerContextDisclosureStatusProjection,
+          }),
         conversation: state === null ? null : {
           conversation_id: state.conversation.conversation_id,
           created_at_ms: state.conversation.created_at_ms,
