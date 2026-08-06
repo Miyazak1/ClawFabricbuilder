@@ -1540,6 +1540,12 @@ function createBuilderGenerationMainService(rawOptions) {
   const bindQueuedFollowupWorkToCurrentTaskAddress = options.sessionTaskAddressBindingService === undefined
     ? null
     : ownMethod(options.sessionTaskAddressBindingService, 'bind_queued_followup_work_to_current_task_address');
+  const bindApprovedPlanContinuationToCurrentTaskAddress = options.sessionTaskAddressBindingService === undefined
+    ? null
+    : ownMethod(
+      options.sessionTaskAddressBindingService,
+      'bind_approved_plan_continuation_to_current_task_address',
+    );
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -1851,6 +1857,26 @@ function createBuilderGenerationMainService(rawOptions) {
     );
   }
 
+  function bindApprovedPlanContinuationContextToCurrentTaskAddress(conversationContext, editContext) {
+    if (bindApprovedPlanContinuationToCurrentTaskAddress === null) return;
+    Reflect.apply(
+      bindApprovedPlanContinuationToCurrentTaskAddress,
+      options.sessionTaskAddressBindingService,
+      [{
+        context: conversationContext,
+        approved_plan_continuation: {
+          project_id: editContext.project_id,
+          conversation_id: editContext.conversation_id,
+          approved_plan_turn_id: editContext.turn_id,
+          approved_plan_task_id: editContext.task_id,
+          approved_plan_run_id: editContext.run_id,
+          continuation_id: editContext.continuation_id,
+          continuation_admission_digest: editContext.continuation_admission_digest,
+        },
+      }],
+    );
+  }
+
   function generationRequestFromApprovedPlan(editContext) {
     const unsigned = freezeDeep({
       version: 'builder-generation-request.v2',
@@ -1968,7 +1994,12 @@ function createBuilderGenerationMainService(rawOptions) {
             base_revision: approvedPlanEditContext.base_revision,
           }],
         );
+        const addressBindingContext = conversationContext;
         conversationContext = recordConversationContextSnapshot(conversationContext);
+        bindApprovedPlanContinuationContextToCurrentTaskAddress(
+          addressBindingContext,
+          approvedPlanEditContext,
+        );
         activeContexts.set(key, conversationContext);
         retryableContexts.delete(key);
         notifyGenerationStarted(request, approvedPlanEditContext.project_id);

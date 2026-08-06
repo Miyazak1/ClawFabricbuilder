@@ -6,6 +6,10 @@ const SERVICE_VERSION = 'builder-session-task-address-binding-service.v1';
 const RESULT_VERSION = 'builder-session-task-address-binding-result.v1';
 const OPTION_KEYS = Object.freeze(['address_store']);
 const BIND_QUEUED_FOLLOWUP_KEYS = Object.freeze(['context', 'queued_followup']);
+const BIND_APPROVED_PLAN_CONTINUATION_KEYS = Object.freeze([
+  'context',
+  'approved_plan_continuation',
+]);
 const CONTEXT_KEYS = Object.freeze([
   'context_version',
   'mode',
@@ -52,12 +56,32 @@ const EVENT_KEYS = Object.freeze([
   'event_digest',
 ]);
 const QUEUED_FOLLOWUP_KEYS = Object.freeze(['turn_id', 'run_id', 'message_id']);
+const APPROVED_PLAN_CONTINUATION_KEYS = Object.freeze([
+  'project_id',
+  'conversation_id',
+  'approved_plan_turn_id',
+  'approved_plan_task_id',
+  'approved_plan_run_id',
+  'continuation_id',
+  'continuation_admission_digest',
+]);
 const FOLLOWUP_CONSUMED_PAYLOAD_KEYS = Object.freeze([
   'turn_id',
   'run_id',
   'message_id',
   'consuming_turn_id',
   'consuming_message_id',
+]);
+const TURN_PAYLOAD_KEYS = Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision', 'route_decision']);
+const MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
+const TASK_KEYS = Object.freeze(['task_id', 'title']);
+const RUN_PAYLOAD_KEYS = Object.freeze([
+  'turn_id',
+  'run_id',
+  'task_id',
+  'attempt_number',
+  'retry_of_run_id',
+  'input_digest',
 ]);
 const ADDRESS_STORE_READ_KEYS = Object.freeze([
   'result_version',
@@ -77,6 +101,11 @@ const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const MESSAGE_ID_PATTERN = new RegExp(`^builder-message:${UUID_SOURCE}$`, 'u');
+const APPROVED_PLAN_CONTINUATION_ID_PATTERN = new RegExp(
+  `^builder-approved-plan-continuation:${UUID_SOURCE}$`,
+  'u',
+);
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const ERROR_MESSAGE = 'Builder session and task address binding could not be verified.';
 
 class BuilderSessionTaskAddressBindingServiceError extends Error {
@@ -157,7 +186,7 @@ function safeTimestamp(value) {
 }
 
 function denseEvents(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 3 || value.length > 128) fail();
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 2 || value.length > 128) fail();
   const keys = Reflect.ownKeys(value);
   if (
     keys.length !== value.length + 1
@@ -188,7 +217,23 @@ function queuedFollowupReference(value) {
   });
 }
 
-function queuedWorkContext(value, queuedFollowup) {
+function approvedPlanContinuationReference(value) {
+  exactObject(value, APPROVED_PLAN_CONTINUATION_KEYS);
+  return freezeDeep({
+    project_id: safePattern(valueAt(value, 'project_id'), PROJECT_ID_PATTERN),
+    conversation_id: safePattern(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN),
+    approved_plan_turn_id: safePattern(valueAt(value, 'approved_plan_turn_id'), TURN_ID_PATTERN),
+    approved_plan_task_id: safePattern(valueAt(value, 'approved_plan_task_id'), TASK_ID_PATTERN),
+    approved_plan_run_id: safePattern(valueAt(value, 'approved_plan_run_id'), RUN_ID_PATTERN),
+    continuation_id: safePattern(
+      valueAt(value, 'continuation_id'),
+      APPROVED_PLAN_CONTINUATION_ID_PATTERN,
+    ),
+    continuation_admission_digest: safePattern(valueAt(value, 'continuation_admission_digest'), DIGEST_PATTERN),
+  });
+}
+
+function baseWorkContext(value) {
   exactObject(value, CONTEXT_KEYS);
   if (valueAt(value, 'context_version') !== 'builder-conversation-run-context.v1') fail();
   if (valueAt(value, 'mode') !== 'work') fail();
@@ -210,19 +255,6 @@ function queuedWorkContext(value, queuedFollowup) {
   const runId = safePattern(valueAt(ids, 'run_id'), RUN_ID_PATTERN);
   const messageId = safePattern(valueAt(ids, 'message_id'), MESSAGE_ID_PATTERN);
   const events = denseEvents(valueAt(value, 'events'));
-  const consumed = events.filter((event) => valueAt(event, 'event_type') === 'turn_followup_consumed');
-  if (consumed.length !== 1) fail();
-  const payload = valueAt(consumed[0], 'payload');
-  exactObject(payload, FOLLOWUP_CONSUMED_PAYLOAD_KEYS);
-  if (
-    valueAt(consumed[0], 'project_id') !== projectId
-    || valueAt(consumed[0], 'conversation_id') !== conversationId
-    || valueAt(payload, 'turn_id') !== queuedFollowup.turn_id
-    || valueAt(payload, 'run_id') !== queuedFollowup.run_id
-    || valueAt(payload, 'message_id') !== queuedFollowup.message_id
-    || valueAt(payload, 'consuming_turn_id') !== turnId
-    || valueAt(payload, 'consuming_message_id') !== messageId
-  ) fail();
   return freezeDeep({
     project_id: projectId,
     conversation_id: conversationId,
@@ -230,6 +262,79 @@ function queuedWorkContext(value, queuedFollowup) {
     run_id: runId,
     low_level_task_id: taskId,
     message_id: messageId,
+    events,
+    request_digest: safePattern(valueAt(value, 'request_digest'), DIGEST_PATTERN),
+  });
+}
+
+function queuedWorkContext(value, queuedFollowup) {
+  const context = baseWorkContext(value);
+  const events = context.events;
+  const consumed = events.filter((event) => valueAt(event, 'event_type') === 'turn_followup_consumed');
+  if (consumed.length !== 1) fail();
+  const payload = valueAt(consumed[0], 'payload');
+  exactObject(payload, FOLLOWUP_CONSUMED_PAYLOAD_KEYS);
+  if (
+    valueAt(consumed[0], 'project_id') !== context.project_id
+    || valueAt(consumed[0], 'conversation_id') !== context.conversation_id
+    || valueAt(payload, 'turn_id') !== queuedFollowup.turn_id
+    || valueAt(payload, 'run_id') !== queuedFollowup.run_id
+    || valueAt(payload, 'message_id') !== queuedFollowup.message_id
+    || valueAt(payload, 'consuming_turn_id') !== context.turn_id
+    || valueAt(payload, 'consuming_message_id') !== context.message_id
+  ) fail();
+  return freezeDeep({
+    project_id: context.project_id,
+    conversation_id: context.conversation_id,
+    turn_id: context.turn_id,
+    run_id: context.run_id,
+    low_level_task_id: context.low_level_task_id,
+    message_id: context.message_id,
+  });
+}
+
+function approvedPlanContinuationWorkContext(value, approvedPlanContinuation) {
+  const context = baseWorkContext(value);
+  if (
+    context.project_id !== approvedPlanContinuation.project_id
+    || context.conversation_id !== approvedPlanContinuation.conversation_id
+  ) fail();
+  const turnEvent = context.events.find((event) => valueAt(event, 'event_type') === 'turn_submitted') ?? null;
+  const runEvent = context.events.find((event) => valueAt(event, 'event_type') === 'run_started') ?? null;
+  if (turnEvent === null || runEvent === null) fail();
+  if (
+    valueAt(turnEvent, 'project_id') !== context.project_id
+    || valueAt(turnEvent, 'conversation_id') !== context.conversation_id
+    || valueAt(runEvent, 'project_id') !== context.project_id
+    || valueAt(runEvent, 'conversation_id') !== context.conversation_id
+  ) fail();
+  const turnPayload = valueAt(turnEvent, 'payload');
+  const runPayload = valueAt(runEvent, 'payload');
+  exactObject(turnPayload, TURN_PAYLOAD_KEYS);
+  exactObject(runPayload, RUN_PAYLOAD_KEYS);
+  const message = valueAt(turnPayload, 'message');
+  const task = valueAt(turnPayload, 'task');
+  exactObject(message, MESSAGE_KEYS);
+  exactObject(task, TASK_KEYS);
+  if (
+    valueAt(turnPayload, 'turn_id') !== context.turn_id
+    || valueAt(turnPayload, 'mode') !== 'work'
+    || valueAt(message, 'message_id') !== context.message_id
+    || valueAt(task, 'task_id') !== context.low_level_task_id
+    || valueAt(runPayload, 'turn_id') !== context.turn_id
+    || valueAt(runPayload, 'run_id') !== context.run_id
+    || valueAt(runPayload, 'task_id') !== context.low_level_task_id
+    || valueAt(runPayload, 'attempt_number') !== 1
+    || valueAt(runPayload, 'retry_of_run_id') !== null
+    || valueAt(runPayload, 'input_digest') !== context.request_digest
+  ) fail();
+  return freezeDeep({
+    project_id: context.project_id,
+    conversation_id: context.conversation_id,
+    turn_id: context.turn_id,
+    run_id: context.run_id,
+    low_level_task_id: context.low_level_task_id,
+    message_id: context.message_id,
   });
 }
 
@@ -302,6 +407,34 @@ function createBuilderSessionTaskAddressBindingService(rawOptions) {
         run_id: context.run_id,
         low_level_task_id: context.low_level_task_id,
         queued_followup: queuedFollowup,
+        session_address: bound.session_address,
+        task_address: bound.task_address,
+        authority: authority(),
+      });
+    },
+    bind_approved_plan_continuation_to_current_task_address(rawRequest) {
+      exactObject(rawRequest, BIND_APPROVED_PLAN_CONTINUATION_KEYS);
+      const approvedPlanContinuation = approvedPlanContinuationReference(
+        valueAt(rawRequest, 'approved_plan_continuation'),
+      );
+      const context = approvedPlanContinuationWorkContext(
+        valueAt(rawRequest, 'context'),
+        approvedPlanContinuation,
+      );
+      const read = Reflect.apply(readCurrent, addressStore, [{
+        project_id: context.project_id,
+        conversation_id: context.conversation_id,
+      }]);
+      const bound = currentAddressRead(read, context.project_id, context.conversation_id);
+      return freezeDeep({
+        result_version: RESULT_VERSION,
+        operation: 'approved_plan_continuation_bound',
+        project_id: context.project_id,
+        conversation_id: context.conversation_id,
+        turn_id: context.turn_id,
+        run_id: context.run_id,
+        low_level_task_id: context.low_level_task_id,
+        approved_plan_continuation: approvedPlanContinuation,
         session_address: bound.session_address,
         task_address: bound.task_address,
         authority: authority(),

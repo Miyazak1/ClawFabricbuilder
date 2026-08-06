@@ -252,21 +252,19 @@ provider/tool dispatcher, not a source/Git mutator, not a permission grant, and
 not archive/delete/fork/export materialization.
 
 Current generation-main integration: `electron/builder-generation-main-service.cjs`
-accepts that recording service as an optional main-owned dependency. Fresh
-work and plan contexts record their Session/Task Address after the run context
-snapshot and before provider dispatch, failing closed if the address recording
-cannot be verified. Read-only answers and queued follow-up work do not create
-new product addresses. Retry, draft continuation, and approved-plan continuation
-also stay out of this first integration because they need explicit binding to an
-existing Task Address instead of a newly minted product task. The Address store
-now has the required read-only `project_id` + `conversation_id` lookup surface,
+accepts the recording and binding services as optional main-owned dependencies.
+Fresh work and plan contexts record their Session/Task Address after the run
+context snapshot and before provider dispatch, failing closed if the address
+recording cannot be verified. Read-only answers, queued follow-up work, and
+approved-plan continuation do not create new product addresses. The Address
+store has the required read-only `project_id` + `conversation_id` lookup surface,
 and the binding service uses it to fail closed before provider dispatch when
-queued follow-up build work cannot be reconnected to the current product Task
-Address. This does not create a new Task Address, append Conversation events,
-grant permission, or bind retry/draft/approved-plan continuation yet. The
-desktop IPC runtime now creates the recording and binding services beside the
-Address store and passes them into generation main with a fixed local Builder
-Agent id until the later Agent Profile store exists.
+queued follow-up build work or approved-plan continuation cannot be reconnected
+to the current product Task Address. This does not create a new Task Address,
+append Conversation events, grant permission, or bind retry/draft continuation
+yet. The desktop IPC runtime now creates the recording and binding services
+beside the Address store and passes them into generation main with a fixed local
+Builder Agent id until the later Agent Profile store exists.
 
 ## Non-Goals For The Current Builder MVP
 

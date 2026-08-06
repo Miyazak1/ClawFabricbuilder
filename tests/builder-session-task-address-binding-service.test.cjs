@@ -33,6 +33,7 @@ const CONSUMING_RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174210';
 const CONSUMING_MESSAGE_ID = 'builder-message:123e4567-e89b-42d3-a456-426614174211';
 const CONSUMING_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174212';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174213';
+const APPROVED_PLAN_CONTINUATION_ID = 'builder-approved-plan-continuation:123e4567-e89b-42d3-a456-426614174214';
 
 function temporaryDatabase(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-address-binding-'));
@@ -123,6 +124,19 @@ function queuedFollowup() {
   };
 }
 
+function approvedPlanContinuation(overrides = {}) {
+  return {
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    approved_plan_turn_id: TURN_ID,
+    approved_plan_task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174215',
+    approved_plan_run_id: RUN_ID,
+    continuation_id: APPROVED_PLAN_CONTINUATION_ID,
+    continuation_admission_digest: digest('a'),
+    ...overrides,
+  };
+}
+
 function queuedWorkContext(overrides = {}) {
   return {
     context_version: 'builder-conversation-run-context.v1',
@@ -136,7 +150,7 @@ function queuedWorkContext(overrides = {}) {
       conversation_id: CONVERSATION_ID,
       created_at_ms: 1000,
     },
-    request_digest: digest('r'),
+    request_digest: digest('1'),
     start_head: {
       sequence: 3,
       event_id: `builder-conversation-event:${'3'.repeat(64)}`,
@@ -158,7 +172,76 @@ function queuedWorkContext(overrides = {}) {
         task_id: CONSUMING_TASK_ID,
         attempt_number: 1,
         retry_of_run_id: null,
-        input_digest: digest('r'),
+        input_digest: digest('1'),
+      }),
+    ],
+    run_terminal_failure_code: null,
+    ids: {
+      turn_command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174220',
+      run_command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174221',
+      terminal_command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174222',
+      turn_terminal_command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174223',
+      cancel_command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174224',
+      cancel_request_id: 'builder-cancel-request:123e4567-e89b-42d3-a456-426614174225',
+      interrupt_command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174226',
+      interrupt_request_id: 'builder-interrupt-request:123e4567-e89b-42d3-a456-426614174227',
+      message_id: CONSUMING_MESSAGE_ID,
+      assistant_message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174228',
+      turn_id: CONSUMING_TURN_ID,
+      task_id: CONSUMING_TASK_ID,
+      run_id: CONSUMING_RUN_ID,
+    },
+    cancel_requested: false,
+    ...overrides,
+  };
+}
+
+function approvedPlanWorkContext(overrides = {}) {
+  return {
+    context_version: 'builder-conversation-run-context.v1',
+    mode: 'work',
+    project: {
+      project_id: PROJECT_ID,
+      created_at_ms: 1000,
+    },
+    conversation: {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1000,
+    },
+    request_digest: digest('1'),
+    start_head: {
+      sequence: 2,
+      event_id: `builder-conversation-event:${'2'.repeat(64)}`,
+      event_digest: digest('2'),
+    },
+    attempt_number: 1,
+    events: [
+      eventAt(1, 'turn_submitted', {
+        message: {
+          message_id: CONSUMING_MESSAGE_ID,
+          text: 'Review the approved plan.\n\nPlan:\n1. Build the approved change.',
+        },
+        turn_id: CONSUMING_TURN_ID,
+        mode: 'work',
+        task: {
+          task_id: CONSUMING_TASK_ID,
+          title: 'Continue approved plan',
+        },
+        base_revision: null,
+        route_decision: {
+          route: 'build',
+          confidence: 'high',
+          matched_signals: ['approved_plan_continuation'],
+        },
+      }),
+      eventAt(2, 'run_started', {
+        turn_id: CONSUMING_TURN_ID,
+        run_id: CONSUMING_RUN_ID,
+        task_id: CONSUMING_TASK_ID,
+        attempt_number: 1,
+        retry_of_run_id: null,
+        input_digest: digest('1'),
       }),
     ],
     run_terminal_failure_code: null,
@@ -229,6 +312,37 @@ test('binds queued follow-up work to the current Session and Task Address by con
   store.close();
 });
 
+test('binds approved-plan continuation work to the current Session and Task Address by conversation', (t) => {
+  const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
+  store.record_session_address({ session_address: sessionAddress() });
+  store.record_task_address({ task_address: taskAddress() });
+  const binder = createBuilderSessionTaskAddressBindingService({ address_store: store });
+  const continuation = approvedPlanContinuation();
+  const bound = binder.bind_approved_plan_continuation_to_current_task_address({
+    context: approvedPlanWorkContext(),
+    approved_plan_continuation: continuation,
+  });
+
+  assert.equal(bound.result_version, RESULT_VERSION);
+  assert.equal(bound.operation, 'approved_plan_continuation_bound');
+  assert.equal(bound.project_id, PROJECT_ID);
+  assert.equal(bound.conversation_id, CONVERSATION_ID);
+  assert.equal(bound.turn_id, CONSUMING_TURN_ID);
+  assert.equal(bound.run_id, CONSUMING_RUN_ID);
+  assert.equal(bound.low_level_task_id, CONSUMING_TASK_ID);
+  assert.deepEqual(bound.approved_plan_continuation, continuation);
+  assert.equal(bound.task_address.task_address.task_address_id, TASK_ADDRESS_ID);
+  assert.equal(bound.task_address.task_address.conversation_id, CONVERSATION_ID);
+  assert.equal(bound.session_address.session_address.session_id, SESSION_ID);
+  assert.equal(bound.authority.address_binding, 'main_owned_read_only_session_task_address_lookup');
+  assert.equal(bound.authority.conversation_append, false);
+  assert.equal(bound.authority.provider_dispatch, false);
+  assert.equal(bound.authority.source_mutation, false);
+  assert.equal(bound.authority.git_mutation, false);
+  assert.equal(bound.authority.permission_grant, false);
+  store.close();
+});
+
 test('fails closed for absent addresses, forged context, malformed input, accessors, and proxies', (t) => {
   const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
   const binder = createBuilderSessionTaskAddressBindingService({ address_store: store });
@@ -236,6 +350,18 @@ test('fails closed for absent addresses, forged context, malformed input, access
   assertBindingError(() => binder.bind_queued_followup_work_to_current_task_address({
     context: queuedWorkContext(),
     queued_followup: queuedFollowup(),
+  }));
+  assertBindingError(() => binder.bind_approved_plan_continuation_to_current_task_address({
+    context: approvedPlanWorkContext(),
+    approved_plan_continuation: approvedPlanContinuation({
+      conversation_id: 'builder-conversation:223e4567-e89b-42d3-a456-426614174205',
+    }),
+  }));
+  assertBindingError(() => binder.bind_approved_plan_continuation_to_current_task_address({
+    context: approvedPlanWorkContext({
+      events: approvedPlanWorkContext().events.slice(0, 1),
+    }),
+    approved_plan_continuation: approvedPlanContinuation(),
   }));
   store.record_session_address({ session_address: sessionAddress() });
   store.record_task_address({ task_address: taskAddress() });
@@ -301,6 +427,7 @@ test('source boundary remains a read-only main binding service without runtime a
   );
   assert.match(source, /main_owned_read_only_session_task_address_lookup/u);
   assert.match(source, /bind_queued_followup_work_to_current_task_address/u);
+  assert.match(source, /bind_approved_plan_continuation_to_current_task_address/u);
   assert.match(source, /read_current_session_task_for_conversation/u);
   assert.match(source, /conversation_append: false/u);
   assert.match(source, /provider_dispatch: false/u);

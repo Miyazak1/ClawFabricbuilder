@@ -5046,6 +5046,9 @@ test('binds queued follow-up build to the current product Task Address before pr
           bindingCalls.push(input);
           return { operation: 'queued_followup_work_bound_for_test' };
         },
+        bind_approved_plan_continuation_to_current_task_address() {
+          return { operation: 'approved_plan_continuation_bound_for_test' };
+        },
       },
     }),
     transport: async () => {
@@ -5095,6 +5098,98 @@ test('binds queued follow-up build to the current product Task Address before pr
   assert.deepEqual(bindingCalls[0].queued_followup, queued.queued_followup);
   assert.equal(lifecycle.calls.queuedFollowupWork.length, 1);
   assert.equal(lifecycle.calls.queuedFollowupWork[0].route_decision_hint.route, 'build');
+});
+
+test('binds approved-plan continuation to the current product Task Address before provider dispatch', async () => {
+  const lifecycle = conversationService();
+  const bindingCalls = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+      sessionTaskAddressBindingService: {
+        bind_queued_followup_work_to_current_task_address() {
+          return { operation: 'queued_followup_work_bound_for_test' };
+        },
+        bind_approved_plan_continuation_to_current_task_address(input) {
+          bindingCalls.push(input);
+          return { operation: 'approved_plan_continuation_bound_for_test' };
+        },
+      },
+    }),
+    transport: async () => {
+      assert.equal(bindingCalls.length, 1);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Approved plan work',
+          summary: 'Approved plan work binds before provider dispatch.',
+        })),
+      };
+    },
+  });
+
+  const result = await service.generate_approved_plan(approvedPlanEditRequest());
+
+  assert.equal(result.title, 'Approved plan work');
+  assert.equal(lifecycle.calls.approvedPlanWork.length, 1);
+  assert.equal(bindingCalls.length, 1);
+  assert.equal(bindingCalls[0].context.mode, 'work');
+  assert.equal(bindingCalls[0].context.project.project_id, PROJECT_ID);
+  assert.equal(bindingCalls[0].context.conversation.conversation_id, CONVERSATION_ID);
+  assert.equal(lifecycle.calls.approvedPlanContinuation.length, 1);
+  assert.equal(bindingCalls[0].approved_plan_continuation.project_id, PROJECT_ID);
+  assert.equal(bindingCalls[0].approved_plan_continuation.conversation_id, CONVERSATION_ID);
+  assert.equal(bindingCalls[0].approved_plan_continuation.approved_plan_turn_id, APPROVED_PLAN_TURN_ID);
+  assert.equal(bindingCalls[0].approved_plan_continuation.approved_plan_task_id, APPROVED_PLAN_TASK_ID);
+  assert.equal(bindingCalls[0].approved_plan_continuation.approved_plan_run_id, APPROVED_PLAN_RUN_ID);
+  assert.equal(
+    bindingCalls[0].approved_plan_continuation.continuation_id,
+    `builder-approved-plan-continuation:${UUIDS[5]}`,
+  );
+  assert.match(
+    bindingCalls[0].approved_plan_continuation.continuation_admission_digest,
+    /^sha256:[0-9a-f]{64}$/u,
+  );
+});
+
+test('fails closed before provider dispatch when approved-plan continuation Task Address binding fails', async () => {
+  let providerCalled = false;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+      sessionTaskAddressBindingService: {
+        bind_queued_followup_work_to_current_task_address() {
+          return { operation: 'queued_followup_work_bound_for_test' };
+        },
+        bind_approved_plan_continuation_to_current_task_address() {
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+    }),
+    transport: async () => {
+      providerCalled = true;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  await assert.rejects(
+    service.generate_approved_plan(approvedPlanEditRequest()),
+    (error) => {
+      assert.equal(error.code, 'builder_generation_service_unavailable');
+      assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
+      return true;
+    },
+  );
+  assert.equal(providerCalled, false);
 });
 
 test('starts queued follow-up answer through the replay-verified question gate', async () => {

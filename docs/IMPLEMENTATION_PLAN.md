@@ -191,16 +191,18 @@ archive/delete/fork/export materialization, or renderer lookup. The current
 generation-main integration now composes this bridge before provider dispatch
 for fresh work and plan contexts. Read-only answers, queued follow-up work,
 retry, draft continuation, and approved-plan continuation do not create a new
-Session/Task Address; they remain later binding work because they must attach to
-an existing product Task Address rather than silently fork a new one. The
-conversation-scoped Address store lookup is now the main-only read prerequisite
-for that later binding work. The current queued-follow-up Task Address binding
-checkpoint adds a read-only binding service and wires generation main/runtime so
-queued follow-up build work must reconnect to the current product Task Address
-before provider dispatch. It still opens no IPC/preload surface, records no new
-Session/Task Address, appends no Conversation event, grants no permission, and
-does not bind retry, draft continuation, approved-plan continuation, or subagent
-delegation.
+Session/Task Address; continuation work must attach to an existing product Task
+Address rather than silently fork a new one. The conversation-scoped Address
+store lookup is now the main-only read prerequisite for that later binding work.
+The queued-follow-up Task Address binding checkpoint adds a read-only binding
+service and wires generation main/runtime so queued follow-up build work must
+reconnect to the current product Task Address before provider dispatch. The
+approved-plan continuation binding checkpoint extends that same read-only gate:
+after a plan is approved and replay-admitted for execution, generation main
+must bind the continuation run to the current product Task Address before
+provider dispatch. These binding checkpoints still open no IPC/preload surface,
+record no new Session/Task Address, append no Conversation event, grant no
+permission, and do not bind retry, draft continuation, or subagent delegation.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 
