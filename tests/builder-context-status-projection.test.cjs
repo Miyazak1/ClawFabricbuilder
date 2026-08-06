@@ -16,6 +16,7 @@ const {
   BUILDER_CONTEXT_STATUS_PROJECTION_VERSION,
   BuilderContextStatusProjectionError,
   projectBuilderContextStatus,
+  sanitizeBuilderContextStatusProjection,
 } = require('../electron/builder-context-status-projection.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
@@ -133,6 +134,7 @@ test('projects executable working context into ordinary renderer-safe status cop
   assert.equal(result.pending_handoff_count, 0);
   assert.equal(result.needs_confirmation, false);
   assert.equal(result.can_contextual_execute, true);
+  assert.deepEqual(sanitizeBuilderContextStatusProjection(structuredClone(result)), result);
   assert.deepEqual(result.authority, {
     projection_authority: 'main_owned_context_status_projection_v1',
     working_context_state: 'verified_not_exposed',
@@ -285,6 +287,14 @@ test('fails closed for malformed state, pending handoff shape, accessors, and pr
     working_context_state: structuredClone(state()),
     pending_handoff_packets: pendingHandoff(),
   }, {})));
+  const forgedAuthority = projection();
+  assertProjectionError(() => sanitizeBuilderContextStatusProjection({
+    ...structuredClone(forgedAuthority),
+    authority: {
+      ...forgedAuthority.authority,
+      provider_dispatch: true,
+    },
+  }));
 });
 
 test('source boundary stays a pure renderer-safe context status projection', () => {

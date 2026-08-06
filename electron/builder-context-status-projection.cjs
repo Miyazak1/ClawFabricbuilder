@@ -174,7 +174,6 @@ function authority(hasPendingHandoff) {
 
 function assertProjection(value) {
   exactObject(value, PROJECTION_KEYS);
-  exactObject(valueAt(value, 'authority'), AUTHORITY_KEYS);
   if (valueAt(value, 'projection_version') !== BUILDER_CONTEXT_STATUS_PROJECTION_VERSION) fail();
   if (!Object.values(STATUS_COPY).some((copy) => copy.label === valueAt(value, 'label'))) {
     if (valueAt(value, 'label') !== 'Handoff received') fail();
@@ -185,6 +184,12 @@ function assertProjection(value) {
   if (!Number.isSafeInteger(valueAt(value, 'pending_handoff_count'))) fail();
   if (typeof valueAt(value, 'needs_confirmation') !== 'boolean') fail();
   if (typeof valueAt(value, 'can_contextual_execute') !== 'boolean') fail();
+  const authorityValue = valueAt(value, 'authority');
+  exactObject(authorityValue, AUTHORITY_KEYS);
+  const expectedAuthority = authority(valueAt(value, 'has_pending_handoff'));
+  for (const key of AUTHORITY_KEYS) {
+    if (valueAt(authorityValue, key) !== valueAt(expectedAuthority, key)) fail();
+  }
   return value;
 }
 
@@ -225,8 +230,17 @@ function projectBuilderContextStatus(rawInput) {
   }
 }
 
+function sanitizeBuilderContextStatusProjection(value) {
+  try {
+    return freezeDeep(assertProjection(value));
+  } catch {
+    fail();
+  }
+}
+
 module.exports = Object.freeze({
   BUILDER_CONTEXT_STATUS_PROJECTION_VERSION,
   BuilderContextStatusProjectionError,
   projectBuilderContextStatus,
+  sanitizeBuilderContextStatusProjection,
 });

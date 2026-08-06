@@ -23,6 +23,11 @@ const {
   BuilderHandoffPacketStoreError,
 } = require('./builder-handoff-packet-store.cjs');
 const {
+  BuilderContextStatusProjectionError,
+  projectBuilderContextStatus,
+  sanitizeBuilderContextStatusProjection,
+} = require('./builder-context-status-projection.cjs');
+const {
   BuilderWorkingContextStateError,
   createBuilderWorkingContextState,
 } = require('./builder-working-context-state.cjs');
@@ -107,6 +112,7 @@ const RESULT_KEYS = Object.freeze([
   'latest_task_capsule',
   'latest_context_compaction_summary',
   'pending_handoff_packets',
+  'context_status_projection',
   'evidence',
 ]);
 const LATEST_TASK_CAPSULE_KEYS = Object.freeze(['status', 'update_id']);
@@ -426,6 +432,11 @@ function normalizeOperationError(error) {
       'builder_working_context_state_service_invalid',
     );
   }
+  if (error instanceof BuilderContextStatusProjectionError) {
+    return new BuilderWorkingContextStateServiceError(
+      'builder_working_context_state_service_invalid',
+    );
+  }
   return new BuilderWorkingContextStateServiceError(
     'builder_working_context_state_service_unavailable',
   );
@@ -666,6 +677,7 @@ function safeServiceResult(value) {
     || (handoffStatus === 'pending' && (handoffCount < 1 || typeof valueAt(pendingHandoffs, 'first_handoff_id') !== 'string'))
     || (handoffStatus !== 'absent' && handoffStatus !== 'pending')
   ) fail();
+  sanitizeBuilderContextStatusProjection(valueAt(value, 'context_status_projection'));
   const evidenceValue = valueAt(value, 'evidence');
   exactObject(evidenceValue, EVIDENCE_KEYS);
   return value;
@@ -700,6 +712,11 @@ function readCurrentWorkingContextState(services, rawRequest) {
     compaction_refs: mergeCompactionRefs(request.compaction_refs, latestCompaction),
     latest_task_capsule: latest.task_capsule,
   });
+  const pendingHandoffProjection = {
+    status: pendingHandoffs.status,
+    count: pendingHandoffs.count,
+    first_handoff_id: pendingHandoffs.first_handoff_id,
+  };
   return freezeDeep(safeServiceResult({
     result_version: BUILDER_WORKING_CONTEXT_STATE_SERVICE_RESULT_VERSION,
     service_version: BUILDER_WORKING_CONTEXT_STATE_SERVICE_VERSION,
@@ -718,11 +735,11 @@ function readCurrentWorkingContextState(services, rawRequest) {
       status: latestCompaction.status,
       summary_id: latestCompaction.summary_id,
     },
-    pending_handoff_packets: {
-      status: pendingHandoffs.status,
-      count: pendingHandoffs.count,
-      first_handoff_id: pendingHandoffs.first_handoff_id,
-    },
+    pending_handoff_packets: pendingHandoffProjection,
+    context_status_projection: projectBuilderContextStatus({
+      working_context_state: state,
+      pending_handoff_packets: pendingHandoffProjection,
+    }),
     evidence: evidence(latest.operation, latestCompaction.operation, pendingHandoffs.operation),
   }));
 }

@@ -364,6 +364,31 @@ test('projects the latest task capsule store fact into ready Working Context Sta
     count: 0,
     first_handoff_id: null,
   });
+  assert.deepEqual(result.context_status_projection, {
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Ready to execute current direction',
+    tone: 'success',
+    next_action_hint: 'You can ask me to make the change.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: true,
+    authority: {
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'none',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  });
   assert.equal(result.evidence.handoff_packet_store_authority, 'not_configured');
   assert.equal(result.evidence.handoff_packet_store_operation, 'not_configured');
   assert.equal(result.evidence.sqlite_write, 'not_performed');
@@ -409,6 +434,8 @@ test('does not turn compaction-only context into executable readiness when the s
   assert.equal(result.working_context_state.task_capsule_ref, null);
   assert.equal(result.working_context_state.compaction_refs[0].summary_digest, digest('b'));
   assert.equal(result.working_context_state.handoff_refs[0].packet_digest, digest('d'));
+  assert.equal(result.context_status_projection.label, 'No direction yet');
+  assert.equal(result.context_status_projection.can_contextual_execute, false);
   assert.equal(result.evidence.task_capsule_store_operation, 'latest_task_capsule_absent_read');
 });
 
@@ -472,6 +499,12 @@ test('projects pending handoff inbox status without adopting context', (t) => {
     first_handoff_id: pending.handoff_id,
   });
   assert.deepEqual(result.working_context_state.handoff_refs, []);
+  assert.equal(result.context_status_projection.label, 'Handoff received');
+  assert.equal(result.context_status_projection.has_pending_handoff, true);
+  assert.equal(result.context_status_projection.pending_handoff_count, 1);
+  assert.equal(result.context_status_projection.needs_confirmation, true);
+  assert.equal(result.context_status_projection.can_contextual_execute, false);
+  assert.doesNotMatch(JSON.stringify(result.context_status_projection), /builder-handoff-packet|sha256:/u);
   assert.equal(result.evidence.handoff_packet_store_authority, 'main_owned_handoff_packet_store');
   assert.equal(result.evidence.handoff_packet_store_operation, 'pending_handoff_packets_ready_read');
   assert.equal(result.evidence.provider_dispatch, false);
@@ -499,6 +532,8 @@ test('projects approved plan and stale correction state without writing to the t
   }));
   assert.equal(approved.status, 'approved_plan_ready');
   assert.equal(approved.working_context_state.approved_plan_ref.plan_result_digest, digest('c'));
+  assert.equal(approved.context_status_projection.label, 'Using approved plan');
+  assert.equal(approved.context_status_projection.can_contextual_execute, true);
 
   const stale = item.service.read_current_working_context_state(request({
     invalidated_by: {
@@ -513,6 +548,9 @@ test('projects approved plan and stale correction state without writing to the t
   }));
   assert.equal(stale.status, 'stale');
   assert.equal(stale.working_context_state.invalidated_by.source, 'brief_correction');
+  assert.equal(stale.context_status_projection.label, 'Direction changed');
+  assert.equal(stale.context_status_projection.needs_confirmation, true);
+  assert.equal(stale.context_status_projection.can_contextual_execute, false);
   assert.equal(
     item.store.read_latest_task_capsule({ project_id: PROJECT_ID }).task_capsule_update.task_capsule_update.update_id,
     update.update_id,
@@ -730,6 +768,7 @@ test('source remains a main-only read projection service without runtime authori
   assert.match(source, /read_latest_context_compaction_summary/u);
   assert.match(source, /read_current_session_task_for_conversation/u);
   assert.match(source, /list_pending_handoff_packets/u);
+  assert.match(source, /projectBuilderContextStatus/u);
   assert.doesNotMatch(
     source,
     /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|child_process|execFile|spawn|run_command|CREATE TABLE|INSERT INTO|UPDATE\s+\w+|DELETE FROM|record_task_capsule_update|record_handoff_packet/u,
