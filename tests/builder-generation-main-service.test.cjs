@@ -719,7 +719,13 @@ function conversationService(options = {}) {
       authority: { ...CONVERSATION_AUTHORITY },
     });
   }
-  function runContextSnapshotEvent(context, workingContextState = null, contextAssembly = null) {
+  function runContextSnapshotEvent(
+    context,
+    workingContextState = null,
+    contextAssembly = null,
+    providerContextProjection = null,
+    providerContextPromptEgressGate = null,
+  ) {
     const submitted = context.events.find((event) => (
       event.event_type === 'turn_submitted'
       && event.payload.turn_id === context.ids.turn_id
@@ -735,7 +741,8 @@ function conversationService(options = {}) {
       latest_task_capsule: null,
       working_context_state: workingContextState,
       context_assembly: contextAssembly,
-      provider_context_projection: null,
+      provider_context_projection: providerContextProjection,
+      provider_context_prompt_egress_gate: providerContextPromptEgressGate,
       base_revision: submitted.payload.base_revision,
       created_at_ms: 99,
     });
@@ -1033,7 +1040,13 @@ function conversationService(options = {}) {
     },
     record_run_context_snapshot(input) {
       calls.contextSnapshot.push(input);
-      const event = runContextSnapshotEvent(input.context, input.working_context_state, input.context_assembly);
+      const event = runContextSnapshotEvent(
+        input.context,
+        input.working_context_state,
+        input.context_assembly,
+        input.provider_context_projection,
+        input.provider_context_prompt_egress_gate,
+      );
       return {
         ...input.context,
         start_head: eventHead(event),
@@ -4530,6 +4543,19 @@ test('uses the Working Context State service as contextual submit route evidence
     context_digest: contextSnapshotInputs[0].context_assembly.context_digest,
   });
   assert.equal(contextSnapshotInputs[0].provider_context_projection.provider_context, null);
+  assert.equal(
+    contextSnapshotInputs[0].provider_context_prompt_egress_gate.source_ref.projection_id,
+    contextSnapshotInputs[0].provider_context_projection.projection_id,
+  );
+  assert.equal(
+    contextSnapshotInputs[0].provider_context_prompt_egress_gate.prompt_egress_status,
+    'blocked_by_context_disclosure',
+  );
+  assert.equal(
+    contextSnapshotInputs[0].provider_context_prompt_egress_gate.blocked_reason,
+    'context_disclosure_denied',
+  );
+  assert.equal(contextSnapshotInputs[0].provider_context_prompt_egress_gate.provider_prompt_context, null);
   assert.equal(providerDisclosureStatusRecords.length, 1);
   assert.equal(
     providerDisclosureStatusRecords[0].context_assembly,

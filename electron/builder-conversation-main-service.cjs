@@ -1921,6 +1921,7 @@ function createBuilderConversationMainService(rawOptions) {
       'working_context_state',
       'context_assembly',
       'provider_context_projection',
+      'provider_context_prompt_egress_gate',
     ]);
     const context = trustedContext(valueAt(rawRequest, 'context'));
     if (
@@ -1949,6 +1950,7 @@ function createBuilderConversationMainService(rawOptions) {
       working_context_state: valueAt(rawRequest, 'working_context_state'),
       context_assembly: valueAt(rawRequest, 'context_assembly'),
       provider_context_projection: valueAt(rawRequest, 'provider_context_projection'),
+      provider_context_prompt_egress_gate: valueAt(rawRequest, 'provider_context_prompt_egress_gate'),
       base_revision: submitted.payload.base_revision,
       created_at_ms: recordedAtMs,
     });

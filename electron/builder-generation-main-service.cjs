@@ -48,6 +48,9 @@ const {
   createBuilderProviderContextProjection,
 } = require('./builder-provider-context-projection.cjs');
 const {
+  assessBuilderProviderContextPromptEgress,
+} = require('./builder-provider-context-prompt-egress-gate.cjs');
+const {
   sanitizeBuilderProviderContextDisclosureDecision,
 } = require('./builder-provider-context-disclosure-decision.cjs');
 
@@ -2123,6 +2126,14 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
+  function providerContextPromptEgressGateForSnapshot(providerContextProjection) {
+    if (providerContextProjection === null) return null;
+    return assessBuilderProviderContextPromptEgress({
+      provider_context_projection: providerContextProjection,
+      assessed_at_ms: valueAt(providerContextProjection, 'projected_at_ms'),
+    });
+  }
+
   function conversationStatusScope(conversationContext) {
     return Object.freeze({
       project_id: conversationContext.project.project_id,
@@ -2180,6 +2191,7 @@ function createBuilderGenerationMainService(rawOptions) {
     const workingContextState = workingContextStateForSnapshot(conversationContext);
     const contextAssembly = contextAssemblyForSnapshot(conversationContext, workingContextState);
     const providerContextProjection = await providerContextProjectionForSnapshot(contextAssembly);
+    const providerContextPromptEgressGate = providerContextPromptEgressGateForSnapshot(providerContextProjection);
     const snapshottedContext = Reflect.apply(
       recordConversationRunContextSnapshot,
       options.conversationService,
@@ -2188,6 +2200,7 @@ function createBuilderGenerationMainService(rawOptions) {
         working_context_state: workingContextState,
         context_assembly: contextAssembly,
         provider_context_projection: providerContextProjection,
+        provider_context_prompt_egress_gate: providerContextPromptEgressGate,
       }],
     );
     if (providerContextProjection !== null) {

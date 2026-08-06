@@ -17,6 +17,9 @@ const {
 const {
   createBuilderProviderContextProjection,
 } = require('../electron/builder-provider-context-projection.cjs');
+const {
+  assessBuilderProviderContextPromptEgress,
+} = require('../electron/builder-provider-context-prompt-egress-gate.cjs');
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -82,6 +85,7 @@ function snapshotInput(overrides = {}) {
     working_context_state: null,
     context_assembly: null,
     provider_context_projection: null,
+    provider_context_prompt_egress_gate: null,
     base_revision: BASE_REVISION,
     created_at_ms: 10,
     ...overrides,
@@ -153,6 +157,14 @@ function providerContextProjection(context_assembly, overrides = {}) {
   });
 }
 
+function providerContextPromptEgressGate(provider_context_projection, overrides = {}) {
+  return assessBuilderProviderContextPromptEgress({
+    provider_context_projection,
+    assessed_at_ms: provider_context_projection.projected_at_ms,
+    ...overrides,
+  });
+}
+
 function latestTaskCapsule() {
   return {
     message_id: BRIEF_MESSAGE_ID,
@@ -220,6 +232,13 @@ test('creates a digest-bound run context snapshot without private source authori
     blocked_reason: null,
     projected_at_ms: null,
   });
+  assert.deepEqual(snapshot.provider_context_prompt_egress_gate_ref, {
+    gate_id: null,
+    prompt_egress_status: null,
+    blocked_reason: null,
+    next_required_step: null,
+    assessed_at_ms: null,
+  });
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot), {
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -229,7 +248,7 @@ test('creates a digest-bound run context snapshot without private source authori
   }), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /"provider_context":|credential|source_tree|prompt|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
+    /"provider_context":|provider_prompt_context|credential|source_tree|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
   );
 });
 
@@ -254,7 +273,7 @@ test('records Context Assembly safe refs in the digest-bound snapshot', () => {
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot)), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /"provider_context":|model_context_segments|latest_user_message|objective_summary|credential|source_tree|prompt/iu,
+    /"provider_context":|provider_prompt_context|model_context_segments|latest_user_message|objective_summary|credential|source_tree/iu,
   );
 
   assert.throws(
@@ -283,10 +302,12 @@ test('records Provider Context Projection safe refs without provider context bod
   });
   const assembly = contextAssembly(state);
   const projection = providerContextProjection(assembly);
+  const promptEgressGate = providerContextPromptEgressGate(projection);
   const snapshot = createBuilderRunContextSnapshot(snapshotInput({
     working_context_state: state,
     context_assembly: assembly,
     provider_context_projection: projection,
+    provider_context_prompt_egress_gate: promptEgressGate,
   }));
 
   assert.deepEqual(snapshot.provider_context_projection_ref, {
@@ -295,10 +316,17 @@ test('records Provider Context Projection safe refs without provider context bod
     blocked_reason: 'context_disclosure_denied',
     projected_at_ms: 9,
   });
+  assert.deepEqual(snapshot.provider_context_prompt_egress_gate_ref, {
+    gate_id: promptEgressGate.gate_id,
+    prompt_egress_status: 'blocked_by_context_disclosure',
+    blocked_reason: 'context_disclosure_denied',
+    next_required_step: 'context_disclosure_denied',
+    assessed_at_ms: 9,
+  });
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot)), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /"provider_context":|model_context_segments|latest_user_message|objective_summary|credential|source_tree|prompt/iu,
+    /"provider_context":|provider_prompt_context|model_context_segments|latest_user_message|objective_summary|credential|source_tree/iu,
   );
 
   const otherAssembly = contextAssembly(state, {
@@ -313,6 +341,7 @@ test('records Provider Context Projection safe refs without provider context bod
       working_context_state: state,
       context_assembly: assembly,
       provider_context_projection: providerContextProjection(otherAssembly),
+      provider_context_prompt_egress_gate: promptEgressGate,
     })),
     BuilderRunContextSnapshotError,
   );
@@ -321,6 +350,16 @@ test('records Provider Context Projection safe refs without provider context bod
       working_context_state: null,
       context_assembly: null,
       provider_context_projection: projection,
+      provider_context_prompt_egress_gate: promptEgressGate,
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      working_context_state: state,
+      context_assembly: assembly,
+      provider_context_projection: projection,
+      provider_context_prompt_egress_gate: null,
     })),
     BuilderRunContextSnapshotError,
   );
@@ -330,6 +369,16 @@ test('records Provider Context Projection safe refs without provider context bod
       provider_context_projection_ref: {
         ...snapshot.provider_context_projection_ref,
         projection_status: 'ready',
+      },
+    }),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot({
+      ...snapshot,
+      provider_context_prompt_egress_gate_ref: {
+        ...snapshot.provider_context_prompt_egress_gate_ref,
+        prompt_egress_status: 'blocked_by_prompt_bridge',
       },
     }),
     BuilderRunContextSnapshotError,
@@ -421,7 +470,7 @@ test('binds a task capsule source message without including brief text', () => {
   }), snapshot);
   assert.doesNotMatch(
     JSON.stringify(snapshot),
-    /assistant_proposal|latest_user_goal|current_brief|credential|"provider_context":|source_tree|prompt/iu,
+    /assistant_proposal|latest_user_goal|current_brief|credential|"provider_context":|provider_prompt_context|source_tree/iu,
   );
 });
 

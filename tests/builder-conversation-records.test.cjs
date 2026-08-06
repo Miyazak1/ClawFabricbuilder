@@ -787,6 +787,7 @@ test('supports digest-bound run context snapshots without source or provider aut
     working_context_state: null,
     context_assembly: null,
     provider_context_projection: null,
+    provider_context_prompt_egress_gate: null,
     base_revision: BASE_REVISION,
     created_at_ms: 3,
   });
@@ -801,7 +802,7 @@ test('supports digest-bound run context snapshots without source or provider aut
   assert.equal(recorded.payload.snapshot.context_digest, snapshot.context_digest);
   assert.doesNotMatch(
     JSON.stringify(recorded),
-    /"provider_context":|credential|secret|source_tree|git_candidate_receipt|prompt|token|Authorization|Bearer/iu,
+    /"provider_context":|provider_prompt_context|credential|secret|source_tree|git_candidate_receipt|token|Authorization|Bearer/iu,
   );
   assert.throws(() => create('run_context_snapshot_recorded', {
     turn_id: typedId('turn', 1),

@@ -15,6 +15,9 @@ const {
 const {
   sanitizeBuilderProviderContextProjection,
 } = require('./builder-provider-context-projection.cjs');
+const {
+  sanitizeBuilderProviderContextPromptEgressGate,
+} = require('./builder-provider-context-prompt-egress-gate.cjs');
 
 const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v1';
 const SNAPSHOT_ID_PREFIX = 'builder-run-context-snapshot:';
@@ -32,6 +35,7 @@ const SNAPSHOT_KEYS = Object.freeze([
   'context_refs',
   'context_assembly_ref',
   'provider_context_projection_ref',
+  'provider_context_prompt_egress_gate_ref',
   'base_revision',
   'permissions',
   'capabilities',
@@ -51,6 +55,7 @@ const SNAPSHOT_BODY_KEYS = Object.freeze([
   'context_refs',
   'context_assembly_ref',
   'provider_context_projection_ref',
+  'provider_context_prompt_egress_gate_ref',
   'base_revision',
   'permissions',
   'capabilities',
@@ -86,6 +91,13 @@ const PROVIDER_CONTEXT_PROJECTION_REF_KEYS = Object.freeze([
   'blocked_reason',
   'projected_at_ms',
 ]);
+const PROVIDER_CONTEXT_PROMPT_EGRESS_GATE_REF_KEYS = Object.freeze([
+  'gate_id',
+  'prompt_egress_status',
+  'blocked_reason',
+  'next_required_step',
+  'assessed_at_ms',
+]);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const PERMISSIONS_KEYS = Object.freeze([
   'required_permissions',
@@ -109,6 +121,8 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SNAPSHOT_ID_PATTERN = /^builder-run-context-snapshot:[0-9a-f]{64}$/u;
 const CONTEXT_ASSEMBLY_ID_PATTERN = /^builder-context-assembly:[0-9a-f]{64}$/u;
 const PROVIDER_CONTEXT_PROJECTION_ID_PATTERN = /^builder-provider-context-projection:[0-9a-f]{64}$/u;
+const PROVIDER_CONTEXT_PROMPT_EGRESS_GATE_ID_PATTERN =
+  /^builder-provider-context-prompt-egress-gate:[0-9a-f]{64}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
 const DISPATCHES = Object.freeze(['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked']);
@@ -127,6 +141,7 @@ const CREATE_INPUT_KEYS = Object.freeze([
   'working_context_state',
   'context_assembly',
   'provider_context_projection',
+  'provider_context_prompt_egress_gate',
   'base_revision',
   'created_at_ms',
 ]);
@@ -524,6 +539,99 @@ function providerContextProjectionRefFromProjection(value, contextAssemblyRef) {
   };
 }
 
+function sanitizeProviderContextPromptEgressGateRef(value, providerContextProjectionRef) {
+  const source = exactObject(value, PROVIDER_CONTEXT_PROMPT_EGRESS_GATE_REF_KEYS);
+  const gateId = nullable(
+    valueAt(source, 'gate_id'),
+    (item) => safePattern(item, PROVIDER_CONTEXT_PROMPT_EGRESS_GATE_ID_PATTERN),
+  );
+  const promptEgressStatus = nullable(
+    valueAt(source, 'prompt_egress_status'),
+    (item) => safeEnum(item, ['blocked_by_context_disclosure', 'blocked_by_prompt_bridge']),
+  );
+  const blockedReason = nullable(
+    valueAt(source, 'blocked_reason'),
+    (item) => safeEnum(item, [
+      'context_disclosure_not_approved',
+      'context_disclosure_denied',
+      'prompt_bridge_not_enabled',
+    ]),
+  );
+  const nextRequiredStep = nullable(
+    valueAt(source, 'next_required_step'),
+    (item) => safeEnum(item, [
+      'approve_context_disclosure',
+      'context_disclosure_denied',
+      'implement_explicit_prompt_bridge',
+    ]),
+  );
+  const assessedAtMs = nullable(valueAt(source, 'assessed_at_ms'), safeTimestamp);
+  if (
+    (gateId === null) !== (promptEgressStatus === null)
+    || (gateId === null) !== (blockedReason === null)
+    || (gateId === null) !== (nextRequiredStep === null)
+    || (gateId === null) !== (assessedAtMs === null)
+    || (gateId === null && providerContextProjectionRef.projection_id !== null)
+    || (gateId !== null && providerContextProjectionRef.projection_id === null)
+    || (
+      promptEgressStatus === 'blocked_by_prompt_bridge'
+      && (
+        providerContextProjectionRef.projection_status !== 'ready'
+        || blockedReason !== 'prompt_bridge_not_enabled'
+        || nextRequiredStep !== 'implement_explicit_prompt_bridge'
+      )
+    )
+    || (
+      promptEgressStatus === 'blocked_by_context_disclosure'
+      && (
+        providerContextProjectionRef.projection_status !== 'blocked'
+        || blockedReason !== providerContextProjectionRef.blocked_reason
+        || (
+          blockedReason === 'context_disclosure_not_approved'
+          && nextRequiredStep !== 'approve_context_disclosure'
+        )
+        || (
+          blockedReason === 'context_disclosure_denied'
+          && nextRequiredStep !== 'context_disclosure_denied'
+        )
+      )
+    )
+    || (assessedAtMs !== null && assessedAtMs < providerContextProjectionRef.projected_at_ms)
+  ) fail();
+  return {
+    gate_id: gateId,
+    prompt_egress_status: promptEgressStatus,
+    blocked_reason: blockedReason,
+    next_required_step: nextRequiredStep,
+    assessed_at_ms: assessedAtMs,
+  };
+}
+
+function providerContextPromptEgressGateRefFromGate(value, providerContextProjectionRef) {
+  if (value === null) {
+    return {
+      gate_id: null,
+      prompt_egress_status: null,
+      blocked_reason: null,
+      next_required_step: null,
+      assessed_at_ms: null,
+    };
+  }
+  const gate = sanitizeBuilderProviderContextPromptEgressGate(value);
+  if (
+    gate.source_ref.projection_id !== providerContextProjectionRef.projection_id
+    || gate.source_ref.projected_at_ms !== providerContextProjectionRef.projected_at_ms
+    || gate.projection_status !== providerContextProjectionRef.projection_status
+  ) fail();
+  return {
+    gate_id: gate.gate_id,
+    prompt_egress_status: gate.prompt_egress_status,
+    blocked_reason: gate.blocked_reason,
+    next_required_step: gate.next_required_step,
+    assessed_at_ms: gate.assessed_at_ms,
+  };
+}
+
 function sanitizeBaseRevision(value) {
   if (value === null) return null;
   const source = exactObject(value, BASE_REVISION_KEYS);
@@ -566,6 +674,10 @@ function snapshotBodyFrom(value) {
     createdAtMs,
     contextRefs,
   );
+  const providerContextProjectionRef = sanitizeProviderContextProjectionRef(
+    valueAt(source, 'provider_context_projection_ref'),
+    contextAssemblyRef,
+  );
   if (
     briefReference.status === 'task_capsule_update'
     && !includedMessageIds.includes(briefReference.source_message_id)
@@ -582,9 +694,10 @@ function snapshotBodyFrom(value) {
     brief_reference: briefReference,
     context_refs: contextRefs,
     context_assembly_ref: contextAssemblyRef,
-    provider_context_projection_ref: sanitizeProviderContextProjectionRef(
-      valueAt(source, 'provider_context_projection_ref'),
-      contextAssemblyRef,
+    provider_context_projection_ref: providerContextProjectionRef,
+    provider_context_prompt_egress_gate_ref: sanitizeProviderContextPromptEgressGateRef(
+      valueAt(source, 'provider_context_prompt_egress_gate_ref'),
+      providerContextProjectionRef,
     ),
     base_revision: sanitizeBaseRevision(valueAt(source, 'base_revision')),
     permissions: sanitizePermissions(valueAt(source, 'permissions')),
@@ -617,6 +730,7 @@ function sanitizeBuilderRunContextSnapshot(value, expected = null) {
     context_refs: valueAt(source, 'context_refs'),
     context_assembly_ref: valueAt(source, 'context_assembly_ref'),
     provider_context_projection_ref: valueAt(source, 'provider_context_projection_ref'),
+    provider_context_prompt_egress_gate_ref: valueAt(source, 'provider_context_prompt_egress_gate_ref'),
     base_revision: valueAt(source, 'base_revision'),
     permissions: valueAt(source, 'permissions'),
     capabilities: valueAt(source, 'capabilities'),
@@ -707,6 +821,10 @@ function createBuilderRunContextSnapshot(input) {
     projectId,
     contextRefs,
   );
+  const providerContextProjectionRef = providerContextProjectionRefFromProjection(
+    valueAt(source, 'provider_context_projection'),
+    contextAssemblyRef,
+  );
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
     project_id: projectId,
@@ -731,9 +849,10 @@ function createBuilderRunContextSnapshot(input) {
     },
     context_refs: contextRefs,
     context_assembly_ref: contextAssemblyRef,
-    provider_context_projection_ref: providerContextProjectionRefFromProjection(
-      valueAt(source, 'provider_context_projection'),
-      contextAssemblyRef,
+    provider_context_projection_ref: providerContextProjectionRef,
+    provider_context_prompt_egress_gate_ref: providerContextPromptEgressGateRefFromGate(
+      valueAt(source, 'provider_context_prompt_egress_gate'),
+      providerContextProjectionRef,
     ),
     base_revision: valueAt(source, 'base_revision'),
     permissions: {

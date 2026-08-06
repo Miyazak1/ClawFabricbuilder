@@ -934,6 +934,7 @@ test('records a digest-bound run context snapshot before progress or tools', () 
       working_context_state: workingContextState,
       context_assembly: null,
       provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
     });
     const snapshotEvent = snapshotted.events.at(-1);
 
@@ -984,6 +985,7 @@ test('records a digest-bound run context snapshot before progress or tools', () 
       working_context_state: null,
       context_assembly: null,
       provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
     }), {
       code: 'builder_conversation_main_service_unavailable',
     });
@@ -996,6 +998,7 @@ test('records a digest-bound run context snapshot before progress or tools', () 
       working_context_state: null,
       context_assembly: null,
       provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
     }), {
       code: 'builder_conversation_main_service_unavailable',
     });
@@ -1769,6 +1772,7 @@ test('records task capsule source message ids in run context snapshots', () => {
       working_context_state: null,
       context_assembly: null,
       provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
     });
     const snapshot = snapshotted.events.at(-1).payload.snapshot;
 
@@ -1869,6 +1873,7 @@ test('does not cite stale task capsule brief after a newer not-ready correction'
       working_context_state: null,
       context_assembly: null,
       provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
     });
     const snapshot = snapshotted.events.at(-1).payload.snapshot;
 

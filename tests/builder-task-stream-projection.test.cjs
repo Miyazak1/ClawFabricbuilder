@@ -200,6 +200,7 @@ function runContextSnapshot({ turnId, taskId, runId, routeDecisionRecord, messag
     working_context_state: null,
     context_assembly: null,
     provider_context_projection: null,
+    provider_context_prompt_egress_gate: null,
     base_revision: null,
     created_at_ms: 4_000,
   });
