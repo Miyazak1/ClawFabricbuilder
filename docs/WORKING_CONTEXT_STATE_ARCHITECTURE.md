@@ -538,8 +538,11 @@ Current checkpoint:
   `context.disclose` action on a `provider` resource. It is intentionally
   separate from `network.request`, so a generic network grant cannot silently
   approve sending Working Context to a configured provider.
-- It is not yet consumed by the provider prompt path; current provider prompt
-  assembly still uses the older generation context path.
+- Generation main can now call the disclosure decision and provider-context
+  projection gate while recording a Run Context Snapshot, then keep the
+  resulting projection main-only. It is still not consumed by the provider
+  prompt path; current provider prompt assembly still uses the older generation
+  context path.
 
 ### 5. Frontend Projection
 

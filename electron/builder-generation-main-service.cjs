@@ -44,6 +44,12 @@ const {
 const {
   createBuilderContextAssembly,
 } = require('./builder-context-assembler.cjs');
+const {
+  createBuilderProviderContextProjection,
+} = require('./builder-provider-context-projection.cjs');
+const {
+  sanitizeBuilderProviderContextDisclosureDecision,
+} = require('./builder-provider-context-disclosure-decision.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
@@ -75,6 +81,7 @@ const OPTION_KEYS = Object.freeze([
   'sessionTaskAddressRecordingService',
   'sessionTaskAddressBindingService',
   'workingContextStateService',
+  'providerContextDisclosureDecisionService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -1108,6 +1115,12 @@ function sanitizeOptions(value) {
   ) {
     fail();
   }
+  if (
+    keys.includes('providerContextDisclosureDecisionService')
+    && !isPlainObject(descriptors.providerContextDisclosureDecisionService.value)
+  ) {
+    fail();
+  }
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1132,6 +1145,9 @@ function sanitizeOptions(value) {
       : {}),
     ...(keys.includes('workingContextStateService')
       ? { workingContextStateService: descriptors.workingContextStateService.value }
+      : {}),
+    ...(keys.includes('providerContextDisclosureDecisionService')
+      ? { providerContextDisclosureDecisionService: descriptors.providerContextDisclosureDecisionService.value }
       : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
@@ -1599,6 +1615,12 @@ function createBuilderGenerationMainService(rawOptions) {
       options.workingContextStateService,
       'read_current_working_context_state_for_conversation',
     );
+  const decideProviderContextDisclosure = options.providerContextDisclosureDecisionService === undefined
+    ? null
+    : ownMethod(
+      options.providerContextDisclosureDecisionService,
+      'decide',
+    );
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -1607,6 +1629,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingGenerateRouteDecisionHints = new Map();
   const pendingGenerateQueuedFollowups = new Map();
   const generationContexts = new WeakMap();
+  const providerContextProjections = new WeakMap();
   const draftContinuationContexts = new WeakMap();
   const pendingDraftContinuationContexts = new Map();
   const explanationContexts = new WeakMap();
@@ -1934,6 +1957,10 @@ function createBuilderGenerationMainService(rawOptions) {
       git_request_id: newId(options.createUuid, 'builder-git-request'),
     });
     generationContexts.set(generationContext, conversationContext);
+    const providerContextProjection = providerContextProjections.get(conversationContext);
+    if (providerContextProjection !== undefined) {
+      providerContextProjections.set(generationContext, providerContextProjection);
+    }
     liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
     return generationContext;
   }
@@ -2053,17 +2080,44 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function recordConversationContextSnapshot(conversationContext) {
+  async function providerContextProjectionForSnapshot(contextAssembly) {
+    if (contextAssembly === null || decideProviderContextDisclosure === null) return null;
+    const decisionResult = sanitizeBuilderProviderContextDisclosureDecision(
+      await Reflect.apply(
+        decideProviderContextDisclosure,
+        options.providerContextDisclosureDecisionService,
+        [{ context_assembly: contextAssembly }],
+      ),
+    );
+    const disclosureDecision = valueAt(decisionResult, 'disclosure_decision');
+    const approvedAtMs = valueAt(disclosureDecision, 'approved_at_ms');
+    return createBuilderProviderContextProjection({
+      context_assembly: contextAssembly,
+      disclosure_decision: disclosureDecision,
+      projected_at_ms: Math.max(
+        valueAt(contextAssembly, 'assembled_at_ms'),
+        approvedAtMs === null ? 0 : approvedAtMs,
+      ),
+    });
+  }
+
+  async function recordConversationContextSnapshot(conversationContext) {
     const workingContextState = workingContextStateForSnapshot(conversationContext);
-    return Reflect.apply(
+    const contextAssembly = contextAssemblyForSnapshot(conversationContext, workingContextState);
+    const providerContextProjection = await providerContextProjectionForSnapshot(contextAssembly);
+    const snapshottedContext = Reflect.apply(
       recordConversationRunContextSnapshot,
       options.conversationService,
       [{
         context: conversationContext,
         working_context_state: workingContextState,
-        context_assembly: contextAssemblyForSnapshot(conversationContext, workingContextState),
+        context_assembly: contextAssembly,
       }],
     );
+    if (providerContextProjection !== null) {
+      providerContextProjections.set(snapshottedContext, providerContextProjection);
+    }
+    return snapshottedContext;
   }
 
   function recordSessionTaskAddressesFromWorkContext(conversationContext) {
@@ -2247,7 +2301,7 @@ function createBuilderGenerationMainService(rawOptions) {
           conversationContext,
           approvedPlanEditContext,
         );
-        conversationContext = recordConversationContextSnapshot(conversationContext);
+        conversationContext = await recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         retryableContexts.delete(key);
         notifyGenerationStarted(request, approvedPlanEditContext.project_id);
@@ -2271,7 +2325,7 @@ function createBuilderGenerationMainService(rawOptions) {
           options.conversationService,
           [{ context: retryableContext, failure_code: failureCode }],
         );
-        retriedContext = recordConversationContextSnapshot(retriedContext);
+        retriedContext = await recordConversationContextSnapshot(retriedContext);
         const base = await baseForGeneration(
           request,
           retriedContext.project.project_id,
@@ -2329,7 +2383,7 @@ function createBuilderGenerationMainService(rawOptions) {
       } else {
         bindQueuedFollowupWorkContextToCurrentTaskAddress(conversationContext, queuedFollowup);
       }
-      conversationContext = recordConversationContextSnapshot(conversationContext);
+      conversationContext = await recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -2362,7 +2416,7 @@ function createBuilderGenerationMainService(rawOptions) {
         }],
       );
       bindDraftContinuationContextToCurrentTaskAddress(conversationContext, continuation);
-      conversationContext = recordConversationContextSnapshot(conversationContext);
+      conversationContext = await recordConversationContextSnapshot(conversationContext);
       const candidateBase = await baseForGeneration(
         request,
         conversationContext.project.project_id,
@@ -2415,7 +2469,7 @@ function createBuilderGenerationMainService(rawOptions) {
             route_decision_hint: routeDecisionHint,
           }],
         );
-        conversationContext = recordConversationContextSnapshot(conversationContext);
+        conversationContext = await recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         notifyGenerationStarted(request, draftAnswerContext.project_id);
         const explanationContext = freezeDeep({
@@ -2471,7 +2525,7 @@ function createBuilderGenerationMainService(rawOptions) {
             queued_followup: queuedFollowup,
           }],
         );
-      conversationContext = recordConversationContextSnapshot(conversationContext);
+      conversationContext = await recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(ANSWER_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -2518,7 +2572,7 @@ function createBuilderGenerationMainService(rawOptions) {
         }],
       );
       recordSessionTaskAddressesFromWorkContext(conversationContext);
-      conversationContext = recordConversationContextSnapshot(conversationContext);
+      conversationContext = await recordConversationContextSnapshot(conversationContext);
       activeContexts.set(key, conversationContext);
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);
@@ -2879,7 +2933,7 @@ function createBuilderGenerationMainService(rawOptions) {
           }],
         );
         activeContexts.set(key, conversationContext);
-        conversationContext = recordConversationContextSnapshot(conversationContext);
+        conversationContext = await recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         conversationContext = Reflect.apply(
           recordConversationRunProgress,

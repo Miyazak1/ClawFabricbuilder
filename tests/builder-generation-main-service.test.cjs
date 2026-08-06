@@ -68,6 +68,14 @@ const {
 const {
   createBuilderWorkingContextStateService,
 } = require('../electron/builder-working-context-state-service.cjs');
+const {
+  BUILDER_PERMISSION_FACTS_READ_RESULT_VERSION,
+  BUILDER_PERMISSION_POLICY_VERSION,
+  createBuilderPermissionEvaluator,
+} = require('../electron/builder-permission-authority-contract.cjs');
+const {
+  createBuilderProviderContextDisclosureDecisionService,
+} = require('../electron/builder-provider-context-disclosure-decision.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -4405,6 +4413,31 @@ test('uses the Working Context State service as contextual submit route evidence
     contextSnapshotInputs.push(input);
     return recordRunContextSnapshot(input);
   };
+  const providerDisclosureInputs = [];
+  const permissionReads = [];
+  const permissionEvaluator = createBuilderPermissionEvaluator({
+    read_permission_facts: async (sourceRequest) => {
+      permissionReads.push(sourceRequest);
+      return {
+        result_version: BUILDER_PERMISSION_FACTS_READ_RESULT_VERSION,
+        permission_authority: 'main_owned_permission_fact_store',
+        policy_version: sourceRequest.policy_version,
+        actor_id: sourceRequest.actor_id,
+        action: sourceRequest.action,
+        resource: sourceRequest.resource,
+        grants: [],
+        revocations: [],
+      };
+    },
+  });
+  const providerContextDisclosureDecisionService = createBuilderProviderContextDisclosureDecisionService({
+    actor_id: `builder-user:${UUIDS[5]}`,
+    now_ms: () => 10_000,
+    evaluate_permission: async (sourceRequest) => {
+      providerDisclosureInputs.push(sourceRequest);
+      return permissionEvaluator.evaluate(sourceRequest);
+    },
+  });
   let transportInput;
   const buildService = createBuilderGenerationMainService({
     ...repositories({
@@ -4439,6 +4472,7 @@ test('uses the Working Context State service as contextual submit route evidence
           return workingContextStateService.read_current_working_context_state_for_conversation(input);
         },
       },
+      providerContextDisclosureDecisionService,
     }),
     transport: async (input) => {
       transportInput = input;
@@ -4470,6 +4504,19 @@ test('uses the Working Context State service as contextual submit route evidence
   assert.match(contextSnapshotInputs[0].context_assembly.assembly_id, /^builder-context-assembly:[0-9a-f]{64}$/u);
   assert.equal(contextSnapshotInputs[0].context_assembly.assembly_purpose, 'contextual_build');
   assert.equal(contextSnapshotInputs[0].context_assembly.permission_gate.side_effect_ready, true);
+  assert.equal(providerDisclosureInputs.length, 1);
+  assert.deepEqual(providerDisclosureInputs[0], {
+    policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+    actor_id: `builder-user:${UUIDS[5]}`,
+    action: 'context.disclose',
+    resource: {
+      resource_kind: 'provider',
+      project_id: PROJECT_ID,
+      resource_id: 'provider:configured/contextual_build',
+    },
+    now_ms: 10_000,
+  });
+  assert.deepEqual(permissionReads, providerDisclosureInputs);
   assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
     brief_version: 'builder-working-brief.v1',
     source: 'task_capsule_update',
@@ -4483,6 +4530,9 @@ test('uses the Working Context State service as contextual submit route evidence
     'working_context_state',
     'contextual_build',
   ]);
+  assert.equal(JSON.stringify(providerPrompt).includes('provider_context'), false);
+  assert.equal(JSON.stringify(providerPrompt).includes('builder-provider-context'), false);
+  assert.equal(JSON.stringify(providerPrompt).includes('context.disclose'), false);
 });
 
 test('does not let stale task capsule store readiness override a newer task stream correction', async (t) => {

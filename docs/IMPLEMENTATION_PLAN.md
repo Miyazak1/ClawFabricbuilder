@@ -799,10 +799,12 @@ Evidence requirements:
   timestamps. `builder-provider-context-disclosure-decision.v1` now derives
   that decision from the main-owned deny-by-default permission evaluator using
   the narrow `context.disclose` action on a `provider` resource; it is distinct
-  from `network.request` and cannot be implied by a generic network grant. It
-  does not yet replace the generation provider prompt path, and it performs no
-  provider dispatch, tool dispatch, SQLite write, Git/source mutation,
-  permission grant, IPC/preload registration, or renderer projection;
+  from `network.request` and cannot be implied by a generic network grant.
+  Generation main can now call that gate while recording Run Snapshot evidence
+  and retain the resulting provider-context projection main-only. It does not
+  yet replace the generation provider prompt path, and it performs no provider
+  dispatch, tool dispatch, SQLite write, Git/source mutation, permission grant,
+  IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works
