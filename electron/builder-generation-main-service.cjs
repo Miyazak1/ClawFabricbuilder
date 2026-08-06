@@ -1935,11 +1935,75 @@ function createBuilderGenerationMainService(rawOptions) {
     return generationContext;
   }
 
+  function latestUserIntentFromConversationContext(conversationContext) {
+    const submitted = conversationContext.events.find((event) => (
+      valueAt(event, 'event_type') === 'turn_submitted'
+      && valueAt(valueAt(event, 'payload'), 'turn_id') === conversationContext.ids.turn_id
+    ));
+    if (submitted === undefined) return null;
+    const message = valueAt(valueAt(valueAt(submitted, 'payload'), 'message'), 'text');
+    return typeof message === 'string' ? message : null;
+  }
+
+  function workingContextSnapshotUpdatedAtMs(conversationContext) {
+    const submitted = conversationContext.events.find((event) => (
+      valueAt(event, 'event_type') === 'turn_submitted'
+      && valueAt(valueAt(event, 'payload'), 'turn_id') === conversationContext.ids.turn_id
+    ));
+    if (submitted !== undefined) {
+      const decidedAtMs = valueAt(
+        valueAt(valueAt(submitted, 'payload'), 'route_decision'),
+        'decided_at_ms',
+      );
+      if (Number.isSafeInteger(decidedAtMs)) return safeTimestamp(decidedAtMs);
+    }
+    return safeTimestamp(conversationContext.conversation.created_at_ms);
+  }
+
+  function workingContextStateForSnapshot(conversationContext) {
+    if (readCurrentWorkingContextStateForConversation === null) return null;
+    try {
+      const baseRevision = baseRevisionFromConversationContext(conversationContext);
+      const result = Reflect.apply(
+        readCurrentWorkingContextStateForConversation,
+        options.workingContextStateService,
+        [{
+          project_id: conversationContext.project.project_id,
+          conversation_id: conversationContext.conversation.conversation_id,
+          objective_summary: null,
+          confirmed_constraints: [],
+          rejected_constraints: [],
+          open_questions: [],
+          latest_user_intent: latestUserIntentFromConversationContext(conversationContext),
+          source_refs: [],
+          compaction_refs: [],
+          handoff_refs: [],
+          approved_plan_ref: null,
+          base_revision_ref: baseRevision === null
+            ? null
+            : { revision_receipt_digest: baseRevision.revision_receipt_digest },
+          invalidated_by: null,
+          updated_at_ms: workingContextSnapshotUpdatedAtMs(conversationContext),
+        }],
+      );
+      if (
+        !isPlainObject(result)
+        || valueAt(result, 'result_version') !== 'builder-working-context-state-service-result.v1'
+      ) return null;
+      return valueAt(result, 'working_context_state');
+    } catch {
+      return null;
+    }
+  }
+
   function recordConversationContextSnapshot(conversationContext) {
     return Reflect.apply(
       recordConversationRunContextSnapshot,
       options.conversationService,
-      [{ context: conversationContext }],
+      [{
+        context: conversationContext,
+        working_context_state: workingContextStateForSnapshot(conversationContext),
+      }],
     );
   }
 
@@ -2120,12 +2184,11 @@ function createBuilderGenerationMainService(rawOptions) {
             base_revision: approvedPlanEditContext.base_revision,
           }],
         );
-        const addressBindingContext = conversationContext;
-        conversationContext = recordConversationContextSnapshot(conversationContext);
         bindApprovedPlanContinuationContextToCurrentTaskAddress(
-          addressBindingContext,
+          conversationContext,
           approvedPlanEditContext,
         );
+        conversationContext = recordConversationContextSnapshot(conversationContext);
         activeContexts.set(key, conversationContext);
         retryableContexts.delete(key);
         notifyGenerationStarted(request, approvedPlanEditContext.project_id);
@@ -2202,13 +2265,12 @@ function createBuilderGenerationMainService(rawOptions) {
             queued_followup: queuedFollowup,
           }],
         );
-      const addressBindingContext = conversationContext;
-      conversationContext = recordConversationContextSnapshot(conversationContext);
       if (queuedFollowup === null) {
-        recordSessionTaskAddressesFromWorkContext(addressBindingContext);
+        recordSessionTaskAddressesFromWorkContext(conversationContext);
       } else {
-        bindQueuedFollowupWorkContextToCurrentTaskAddress(addressBindingContext, queuedFollowup);
+        bindQueuedFollowupWorkContextToCurrentTaskAddress(conversationContext, queuedFollowup);
       }
+      conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -2240,9 +2302,8 @@ function createBuilderGenerationMainService(rawOptions) {
           request_digest: request.request_digest,
         }],
       );
-      const addressBindingContext = conversationContext;
+      bindDraftContinuationContextToCurrentTaskAddress(conversationContext, continuation);
       conversationContext = recordConversationContextSnapshot(conversationContext);
-      bindDraftContinuationContextToCurrentTaskAddress(addressBindingContext, continuation);
       const candidateBase = await baseForGeneration(
         request,
         conversationContext.project.project_id,
@@ -2397,8 +2458,8 @@ function createBuilderGenerationMainService(rawOptions) {
           route_decision_hint: planRouteDecisionHint(),
         }],
       );
-      conversationContext = recordConversationContextSnapshot(conversationContext);
       recordSessionTaskAddressesFromWorkContext(conversationContext);
+      conversationContext = recordConversationContextSnapshot(conversationContext);
       activeContexts.set(key, conversationContext);
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);

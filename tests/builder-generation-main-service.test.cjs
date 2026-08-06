@@ -711,7 +711,7 @@ function conversationService(options = {}) {
       authority: { ...CONVERSATION_AUTHORITY },
     });
   }
-  function runContextSnapshotEvent(context) {
+  function runContextSnapshotEvent(context, workingContextState = null) {
     const submitted = context.events.find((event) => (
       event.event_type === 'turn_submitted'
       && event.payload.turn_id === context.ids.turn_id
@@ -725,6 +725,7 @@ function conversationService(options = {}) {
       message_id: submitted.payload.message.message_id,
       route_decision: submitted.payload.route_decision,
       latest_task_capsule: null,
+      working_context_state: workingContextState,
       base_revision: submitted.payload.base_revision,
       created_at_ms: 99,
     });
@@ -1022,7 +1023,7 @@ function conversationService(options = {}) {
     },
     record_run_context_snapshot(input) {
       calls.contextSnapshot.push(input);
-      const event = runContextSnapshotEvent(input.context);
+      const event = runContextSnapshotEvent(input.context, input.working_context_state);
       return {
         ...input.context,
         start_head: eventHead(event),
@@ -4409,6 +4410,21 @@ test('uses the Working Context State service as contextual submit route evidence
           }));
         },
       },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
       createUuid: createUniqueUuidFactory(1_020),
       workingContextStateService: {
         read_current_working_context_state_for_conversation(input) {
@@ -4436,10 +4452,13 @@ test('uses the Working Context State service as contextual submit route evidence
   const providerPrompt = JSON.parse(transportInput.messages[1].content);
 
   assert.equal(draft.title, 'Portfolio from working context');
-  assert.equal(workingContextReads.length, 1);
+  assert.equal(workingContextReads.length, 2);
   assert.equal(workingContextReads[0].project_id, PROJECT_ID);
   assert.equal(workingContextReads[0].conversation_id, CONVERSATION_ID);
   assert.equal(workingContextReads[0].latest_user_intent, '按刚才方案做');
+  assert.equal(workingContextReads[1].project_id, PROJECT_ID);
+  assert.equal(workingContextReads[1].conversation_id, CONVERSATION_ID);
+  assert.equal(workingContextReads[1].latest_user_intent, '按刚才方案做');
   assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
     brief_version: 'builder-working-brief.v1',
     source: 'task_capsule_update',

@@ -197,6 +197,7 @@ function runContextSnapshot({ turnId, taskId, runId, routeDecisionRecord, messag
     message_id: messageId,
     route_decision: routeDecisionRecord,
     latest_task_capsule: null,
+    working_context_state: null,
     base_revision: null,
     created_at_ms: 4_000,
   });

@@ -784,6 +784,7 @@ test('supports digest-bound run context snapshots without source or provider aut
     message_id: typedId('message', 1),
     route_decision: submitted.payload.route_decision,
     latest_task_capsule: null,
+    working_context_state: null,
     base_revision: BASE_REVISION,
     created_at_ms: 3,
   });

@@ -8,6 +8,9 @@ const {
   createBuilderRunContextSnapshot,
   sanitizeBuilderRunContextSnapshot,
 } = require('../electron/builder-run-context-snapshot.cjs');
+const {
+  createBuilderWorkingContextState,
+} = require('../electron/builder-working-context-state.cjs');
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -23,6 +26,16 @@ const BRIEF_ROUTE_DECISION_ID = 'builder-route-decision:22222222-2222-4222-8222-
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: `sha256:${'a'.repeat(64)}`,
   commit_oid: 'b'.repeat(40),
+});
+const COMPACTION_REF = Object.freeze({
+  summary_digest: `sha256:${'c'.repeat(64)}`,
+  source_range_digest: `sha256:${'d'.repeat(64)}`,
+  compacted_at_ms: 8,
+});
+const HANDOFF_REF = Object.freeze({
+  packet_digest: `sha256:${'e'.repeat(64)}`,
+  inserted_at_ms: 6,
+  adopted_at_ms: 9,
 });
 
 function routeDecision(overrides = {}) {
@@ -55,10 +68,36 @@ function snapshotInput(overrides = {}) {
     message_id: MESSAGE_ID,
     route_decision: routeDecision(),
     latest_task_capsule: null,
+    working_context_state: null,
     base_revision: BASE_REVISION,
     created_at_ms: 10,
     ...overrides,
   };
+}
+
+function workingContextState(overrides = {}) {
+  return createBuilderWorkingContextState({
+    project_id: PROJECT_ID,
+    session_id: 'builder-session:22222222-2222-4222-8222-222222222222',
+    task_address_id: 'builder-task-address:33333333-3333-4333-8333-333333333333',
+    conversation_id: CONVERSATION_ID,
+    objective_summary: null,
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: null,
+    source_refs: [],
+    compaction_refs: [],
+    handoff_refs: [],
+    latest_task_capsule: null,
+    approved_plan_ref: null,
+    base_revision_ref: {
+      revision_receipt_digest: BASE_REVISION.revision_receipt_digest,
+    },
+    invalidated_by: null,
+    updated_at_ms: 9,
+    ...overrides,
+  });
 }
 
 function latestTaskCapsule() {
@@ -111,6 +150,12 @@ test('creates a digest-bound run context snapshot without private source authori
     permission_result: 'allowed',
     admission_source: 'route_decision',
   });
+  assert.deepEqual(snapshot.context_refs, {
+    working_context_state_id: null,
+    working_context_state_updated_at_ms: null,
+    compaction_refs: [],
+    handoff_refs: [],
+  });
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot), {
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -121,6 +166,45 @@ test('creates a digest-bound run context snapshot without private source authori
   assert.doesNotMatch(
     JSON.stringify(snapshot),
     /credential|provider|source_tree|prompt|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
+  );
+});
+
+test('records Working Context safe refs in the digest-bound snapshot', () => {
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    working_context_state: workingContextState({
+      compaction_refs: [COMPACTION_REF],
+      handoff_refs: [HANDOFF_REF],
+    }),
+  }));
+  const digestBeforeTamper = snapshot.context_digest;
+
+  assert.deepEqual(snapshot.context_refs, {
+    working_context_state_id: snapshot.context_refs.working_context_state_id,
+    working_context_state_updated_at_ms: 9,
+    compaction_refs: [COMPACTION_REF],
+    handoff_refs: [HANDOFF_REF],
+  });
+  assert.match(snapshot.context_refs.working_context_state_id, /^builder-working-context-state:[0-9a-f]{64}$/u);
+  assert.doesNotMatch(
+    JSON.stringify(snapshot),
+    /objective_summary|confirmed_constraints|handoff_id|requested_next_action|summary_text|provider|credential|source_tree/iu,
+  );
+
+  const tampered = structuredClone(snapshot);
+  tampered.context_refs.compaction_refs[0].summary_digest = `sha256:${'1'.repeat(64)}`;
+  const different = createBuilderRunContextSnapshot(snapshotInput({
+    working_context_state: workingContextState({
+      compaction_refs: [{
+        ...COMPACTION_REF,
+        summary_digest: `sha256:${'1'.repeat(64)}`,
+      }],
+      handoff_refs: [HANDOFF_REF],
+    }),
+  }));
+  assert.notEqual(different.context_digest, digestBeforeTamper);
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot(tampered),
+    BuilderRunContextSnapshotError,
   );
 });
 
@@ -292,6 +376,43 @@ test('rejects private route signals, extra fields, and mismatched identity', () 
         task_id: null,
       },
     ),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      working_context_state: {
+        ...workingContextState({
+          updated_at_ms: 11,
+        }),
+      },
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot({
+      ...createBuilderRunContextSnapshot(snapshotInput()),
+      context_refs: {
+        working_context_state_id: null,
+        working_context_state_updated_at_ms: null,
+        compaction_refs: [{
+          ...COMPACTION_REF,
+          summary_text: 'private summary',
+        }],
+        handoff_refs: [],
+      },
+    }),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot({
+      ...createBuilderRunContextSnapshot(snapshotInput()),
+      context_refs: {
+        working_context_state_id: null,
+        working_context_state_updated_at_ms: null,
+        compaction_refs: [COMPACTION_REF],
+        handoff_refs: [],
+      },
+    }),
     BuilderRunContextSnapshotError,
   );
 });

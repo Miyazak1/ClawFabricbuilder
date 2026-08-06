@@ -60,6 +60,9 @@ const {
 const {
   createBuilderAgentStepProgressConversationAdmission,
 } = require('../electron/builder-agent-step-progress-conversation-admission.cjs');
+const {
+  createBuilderWorkingContextState,
+} = require('../electron/builder-working-context-state.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
@@ -74,6 +77,16 @@ const TOOL_PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
 const BASE_REVISION = Object.freeze({
   revision_receipt_digest: `sha256:${'3'.repeat(64)}`,
   commit_oid: '4'.repeat(40),
+});
+const COMPACTION_REF = Object.freeze({
+  summary_digest: `sha256:${'5'.repeat(64)}`,
+  source_range_digest: `sha256:${'6'.repeat(64)}`,
+  compacted_at_ms: 998,
+});
+const HANDOFF_REF = Object.freeze({
+  packet_digest: `sha256:${'7'.repeat(64)}`,
+  inserted_at_ms: 997,
+  adopted_at_ms: 999,
 });
 
 function uuidFactory(start = 1) {
@@ -861,7 +874,29 @@ test('records a digest-bound run context snapshot before progress or tools', () 
   const item = fixture();
   try {
     const first = begin(item.service);
-    const snapshotted = item.service.record_run_context_snapshot({ context: first });
+    const workingContextState = createBuilderWorkingContextState({
+      project_id: PROJECT_ID,
+      session_id: 'builder-session:11111111-1111-4111-8111-111111111111',
+      task_address_id: 'builder-task-address:11111111-1111-4111-8111-111111111111',
+      conversation_id: first.conversation.conversation_id,
+      objective_summary: null,
+      confirmed_constraints: [],
+      rejected_constraints: [],
+      open_questions: [],
+      latest_user_intent: 'Build a focused timer',
+      source_refs: [],
+      compaction_refs: [COMPACTION_REF],
+      handoff_refs: [HANDOFF_REF],
+      latest_task_capsule: null,
+      approved_plan_ref: null,
+      base_revision_ref: null,
+      invalidated_by: null,
+      updated_at_ms: 999,
+    });
+    const snapshotted = item.service.record_run_context_snapshot({
+      context: first,
+      working_context_state: workingContextState,
+    });
     const snapshotEvent = snapshotted.events.at(-1);
 
     assert.equal(snapshotted.start_head.sequence, 3);
@@ -869,6 +904,12 @@ test('records a digest-bound run context snapshot before progress or tools', () 
     assert.equal(snapshotEvent.payload.turn_id, first.ids.turn_id);
     assert.equal(snapshotEvent.payload.run_id, first.ids.run_id);
     assert.match(snapshotEvent.payload.snapshot.snapshot_id, /^builder-run-context-snapshot:/u);
+    assert.equal(
+      snapshotEvent.payload.snapshot.context_refs.working_context_state_id,
+      workingContextState.state_id,
+    );
+    assert.deepEqual(snapshotEvent.payload.snapshot.context_refs.compaction_refs, [COMPACTION_REF]);
+    assert.deepEqual(snapshotEvent.payload.snapshot.context_refs.handoff_refs, [HANDOFF_REF]);
     assert.equal(snapshotEvent.payload.snapshot.route_decision.route, 'build');
     assert.equal(snapshotEvent.payload.snapshot.capabilities.command_execution, 'not_included');
     assert.equal(snapshotEvent.payload.snapshot.capabilities.network_access, 'not_included');
@@ -897,17 +938,23 @@ test('records a digest-bound run context snapshot before progress or tools', () 
     });
     assert.doesNotMatch(
       JSON.stringify(stream),
-      /snapshot_id|context_digest|route_decision|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
+      /snapshot_id|context_digest|context_refs|working_context_state|summary_digest|packet_digest|route_decision|credential|source_tree|git_candidate_receipt|commit_oid|tree_oid/iu,
     );
 
-    assert.throws(() => item.service.record_run_context_snapshot({ context: first }), {
+    assert.throws(() => item.service.record_run_context_snapshot({
+      context: first,
+      working_context_state: null,
+    }), {
       code: 'builder_conversation_main_service_unavailable',
     });
     const progressed = item.service.record_run_progress({
       context: snapshotted,
       stage: 'context_ready',
     });
-    assert.throws(() => item.service.record_run_context_snapshot({ context: progressed }), {
+    assert.throws(() => item.service.record_run_context_snapshot({
+      context: progressed,
+      working_context_state: null,
+    }), {
       code: 'builder_conversation_main_service_unavailable',
     });
   } finally {
@@ -1675,7 +1722,10 @@ test('records task capsule source message ids in run context snapshots', () => {
         dispatch: 'build',
       },
     });
-    const snapshotted = item.service.record_run_context_snapshot({ context: work });
+    const snapshotted = item.service.record_run_context_snapshot({
+      context: work,
+      working_context_state: null,
+    });
     const snapshot = snapshotted.events.at(-1).payload.snapshot;
 
     assert.deepEqual(snapshot.included_message_ids, [
@@ -1770,7 +1820,10 @@ test('does not cite stale task capsule brief after a newer not-ready correction'
         dispatch: 'build',
       },
     });
-    const snapshotted = item.service.record_run_context_snapshot({ context: work });
+    const snapshotted = item.service.record_run_context_snapshot({
+      context: work,
+      working_context_state: null,
+    });
     const snapshot = snapshotted.events.at(-1).payload.snapshot;
 
     assert.deepEqual(snapshot.included_message_ids, [work.ids.message_id]);

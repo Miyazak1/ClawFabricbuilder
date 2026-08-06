@@ -6,6 +6,9 @@ const { types: utilTypes } = require('node:util');
 const {
   isPublicBuilderRouteDecisionSignal,
 } = require('./builder-route-decision-signals.cjs');
+const {
+  sanitizeBuilderWorkingContextState,
+} = require('./builder-working-context-state.cjs');
 
 const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v1';
 const SNAPSHOT_ID_PREFIX = 'builder-run-context-snapshot:';
@@ -20,6 +23,7 @@ const SNAPSHOT_KEYS = Object.freeze([
   'included_message_ids',
   'route_decision',
   'brief_reference',
+  'context_refs',
   'base_revision',
   'permissions',
   'capabilities',
@@ -36,6 +40,7 @@ const SNAPSHOT_BODY_KEYS = Object.freeze([
   'included_message_ids',
   'route_decision',
   'brief_reference',
+  'context_refs',
   'base_revision',
   'permissions',
   'capabilities',
@@ -56,6 +61,14 @@ const BRIEF_REFERENCE_KEYS = Object.freeze([
   'last_route_decision_id',
   'contextual_build_ready',
 ]);
+const CONTEXT_REFS_KEYS = Object.freeze([
+  'working_context_state_id',
+  'working_context_state_updated_at_ms',
+  'compaction_refs',
+  'handoff_refs',
+]);
+const COMPACTION_REF_KEYS = Object.freeze(['summary_digest', 'source_range_digest', 'compacted_at_ms']);
+const HANDOFF_REF_KEYS = Object.freeze(['packet_digest', 'inserted_at_ms', 'adopted_at_ms']);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const PERMISSIONS_KEYS = Object.freeze([
   'required_permissions',
@@ -83,6 +96,19 @@ const DISPATCHES = Object.freeze(['reply', 'brief_update', 'plan', 'build', 'ask
 const DOWNGRADE_REASONS = Object.freeze(['ambiguous_build_intent', 'missing_prior_build_context', 'workspace_required']);
 const PERMISSIONS = Object.freeze(['project_read', 'write_project']);
 const PERMISSION_RESULTS = Object.freeze(['not_required', 'allowed', 'ask', 'denied']);
+const CREATE_INPUT_KEYS = Object.freeze([
+  'project_id',
+  'conversation_id',
+  'turn_id',
+  'run_id',
+  'task_id',
+  'message_id',
+  'route_decision',
+  'latest_task_capsule',
+  'working_context_state',
+  'base_revision',
+  'created_at_ms',
+]);
 
 class BuilderRunContextSnapshotError extends Error {
   constructor() {
@@ -272,6 +298,111 @@ function sanitizeBriefReference(value) {
   };
 }
 
+function denseCompactionRefs(value) {
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || value.length > 4
+  ) fail();
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== value.length + 1 || ownKeys.some((key) => typeof key === 'symbol')) fail();
+  const refs = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const source = exactObject(descriptor.value, COMPACTION_REF_KEYS);
+    const summaryDigest = safePattern(valueAt(source, 'summary_digest'), DIGEST_PATTERN);
+    const sourceRangeDigest = safePattern(valueAt(source, 'source_range_digest'), DIGEST_PATTERN);
+    const key = `${summaryDigest}:${sourceRangeDigest}`;
+    if (seen.has(key)) fail();
+    seen.add(key);
+    refs.push({
+      summary_digest: summaryDigest,
+      source_range_digest: sourceRangeDigest,
+      compacted_at_ms: safeTimestamp(valueAt(source, 'compacted_at_ms')),
+    });
+  }
+  return refs;
+}
+
+function denseHandoffRefs(value) {
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || value.length > 4
+  ) fail();
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== value.length + 1 || ownKeys.some((key) => typeof key === 'symbol')) fail();
+  const refs = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const source = exactObject(descriptor.value, HANDOFF_REF_KEYS);
+    const packetDigest = safePattern(valueAt(source, 'packet_digest'), DIGEST_PATTERN);
+    if (seen.has(packetDigest)) fail();
+    seen.add(packetDigest);
+    const insertedAtMs = safeTimestamp(valueAt(source, 'inserted_at_ms'));
+    const adoptedAtMs = safeTimestamp(valueAt(source, 'adopted_at_ms'));
+    if (adoptedAtMs < insertedAtMs) fail();
+    refs.push({
+      packet_digest: packetDigest,
+      inserted_at_ms: insertedAtMs,
+      adopted_at_ms: adoptedAtMs,
+    });
+  }
+  return refs;
+}
+
+function sanitizeContextRefs(value, createdAtMs) {
+  const source = exactObject(value, CONTEXT_REFS_KEYS);
+  const workingContextStateId = nullable(
+    valueAt(source, 'working_context_state_id'),
+    (item) => safePattern(item, /^builder-working-context-state:[0-9a-f]{64}$/u),
+  );
+  const workingContextStateUpdatedAtMs = nullable(
+    valueAt(source, 'working_context_state_updated_at_ms'),
+    safeTimestamp,
+  );
+  const compactionRefs = denseCompactionRefs(valueAt(source, 'compaction_refs'));
+  const handoffRefs = denseHandoffRefs(valueAt(source, 'handoff_refs'));
+  if (
+    (workingContextStateId === null) !== (workingContextStateUpdatedAtMs === null)
+    || (workingContextStateUpdatedAtMs !== null && workingContextStateUpdatedAtMs > createdAtMs)
+    || (workingContextStateId === null && (compactionRefs.length > 0 || handoffRefs.length > 0))
+    || compactionRefs.some((ref) => ref.compacted_at_ms > createdAtMs)
+    || handoffRefs.some((ref) => ref.inserted_at_ms > createdAtMs || ref.adopted_at_ms > createdAtMs)
+  ) fail();
+  return {
+    working_context_state_id: workingContextStateId,
+    working_context_state_updated_at_ms: workingContextStateUpdatedAtMs,
+    compaction_refs: compactionRefs,
+    handoff_refs: handoffRefs,
+  };
+}
+
+function contextRefsFromWorkingContextState(value, projectId, conversationId) {
+  if (value === null) {
+    return {
+      working_context_state_id: null,
+      working_context_state_updated_at_ms: null,
+      compaction_refs: [],
+      handoff_refs: [],
+    };
+  }
+  const state = sanitizeBuilderWorkingContextState(value);
+  if (state.project_id !== projectId || state.conversation_id !== conversationId) fail();
+  return {
+    working_context_state_id: state.state_id,
+    working_context_state_updated_at_ms: state.updated_at_ms,
+    compaction_refs: state.compaction_refs.map((ref) => ({ ...ref })),
+    handoff_refs: state.handoff_refs.map((ref) => ({ ...ref })),
+  };
+}
+
 function sanitizeBaseRevision(value) {
   if (value === null) return null;
   const source = exactObject(value, BASE_REVISION_KEYS);
@@ -307,6 +438,7 @@ function snapshotBodyFrom(value) {
   const taskId = nullable(valueAt(source, 'task_id'), (item) => safePattern(item, TASK_ID_PATTERN));
   const includedMessageIds = denseMessageIds(valueAt(source, 'included_message_ids'));
   const briefReference = sanitizeBriefReference(valueAt(source, 'brief_reference'));
+  const createdAtMs = safeTimestamp(valueAt(source, 'created_at_ms'));
   if (
     briefReference.status === 'task_capsule_update'
     && !includedMessageIds.includes(briefReference.source_message_id)
@@ -321,10 +453,11 @@ function snapshotBodyFrom(value) {
     included_message_ids: includedMessageIds,
     route_decision: sanitizeRouteDecision(valueAt(source, 'route_decision')),
     brief_reference: briefReference,
+    context_refs: sanitizeContextRefs(valueAt(source, 'context_refs'), createdAtMs),
     base_revision: sanitizeBaseRevision(valueAt(source, 'base_revision')),
     permissions: sanitizePermissions(valueAt(source, 'permissions')),
     capabilities: sanitizeCapabilities(valueAt(source, 'capabilities')),
-    created_at_ms: safeTimestamp(valueAt(source, 'created_at_ms')),
+    created_at_ms: createdAtMs,
   };
 }
 
@@ -349,6 +482,7 @@ function sanitizeBuilderRunContextSnapshot(value, expected = null) {
     included_message_ids: valueAt(source, 'included_message_ids'),
     route_decision: valueAt(source, 'route_decision'),
     brief_reference: valueAt(source, 'brief_reference'),
+    context_refs: valueAt(source, 'context_refs'),
     base_revision: valueAt(source, 'base_revision'),
     permissions: valueAt(source, 'permissions'),
     capabilities: valueAt(source, 'capabilities'),
@@ -374,18 +508,7 @@ function sanitizeBuilderRunContextSnapshot(value, expected = null) {
 }
 
 function createBuilderRunContextSnapshot(input) {
-  const source = exactObject(input, [
-    'project_id',
-    'conversation_id',
-    'turn_id',
-    'run_id',
-    'task_id',
-    'message_id',
-    'route_decision',
-    'latest_task_capsule',
-    'base_revision',
-    'created_at_ms',
-  ]);
+  const source = exactObject(input, CREATE_INPUT_KEYS);
   const routeDecisionSource = exactObject(valueAt(source, 'route_decision'), [
     'decision_id',
     'decision_version',
@@ -403,6 +526,7 @@ function createBuilderRunContextSnapshot(input) {
     'decided_at_ms',
   ]);
   const projectId = safePattern(valueAt(source, 'project_id'), PROJECT_ID_PATTERN);
+  const conversationId = safePattern(valueAt(source, 'conversation_id'), CONVERSATION_ID_PATTERN);
   const taskId = nullable(valueAt(source, 'task_id'), (item) => safePattern(item, TASK_ID_PATTERN));
   const messageId = safePattern(valueAt(source, 'message_id'), MESSAGE_ID_PATTERN);
   const routeDecisionProjectId = safePattern(valueAt(routeDecisionSource, 'project_id'), PROJECT_ID_PATTERN);
@@ -442,7 +566,7 @@ function createBuilderRunContextSnapshot(input) {
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
     project_id: projectId,
-    conversation_id: valueAt(source, 'conversation_id'),
+    conversation_id: conversationId,
     turn_id: valueAt(source, 'turn_id'),
     run_id: valueAt(source, 'run_id'),
     task_id: taskId,
@@ -461,6 +585,11 @@ function createBuilderRunContextSnapshot(input) {
       last_route_decision_id: valueAt(taskCapsule, 'last_route_decision_id'),
       contextual_build_ready: true,
     },
+    context_refs: contextRefsFromWorkingContextState(
+      valueAt(source, 'working_context_state'),
+      projectId,
+      conversationId,
+    ),
     base_revision: valueAt(source, 'base_revision'),
     permissions: {
       required_permissions: valueAt(routeDecisionSource, 'required_permissions'),

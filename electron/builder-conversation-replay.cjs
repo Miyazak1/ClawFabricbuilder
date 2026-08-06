@@ -650,6 +650,13 @@ function publicTurn(turn) {
             matched_signals: [...run.context_snapshot.route_decision.matched_signals],
           },
           brief_reference: { ...run.context_snapshot.brief_reference },
+          context_refs: {
+            working_context_state_id: run.context_snapshot.context_refs.working_context_state_id,
+            working_context_state_updated_at_ms:
+              run.context_snapshot.context_refs.working_context_state_updated_at_ms,
+            compaction_refs: run.context_snapshot.context_refs.compaction_refs.map((ref) => ({ ...ref })),
+            handoff_refs: run.context_snapshot.context_refs.handoff_refs.map((ref) => ({ ...ref })),
+          },
           base_revision: run.context_snapshot.base_revision === null
             ? null
             : { ...run.context_snapshot.base_revision },
