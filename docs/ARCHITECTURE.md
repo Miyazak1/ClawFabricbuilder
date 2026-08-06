@@ -138,7 +138,13 @@ current approval gate can read only the main-owned in-memory preparation for the
 current Project/Conversation and pass it to that approval service; it fails
 closed for missing, stale, ready, or wrong-reason preparations and still does not
 open IPC/preload, prompt bridging, provider dispatch, storage, source, Git, or
-Revision authority.
+Revision authority. A controlled IPC adapter can expose only an active-renderer
+`approveCurrent` command shell around that gate, accepting current
+Project/Conversation IDs and returning a sanitized approval result; the adapter
+itself still performs no direct Electron registration, preload exposure, request
+id exposure, permission fact readback, provider-context body exposure,
+provider/tool dispatch, prompt bridge, source/Git mutation, or Revision
+authority.
 
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but

@@ -875,7 +875,13 @@ Evidence requirements:
   preparation exists, when the preparation is already ready, or when the blocked
   reason is not `context_disclosure_not_approved`, and it still opens no
   IPC/preload/UI command, prompt bridge, provider dispatch, permission fact
-  exposure, source/Git mutation, SQLite write, or revision admission. The renderer now
+  exposure, source/Git mutation, SQLite write, or revision admission.
+  `builder-provider-context-disclosure-approval-ipc-adapter.v1` adds the
+  controlled renderer command shell for that gate: active renderer only, exact
+  current Project/Conversation payload only, fixed redacted errors, sanitized
+  approval result only, and no direct Electron registration, preload exposure,
+  request id, permission fact readback, provider-context body, prompt bridge,
+  provider/tool dispatch, source/Git mutation, or Revision authority. The renderer now
   gives that main-owned status
   precedence in the composer context chip while it is present, using only the
   safe label and next-action hint and never exposing request ids, context
