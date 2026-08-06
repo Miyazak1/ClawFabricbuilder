@@ -2863,7 +2863,7 @@ export function BuilderPage({
       catalogBusy={catalogBusy}
       catalogProjects={catalogProjects}
       catalogWorkspaceProjects={catalogWorkspaceProjects}
-      composerContextStatus={composerContextStatus}
+      composerContextStatus={viewingHistory ? null : composerContextStatus}
       composerMode={composerMode}
       composerRouteDecision={composerRouteDecision}
       hasUnsavedDraft={hasUnsavedDraft}

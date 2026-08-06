@@ -4067,6 +4067,7 @@ describe('BuilderPage v2', () => {
     const inspectedContainer = render(
       <BuilderPage
         activeFile={null}
+        composerContextStatus="ready_to_execute"
         historySnapshot={history}
         instruction="Change it."
         onInspectRevision={onInspectRevision}
