@@ -71,6 +71,7 @@ const OPTION_KEYS = Object.freeze([
   'taskCapsuleRecordingService',
   'sessionTaskAddressRecordingService',
   'sessionTaskAddressBindingService',
+  'workingContextStateService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -531,14 +532,14 @@ function denseTaskStreamItems(value) {
   return items;
 }
 
-function taskStreamItemsForSubmitContext(value, expectedProjectId) {
+function taskStreamConversationForSubmitContext(value, expectedProjectId) {
   exactObject(value, ['stream_version', 'project_id', 'conversation', 'authority']);
   if (
     valueAt(value, 'stream_version') !== BUILDER_TASK_STREAM_READ_RESULT_VERSION
     || valueAt(value, 'project_id') !== expectedProjectId
   ) fail();
   const conversation = valueAt(value, 'conversation');
-  if (conversation === null) return [];
+  if (conversation === null) return null;
   exactObject(conversation, [
     'conversation_id',
     'created_at_ms',
@@ -547,7 +548,25 @@ function taskStreamItemsForSubmitContext(value, expectedProjectId) {
     'window',
     'items',
   ]);
+  safeConversationId(valueAt(conversation, 'conversation_id'), expectedProjectId);
+  return conversation;
+}
+
+function taskStreamItemsForSubmitContext(value, expectedProjectId) {
+  const conversation = taskStreamConversationForSubmitContext(value, expectedProjectId);
+  if (conversation === null) return [];
   return denseTaskStreamItems(valueAt(conversation, 'items'));
+}
+
+function conversationIdInTaskStream(value, expectedProjectId) {
+  try {
+    const conversation = taskStreamConversationForSubmitContext(value, expectedProjectId);
+    return conversation === null
+      ? null
+      : safeConversationId(valueAt(conversation, 'conversation_id'), expectedProjectId);
+  } catch {
+    return null;
+  }
 }
 
 function messageTextFromTaskStreamItem(item, key) {
@@ -1070,6 +1089,12 @@ function sanitizeOptions(value) {
   ) {
     fail();
   }
+  if (
+    keys.includes('workingContextStateService')
+    && !isPlainObject(descriptors.workingContextStateService.value)
+  ) {
+    fail();
+  }
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1091,6 +1116,9 @@ function sanitizeOptions(value) {
       : {}),
     ...(keys.includes('sessionTaskAddressBindingService')
       ? { sessionTaskAddressBindingService: descriptors.sessionTaskAddressBindingService.value }
+      : {}),
+    ...(keys.includes('workingContextStateService')
+      ? { workingContextStateService: descriptors.workingContextStateService.value }
       : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
@@ -1552,6 +1580,12 @@ function createBuilderGenerationMainService(rawOptions) {
       options.sessionTaskAddressBindingService,
       'bind_draft_continuation_to_current_task_address',
     );
+  const readCurrentWorkingContextStateForConversation = options.workingContextStateService === undefined
+    ? null
+    : ownMethod(
+      options.workingContextStateService,
+      'read_current_working_context_state_for_conversation',
+    );
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -1617,12 +1651,22 @@ function createBuilderGenerationMainService(rawOptions) {
       const streamContextState = requested.has_contextual_build_context === true
         ? contextualBuildContextStateInTaskStream(stream, request.existing_project_id)
         : 'unknown';
+      const conversationId = requested.has_contextual_build_context === true
+        ? conversationIdInTaskStream(stream, request.existing_project_id)
+        : null;
       return Object.freeze({
         hasContextualBuildContext: streamContextState === 'ready'
           || (
             requested.has_contextual_build_context === true
             && streamContextState === 'unknown'
-            && hasContextualBuildContextInTaskCapsuleStore(request.existing_project_id)
+            && (
+              hasContextualBuildContextInWorkingContextStateService(
+                request.existing_project_id,
+                conversationId,
+                request.instruction,
+              )
+              || hasContextualBuildContextInTaskCapsuleStore(request.existing_project_id)
+            )
           ),
         hasPendingBuildConfirmation: requested.has_pending_build_confirmation === true
           ? hasPendingBuildConfirmationInTaskStream(stream, request.existing_project_id)
@@ -1633,6 +1677,42 @@ function createBuilderGenerationMainService(rawOptions) {
         hasContextualBuildContext: false,
         hasPendingBuildConfirmation: false,
       });
+    }
+  }
+
+  function hasContextualBuildContextInWorkingContextStateService(projectId, conversationId, instruction) {
+    if (readCurrentWorkingContextStateForConversation === null || conversationId === null) return false;
+    try {
+      const result = Reflect.apply(
+        readCurrentWorkingContextStateForConversation,
+        options.workingContextStateService,
+        [{
+          project_id: projectId,
+          conversation_id: conversationId,
+          objective_summary: null,
+          confirmed_constraints: [],
+          rejected_constraints: [],
+          open_questions: [],
+          latest_user_intent: instruction,
+          source_refs: [],
+          approved_plan_ref: null,
+          base_revision_ref: null,
+          invalidated_by: null,
+          updated_at_ms: Date.now(),
+        }],
+      );
+      if (
+        !isPlainObject(result)
+        || valueAt(result, 'result_version') !== 'builder-working-context-state-service-result.v1'
+        || valueAt(result, 'status') !== 'ready'
+      ) return false;
+      const state = valueAt(result, 'working_context_state');
+      return isPlainObject(state)
+        && valueAt(state, 'project_id') === projectId
+        && valueAt(state, 'conversation_id') === conversationId
+        && valueAt(state, 'state') === 'ready';
+    } catch {
+      return false;
     }
   }
 

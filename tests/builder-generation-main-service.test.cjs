@@ -59,8 +59,15 @@ const {
   createBuilderSessionTaskAddressRecordingService,
 } = require('../electron/builder-session-task-address-recording-service.cjs');
 const {
+  createBuilderSessionAddress,
+  createBuilderTaskAddress,
+} = require('../electron/builder-session-task-address.cjs');
+const {
   createBuilderSessionTaskAddressStore,
 } = require('../electron/builder-session-task-address-store.cjs');
+const {
+  createBuilderWorkingContextStateService,
+} = require('../electron/builder-working-context-state-service.cjs');
 
 const UUIDS = Object.freeze([
   '123e4567-e89b-42d3-a456-426614174000',
@@ -4260,6 +4267,188 @@ test('uses the main-owned task capsule store as contextual submit route evidence
     transportInput.messages[1].content,
     /builder-task-capsule-update|builder-route-decision|credential|provider|api[_-]?key|Bearer/iu,
   );
+});
+
+test('uses the Working Context State service as contextual submit route evidence', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-working-context-route-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
+  const addressStore = createBuilderSessionTaskAddressStore(path.join(root, 'session-task-addresses.sqlite'));
+  t.after(() => {
+    try { addressStore.close(); } catch { /* already closed */ }
+    try { taskCapsuleStore.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  let now = 9_000;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(1_000),
+    nowMs: () => now++,
+  });
+  const recordingService = createBuilderTaskCapsuleRecordingService({
+    task_capsule_store: taskCapsuleStore,
+  });
+  const answerService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: conversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          throw new Error('no saved revision yet');
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(input) {
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: input.project_id,
+              created_at_ms: 1_000,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+      createUuid: createUniqueUuidFactory(1_010),
+      taskCapsuleRecordingService: recordingService,
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerExplanation({
+        title: 'Direction saved',
+        summary: 'Stores the agreed direction.',
+        explanation: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+      })),
+    }),
+  });
+  await answerService.answer(request({
+    instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
+    existingProjectId: PROJECT_ID,
+  }));
+  addressStore.record_session_address({
+    session_address: createBuilderSessionAddress({
+      session_id: `builder-session:${UUIDS[1]}`,
+      project_id: PROJECT_ID,
+      display_id: 'S-WCS001',
+      title: 'Portfolio work line',
+      status: 'active',
+      root_conversation_id: CONVERSATION_ID,
+      current_task_id: `builder-task-address:${UUIDS[2]}`,
+      parent_session_id: null,
+      forked_from_session_id: null,
+      forked_from_revision_receipt_digest: null,
+      created_by: 'local-user',
+      created_at_ms: 1_000,
+      updated_at_ms: 1_100,
+      archived_at_ms: null,
+    }),
+  });
+  addressStore.record_task_address({
+    task_address: createBuilderTaskAddress({
+      task_address_id: `builder-task-address:${UUIDS[2]}`,
+      session_id: `builder-session:${UUIDS[1]}`,
+      project_id: PROJECT_ID,
+      agent_id: `builder-agent:${UUIDS[3]}`,
+      parent_task_address_id: null,
+      conversation_id: CONVERSATION_ID,
+      title: 'Build portfolio homepage',
+      goal: 'Create the portfolio homepage from the current discussion.',
+      status: 'planned',
+      current_brief_id: digest('portfolio-brief'),
+      current_plan_id: null,
+      base_revision_receipt_digest: null,
+      produced_revision_receipt_digest: null,
+      created_by: 'local-user',
+      created_at_ms: 1_000,
+      updated_at_ms: 1_100,
+      closed_at_ms: null,
+    }),
+  });
+  const workingContextStateService = createBuilderWorkingContextStateService({
+    task_capsule_store: taskCapsuleStore,
+    session_task_address_store: addressStore,
+  });
+  const workingContextReads = [];
+  const hiddenTaskStreamConversation = {};
+  for (const key of Reflect.ownKeys(conversation)) {
+    const descriptor = Object.getOwnPropertyDescriptor(conversation, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') continue;
+    hiddenTaskStreamConversation[key] = (...args) => Reflect.apply(descriptor.value, conversation, args);
+  }
+  hiddenTaskStreamConversation.read_stream = (body) => ({
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: body.project_id,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1_000,
+      head_sequence: 1,
+      recorded_active_turn_id: null,
+      window: null,
+      items: [],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  });
+  let transportInput;
+  const buildService = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: hiddenTaskStreamConversation,
+      gitAuthority: gitAuthority(),
+      projectReadAuthority: {
+        load_current() {
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+          }));
+        },
+      },
+      createUuid: createUniqueUuidFactory(1_020),
+      workingContextStateService: {
+        read_current_working_context_state_for_conversation(input) {
+          workingContextReads.push(input);
+          return workingContextStateService.read_current_working_context_state_for_conversation(input);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInput = input;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          title: 'Portfolio from working context',
+          summary: 'Builds from the projected Working Context State.',
+        })),
+      };
+    },
+  });
+
+  const draft = await buildService.submit(request({
+    instruction: '按刚才方案做',
+    existingProjectId: PROJECT_ID,
+  }));
+  const providerPrompt = JSON.parse(transportInput.messages[1].content);
+
+  assert.equal(draft.title, 'Portfolio from working context');
+  assert.equal(workingContextReads.length, 1);
+  assert.equal(workingContextReads[0].project_id, PROJECT_ID);
+  assert.equal(workingContextReads[0].conversation_id, CONVERSATION_ID);
+  assert.equal(workingContextReads[0].latest_user_intent, '按刚才方案做');
+  assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
+    brief_version: 'builder-working-brief.v1',
+    source: 'task_capsule_update',
+    latest_user_goal: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
+    assistant_proposal: '可以先做一个单页作品集，包含 hero、项目卡片和联系入口。',
+    approved_plan: null,
+    use_when_instruction_is_contextual: true,
+  });
+  assert.equal(providerPrompt.build_context_snapshot.execution_basis, 'task_brief');
 });
 
 test('does not let stale task capsule store readiness override a newer task stream correction', async (t) => {

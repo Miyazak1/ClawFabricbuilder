@@ -220,6 +220,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.taskCapsuleStore, context.__taskCapsuleStore);
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
             assert.equal(options.sessionTaskAddressRecordingService, context.__sessionTaskAddressRecordingService);
+            assert.equal(options.workingContextStateService, context.__workingContextStateService);
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
@@ -255,6 +256,20 @@ function runtimeWithService(service, probes = {}) {
               record_task_capsule_from_conversation() {},
             };
             return context.__taskCapsuleRecordingService;
+          },
+        };
+      }
+      if (specifier === './builder-working-context-state-service.cjs') {
+        return {
+          createBuilderWorkingContextStateService: (options) => {
+            probes.workingContextStateOptions = options;
+            assert.equal(options.task_capsule_store, context.__taskCapsuleStore);
+            assert.equal(options.session_task_address_store, context.__sessionTaskAddressStore);
+            context.__workingContextStateService = {
+              service_version: 'builder-working-context-state-service.v1',
+              read_current_working_context_state_for_conversation() {},
+            };
+            return context.__workingContextStateService;
           },
         };
       }
@@ -1967,6 +1982,10 @@ test('composes project main authority and closes it on dispose', (t) => {
     path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite'));
   assert.equal(probes.taskCapsuleRecordingOptions.task_capsule_store,
     runtimeModule.context.__taskCapsuleStore);
+  assert.equal(probes.workingContextStateOptions.task_capsule_store,
+    runtimeModule.context.__taskCapsuleStore);
+  assert.equal(probes.workingContextStateOptions.session_task_address_store,
+    runtimeModule.context.__sessionTaskAddressStore);
   assert.equal(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(probes.serviceOptions.conversationService,
@@ -1977,6 +1996,8 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.serviceOptions.taskCapsuleRecordingService,
     runtimeModule.context.__taskCapsuleRecordingService);
+  assert.equal(probes.serviceOptions.workingContextStateService,
+    runtimeModule.context.__workingContextStateService);
   assert.equal(probes.saveOptions.generationDrafts, service);
   assert.equal(probes.saveOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
