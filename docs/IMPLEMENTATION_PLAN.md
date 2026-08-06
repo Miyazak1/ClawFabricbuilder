@@ -796,9 +796,13 @@ Evidence requirements:
   gate that defaults to `blocked` unless a local-user disclosure decision
   approves sending context to the configured provider for the same purpose. Its
   approved provider context strips assembly ids, digests, source refs, and
-  timestamps. It does not yet replace the generation provider prompt path, and
-  it performs no provider dispatch, tool dispatch, SQLite write, Git/source
-  mutation, permission grant, IPC/preload registration, or renderer projection;
+  timestamps. `builder-provider-context-disclosure-decision.v1` now derives
+  that decision from the main-owned deny-by-default permission evaluator using
+  the narrow `context.disclose` action on a `provider` resource; it is distinct
+  from `network.request` and cannot be implied by a generic network grant. It
+  does not yet replace the generation provider prompt path, and it performs no
+  provider dispatch, tool dispatch, SQLite write, Git/source mutation,
+  permission grant, IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

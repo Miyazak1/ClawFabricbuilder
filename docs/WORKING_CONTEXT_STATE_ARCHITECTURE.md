@@ -533,6 +533,11 @@ Current checkpoint:
   the same purpose, it returns `blocked` and no provider-sendable context. When
   approved, it projects only segment kind/text, budget, and permission-gate
   status, while keeping assembly ids and digests outside the provider context.
+- `builder-provider-context-disclosure-decision.v1` derives that disclosure
+  decision from deny-by-default permission facts through the narrow
+  `context.disclose` action on a `provider` resource. It is intentionally
+  separate from `network.request`, so a generic network grant cannot silently
+  approve sending Working Context to a configured provider.
 - It is not yet consumed by the provider prompt path; current provider prompt
   assembly still uses the older generation context path.
 

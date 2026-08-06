@@ -219,6 +219,45 @@ test('allows only exact active facts read from the main-owned fact authority', a
   assert.equal(decision.permission_authority, 'builder_permission_facts_deny_by_default_v1');
 });
 
+test('supports narrow provider context disclosure grants without implying network authority', async () => {
+  const providerResource = resource({
+    resource_kind: 'provider',
+    resource_id: 'provider:configured/contextual_build',
+  });
+  const providerGrant = grant({
+    action: 'context.disclose',
+    resource: providerResource,
+  });
+  const evaluator = evaluatorWith(async (sourceRequest) => factsFor(sourceRequest, [providerGrant]));
+  const decision = await evaluator.evaluate(request({
+    action: 'context.disclose',
+    resource: providerResource,
+  }));
+
+  assert.equal(decision.decision, 'allowed');
+  assert.equal(decision.permission_id, providerGrant.permission_id);
+  assert.equal(decision.action, 'context.disclose');
+  assert.equal(decision.resource.resource_kind, 'provider');
+
+  const networkDecision = await evaluator.evaluate(request({
+    action: 'network.request',
+    resource: resource({
+      resource_kind: 'network',
+      resource_id: 'https:api.deepseek.com',
+    }),
+  }));
+  assert.equal(networkDecision.decision, 'denied');
+  assert.equal(networkDecision.permission_id, null);
+
+  assert.throws(
+    () => createBuilderPermissionGrantRecord(grantInput({
+      action: 'context.disclose',
+      resource: resource({ resource_kind: 'network', resource_id: 'https:api.deepseek.com' }),
+    })),
+    BuilderPermissionAuthorityContractError,
+  );
+});
+
 test('revocation replays over older active grants without deleting history', async () => {
   const active = grant();
   const revoked = revocation(active);

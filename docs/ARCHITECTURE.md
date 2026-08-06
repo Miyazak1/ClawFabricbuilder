@@ -123,6 +123,14 @@ Project and bounded main-selected source resources, and it cannot be reused for
 arbitrary tools, external network/process access, source mutation, Save, or
 Project Revision creation.
 
+Provider Working Context disclosure now has its own main-owned permission
+surface. The permission policy includes a narrow `context.disclose` action on a
+`provider` resource, separate from `network.request`; this lets Builder require
+an explicit local-user fact before any assembled Working Context can become
+provider-sendable context. The current decision adapter and projection gate do
+not dispatch a provider, grant permissions, expose IPC/preload commands, mutate
+source/Git, write SQLite, or replace the existing prompt path.
+
 The visible desktop Builder now distinguishes a logical New project from a
 working local project. Chat answers may still run without a folder, but
 `submit`, direct draft generation, and retry require either a verified saved
