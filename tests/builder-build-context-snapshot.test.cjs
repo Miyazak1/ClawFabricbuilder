@@ -122,6 +122,53 @@ test('prioritizes approved plan context without exposing plan text', () => {
   assert.doesNotMatch(JSON.stringify(snapshot), /Plan:|homepage update|Build the portfolio|project cards/u);
 });
 
+test('does not let an approved plan override a newer not-ready brief correction', () => {
+  const snapshot = create({
+    route_context: routeContext({ matched_signals: ['contextual_build_phrase'] }),
+    conversation_brief: conversationBrief({
+      latest_plan: latestPlan(),
+      working_brief: workingBrief({
+        use_when_instruction_is_contextual: false,
+      }),
+    }),
+  });
+
+  assert.equal(snapshot.execution_basis, 'missing_context_not_admitted');
+  assert.deepEqual(snapshot.latest_plan, {
+    available: true,
+    state: 'approved',
+  });
+  assert.deepEqual(snapshot.working_brief, {
+    available: true,
+    source: 'task_capsule_update',
+    contextual_build_ready: false,
+  });
+});
+
+test('uses a newer ready task brief instead of a stale approved plan', () => {
+  const snapshot = create({
+    conversation_brief: conversationBrief({
+      latest_plan: latestPlan(),
+      working_brief: workingBrief({
+        source: 'task_capsule_update',
+        approved_plan: null,
+        use_when_instruction_is_contextual: true,
+      }),
+    }),
+  });
+
+  assert.equal(snapshot.execution_basis, 'task_brief');
+  assert.deepEqual(snapshot.latest_plan, {
+    available: true,
+    state: 'approved',
+  });
+  assert.deepEqual(snapshot.working_brief, {
+    available: true,
+    source: 'task_capsule_update',
+    contextual_build_ready: true,
+  });
+});
+
 test('keeps read-only and missing-route snapshots not admitted', () => {
   const readOnly = create({
     route_context: routeContext({
@@ -224,6 +271,18 @@ test('fails closed on extras, hostile shapes, private signals, and forged capabi
       conversation_brief: conversationBrief({ working_brief: null }),
     }),
     execution_basis: 'not_admitted',
+  }));
+  assertSnapshotError(() => sanitizeBuilderBuildContextSnapshot({
+    ...create({
+      conversation_brief: conversationBrief({
+        latest_plan: latestPlan(),
+        working_brief: workingBrief({
+          source: 'task_capsule_update',
+          approved_plan: null,
+        }),
+      }),
+    }),
+    execution_basis: 'approved_plan',
   }));
 });
 

@@ -201,7 +201,13 @@ function buildExecutionBasis(routeContext, conversationBrief) {
   if (routeContext.route !== 'build' || routeContext.dispatch !== 'build') {
     return 'not_admitted';
   }
-  if (conversationBrief.latest_plan !== null && conversationBrief.latest_plan.state === 'approved') {
+  if (
+    conversationBrief.latest_plan !== null
+    && conversationBrief.latest_plan.state === 'approved'
+    && conversationBrief.working_brief !== null
+    && conversationBrief.working_brief.source === 'approved_plan'
+    && conversationBrief.working_brief.contextual_build_ready === true
+  ) {
     return 'approved_plan';
   }
   if (
@@ -304,7 +310,13 @@ function sanitizeBuilderBuildContextSnapshot(value) {
   } else if (executionBasis === 'not_admitted') {
     fail();
   } else if (executionBasis === 'approved_plan') {
-    if (!latestPlanAvailable || latestPlanState !== 'approved') fail();
+    if (
+      !latestPlanAvailable
+      || latestPlanState !== 'approved'
+      || !workingBriefAvailable
+      || workingBriefSource !== 'approved_plan'
+      || contextualReady !== true
+    ) fail();
   } else if (executionBasis === 'task_brief') {
     if (!workingBriefAvailable || workingBriefSource !== 'task_capsule_update' || contextualReady !== true) fail();
   } else if (executionBasis === 'working_brief') {
