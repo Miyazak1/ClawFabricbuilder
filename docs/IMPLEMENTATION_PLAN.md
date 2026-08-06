@@ -844,9 +844,13 @@ Evidence requirements:
   main-only process-memory `record/read/clear current status` service, designed
   to be fed by the exact Context Assembly and Provider Context Projection used
   by a generation Run Snapshot rather than reassembling context during
-  read_stream. It stores only the renderer-safe status projection and exposes no
-  request id, assembly id, digest, provider-context body, permission grant,
-  provider dispatch, SQLite write, IPC/preload channel, or prompt bridge.
+  read_stream. It stores the renderer-safe status projection plus the verified
+  disclosure request preparation in process memory; conversation read_stream
+  receives only the status projection, while the preparation is available only
+  through a main-only reader for the later approval bridge. The renderer-safe
+  read path still exposes no request id, assembly id, digest, provider-context
+  body, permission grant, provider dispatch, SQLite write, IPC/preload channel,
+  or prompt bridge.
   Generation main can now optionally feed that service immediately after a Run
   Snapshot succeeds, using the exact Context Assembly and Provider Context
   Projection objects already snapshotted for the run, then clear the current

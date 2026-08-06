@@ -143,6 +143,26 @@ test('records and reads only renderer-safe provider context disclosure status', 
     JSON.stringify(read),
     /builder-context-assembly:|builder-provider-context-projection:|builder-provider-context-disclosure-request|builder-provider-context-disclosure-request-preparation:|context_digest|assembly_id|request_id|provider_context_segments|"provider_context":|api[_-]?key|credential|source_tree/iu,
   );
+
+  const preparation = service.read_current_provider_context_disclosure_request_preparation_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  assert.equal(preparation.operation, 'provider_context_disclosure_request_preparation_read');
+  assert.equal(preparation.project_id, PROJECT_ID);
+  assert.equal(preparation.conversation_id, CONVERSATION_ID);
+  assert.equal(preparation.disclosure_request_preparation.project_id, PROJECT_ID);
+  assert.equal(preparation.disclosure_request_preparation.projection_status, 'blocked');
+  assert.equal(preparation.disclosure_request_preparation.blocked_reason, 'context_disclosure_not_approved');
+  assert.equal(
+    preparation.disclosure_request_preparation.provider_context_disclosure_request
+      .disclosure_request.resource.resource_id,
+    'provider:configured/contextual_build',
+  );
+  assert.doesNotMatch(
+    JSON.stringify(preparation),
+    /Apply the approved plan|private dashboard|builder-context-assembly:|builder-provider-context-projection:|context_digest|assembly_id|"provider_context":|api[_-]?key|credential|source_tree/iu,
+  );
 });
 
 test('records approved provider context disclosure as ready and clears stale current status', () => {
@@ -169,6 +189,13 @@ test('records approved provider context disclosure as ready and clears stale cur
   assert.equal(read.provider_context_disclosure_status_projection.needs_user_approval, false);
   assert.equal(read.provider_context_disclosure_status_projection.can_use_provider_context, true);
   assert.equal(read.provider_context_disclosure_status_projection.blocked_reason, null);
+  const preparation = service.read_current_provider_context_disclosure_request_preparation_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  assert.equal(preparation.operation, 'provider_context_disclosure_request_preparation_read');
+  assert.equal(preparation.disclosure_request_preparation.projection_status, 'ready');
+  assert.equal(preparation.disclosure_request_preparation.provider_context_disclosure_request, null);
 
   assert.deepEqual(service.clear_current_provider_context_disclosure_status_for_conversation({
     project_id: PROJECT_ID,
@@ -187,6 +214,15 @@ test('records approved provider context disclosure as ready and clears stale cur
   });
   assert.equal(afterClear.operation, 'provider_context_disclosure_status_absent');
   assert.equal(afterClear.provider_context_disclosure_status_projection, null);
+  const preparationAfterClear = service.read_current_provider_context_disclosure_request_preparation_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  assert.equal(
+    preparationAfterClear.operation,
+    'provider_context_disclosure_request_preparation_absent',
+  );
+  assert.equal(preparationAfterClear.disclosure_request_preparation, null);
 });
 
 test('keeps status scoped per conversation and reports absent without fabricating work', () => {
@@ -199,6 +235,15 @@ test('keeps status scoped per conversation and reports absent without fabricatin
   });
   assert.equal(other.operation, 'provider_context_disclosure_status_absent');
   assert.equal(other.provider_context_disclosure_status_projection, null);
+  const otherPreparation = service.read_current_provider_context_disclosure_request_preparation_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: OTHER_CONVERSATION_ID,
+  });
+  assert.equal(
+    otherPreparation.operation,
+    'provider_context_disclosure_request_preparation_absent',
+  );
+  assert.equal(otherPreparation.disclosure_request_preparation, null);
   assert.equal(service.clear_current_provider_context_disclosure_status_for_conversation({
     project_id: PROJECT_ID,
     conversation_id: OTHER_CONVERSATION_ID,
@@ -227,6 +272,11 @@ test('fails closed for drift, stale projection time, forged objects, and hostile
     conversation_id: CONVERSATION_ID,
     extra: true,
   }));
+  assertServiceError(() => service.read_current_provider_context_disclosure_request_preparation_for_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    extra: true,
+  }));
   assertServiceError(() => service.clear_current_provider_context_disclosure_status_for_conversation(new Proxy({
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -241,6 +291,7 @@ test('source remains a main-only in-memory status service without dispatch, IPC,
   assert.match(source, /builder-provider-context-disclosure-status-service\.v1/u);
   assert.match(source, /record_current_provider_context_disclosure_status/u);
   assert.match(source, /read_current_provider_context_disclosure_status_for_conversation/u);
+  assert.match(source, /read_current_provider_context_disclosure_request_preparation_for_conversation/u);
   assert.match(source, /clear_current_provider_context_disclosure_status_for_conversation/u);
   assert.doesNotMatch(
     source,

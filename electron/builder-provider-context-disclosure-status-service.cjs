@@ -10,6 +10,7 @@ const {
 } = require('./builder-provider-context-projection.cjs');
 const {
   prepareBuilderProviderContextDisclosureRequest,
+  sanitizeBuilderProviderContextDisclosureRequestPreparation,
 } = require('./builder-provider-context-disclosure-request-service.cjs');
 const {
   projectBuilderProviderContextDisclosureStatus,
@@ -35,7 +36,7 @@ const AUTHORITY = Object.freeze({
   status_service: 'main_owned_provider_context_disclosure_status_service_v1',
   context_assembly: 'caller_provided_verified_not_exposed',
   provider_context_projection: 'caller_provided_verified_not_exposed',
-  disclosure_request_preparation: 'in_memory_not_exposed',
+  disclosure_request_preparation: 'in_memory_main_only_not_renderer_exposed',
   storage: 'process_memory_only',
   renderer_authority: 'not_present',
   provider_context_body: 'not_exposed',
@@ -133,6 +134,19 @@ function readResult(request, statusProjection) {
   });
 }
 
+function readPreparationResult(request, preparation) {
+  return freezeDeep({
+    result_version: BUILDER_PROVIDER_CONTEXT_DISCLOSURE_STATUS_SERVICE_VERSION,
+    operation: preparation === null
+      ? 'provider_context_disclosure_request_preparation_absent'
+      : 'provider_context_disclosure_request_preparation_read',
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    disclosure_request_preparation: preparation,
+    authority: { ...AUTHORITY },
+  });
+}
+
 function recordResult(request, statusProjection) {
   return freezeDeep({
     result_version: BUILDER_PROVIDER_CONTEXT_DISCLOSURE_STATUS_SERVICE_VERSION,
@@ -175,30 +189,39 @@ function recordRequest(rawRequest) {
   return { request, contextAssembly, providerContextProjection, recordedAtMs };
 }
 
-function createStatusProjection(record) {
-  const preparation = prepareBuilderProviderContextDisclosureRequest({
+function createDisclosureRequestPreparation(record) {
+  return prepareBuilderProviderContextDisclosureRequest({
     context_assembly: record.contextAssembly,
     provider_context_projection: record.providerContextProjection,
     requested_at_ms: record.recordedAtMs,
   });
+}
+
+function createStatusProjection(preparation) {
   return projectBuilderProviderContextDisclosureStatus({
     disclosure_request_preparation: preparation,
   });
 }
 
 function createBuilderProviderContextDisclosureStatusService() {
-  const currentStatuses = new Map();
+  const currentRecords = new Map();
 
   return Object.freeze({
     service_version: BUILDER_PROVIDER_CONTEXT_DISCLOSURE_STATUS_SERVICE_VERSION,
     record_current_provider_context_disclosure_status(rawRequest) {
       try {
         const record = recordRequest(rawRequest);
-        const statusProjection = createStatusProjection(record);
+        const disclosureRequestPreparation = sanitizeBuilderProviderContextDisclosureRequestPreparation(
+          createDisclosureRequestPreparation(record),
+        );
+        const statusProjection = createStatusProjection(disclosureRequestPreparation);
         const storedProjection = sanitizeBuilderProviderContextDisclosureStatusProjection(
           statusProjection,
         );
-        currentStatuses.set(statusKey(record.request), storedProjection);
+        currentRecords.set(statusKey(record.request), freezeDeep({
+          disclosureRequestPreparation,
+          statusProjection: storedProjection,
+        }));
         return recordResult(record.request, storedProjection);
       } catch {
         fail();
@@ -208,8 +231,21 @@ function createBuilderProviderContextDisclosureStatusService() {
     read_current_provider_context_disclosure_status_for_conversation(rawRequest) {
       try {
         const request = conversationRequest(rawRequest);
-        const storedProjection = currentStatuses.get(statusKey(request));
-        return readResult(request, storedProjection === undefined ? null : storedProjection);
+        const storedRecord = currentRecords.get(statusKey(request));
+        return readResult(request, storedRecord === undefined ? null : storedRecord.statusProjection);
+      } catch {
+        fail();
+      }
+      return null;
+    },
+    read_current_provider_context_disclosure_request_preparation_for_conversation(rawRequest) {
+      try {
+        const request = conversationRequest(rawRequest);
+        const storedRecord = currentRecords.get(statusKey(request));
+        return readPreparationResult(
+          request,
+          storedRecord === undefined ? null : storedRecord.disclosureRequestPreparation,
+        );
       } catch {
         fail();
       }
@@ -219,7 +255,7 @@ function createBuilderProviderContextDisclosureStatusService() {
       try {
         const request = conversationRequest(rawRequest);
         const key = statusKey(request);
-        const cleared = currentStatuses.delete(key);
+        const cleared = currentRecords.delete(key);
         return clearResult(request, cleared);
       } catch {
         fail();
