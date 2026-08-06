@@ -10,6 +10,10 @@ const BIND_APPROVED_PLAN_CONTINUATION_KEYS = Object.freeze([
   'context',
   'approved_plan_continuation',
 ]);
+const BIND_DRAFT_CONTINUATION_KEYS = Object.freeze([
+  'context',
+  'draft_continuation',
+]);
 const CONTEXT_KEYS = Object.freeze([
   'context_version',
   'mode',
@@ -23,6 +27,7 @@ const CONTEXT_KEYS = Object.freeze([
   'ids',
   'cancel_requested',
 ]);
+const DRAFT_CONTINUATION_CONTEXT_KEYS = Object.freeze([...CONTEXT_KEYS, 'draft_continuation']);
 const PROJECT_KEYS = Object.freeze(['project_id', 'created_at_ms']);
 const CONVERSATION_KEYS = Object.freeze(['project_id', 'conversation_id', 'created_at_ms']);
 const IDS_KEYS = Object.freeze([
@@ -65,12 +70,31 @@ const APPROVED_PLAN_CONTINUATION_KEYS = Object.freeze([
   'continuation_id',
   'continuation_admission_digest',
 ]);
+const DRAFT_CONTINUATION_KEYS = Object.freeze([
+  'project_id',
+  'conversation_id',
+  'draft_id',
+  'previous_turn_id',
+  'previous_task_id',
+  'previous_run_id',
+  'continuation_id',
+  'admission_digest',
+  'candidate_digest',
+]);
 const FOLLOWUP_CONSUMED_PAYLOAD_KEYS = Object.freeze([
   'turn_id',
   'run_id',
   'message_id',
   'consuming_turn_id',
   'consuming_message_id',
+]);
+const DRAFT_CONTINUATION_CONTEXT_PAYLOAD_KEYS = Object.freeze([
+  'admission_digest',
+  'draft_id',
+  'previous_turn_id',
+  'previous_task_id',
+  'previous_run_id',
+  'previous_candidate_digest',
 ]);
 const TURN_PAYLOAD_KEYS = Object.freeze(['message', 'turn_id', 'mode', 'task', 'base_revision', 'route_decision']);
 const MESSAGE_KEYS = Object.freeze(['message_id', 'text']);
@@ -105,6 +129,8 @@ const APPROVED_PLAN_CONTINUATION_ID_PATTERN = new RegExp(
   `^builder-approved-plan-continuation:${UUID_SOURCE}$`,
   'u',
 );
+const DRAFT_CONTINUATION_ID_PATTERN = new RegExp(`^builder-draft-continuation:${UUID_SOURCE}$`, 'u');
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const ERROR_MESSAGE = 'Builder session and task address binding could not be verified.';
 
@@ -233,8 +259,27 @@ function approvedPlanContinuationReference(value) {
   });
 }
 
+function draftContinuationReference(value) {
+  exactObject(value, DRAFT_CONTINUATION_KEYS);
+  return freezeDeep({
+    project_id: safePattern(valueAt(value, 'project_id'), PROJECT_ID_PATTERN),
+    conversation_id: safePattern(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN),
+    draft_id: safePattern(valueAt(value, 'draft_id'), DRAFT_ID_PATTERN),
+    previous_turn_id: safePattern(valueAt(value, 'previous_turn_id'), TURN_ID_PATTERN),
+    previous_task_id: safePattern(valueAt(value, 'previous_task_id'), TASK_ID_PATTERN),
+    previous_run_id: safePattern(valueAt(value, 'previous_run_id'), RUN_ID_PATTERN),
+    continuation_id: safePattern(valueAt(value, 'continuation_id'), DRAFT_CONTINUATION_ID_PATTERN),
+    admission_digest: safePattern(valueAt(value, 'admission_digest'), DIGEST_PATTERN),
+    candidate_digest: safePattern(valueAt(value, 'candidate_digest'), DIGEST_PATTERN),
+  });
+}
+
 function baseWorkContext(value) {
-  exactObject(value, CONTEXT_KEYS);
+  const actualKeys = Reflect.ownKeys(value);
+  exactObject(
+    value,
+    actualKeys.includes('draft_continuation') ? DRAFT_CONTINUATION_CONTEXT_KEYS : CONTEXT_KEYS,
+  );
   if (valueAt(value, 'context_version') !== 'builder-conversation-run-context.v1') fail();
   if (valueAt(value, 'mode') !== 'work') fail();
   if (valueAt(value, 'run_terminal_failure_code') !== null || valueAt(value, 'cancel_requested') !== false) fail();
@@ -293,11 +338,11 @@ function queuedWorkContext(value, queuedFollowup) {
   });
 }
 
-function approvedPlanContinuationWorkContext(value, approvedPlanContinuation) {
+function startedWorkContext(value, continuationReference) {
   const context = baseWorkContext(value);
   if (
-    context.project_id !== approvedPlanContinuation.project_id
-    || context.conversation_id !== approvedPlanContinuation.conversation_id
+    context.project_id !== continuationReference.project_id
+    || context.conversation_id !== continuationReference.conversation_id
   ) fail();
   const turnEvent = context.events.find((event) => valueAt(event, 'event_type') === 'turn_submitted') ?? null;
   const runEvent = context.events.find((event) => valueAt(event, 'event_type') === 'run_started') ?? null;
@@ -336,6 +381,25 @@ function approvedPlanContinuationWorkContext(value, approvedPlanContinuation) {
     low_level_task_id: context.low_level_task_id,
     message_id: context.message_id,
   });
+}
+
+function approvedPlanContinuationWorkContext(value, approvedPlanContinuation) {
+  return startedWorkContext(value, approvedPlanContinuation);
+}
+
+function draftContinuationWorkContext(value, draftContinuation) {
+  const context = startedWorkContext(value, draftContinuation);
+  const payload = valueAt(value, 'draft_continuation');
+  exactObject(payload, DRAFT_CONTINUATION_CONTEXT_PAYLOAD_KEYS);
+  if (
+    valueAt(payload, 'admission_digest') !== draftContinuation.admission_digest
+    || valueAt(payload, 'draft_id') !== draftContinuation.draft_id
+    || valueAt(payload, 'previous_turn_id') !== draftContinuation.previous_turn_id
+    || valueAt(payload, 'previous_task_id') !== draftContinuation.previous_task_id
+    || valueAt(payload, 'previous_run_id') !== draftContinuation.previous_run_id
+    || valueAt(payload, 'previous_candidate_digest') !== draftContinuation.candidate_digest
+  ) fail();
+  return context;
 }
 
 function addressRecord(value, key) {
@@ -435,6 +499,29 @@ function createBuilderSessionTaskAddressBindingService(rawOptions) {
         run_id: context.run_id,
         low_level_task_id: context.low_level_task_id,
         approved_plan_continuation: approvedPlanContinuation,
+        session_address: bound.session_address,
+        task_address: bound.task_address,
+        authority: authority(),
+      });
+    },
+    bind_draft_continuation_to_current_task_address(rawRequest) {
+      exactObject(rawRequest, BIND_DRAFT_CONTINUATION_KEYS);
+      const draftContinuation = draftContinuationReference(valueAt(rawRequest, 'draft_continuation'));
+      const context = draftContinuationWorkContext(valueAt(rawRequest, 'context'), draftContinuation);
+      const read = Reflect.apply(readCurrent, addressStore, [{
+        project_id: context.project_id,
+        conversation_id: context.conversation_id,
+      }]);
+      const bound = currentAddressRead(read, context.project_id, context.conversation_id);
+      return freezeDeep({
+        result_version: RESULT_VERSION,
+        operation: 'draft_continuation_bound',
+        project_id: context.project_id,
+        conversation_id: context.conversation_id,
+        turn_id: context.turn_id,
+        run_id: context.run_id,
+        low_level_task_id: context.low_level_task_id,
+        draft_continuation: draftContinuation,
         session_address: bound.session_address,
         task_address: bound.task_address,
         authority: authority(),

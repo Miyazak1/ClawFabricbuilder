@@ -5049,6 +5049,9 @@ test('binds queued follow-up build to the current product Task Address before pr
         bind_approved_plan_continuation_to_current_task_address() {
           return { operation: 'approved_plan_continuation_bound_for_test' };
         },
+        bind_draft_continuation_to_current_task_address() {
+          return { operation: 'draft_continuation_bound_for_test' };
+        },
       },
     }),
     transport: async () => {
@@ -5118,6 +5121,9 @@ test('binds approved-plan continuation to the current product Task Address befor
           bindingCalls.push(input);
           return { operation: 'approved_plan_continuation_bound_for_test' };
         },
+        bind_draft_continuation_to_current_task_address() {
+          return { operation: 'draft_continuation_bound_for_test' };
+        },
       },
     }),
     transport: async () => {
@@ -5169,6 +5175,9 @@ test('fails closed before provider dispatch when approved-plan continuation Task
         },
         bind_approved_plan_continuation_to_current_task_address() {
           throw new Error(PRIVATE_MARKER);
+        },
+        bind_draft_continuation_to_current_task_address() {
+          return { operation: 'draft_continuation_bound_for_test' };
         },
       },
     }),
@@ -5618,6 +5627,7 @@ test('generates a replacement draft from pending candidate source squashed onto 
   let firstGeneratedSourceTree = null;
   const readCurrentCalls = [];
   const transportInputs = [];
+  const bindingCalls = [];
   const lifecycle = conversationService();
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
@@ -5644,9 +5654,22 @@ test('generates a replacement draft from pending candidate source squashed onto 
           return readResult(savedSourceTree);
         },
       },
+      sessionTaskAddressBindingService: {
+        bind_queued_followup_work_to_current_task_address() {
+          return { operation: 'queued_followup_work_bound_for_test' };
+        },
+        bind_approved_plan_continuation_to_current_task_address() {
+          return { operation: 'approved_plan_continuation_bound_for_test' };
+        },
+        bind_draft_continuation_to_current_task_address(input) {
+          bindingCalls.push(input);
+          return { operation: 'draft_continuation_bound_for_test' };
+        },
+      },
     }),
     transport: async (input) => {
       transportInputs.push(input);
+      if (transportInputs.length === 2) assert.equal(bindingCalls.length, 1);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(transportInputs.length === 1
@@ -5691,6 +5714,17 @@ test('generates a replacement draft from pending candidate source squashed onto 
   assert.equal(lifecycle.calls.draftContinuationWork[0].admission.draft_id, first.draft_id);
   assert.equal(lifecycle.calls.draftContinuationWork[0].instruction, 'Make this pending draft calmer before saving.');
   assert.equal(lifecycle.calls.draftContinuationWork[0].request_digest, replacement.request_id);
+  assert.equal(bindingCalls.length, 1);
+  assert.equal(bindingCalls[0].context.mode, 'work');
+  assert.equal(bindingCalls[0].draft_continuation.project_id, PROJECT_ID);
+  assert.equal(bindingCalls[0].draft_continuation.conversation_id, lifecycle.calls.draftContinuationWork[0].admission.conversation_id);
+  assert.equal(bindingCalls[0].draft_continuation.draft_id, first.draft_id);
+  assert.equal(bindingCalls[0].draft_continuation.previous_turn_id, lifecycle.calls.draftContinuationWork[0].admission.previous_turn_id);
+  assert.equal(bindingCalls[0].draft_continuation.previous_task_id, lifecycle.calls.draftContinuationWork[0].admission.previous_task_id);
+  assert.equal(bindingCalls[0].draft_continuation.previous_run_id, lifecycle.calls.draftContinuationWork[0].admission.previous_run_id);
+  assert.equal(bindingCalls[0].draft_continuation.continuation_id, lifecycle.calls.draftContinuationWork[0].admission.continuation_id);
+  assert.equal(bindingCalls[0].draft_continuation.admission_digest, lifecycle.calls.draftContinuationWork[0].admission.admission_digest);
+  assert.equal(bindingCalls[0].draft_continuation.candidate_digest, lifecycle.calls.draftContinuationWork[0].admission.candidate_digest);
   assert.equal(lifecycle.calls.candidate.length, 2);
   assert.equal(lifecycle.calls.candidate[1].context.events[0].payload.task.title, 'Revise unsaved draft');
   assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
@@ -5733,6 +5767,50 @@ test('generates a replacement draft from pending candidate source squashed onto 
     JSON.stringify(replacement),
     /git_candidate_receipt|verification_receipt|operations|provider\.example|credential|secret|Authorization|Bearer/iu,
   );
+});
+
+test('fails closed before provider dispatch when draft continuation Task Address binding fails', async () => {
+  let providerCalls = 0;
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+      sessionTaskAddressBindingService: {
+        bind_queued_followup_work_to_current_task_address() {
+          return { operation: 'queued_followup_work_bound_for_test' };
+        },
+        bind_approved_plan_continuation_to_current_task_address() {
+          return { operation: 'approved_plan_continuation_bound_for_test' };
+        },
+        bind_draft_continuation_to_current_task_address() {
+          throw new Error(PRIVATE_MARKER);
+        },
+      },
+    }),
+    transport: async () => {
+      providerCalls += 1;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  const first = await service.generate(request({ existingProjectId: PROJECT_ID }));
+
+  await assert.rejects(
+    service.generate_draft_continuation({
+      draft_id: first.draft_id,
+      instruction: 'Revise the pending draft before saving.',
+    }),
+    (error) => {
+      assert.equal(error.code, 'builder_generation_service_unavailable');
+      assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
+      return true;
+    },
+  );
+  assert.equal(providerCalls, 1);
 });
 
 test('restores a pending draft from conversation proof and verified Git source after memory loss', async () => {

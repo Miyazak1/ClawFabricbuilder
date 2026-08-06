@@ -290,6 +290,7 @@ function runtimeWithService(service, probes = {}) {
               service_version: 'builder-session-task-address-binding-service.v1',
               bind_queued_followup_work_to_current_task_address() {},
               bind_approved_plan_continuation_to_current_task_address() {},
+              bind_draft_continuation_to_current_task_address() {},
             };
             return context.__sessionTaskAddressBindingService;
           },

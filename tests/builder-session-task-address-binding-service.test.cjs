@@ -34,6 +34,8 @@ const CONSUMING_MESSAGE_ID = 'builder-message:123e4567-e89b-42d3-a456-4266141742
 const CONSUMING_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174212';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174213';
 const APPROVED_PLAN_CONTINUATION_ID = 'builder-approved-plan-continuation:123e4567-e89b-42d3-a456-426614174214';
+const DRAFT_CONTINUATION_ID = 'builder-draft-continuation:123e4567-e89b-42d3-a456-426614174215';
+const DRAFT_ID = `builder-generation-draft:${'d'.repeat(64)}`;
 
 function temporaryDatabase(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-address-binding-'));
@@ -133,6 +135,21 @@ function approvedPlanContinuation(overrides = {}) {
     approved_plan_run_id: RUN_ID,
     continuation_id: APPROVED_PLAN_CONTINUATION_ID,
     continuation_admission_digest: digest('a'),
+    ...overrides,
+  };
+}
+
+function draftContinuation(overrides = {}) {
+  return {
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    draft_id: DRAFT_ID,
+    previous_turn_id: TURN_ID,
+    previous_task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174216',
+    previous_run_id: RUN_ID,
+    continuation_id: DRAFT_CONTINUATION_ID,
+    admission_digest: digest('b'),
+    candidate_digest: digest('c'),
     ...overrides,
   };
 }
@@ -265,6 +282,21 @@ function approvedPlanWorkContext(overrides = {}) {
   };
 }
 
+function draftContinuationWorkContext(overrides = {}) {
+  const continuation = draftContinuation();
+  return approvedPlanWorkContext({
+    draft_continuation: {
+      admission_digest: continuation.admission_digest,
+      draft_id: continuation.draft_id,
+      previous_turn_id: continuation.previous_turn_id,
+      previous_task_id: continuation.previous_task_id,
+      previous_run_id: continuation.previous_run_id,
+      previous_candidate_digest: continuation.candidate_digest,
+    },
+    ...overrides,
+  });
+}
+
 function assertBindingError(fn) {
   assert.throws(
     fn,
@@ -343,6 +375,37 @@ test('binds approved-plan continuation work to the current Session and Task Addr
   store.close();
 });
 
+test('binds draft continuation work to the current Session and Task Address by conversation', (t) => {
+  const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
+  store.record_session_address({ session_address: sessionAddress() });
+  store.record_task_address({ task_address: taskAddress() });
+  const binder = createBuilderSessionTaskAddressBindingService({ address_store: store });
+  const continuation = draftContinuation();
+  const bound = binder.bind_draft_continuation_to_current_task_address({
+    context: draftContinuationWorkContext(),
+    draft_continuation: continuation,
+  });
+
+  assert.equal(bound.result_version, RESULT_VERSION);
+  assert.equal(bound.operation, 'draft_continuation_bound');
+  assert.equal(bound.project_id, PROJECT_ID);
+  assert.equal(bound.conversation_id, CONVERSATION_ID);
+  assert.equal(bound.turn_id, CONSUMING_TURN_ID);
+  assert.equal(bound.run_id, CONSUMING_RUN_ID);
+  assert.equal(bound.low_level_task_id, CONSUMING_TASK_ID);
+  assert.deepEqual(bound.draft_continuation, continuation);
+  assert.equal(bound.task_address.task_address.task_address_id, TASK_ADDRESS_ID);
+  assert.equal(bound.task_address.task_address.conversation_id, CONVERSATION_ID);
+  assert.equal(bound.session_address.session_address.session_id, SESSION_ID);
+  assert.equal(bound.authority.address_binding, 'main_owned_read_only_session_task_address_lookup');
+  assert.equal(bound.authority.conversation_append, false);
+  assert.equal(bound.authority.provider_dispatch, false);
+  assert.equal(bound.authority.source_mutation, false);
+  assert.equal(bound.authority.git_mutation, false);
+  assert.equal(bound.authority.permission_grant, false);
+  store.close();
+});
+
 test('fails closed for absent addresses, forged context, malformed input, accessors, and proxies', (t) => {
   const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
   const binder = createBuilderSessionTaskAddressBindingService({ address_store: store });
@@ -362,6 +425,14 @@ test('fails closed for absent addresses, forged context, malformed input, access
       events: approvedPlanWorkContext().events.slice(0, 1),
     }),
     approved_plan_continuation: approvedPlanContinuation(),
+  }));
+  assertBindingError(() => binder.bind_draft_continuation_to_current_task_address({
+    context: draftContinuationWorkContext(),
+    draft_continuation: draftContinuation({ candidate_digest: digest('e') }),
+  }));
+  assertBindingError(() => binder.bind_draft_continuation_to_current_task_address({
+    context: approvedPlanWorkContext(),
+    draft_continuation: draftContinuation(),
   }));
   store.record_session_address({ session_address: sessionAddress() });
   store.record_task_address({ task_address: taskAddress() });
@@ -428,6 +499,7 @@ test('source boundary remains a read-only main binding service without runtime a
   assert.match(source, /main_owned_read_only_session_task_address_lookup/u);
   assert.match(source, /bind_queued_followup_work_to_current_task_address/u);
   assert.match(source, /bind_approved_plan_continuation_to_current_task_address/u);
+  assert.match(source, /bind_draft_continuation_to_current_task_address/u);
   assert.match(source, /read_current_session_task_for_conversation/u);
   assert.match(source, /conversation_append: false/u);
   assert.match(source, /provider_dispatch: false/u);

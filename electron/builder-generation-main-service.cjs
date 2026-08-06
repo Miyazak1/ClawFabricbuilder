@@ -1546,6 +1546,12 @@ function createBuilderGenerationMainService(rawOptions) {
       options.sessionTaskAddressBindingService,
       'bind_approved_plan_continuation_to_current_task_address',
     );
+  const bindDraftContinuationToCurrentTaskAddress = options.sessionTaskAddressBindingService === undefined
+    ? null
+    : ownMethod(
+      options.sessionTaskAddressBindingService,
+      'bind_draft_continuation_to_current_task_address',
+    );
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
@@ -1877,6 +1883,28 @@ function createBuilderGenerationMainService(rawOptions) {
     );
   }
 
+  function bindDraftContinuationContextToCurrentTaskAddress(conversationContext, continuation) {
+    if (bindDraftContinuationToCurrentTaskAddress === null) return;
+    Reflect.apply(
+      bindDraftContinuationToCurrentTaskAddress,
+      options.sessionTaskAddressBindingService,
+      [{
+        context: conversationContext,
+        draft_continuation: {
+          project_id: continuation.admission.project_id,
+          conversation_id: continuation.admission.conversation_id,
+          draft_id: continuation.admission.draft_id,
+          previous_turn_id: continuation.admission.previous_turn_id,
+          previous_task_id: continuation.admission.previous_task_id,
+          previous_run_id: continuation.admission.previous_run_id,
+          continuation_id: continuation.admission.continuation_id,
+          admission_digest: continuation.admission.admission_digest,
+          candidate_digest: continuation.admission.candidate_digest,
+        },
+      }],
+    );
+  }
+
   function generationRequestFromApprovedPlan(editContext) {
     const unsigned = freezeDeep({
       version: 'builder-generation-request.v2',
@@ -2114,7 +2142,9 @@ function createBuilderGenerationMainService(rawOptions) {
           request_digest: request.request_digest,
         }],
       );
+      const addressBindingContext = conversationContext;
       conversationContext = recordConversationContextSnapshot(conversationContext);
+      bindDraftContinuationContextToCurrentTaskAddress(addressBindingContext, continuation);
       const candidateBase = await baseForGeneration(
         request,
         conversationContext.project.project_id,

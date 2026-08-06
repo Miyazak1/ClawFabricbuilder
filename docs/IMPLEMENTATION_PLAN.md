@@ -200,9 +200,13 @@ reconnect to the current product Task Address before provider dispatch. The
 approved-plan continuation binding checkpoint extends that same read-only gate:
 after a plan is approved and replay-admitted for execution, generation main
 must bind the continuation run to the current product Task Address before
-provider dispatch. These binding checkpoints still open no IPC/preload surface,
+provider dispatch. The draft-continuation binding checkpoint now applies the
+same rule to replacement drafts: after a pending draft is replay-verified and
+admitted for revision, generation main must bind the new continuation run to
+the current product Task Address before reading the project base and dispatching
+the provider. These binding checkpoints still open no IPC/preload surface,
 record no new Session/Task Address, append no Conversation event, grant no
-permission, and do not bind retry, draft continuation, or subagent delegation.
+permission, and do not bind retry or subagent delegation.
 
 ### Gate F5 - Main-Owned Conversation and Run Repository
 
