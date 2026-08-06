@@ -18,6 +18,13 @@ const {
   createBuilderContextCompactionSummaryStore,
 } = require('../electron/builder-context-compaction-summary-store.cjs');
 const {
+  createBuilderHandoffPacket,
+} = require('../electron/builder-handoff-packet.cjs');
+const {
+  BUILDER_HANDOFF_PACKET_STORE_VERSION,
+  createBuilderHandoffPacketStore,
+} = require('../electron/builder-handoff-packet-store.cjs');
+const {
   createBuilderSessionAddress,
   createBuilderTaskAddress,
 } = require('../electron/builder-session-task-address.cjs');
@@ -53,6 +60,7 @@ function temporaryDatabase() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-working-context-'));
   return {
     compactionDatabasePath: path.join(root, 'context-compaction.sqlite'),
+    handoffDatabasePath: path.join(root, 'handoff-packets.sqlite'),
     taskCapsuleDatabasePath: path.join(root, 'task-capsules.sqlite'),
     addressDatabasePath: path.join(root, 'session-task-addresses.sqlite'),
     root,
@@ -138,6 +146,45 @@ function compactionSummary(overrides = {}) {
       { source_kind: 'assistant_message', source_digest: digest('e') },
     ],
     created_at_ms: 1_250,
+    ...overrides,
+  });
+}
+
+function handoffPacket(overrides = {}) {
+  return createBuilderHandoffPacket({
+    source_thread_id: 'builder-session:123e4567-e89b-42d3-a456-426614174299',
+    source_task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174298',
+    target_thread_id: SESSION_ID,
+    inserted_by: 'subagent',
+    summary: 'Pending handoff provides public context but must be reconciled before use.',
+    decisions: ['Treat this as pending context only.'],
+    open_questions: [],
+    changed_files: [{
+      path: 'src/pages/Home.tsx',
+      change_kind: 'modified',
+      file_digest: digest('6'),
+    }],
+    commit_refs: [{
+      ref_kind: 'project_revision',
+      ref_digest: digest('7'),
+    }],
+    verification_evidence: [{
+      evidence_kind: 'review',
+      status: 'passed',
+      evidence_digest: digest('8'),
+      summary: 'Source review passed.',
+    }],
+    requested_next_action: 'Review this pending handoff after the current work reaches a safe boundary.',
+    authority_claims: [{
+      claim_kind: 'context_only',
+      classification: 'informational',
+      summary: 'No permission or approval is inherited.',
+    }],
+    source_refs: [
+      { source_kind: 'public_summary', source_digest: digest('9') },
+      { source_kind: 'saved_revision', source_digest: digest('0') },
+    ],
+    inserted_at_ms: 1_260,
     ...overrides,
   });
 }
@@ -239,6 +286,25 @@ function compactionFixture(t) {
   };
 }
 
+function handoffFixture(t) {
+  const temp = temporaryDatabase();
+  const taskCapsuleStore = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
+  const handoffStore = createBuilderHandoffPacketStore(temp.handoffDatabasePath);
+  t.after(() => {
+    taskCapsuleStore.close();
+    handoffStore.close();
+    fs.rmSync(temp.root, { force: true, recursive: true });
+  });
+  return {
+    taskCapsuleStore,
+    handoffStore,
+    service: createBuilderWorkingContextStateService({
+      task_capsule_store: taskCapsuleStore,
+      handoff_packet_store: handoffStore,
+    }),
+  };
+}
+
 function addressedFixture(t) {
   const temp = temporaryDatabase();
   const taskCapsuleStore = createBuilderTaskCapsuleStore(temp.taskCapsuleDatabasePath);
@@ -293,6 +359,13 @@ test('projects the latest task capsule store fact into ready Working Context Sta
   assert.equal(result.latest_context_compaction_summary.status, 'absent');
   assert.equal(result.evidence.context_compaction_summary_store_authority, 'not_configured');
   assert.equal(result.evidence.context_compaction_summary_store_operation, 'not_configured');
+  assert.deepEqual(result.pending_handoff_packets, {
+    status: 'absent',
+    count: 0,
+    first_handoff_id: null,
+  });
+  assert.equal(result.evidence.handoff_packet_store_authority, 'not_configured');
+  assert.equal(result.evidence.handoff_packet_store_operation, 'not_configured');
   assert.equal(result.evidence.sqlite_write, 'not_performed');
   assert.equal(result.evidence.conversation_append, false);
   assert.equal(result.evidence.provider_dispatch, false);
@@ -373,6 +446,36 @@ test('projects latest compaction summary refs without changing readiness authori
     'latest_context_compaction_summary_ready_read',
   );
   assert.equal(result.evidence.provider_dispatch, false);
+  assert.equal(result.evidence.source_mutation, false);
+  assert.equal(result.evidence.git_mutation, false);
+  assert.equal(result.evidence.permission_grant, false);
+});
+
+test('projects pending handoff inbox status without adopting context', (t) => {
+  const item = handoffFixture(t);
+  const pending = handoffPacket();
+  item.handoffStore.record_handoff_packet({ handoff_packet: pending });
+
+  const result = item.service.read_current_working_context_state(request({
+    objective_summary: null,
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: null,
+    source_refs: [],
+  }));
+
+  assert.equal(result.status, 'empty');
+  assert.deepEqual(result.pending_handoff_packets, {
+    status: 'pending',
+    count: 1,
+    first_handoff_id: pending.handoff_id,
+  });
+  assert.deepEqual(result.working_context_state.handoff_refs, []);
+  assert.equal(result.evidence.handoff_packet_store_authority, 'main_owned_handoff_packet_store');
+  assert.equal(result.evidence.handoff_packet_store_operation, 'pending_handoff_packets_ready_read');
+  assert.equal(result.evidence.provider_dispatch, false);
+  assert.equal(result.evidence.tool_dispatch, false);
   assert.equal(result.evidence.source_mutation, false);
   assert.equal(result.evidence.git_mutation, false);
   assert.equal(result.evidence.permission_grant, false);
@@ -575,6 +678,13 @@ test('fails closed for malformed requests, forged stores, and hostile read resul
       read_latest_context_compaction_summary: 'nope',
     },
   }));
+  assertServiceError(() => createBuilderWorkingContextStateService({
+    task_capsule_store: item.store,
+    handoff_packet_store: {
+      store_version: BUILDER_HANDOFF_PACKET_STORE_VERSION,
+      list_pending_handoff_packets: 'nope',
+    },
+  }));
   assertServiceError(() => createBuilderWorkingContextStateService(new Proxy({
     task_capsule_store: item.store,
   }, {})));
@@ -619,8 +729,9 @@ test('source remains a main-only read projection service without runtime authori
   assert.match(source, /read_latest_task_capsule/u);
   assert.match(source, /read_latest_context_compaction_summary/u);
   assert.match(source, /read_current_session_task_for_conversation/u);
+  assert.match(source, /list_pending_handoff_packets/u);
   assert.doesNotMatch(
     source,
-    /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|child_process|execFile|spawn|run_command|CREATE TABLE|INSERT INTO|UPDATE\s+\w+|DELETE FROM|record_task_capsule_update/u,
+    /ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|fetch\s*\(|child_process|execFile|spawn|run_command|CREATE TABLE|INSERT INTO|UPDATE\s+\w+|DELETE FROM|record_task_capsule_update|record_handoff_packet/u,
   );
 });

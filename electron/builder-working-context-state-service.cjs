@@ -18,6 +18,11 @@ const {
   BuilderContextCompactionSummaryStoreError,
 } = require('./builder-context-compaction-summary-store.cjs');
 const {
+  BUILDER_HANDOFF_PACKET_STORE_READ_RESULT_VERSION,
+  BUILDER_HANDOFF_PACKET_STORE_VERSION,
+  BuilderHandoffPacketStoreError,
+} = require('./builder-handoff-packet-store.cjs');
+const {
   BuilderWorkingContextStateError,
   createBuilderWorkingContextState,
 } = require('./builder-working-context-state.cjs');
@@ -33,10 +38,27 @@ const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}
 const SERVICE_KEYS = Object.freeze(['task_capsule_store']);
 const SERVICE_WITH_ADDRESS_KEYS = Object.freeze(['task_capsule_store', 'session_task_address_store']);
 const SERVICE_WITH_COMPACTION_KEYS = Object.freeze(['task_capsule_store', 'context_compaction_summary_store']);
+const SERVICE_WITH_HANDOFF_KEYS = Object.freeze(['task_capsule_store', 'handoff_packet_store']);
 const SERVICE_WITH_ADDRESS_AND_COMPACTION_KEYS = Object.freeze([
   'task_capsule_store',
   'session_task_address_store',
   'context_compaction_summary_store',
+]);
+const SERVICE_WITH_ADDRESS_AND_HANDOFF_KEYS = Object.freeze([
+  'task_capsule_store',
+  'session_task_address_store',
+  'handoff_packet_store',
+]);
+const SERVICE_WITH_COMPACTION_AND_HANDOFF_KEYS = Object.freeze([
+  'task_capsule_store',
+  'context_compaction_summary_store',
+  'handoff_packet_store',
+]);
+const SERVICE_WITH_ALL_OPTIONAL_KEYS = Object.freeze([
+  'task_capsule_store',
+  'session_task_address_store',
+  'context_compaction_summary_store',
+  'handoff_packet_store',
 ]);
 const REQUEST_KEYS = Object.freeze([
   'project_id',
@@ -84,10 +106,12 @@ const RESULT_KEYS = Object.freeze([
   'working_context_state',
   'latest_task_capsule',
   'latest_context_compaction_summary',
+  'pending_handoff_packets',
   'evidence',
 ]);
 const LATEST_TASK_CAPSULE_KEYS = Object.freeze(['status', 'update_id']);
 const LATEST_COMPACTION_SUMMARY_KEYS = Object.freeze(['status', 'summary_id']);
+const PENDING_HANDOFF_PACKETS_KEYS = Object.freeze(['status', 'count', 'first_handoff_id']);
 const EVIDENCE_KEYS = Object.freeze([
   'service_authority',
   'working_context_contract_authority',
@@ -95,6 +119,8 @@ const EVIDENCE_KEYS = Object.freeze([
   'task_capsule_store_operation',
   'context_compaction_summary_store_authority',
   'context_compaction_summary_store_operation',
+  'handoff_packet_store_authority',
+  'handoff_packet_store_operation',
   'renderer_authority',
   'ipc_authority',
   'sqlite_write',
@@ -244,15 +270,30 @@ function safeCompactionStore(value) {
   });
 }
 
+function safeHandoffStore(value) {
+  if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) fail();
+  const version = Object.getOwnPropertyDescriptor(value, 'store_version');
+  if (!version || !Object.hasOwn(version, 'value') || version.value !== BUILDER_HANDOFF_PACKET_STORE_VERSION) fail();
+  return freezeDeep({
+    store_version: BUILDER_HANDOFF_PACKET_STORE_VERSION,
+    list_pending_handoff_packets: method(value, 'list_pending_handoff_packets'),
+  });
+}
+
 function safeServices(rawServices) {
   const keys = exactObjectOneOf(rawServices, [
     SERVICE_KEYS,
     SERVICE_WITH_ADDRESS_KEYS,
     SERVICE_WITH_COMPACTION_KEYS,
+    SERVICE_WITH_HANDOFF_KEYS,
     SERVICE_WITH_ADDRESS_AND_COMPACTION_KEYS,
+    SERVICE_WITH_ADDRESS_AND_HANDOFF_KEYS,
+    SERVICE_WITH_COMPACTION_AND_HANDOFF_KEYS,
+    SERVICE_WITH_ALL_OPTIONAL_KEYS,
   ]);
   const hasAddressStore = keys.includes('session_task_address_store');
   const hasCompactionStore = keys.includes('context_compaction_summary_store');
+  const hasHandoffStore = keys.includes('handoff_packet_store');
   return freezeDeep({
     task_capsule_store: safeStore(valueAt(rawServices, 'task_capsule_store')),
     session_task_address_store: hasAddressStore
@@ -260,6 +301,9 @@ function safeServices(rawServices) {
       : null,
     context_compaction_summary_store: hasCompactionStore
       ? safeCompactionStore(valueAt(rawServices, 'context_compaction_summary_store'))
+      : null,
+    handoff_packet_store: hasHandoffStore
+      ? safeHandoffStore(valueAt(rawServices, 'handoff_packet_store'))
       : null,
   });
 }
@@ -306,7 +350,7 @@ function safeConversationRequest(rawRequest) {
   });
 }
 
-function evidence(taskCapsuleStoreOperation, compactionStoreOperation) {
+function evidence(taskCapsuleStoreOperation, compactionStoreOperation, handoffStoreOperation) {
   return freezeDeep({
     service_authority: 'main_working_context_state_projection_service_v1',
     working_context_contract_authority: 'main_working_context_state_contract_v1',
@@ -316,6 +360,10 @@ function evidence(taskCapsuleStoreOperation, compactionStoreOperation) {
       ? 'not_configured'
       : 'main_owned_context_compaction_summary_store',
     context_compaction_summary_store_operation: compactionStoreOperation,
+    handoff_packet_store_authority: handoffStoreOperation === 'not_configured'
+      ? 'not_configured'
+      : 'main_owned_handoff_packet_store',
+    handoff_packet_store_operation: handoffStoreOperation,
     renderer_authority: 'not_present',
     ipc_authority: 'not_present',
     sqlite_write: 'not_performed',
@@ -359,6 +407,16 @@ function normalizeOperationError(error) {
     );
   }
   if (error instanceof BuilderContextCompactionSummaryStoreError) {
+    if (/_unavailable$/u.test(error.code)) {
+      return new BuilderWorkingContextStateServiceError(
+        'builder_working_context_state_service_unavailable',
+      );
+    }
+    return new BuilderWorkingContextStateServiceError(
+      'builder_working_context_state_service_invalid',
+    );
+  }
+  if (error instanceof BuilderHandoffPacketStoreError) {
     if (/_unavailable$/u.test(error.code)) {
       return new BuilderWorkingContextStateServiceError(
         'builder_working_context_state_service_unavailable',
@@ -479,6 +537,73 @@ function safeCompactionStoreOperation(evidenceValue) {
   return transaction;
 }
 
+function safePendingHandoffResult(value, sessionId) {
+  if (value === null) {
+    return freezeDeep({
+      status: 'absent',
+      count: 0,
+      first_handoff_id: null,
+      operation: 'not_configured',
+    });
+  }
+  exactObject(value, [
+    'result_version',
+    'handoff_packet_authority',
+    'status',
+    'handoff_packets',
+    'truncated',
+    'evidence',
+  ]);
+  if (
+    valueAt(value, 'result_version') !== BUILDER_HANDOFF_PACKET_STORE_READ_RESULT_VERSION
+    || valueAt(value, 'handoff_packet_authority') !== 'main_owned_handoff_packet_store'
+    || valueAt(value, 'truncated') !== false
+  ) fail();
+  const operation = safeHandoffStoreOperation(valueAt(value, 'evidence'));
+  const status = valueAt(value, 'status');
+  const packets = valueAt(value, 'handoff_packets');
+  if (!Array.isArray(packets) || utilTypes.isProxy(packets) || packets.length > 128) fail();
+  const keys = Reflect.ownKeys(packets);
+  if (keys.some((key) => typeof key === 'symbol') || keys.length !== packets.length + 1) fail();
+  if (status === 'absent') {
+    if (packets.length !== 0) fail();
+    return freezeDeep({
+      status: 'absent',
+      count: 0,
+      first_handoff_id: null,
+      operation,
+    });
+  }
+  if (status !== 'ready' || packets.length < 1) fail();
+  let firstHandoffId = null;
+  for (let index = 0; index < packets.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(packets, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    const entry = descriptor.value;
+    exactObject(entry, ['status', 'handoff_packet']);
+    if (valueAt(entry, 'status') !== 'pending') fail();
+    const packet = valueAt(entry, 'handoff_packet');
+    if (!isPlainObject(packet) || valueAt(packet, 'target_thread_id') !== sessionId) fail();
+    if (firstHandoffId === null) firstHandoffId = valueAt(packet, 'handoff_id');
+  }
+  return freezeDeep({
+    status: 'pending',
+    count: packets.length,
+    first_handoff_id: firstHandoffId,
+    operation,
+  });
+}
+
+function safeHandoffStoreOperation(evidenceValue) {
+  if (!isPlainObject(evidenceValue)) fail();
+  const transaction = valueAt(evidenceValue, 'transaction');
+  if (
+    transaction !== 'pending_handoff_packets_ready_read'
+    && transaction !== 'pending_handoff_packets_absent_read'
+  ) fail();
+  return transaction;
+}
+
 function mergeCompactionRefs(baseRefs, latestCompaction) {
   if (latestCompaction.compaction_ref === null) return baseRefs;
   if (baseRefs.some((ref) => (
@@ -530,6 +655,17 @@ function safeServiceResult(value) {
     (compactionStatus === 'absent' && valueAt(latestCompaction, 'summary_id') !== null)
     || (compactionStatus === 'ready' && typeof valueAt(latestCompaction, 'summary_id') !== 'string')
   ) fail();
+  const pendingHandoffs = valueAt(value, 'pending_handoff_packets');
+  exactObject(pendingHandoffs, PENDING_HANDOFF_PACKETS_KEYS);
+  const handoffStatus = valueAt(pendingHandoffs, 'status');
+  const handoffCount = valueAt(pendingHandoffs, 'count');
+  if (
+    !Number.isSafeInteger(handoffCount)
+    || handoffCount < 0
+    || (handoffStatus === 'absent' && (handoffCount !== 0 || valueAt(pendingHandoffs, 'first_handoff_id') !== null))
+    || (handoffStatus === 'pending' && (handoffCount < 1 || typeof valueAt(pendingHandoffs, 'first_handoff_id') !== 'string'))
+    || (handoffStatus !== 'absent' && handoffStatus !== 'pending')
+  ) fail();
   const evidenceValue = valueAt(value, 'evidence');
   exactObject(evidenceValue, EVIDENCE_KEYS);
   return value;
@@ -550,6 +686,14 @@ function readCurrentWorkingContextState(services, rawRequest) {
       }),
     request.conversation_id,
     request.task_address_id,
+  );
+  const pendingHandoffs = safePendingHandoffResult(
+    services.handoff_packet_store === null
+      ? null
+      : services.handoff_packet_store.list_pending_handoff_packets({
+        target_thread_id: request.session_id,
+      }),
+    request.session_id,
   );
   const state = createBuilderWorkingContextState({
     ...request,
@@ -574,7 +718,12 @@ function readCurrentWorkingContextState(services, rawRequest) {
       status: latestCompaction.status,
       summary_id: latestCompaction.summary_id,
     },
-    evidence: evidence(latest.operation, latestCompaction.operation),
+    pending_handoff_packets: {
+      status: pendingHandoffs.status,
+      count: pendingHandoffs.count,
+      first_handoff_id: pendingHandoffs.first_handoff_id,
+    },
+    evidence: evidence(latest.operation, latestCompaction.operation, pendingHandoffs.operation),
   }));
 }
 
