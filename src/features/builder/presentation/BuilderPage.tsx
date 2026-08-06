@@ -1543,12 +1543,37 @@ function permissionReadStatus(prompt: BuilderPlanSourceReadApprovalPrompt | null
   return 'Chat stays read-only unless a plan or tool path asks for project context.';
 }
 
+function aiContextPermissionLabel(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): string {
+  return status?.label ?? 'Not active';
+}
+
+function aiContextPermissionStatus(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): string {
+  if (status === null) return 'Builder has not requested current task context for an AI call in this view.';
+  if (status.needs_user_approval) {
+    return 'Builder needs your approval before sharing current task context with the AI service.';
+  }
+  return status.next_action_hint;
+}
+
+function aiContextPermissionStatusCode(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): 'absent' | 'allowed' | 'denied' | 'needs_approval' {
+  if (status === null) return 'absent';
+  if (status.can_use_provider_context) return 'allowed';
+  return status.needs_user_approval ? 'needs_approval' : 'denied';
+}
+
 function BuilderArtifactPermissionsPanel({
   approvalMode,
   currentProjectWriteApproval,
   hasSavedProject,
   hasUnsavedDraft,
   planSourceReadApproval,
+  providerContextDisclosureStatus,
   workingProject,
 }: Readonly<{
   approvalMode: BuilderComposerApprovalMode;
@@ -1556,6 +1581,7 @@ function BuilderArtifactPermissionsPanel({
   hasSavedProject: boolean;
   hasUnsavedDraft: boolean;
   planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
+  providerContextDisclosureStatus: BuilderProviderContextDisclosureStatusProjectionWire | null;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
   const projectLabel = workingProject?.title
@@ -1592,6 +1618,17 @@ function BuilderArtifactPermissionsPanel({
           <dd>
             <strong>Project context</strong>
             <span>{permissionReadStatus(planSourceReadApproval)}</span>
+          </dd>
+        </div>
+        <div
+          className="cf-builder-permission-row"
+          data-builder-ai-context-status={aiContextPermissionStatusCode(providerContextDisclosureStatus)}
+          data-builder-permission-row="ai-context"
+        >
+          <dt>AI context</dt>
+          <dd>
+            <strong>{aiContextPermissionLabel(providerContextDisclosureStatus)}</strong>
+            <span>{aiContextPermissionStatus(providerContextDisclosureStatus)}</span>
           </dd>
         </div>
         <div className="cf-builder-permission-row" data-builder-permission-row="future-tools">
@@ -1767,6 +1804,7 @@ function BuilderArtifactSidebar({
   onSelectTab,
   onSourceOpenChange,
   planSourceReadApproval,
+  providerContextDisclosureStatus,
   preview,
   previewPanelRef,
   sidebarRef,
@@ -1802,6 +1840,7 @@ function BuilderArtifactSidebar({
   onSelectTab: (tab: BuilderArtifactTab) => void;
   onSourceOpenChange: (open: boolean) => void;
   planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
+  providerContextDisclosureStatus: BuilderProviderContextDisclosureStatusProjectionWire | null;
   preview: BuilderProjectControllerSnapshot['preview'];
   previewPanelRef?: Ref<HTMLElement>;
   sidebarRef?: Ref<HTMLElement>;
@@ -1923,6 +1962,7 @@ function BuilderArtifactSidebar({
             hasSavedProject={hasSavedProject}
             hasUnsavedDraft={hasUnsavedDraft}
             planSourceReadApproval={planSourceReadApproval}
+            providerContextDisclosureStatus={providerContextDisclosureStatus}
             workingProject={workingProject}
           />
         ) : null}
@@ -3027,6 +3067,7 @@ export function BuilderPage({
       onSelectTab={openArtifactTab}
       onSourceOpenChange={setSourceDisclosureOpen}
       planSourceReadApproval={planSourceReadApproval}
+      providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
       preview={preview}
       previewPanelRef={resultFlowRef}
       sidebarRef={artifactSidebarRef}

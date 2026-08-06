@@ -834,7 +834,9 @@ Evidence requirements:
   assembly ids, digests, provider-context body, permission grants, or provider
   dispatch. Conversation main service can now accept a main-owned optional
   provider disclosure status reader and pass its sanitized status through
-  read-only task stream output. Missing, throwing, or forged readers are ignored
+  read-only task stream output, and the desktop renderer shows that sanitized
+  status in the composer and the right-side Permissions artifact panel as a
+  read-only AI context fact. Missing, throwing, or forged readers are ignored
   so activity remains available and the conversation lifecycle still imports no
   provider contract, provider dispatch, prompt bridge, permission grant,
   storage write, or IPC/preload authority. The local

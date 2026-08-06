@@ -57,6 +57,34 @@ const PLAN_SOURCE_READ_APPROVED = Object.freeze({
   authority: 'main_selected_project_bounded_filesystem_read_v1',
 } as const);
 
+function providerContextDisclosureStatusProjection() {
+  return Object.freeze({
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: Object.freeze({
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    }),
+  } as const);
+}
+
 afterEach(() => {
   for (const entry of mounted.splice(0)) {
     act(() => entry.root.unmount());
@@ -2920,10 +2948,44 @@ describe('BuilderPage v2', () => {
     expect(permissionsPanel?.textContent).toContain('Project context');
     expect(permissionsPanel?.textContent)
       .toContain('Chat stays read-only unless a plan or tool path asks for project context.');
+    expect(permissionsPanel?.textContent).toContain('AI context');
+    expect(permissionsPanel?.textContent).toContain('Not active');
+    expect(permissionsPanel?.textContent)
+      .toContain('Builder has not requested current task context for an AI call in this view.');
+    expect(permissionsPanel?.querySelector('[data-builder-permission-row="ai-context"]')
+      ?.getAttribute('data-builder-ai-context-status')).toBe('absent');
     expect(permissionsPanel?.textContent)
       .toContain('Terminal, network, external folders, publish, and delegation are separate future approvals.');
     expect(permissionsPanel?.textContent).not.toMatch(
       /builder-project:|main_selected_project|approval_scope|authority|receipt|digest|credential|provider/iu,
+    );
+  });
+
+  it('shows the current AI context status in the permissions artifact tab without raw request details', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        providerContextDisclosureStatus={providerContextDisclosureStatusProjection()}
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="permissions"]');
+
+    const row = container.querySelector('[data-builder-permission-row="ai-context"]');
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute('data-builder-ai-context-status')).toBe('needs_approval');
+    expect(row?.textContent).toContain('AI context');
+    expect(row?.textContent).toContain('Allow AI to use current context');
+    expect(row?.textContent)
+      .toContain('Builder needs your approval before sharing current task context with the AI service.');
+    expect(row?.textContent).not.toMatch(
+      /builder-provider-context|builder-context|sha256:|request_id|assembly_id|context_digest|authority|provider_context|source_tree|credential/iu,
     );
   });
 
