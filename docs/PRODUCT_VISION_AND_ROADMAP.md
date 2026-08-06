@@ -57,6 +57,13 @@ until the goal is actually done or explicitly blocked.
 The staged engineering gates are defined in
 [Implementation Plan](IMPLEMENTATION_PLAN.md).
 
+The implementation language strategy is intentionally conservative. Builder
+does not have a near-term native rewrite track; Electron, React, TypeScript, and
+Node/Electron main-side contracts remain the active product path. Rust, Go, or
+other native code may appear later only as narrow kernels for measured
+performance, packaging, or isolation needs. The policy is defined in
+[Native Kernel Strategy](NATIVE_KERNEL_STRATEGY.md).
+
 ## Product Promise
 
 The ordinary user loop is:

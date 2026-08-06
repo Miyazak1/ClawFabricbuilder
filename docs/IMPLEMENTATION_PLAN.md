@@ -25,6 +25,14 @@ Artifact, Review, verification, and Session/Task Address facts; it is not a
 social feed item, raw transcript export, source zip, autonomous experiment
 branch, or publish action.
 
+There is no near-term native rewrite gate. The implementation continues through
+the existing Electron, React, TypeScript, and Node/Electron main-side contract
+architecture until a measured bottleneck or isolation boundary justifies a
+separate native kernel. Rust, Go, C#, or other native modules must enter only as
+small sidecars/workers/libraries with independent gates, package evidence,
+restart behavior, and authority boundaries. The decision is recorded in
+[Native Kernel Strategy](NATIVE_KERNEL_STRATEGY.md).
+
 ## Verified Starting Point
 
 The standalone Builder has a dedicated desktop shell, encrypted provider
