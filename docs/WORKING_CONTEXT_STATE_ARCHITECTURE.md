@@ -580,6 +580,39 @@ Current checkpoint:
   projection is already `ready`, and fails closed on projection/assembly drift.
   It still performs no permission grant, provider dispatch, prompt bridge, IPC,
   storage write, or renderer projection.
+- `builder-provider-context-disclosure-status-projection.v1` turns that
+  preparation result into renderer-safe user-language status such as
+  `Allow AI to use current context`, `AI context not allowed`, or
+  `AI context allowed`. Task stream can now carry this as an optional top-level
+  projection without request ids, raw context text, assembly ids, digests,
+  provider-context body, permission grants, or provider dispatch.
+
+### Provider Context Egress Consent
+
+Approved provider-context disclosure is not an ordinary UI status. It is the
+consent boundary for sending assembled working context outside the local
+workspace to the configured provider. Therefore the provider prompt path must
+remain closed until an explicit disclosure UX and prompt-bridge checkpoint meet
+all of these maturity gates:
+
+- the user sees clear product language explaining that AI will use current
+  project/session context with the configured provider;
+- the user can inspect a bounded, redacted preview of the context categories
+  and source scopes before approval;
+- approval is bound to the current Project, Conversation, purpose, assembled
+  context digest, provider target, and freshness window;
+- approval expires on stale context, project switch, provider switch, new
+  conflicting user correction, terminal run completion, or explicit revocation;
+- the Run Context Snapshot records the exact approved projection ref before any
+  provider dispatch;
+- tests prove denied, expired, stale, wrong-project, wrong-conversation,
+  wrong-provider, and conflicting-correction cases fail closed;
+- renderer status chips remain read-only and cannot approve, revoke, bridge the
+  prompt, expose raw context, or grant permission by themselves.
+
+Only after these gates pass may Working Context State become provider prompt
+input. Until then, provider-context projection and disclosure status are audit
+and permission-preparation evidence only.
 
 ### 5. Frontend Projection
 
@@ -708,7 +741,11 @@ User approves plan
 6. **Contract unification**: add a pure main-side
    `builder-working-context-state.v1` contract that reads current facts and
    emits `empty/discussing/ready/stale/approved_plan_ready/needs_clarification`.
-7. **Regression tests**:
+7. **Provider context egress consent**: before Working Context State enters the
+   provider prompt path, add explicit user-facing approval, inspectable
+   redacted context preview, expiry/revocation rules, prompt-bridge admission,
+   and run-snapshot evidence.
+8. **Regression tests**:
    - no user-visible Brief menu item;
    - ordinary chat updates internal context without creating a draft;
    - contextual build works only from current ready state;
@@ -718,6 +755,9 @@ User approves plan
    - imported handoff context cannot override a newer local correction;
    - execution that uses handoff context records that dependency in the Run
      Context Snapshot.
+   - provider prompt bridging fails closed when context disclosure approval is
+     missing, stale, expired, wrong-project, wrong-conversation, wrong-provider,
+     or contradicted by a newer user correction.
 
 ## Non-Goals
 

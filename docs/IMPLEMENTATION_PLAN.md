@@ -60,6 +60,12 @@ sessions, instructions, compaction, branching, handoff, and reviewable project
 memory, while embedding/vector recall appears mainly in plugins or extensions.
 Builder may add vector recall later, but only as an inspectable candidate input
 to Context Assembly, never as readiness, permission, or plan authority.
+Provider context disclosure also has a separate maturity gate: a renderer-safe
+status or an approval IPC adapter is not enough to send Working Context State to
+the model provider. Prompt bridging must wait until the user can understand the
+egress decision, inspect bounded/redacted context categories, approve a current
+Project/Conversation/provider/purpose/freshness window, and rely on tested
+expiry/revocation/stale-conflict behavior recorded in the Run Context Snapshot.
 The recommended implementation order is: compaction contract, handoff packet
 contract, Working Context State service, Context Assembler, Run Snapshot refs,
 then the default UI projection and inspection surface.
