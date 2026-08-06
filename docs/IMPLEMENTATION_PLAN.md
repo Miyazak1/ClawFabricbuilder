@@ -837,7 +837,14 @@ Evidence requirements:
   read-only task stream output. Missing, throwing, or forged readers are ignored
   so activity remains available and the conversation lifecycle still imports no
   provider contract, provider dispatch, prompt bridge, permission grant,
-  storage write, or IPC/preload authority;
+  storage write, or IPC/preload authority. The local
+  `builder-provider-context-disclosure-status-service.v1` checkpoint adds a
+  main-only process-memory `record/read/clear current status` service, designed
+  to be fed by the exact Context Assembly and Provider Context Projection used
+  by a generation Run Snapshot rather than reassembling context during
+  read_stream. It stores only the renderer-safe status projection and exposes no
+  request id, assembly id, digest, provider-context body, permission grant,
+  provider dispatch, SQLite write, IPC/preload channel, or prompt bridge;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works
