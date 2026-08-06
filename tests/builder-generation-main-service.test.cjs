@@ -711,7 +711,7 @@ function conversationService(options = {}) {
       authority: { ...CONVERSATION_AUTHORITY },
     });
   }
-  function runContextSnapshotEvent(context, workingContextState = null) {
+  function runContextSnapshotEvent(context, workingContextState = null, contextAssembly = null) {
     const submitted = context.events.find((event) => (
       event.event_type === 'turn_submitted'
       && event.payload.turn_id === context.ids.turn_id
@@ -726,6 +726,7 @@ function conversationService(options = {}) {
       route_decision: submitted.payload.route_decision,
       latest_task_capsule: null,
       working_context_state: workingContextState,
+      context_assembly: contextAssembly,
       base_revision: submitted.payload.base_revision,
       created_at_ms: 99,
     });
@@ -1023,7 +1024,7 @@ function conversationService(options = {}) {
     },
     record_run_context_snapshot(input) {
       calls.contextSnapshot.push(input);
-      const event = runContextSnapshotEvent(input.context, input.working_context_state);
+      const event = runContextSnapshotEvent(input.context, input.working_context_state, input.context_assembly);
       return {
         ...input.context,
         start_head: eventHead(event),
@@ -4398,6 +4399,12 @@ test('uses the Working Context State service as contextual submit route evidence
       project_revision: 'not_inferred',
     },
   });
+  const contextSnapshotInputs = [];
+  const recordRunContextSnapshot = hiddenTaskStreamConversation.record_run_context_snapshot;
+  hiddenTaskStreamConversation.record_run_context_snapshot = (input) => {
+    contextSnapshotInputs.push(input);
+    return recordRunContextSnapshot(input);
+  };
   let transportInput;
   const buildService = createBuilderGenerationMainService({
     ...repositories({
@@ -4459,6 +4466,10 @@ test('uses the Working Context State service as contextual submit route evidence
   assert.equal(workingContextReads[1].project_id, PROJECT_ID);
   assert.equal(workingContextReads[1].conversation_id, CONVERSATION_ID);
   assert.equal(workingContextReads[1].latest_user_intent, '按刚才方案做');
+  assert.equal(contextSnapshotInputs.length, 1);
+  assert.match(contextSnapshotInputs[0].context_assembly.assembly_id, /^builder-context-assembly:[0-9a-f]{64}$/u);
+  assert.equal(contextSnapshotInputs[0].context_assembly.assembly_purpose, 'contextual_build');
+  assert.equal(contextSnapshotInputs[0].context_assembly.permission_gate.side_effect_ready, true);
   assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
     brief_version: 'builder-working-brief.v1',
     source: 'task_capsule_update',

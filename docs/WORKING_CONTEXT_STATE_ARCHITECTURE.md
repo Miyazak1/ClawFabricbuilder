@@ -299,6 +299,8 @@ Current implementation pieces already approximate the first version:
   of reviving the first historical ready brief;
 - Run Context Snapshot records whether the execution used a task capsule,
   approved plan, route purpose, project base, and permission result;
+- Run Context Snapshot now records safe Context Assembly refs when a
+  main-side assembly is available for the selected Working Context State;
 - approved-plan and draft-continuation paths bind to the current Session/Task
   Address before provider dispatch.
 - cloned, forked, delegated, or manually inserted task context should be treated
@@ -322,7 +324,7 @@ projection, run-audit evidence, and regression tests.
 | Working brief / Task Capsule | Implemented foundation | Usable for v1 contextual build, but should be unified behind Working Context State |
 | Brief correction / stale guard | Implemented foundation | Mature enough to prevent obvious stale ready-state reuse |
 | Approved plan and draft continuation binding | Implemented foundation | Mature enough for current build admission paths |
-| Run Context Snapshot | Implemented foundation | Needs refs to compaction and handoff before it can audit full context assembly |
+| Run Context Snapshot | Implemented foundation | Records Working Context refs and safe Context Assembly refs; compaction/handoff materialization and inspection are still incomplete |
 | Auto Compaction | Architecture only | Not mature until contract, store, digest, budget, and stale-state tests exist |
 | Handoff Packet | Architecture only | Not mature until inbox, adoption, conflict reconciliation, and run-snapshot refs exist |
 | Context Assembler | Pure contract foundation | `builder-context-assembler.v1` now defines bounded model context segments, omitted refs, budget, digest, permission gate, and run snapshot refs; generation dispatch still needs to consume it |
@@ -521,7 +523,10 @@ Current checkpoint:
   `context_budget`, `context_digest`, `run_snapshot_refs`, and a permission
   gate without reading SQLite, dispatching a provider/tool, mutating Git/source,
   granting permission, or opening IPC/preload.
-- It is not yet wired into generation dispatch; current provider prompt
+- Generation main now creates this assembly for run-snapshot audit when a
+  selected Working Context State is available, and the snapshot records only
+  `assembly_id`, `context_digest`, and `assembled_at_ms`.
+- It is not yet consumed by the provider prompt path; current provider prompt
   assembly still uses the older generation context path.
 
 ### 5. Frontend Projection

@@ -1867,7 +1867,7 @@ function createBuilderConversationMainService(rawOptions) {
   }
 
   function recordRunContextSnapshot(rawRequest) {
-    exactObject(rawRequest, ['context', 'working_context_state']);
+    exactObject(rawRequest, ['context', 'working_context_state', 'context_assembly']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
     if (
       context.run_terminal_failure_code !== null
@@ -1893,6 +1893,7 @@ function createBuilderConversationMainService(rawOptions) {
       route_decision: submitted.payload.route_decision,
       latest_task_capsule: latestTaskCapsuleFromEvents(context.events),
       working_context_state: valueAt(rawRequest, 'working_context_state'),
+      context_assembly: valueAt(rawRequest, 'context_assembly'),
       base_revision: submitted.payload.base_revision,
       created_at_ms: recordedAtMs,
     });

@@ -41,6 +41,9 @@ const {
   createBuilderDraftContinuationBase,
   sanitizeBuilderDraftContinuationBase,
 } = require('./builder-draft-continuation-base.cjs');
+const {
+  createBuilderContextAssembly,
+} = require('./builder-context-assembler.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
@@ -1996,13 +1999,69 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function submittedRouteDecisionFromConversationContext(conversationContext) {
+    const submitted = conversationContext.events.find((event) => (
+      valueAt(event, 'event_type') === 'turn_submitted'
+      && valueAt(valueAt(event, 'payload'), 'turn_id') === conversationContext.ids.turn_id
+    ));
+    return submitted === undefined ? null : valueAt(valueAt(submitted, 'payload'), 'route_decision');
+  }
+
+  function contextAssemblyPurposeFromRoute(routeDecision, workingContextState) {
+    const route = valueAt(routeDecision, 'route');
+    if (route === 'plan') return 'plan';
+    if (route !== 'build') return 'answer';
+    const state = valueAt(workingContextState, 'state');
+    return ['ready', 'approved_plan_ready'].includes(state) ? 'contextual_build' : null;
+  }
+
+  function contextAssemblyForSnapshot(conversationContext, workingContextState) {
+    if (workingContextState === null) return null;
+    const routeDecision = submittedRouteDecisionFromConversationContext(conversationContext);
+    if (routeDecision === null) return null;
+    const assemblyPurpose = contextAssemblyPurposeFromRoute(routeDecision, workingContextState);
+    if (assemblyPurpose === null) return null;
+    const assembledAtMs = Math.max(
+      workingContextSnapshotUpdatedAtMs(conversationContext),
+      safeTimestamp(valueAt(workingContextState, 'updated_at_ms')),
+    );
+    try {
+      return createBuilderContextAssembly({
+        assembly_purpose: assemblyPurpose,
+        project_id: conversationContext.project.project_id,
+        latest_user_message: latestUserIntentFromConversationContext(conversationContext),
+        working_context_state: workingContextState,
+        approved_plan_ref: valueAt(workingContextState, 'approved_plan_ref'),
+        current_result_ref: null,
+        selected_source_summaries: [],
+        compaction_summaries: [],
+        adopted_handoff_packets: [],
+        permission_state: {
+          workspace_state: 'bound',
+          write_permission: valueAt(routeDecision, 'permission_result'),
+        },
+        context_budget: {
+          max_segments: 8,
+          max_prompt_bytes: 8_192,
+          reserved_response_bytes: 4_096,
+        },
+        assembled_at_ms: assembledAtMs,
+      });
+    } catch (error) {
+      if (assemblyPurpose === 'contextual_build') throw error;
+      return null;
+    }
+  }
+
   function recordConversationContextSnapshot(conversationContext) {
+    const workingContextState = workingContextStateForSnapshot(conversationContext);
     return Reflect.apply(
       recordConversationRunContextSnapshot,
       options.conversationService,
       [{
         context: conversationContext,
-        working_context_state: workingContextStateForSnapshot(conversationContext),
+        working_context_state: workingContextState,
+        context_assembly: contextAssemblyForSnapshot(conversationContext, workingContextState),
       }],
     );
   }

@@ -789,9 +789,12 @@ Evidence requirements:
   model context segments, omitted refs, a digest, a permission gate, and Run
   Snapshot refs; and refuses side-effecting contextual build assembly when the
   current context is stale, unclear, missing a workspace, or denied write
-  permission. It does not yet replace the generation provider prompt path, and
-  it performs no provider dispatch, tool dispatch, SQLite write, Git/source
-  mutation, permission grant, IPC/preload registration, or renderer projection;
+  permission. Generation main now records the assembly as a safe
+  `assembly_id` / `context_digest` / `assembled_at_ms` Run Snapshot ref when a
+  selected Working Context State is available. It does not yet replace the
+  generation provider prompt path, and it performs no provider dispatch, tool
+  dispatch, SQLite write, Git/source mutation, permission grant, IPC/preload
+  registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

@@ -11,6 +11,9 @@ const {
 const {
   createBuilderWorkingContextState,
 } = require('../electron/builder-working-context-state.cjs');
+const {
+  createBuilderContextAssembly,
+} = require('../electron/builder-context-assembler.cjs');
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -36,6 +39,11 @@ const HANDOFF_REF = Object.freeze({
   packet_digest: `sha256:${'e'.repeat(64)}`,
   inserted_at_ms: 6,
   adopted_at_ms: 9,
+});
+const APPROVED_PLAN_REF = Object.freeze({
+  plan_result_digest: `sha256:${'6'.repeat(64)}`,
+  conversation_head_digest: `sha256:${'7'.repeat(64)}`,
+  approved_at_ms: 9,
 });
 
 function routeDecision(overrides = {}) {
@@ -69,6 +77,7 @@ function snapshotInput(overrides = {}) {
     route_decision: routeDecision(),
     latest_task_capsule: null,
     working_context_state: null,
+    context_assembly: null,
     base_revision: BASE_REVISION,
     created_at_ms: 10,
     ...overrides,
@@ -96,6 +105,31 @@ function workingContextState(overrides = {}) {
     },
     invalidated_by: null,
     updated_at_ms: 9,
+    ...overrides,
+  });
+}
+
+function contextAssembly(working_context_state, overrides = {}) {
+  return createBuilderContextAssembly({
+    assembly_purpose: 'contextual_build',
+    project_id: PROJECT_ID,
+    latest_user_message: 'Build from the approved plan.',
+    working_context_state,
+    approved_plan_ref: working_context_state.approved_plan_ref,
+    current_result_ref: null,
+    selected_source_summaries: [],
+    compaction_summaries: [],
+    adopted_handoff_packets: [],
+    permission_state: {
+      workspace_state: 'bound',
+      write_permission: 'allowed',
+    },
+    context_budget: {
+      max_segments: 8,
+      max_prompt_bytes: 4_096,
+      reserved_response_bytes: 1_024,
+    },
+    assembled_at_ms: 9,
     ...overrides,
   });
 }
@@ -156,6 +190,11 @@ test('creates a digest-bound run context snapshot without private source authori
     compaction_refs: [],
     handoff_refs: [],
   });
+  assert.deepEqual(snapshot.context_assembly_ref, {
+    assembly_id: null,
+    context_digest: null,
+    assembled_at_ms: null,
+  });
   assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot), {
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -166,6 +205,49 @@ test('creates a digest-bound run context snapshot without private source authori
   assert.doesNotMatch(
     JSON.stringify(snapshot),
     /credential|provider|source_tree|prompt|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
+  );
+});
+
+test('records Context Assembly safe refs in the digest-bound snapshot', () => {
+  const state = workingContextState({
+    objective_summary: 'Build a dashboard from the approved plan.',
+    approved_plan_ref: APPROVED_PLAN_REF,
+    compaction_refs: [COMPACTION_REF],
+    handoff_refs: [HANDOFF_REF],
+  });
+  const assembly = contextAssembly(state);
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    working_context_state: state,
+    context_assembly: assembly,
+  }));
+
+  assert.deepEqual(snapshot.context_assembly_ref, {
+    assembly_id: assembly.assembly_id,
+    context_digest: assembly.context_digest,
+    assembled_at_ms: 9,
+  });
+  assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot)), snapshot);
+  assert.doesNotMatch(
+    JSON.stringify(snapshot),
+    /model_context_segments|latest_user_message|objective_summary|provider|credential|source_tree|prompt/iu,
+  );
+
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      working_context_state: null,
+      context_assembly: assembly,
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => sanitizeBuilderRunContextSnapshot({
+      ...snapshot,
+      context_assembly_ref: {
+        ...snapshot.context_assembly_ref,
+        context_digest: `sha256:${'1'.repeat(64)}`,
+      },
+    }),
+    BuilderRunContextSnapshotError,
   );
 });
 

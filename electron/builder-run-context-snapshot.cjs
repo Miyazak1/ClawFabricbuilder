@@ -9,6 +9,9 @@ const {
 const {
   sanitizeBuilderWorkingContextState,
 } = require('./builder-working-context-state.cjs');
+const {
+  sanitizeBuilderContextAssembly,
+} = require('./builder-context-assembler.cjs');
 
 const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v1';
 const SNAPSHOT_ID_PREFIX = 'builder-run-context-snapshot:';
@@ -24,6 +27,7 @@ const SNAPSHOT_KEYS = Object.freeze([
   'route_decision',
   'brief_reference',
   'context_refs',
+  'context_assembly_ref',
   'base_revision',
   'permissions',
   'capabilities',
@@ -41,6 +45,7 @@ const SNAPSHOT_BODY_KEYS = Object.freeze([
   'route_decision',
   'brief_reference',
   'context_refs',
+  'context_assembly_ref',
   'base_revision',
   'permissions',
   'capabilities',
@@ -69,6 +74,7 @@ const CONTEXT_REFS_KEYS = Object.freeze([
 ]);
 const COMPACTION_REF_KEYS = Object.freeze(['summary_digest', 'source_range_digest', 'compacted_at_ms']);
 const HANDOFF_REF_KEYS = Object.freeze(['packet_digest', 'inserted_at_ms', 'adopted_at_ms']);
+const CONTEXT_ASSEMBLY_REF_KEYS = Object.freeze(['assembly_id', 'context_digest', 'assembled_at_ms']);
 const BASE_REVISION_KEYS = Object.freeze(['revision_receipt_digest', 'commit_oid']);
 const PERMISSIONS_KEYS = Object.freeze([
   'required_permissions',
@@ -90,6 +96,7 @@ const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-
 const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SNAPSHOT_ID_PATTERN = /^builder-run-context-snapshot:[0-9a-f]{64}$/u;
+const CONTEXT_ASSEMBLY_ID_PATTERN = /^builder-context-assembly:[0-9a-f]{64}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
 const DISPATCHES = Object.freeze(['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked']);
@@ -106,6 +113,7 @@ const CREATE_INPUT_KEYS = Object.freeze([
   'route_decision',
   'latest_task_capsule',
   'working_context_state',
+  'context_assembly',
   'base_revision',
   'created_at_ms',
 ]);
@@ -403,6 +411,53 @@ function contextRefsFromWorkingContextState(value, projectId, conversationId) {
   };
 }
 
+function sanitizeContextAssemblyRef(value, createdAtMs, contextRefs) {
+  const source = exactObject(value, CONTEXT_ASSEMBLY_REF_KEYS);
+  const assemblyId = nullable(
+    valueAt(source, 'assembly_id'),
+    (item) => safePattern(item, CONTEXT_ASSEMBLY_ID_PATTERN),
+  );
+  const contextDigest = nullable(valueAt(source, 'context_digest'), (item) => safePattern(item, DIGEST_PATTERN));
+  const assembledAtMs = nullable(valueAt(source, 'assembled_at_ms'), safeTimestamp);
+  if (
+    (assemblyId === null) !== (contextDigest === null)
+    || (assemblyId === null) !== (assembledAtMs === null)
+    || (assembledAtMs !== null && assembledAtMs > createdAtMs)
+    || (
+      assemblyId !== null
+      && contextRefs.working_context_state_id === null
+    )
+  ) fail();
+  return {
+    assembly_id: assemblyId,
+    context_digest: contextDigest,
+    assembled_at_ms: assembledAtMs,
+  };
+}
+
+function contextAssemblyRefFromAssembly(value, projectId, contextRefs) {
+  if (value === null) {
+    return {
+      assembly_id: null,
+      context_digest: null,
+      assembled_at_ms: null,
+    };
+  }
+  const assembly = sanitizeBuilderContextAssembly(value);
+  if (
+    assembly.project_id !== projectId
+    || assembly.run_snapshot_refs.working_context_state_id !== contextRefs.working_context_state_id
+    || assembly.run_snapshot_refs.working_context_state_updated_at_ms !== contextRefs.working_context_state_updated_at_ms
+    || canonicalJson(assembly.run_snapshot_refs.compaction_refs) !== canonicalJson(contextRefs.compaction_refs)
+    || canonicalJson(assembly.run_snapshot_refs.handoff_refs) !== canonicalJson(contextRefs.handoff_refs)
+  ) fail();
+  return {
+    assembly_id: assembly.assembly_id,
+    context_digest: assembly.context_digest,
+    assembled_at_ms: assembly.assembled_at_ms,
+  };
+}
+
 function sanitizeBaseRevision(value) {
   if (value === null) return null;
   const source = exactObject(value, BASE_REVISION_KEYS);
@@ -439,6 +494,7 @@ function snapshotBodyFrom(value) {
   const includedMessageIds = denseMessageIds(valueAt(source, 'included_message_ids'));
   const briefReference = sanitizeBriefReference(valueAt(source, 'brief_reference'));
   const createdAtMs = safeTimestamp(valueAt(source, 'created_at_ms'));
+  const contextRefs = sanitizeContextRefs(valueAt(source, 'context_refs'), createdAtMs);
   if (
     briefReference.status === 'task_capsule_update'
     && !includedMessageIds.includes(briefReference.source_message_id)
@@ -453,7 +509,12 @@ function snapshotBodyFrom(value) {
     included_message_ids: includedMessageIds,
     route_decision: sanitizeRouteDecision(valueAt(source, 'route_decision')),
     brief_reference: briefReference,
-    context_refs: sanitizeContextRefs(valueAt(source, 'context_refs'), createdAtMs),
+    context_refs: contextRefs,
+    context_assembly_ref: sanitizeContextAssemblyRef(
+      valueAt(source, 'context_assembly_ref'),
+      createdAtMs,
+      contextRefs,
+    ),
     base_revision: sanitizeBaseRevision(valueAt(source, 'base_revision')),
     permissions: sanitizePermissions(valueAt(source, 'permissions')),
     capabilities: sanitizeCapabilities(valueAt(source, 'capabilities')),
@@ -483,6 +544,7 @@ function sanitizeBuilderRunContextSnapshot(value, expected = null) {
     route_decision: valueAt(source, 'route_decision'),
     brief_reference: valueAt(source, 'brief_reference'),
     context_refs: valueAt(source, 'context_refs'),
+    context_assembly_ref: valueAt(source, 'context_assembly_ref'),
     base_revision: valueAt(source, 'base_revision'),
     permissions: valueAt(source, 'permissions'),
     capabilities: valueAt(source, 'capabilities'),
@@ -563,6 +625,11 @@ function createBuilderRunContextSnapshot(input) {
     : safePattern(valueAt(taskCapsuleReference, 'message_id'), MESSAGE_ID_PATTERN);
   const includedMessageIds = [messageId];
   if (sourceMessageId !== null && sourceMessageId !== messageId) includedMessageIds.push(sourceMessageId);
+  const contextRefs = contextRefsFromWorkingContextState(
+    valueAt(source, 'working_context_state'),
+    projectId,
+    conversationId,
+  );
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
     project_id: projectId,
@@ -585,10 +652,11 @@ function createBuilderRunContextSnapshot(input) {
       last_route_decision_id: valueAt(taskCapsule, 'last_route_decision_id'),
       contextual_build_ready: true,
     },
-    context_refs: contextRefsFromWorkingContextState(
-      valueAt(source, 'working_context_state'),
+    context_refs: contextRefs,
+    context_assembly_ref: contextAssemblyRefFromAssembly(
+      valueAt(source, 'context_assembly'),
       projectId,
-      conversationId,
+      contextRefs,
     ),
     base_revision: valueAt(source, 'base_revision'),
     permissions: {
