@@ -9,7 +9,7 @@ const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v18';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v19';
 const CANARY_INITIAL_CHAT_QUESTION = 'What can you help me with before I choose a project folder?';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
@@ -76,6 +76,7 @@ const SELECTORS = Object.freeze({
   newProjectPanel: '[data-builder-new-project-panel="true"]',
   cancelWork: '[data-builder-cancel-work="true"]',
   composer: '[data-builder-composer="true"]',
+  composerStatus: '[data-builder-composer-status="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
   approveCurrentProjectWrite: '[data-builder-approve-current-project-write="true"]',
   approvePlanSourceRead: '[data-builder-approve-plan-source-read="true"]',
@@ -163,6 +164,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_plan_bridge_unavailable_failed: 'Packaged canary plan bridge diagnostic was unavailable.',
   canary_plan_failed: 'Packaged canary plan proposal failed.',
   canary_plan_evidence_failed: 'Packaged canary plan evidence failed.',
+  canary_plan_context_status_failed: 'Packaged canary plan context status was unavailable.',
   canary_plan_provider_http_failed: 'Packaged canary plan provider request failed.',
   canary_plan_provider_unavailable_failed: 'Packaged canary plan provider was unavailable.',
   canary_plan_renderer_sanitizer_failed: 'Packaged canary plan succeeded in main but was rejected by the renderer.',
@@ -271,6 +273,7 @@ const ERROR_STAGES = Object.freeze({
   canary_plan_bridge_unavailable_failed: 'plan_bridge_unavailable',
   canary_plan_failed: 'plan',
   canary_plan_evidence_failed: 'plan_evidence',
+  canary_plan_context_status_failed: 'plan_context_status',
   canary_plan_provider_http_failed: 'plan_provider_http',
   canary_plan_provider_unavailable_failed: 'plan_provider_unavailable',
   canary_plan_renderer_sanitizer_failed: 'plan_renderer_sanitizer',
@@ -2683,6 +2686,7 @@ async function proposePlanViaUi(
     await waitForPlanProposalVisible(page, currentProject.project_id);
     await page.locator(SELECTORS.planProposed).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.approvePlan).waitFor({ state: 'visible' });
+    await expectComposerStatus(page, 'Needs confirmation');
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
@@ -2701,6 +2705,7 @@ async function proposePlanViaUi(
     assertExactRevision(evidence, currentProject);
     return Object.freeze({
       approve_plan_visible: true,
+      composer_status_text: await readComposerStatus(page),
       plan_review_actions_visible: true,
       saved_revision_unchanged: true,
       task_stream: assertTaskStreamPlanFacts(
@@ -2715,6 +2720,21 @@ async function proposePlanViaUi(
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_plan_evidence_failed');
+  }
+}
+
+async function readComposerStatus(page) {
+  return safeDiagnosticText(await page.locator(SELECTORS.composerStatus).textContent());
+}
+
+async function expectComposerStatus(page, expectedText) {
+  try {
+    await page.locator(SELECTORS.composerStatus).waitFor({ state: 'visible' });
+    const statusText = await readComposerStatus(page);
+    if (statusText !== expectedText) fail('canary_plan_context_status_failed');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_plan_context_status_failed');
   }
 }
 

@@ -358,6 +358,9 @@ class FakeLocator {
     if (this.selector === SELECTORS.questionAnswerFailedNotice) {
       return this.page.questionAnswerFailedNoticeVisible;
     }
+    if (this.selector === SELECTORS.composerStatus) {
+      return this.page.composerStatusText() !== null;
+    }
     if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
     if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
@@ -383,6 +386,9 @@ class FakeLocator {
     if (this.selector === SELECTORS.liveOutput) {
       if (this.page.liveOutputTextOverride !== null) return this.page.liveOutputTextOverride;
       return 'Assistant Building the first project draft.';
+    }
+    if (this.selector === SELECTORS.composerStatus) {
+      return this.page.composerStatusText();
     }
     if (this.selector === SELECTORS.reviewCheckpoint) {
       if (this.page.reviewTextOverride !== null) return this.page.reviewTextOverride;
@@ -483,6 +489,10 @@ class FakeLocator {
         this.page.planTurns > this.page.approvedPlanReviews,
         state,
       );
+      return;
+    }
+    if (this.selector === SELECTORS.composerStatus) {
+      this.page.assertSelectorVisibility(this.selector, this.page.composerStatusText() !== null, state);
       return;
     }
     if (this.selector === SELECTORS.planSourceReadApproval) {
@@ -822,6 +832,14 @@ class FakePage {
         return;
       }
       this.recordCandidateAttempt(candidateTurns);
+    };
+    this.composerStatusText = () => {
+      if (this.unsavedDraftVisible === true) return 'Ready to execute current direction';
+      if (this.planTurns > this.approvedPlanReviews) return 'Needs confirmation';
+      if (this.approvedPlanReviews > 0) return 'Using approved plan';
+      if (this.briefCorrectionActive === true) return 'Direction changed';
+      if (this.candidateTurns > 0) return 'Ready to execute current direction';
+      return null;
     };
   }
 
@@ -3110,6 +3128,7 @@ test('approves visible plan source-read prompt before waiting for a plan', async
   assert.equal(page.approvedPlanReviews, 0);
   assert.equal(page.candidateTurns, 2);
   assert.equal(page.unsavedDraftVisible, false);
+  assert.equal(plan.composer_status_text, 'Needs confirmation');
   assert.deepEqual(
     assertTaskStreamPlanFacts(bridgeEvidence(projectId, true, 2, 2, 1, 1, 0), currentRevision, 2, 1, 1),
     plan.task_stream,
@@ -3142,6 +3161,7 @@ test('proposes and approves a saved-project plan before creating a draft', async
   assert.equal(page.approvedPlanReviews, 0);
   assert.equal(page.candidateTurns, 2);
   assert.equal(page.unsavedDraftVisible, false);
+  assert.equal(plan.composer_status_text, 'Needs confirmation');
   assert.deepEqual(
     assertTaskStreamPlanFacts(bridgeEvidence(projectId, true, 2, 2, 1, 1, 0), currentRevision, 2, 1, 1),
     plan.task_stream,
@@ -4562,6 +4582,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   assert.deepEqual(result.plan, {
     restart_continuation: {
       approve_plan_visible: true,
+      composer_status_text: 'Needs confirmation',
       plan_review_actions_visible: true,
       saved_revision_unchanged: true,
       task_stream: {
