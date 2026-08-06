@@ -2625,24 +2625,25 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('goal_mode_request');
   });
 
-  it('keeps Brief menu updates on the read-only task capsule path', async () => {
+  it('keeps context updates internal while removing the Brief menu entry', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       briefUpdateActivity: true,
       initiallySaved: true,
     });
     await openSavedProject(container);
 
-    setComposerInstruction(container, '目标用户是小团队，视觉要克制');
     click(container, '[data-builder-composer-add-menu-button="true"]');
-    click(container, '[data-builder-composer-add-brief="true"]');
+    const addMenu = container.querySelector('[data-builder-composer-add-menu="true"]');
+    expect(addMenu?.textContent).not.toContain('Brief');
+    expect(container.querySelector('[data-builder-composer-add-brief="true"]')).toBeNull();
 
-    const scaffolded = '保存这个方向，后面按这个来：目标用户是小团队，视觉要克制';
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe(scaffolded);
+    const instruction = '保存这个方向，后面按这个来：目标用户是小团队，视觉要克制';
+    setComposerInstruction(container, instruction);
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: scaffolded });
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction });
     });
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();

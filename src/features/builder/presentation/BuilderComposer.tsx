@@ -71,7 +71,6 @@ export type BuilderComposerProps = Readonly<{
   onInstructionChange?: (value: string) => void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
-  onSelectBriefMode?: () => void;
   onSelectPlanMode?: () => void;
   onSubmitInstruction?: () => void;
   savedProject: SavedComposerProject | null;
@@ -134,7 +133,6 @@ export function BuilderComposer({
   onInstructionChange,
   onOpenProject,
   onSelectApprovalMode,
-  onSelectBriefMode,
   onSelectPlanMode,
   onSubmitInstruction,
   savedProject,
@@ -412,11 +410,6 @@ export function BuilderComposer({
     onSelectPlanMode?.();
   }
 
-  function selectBriefMode(): void {
-    setAddMenuOpen(false);
-    onSelectBriefMode?.();
-  }
-
   function selectApprovalMode(mode: BuilderComposerApprovalMode): void {
     if (typeof onSelectApprovalMode !== 'function') return;
     if (mode === 'allow_current_project' && !canAllowCurrentProjectApproval) return;
@@ -595,15 +588,6 @@ export function BuilderComposer({
                   >
                     <FolderOpen aria-hidden="true" className="size-3.5" />
                     Files and folders
-                  </button>
-                  <button
-                    data-builder-composer-add-brief="true"
-                    onClick={selectBriefMode}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <ListChecks aria-hidden="true" className="size-3.5" />
-                    Brief
                   </button>
                   <button
                     data-builder-composer-add-plan-mode="true"

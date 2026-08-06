@@ -448,7 +448,6 @@ describe('BuilderComposer', () => {
 
   it('uses the add menu for Plan mode without adding another send command', () => {
     const onSelectPlanMode = vi.fn();
-    const onSelectBriefMode = vi.fn();
     const onSelectApprovalMode = vi.fn();
     const onSubmitInstruction = vi.fn();
     const container = render(
@@ -457,7 +456,6 @@ describe('BuilderComposer', () => {
           canAllowCurrentProjectApproval: true,
           canProposePlan: true,
           onSelectApprovalMode,
-          onSelectBriefMode,
           onSelectPlanMode,
           onSubmitInstruction,
           savedProject: {
@@ -478,25 +476,21 @@ describe('BuilderComposer', () => {
     const menu = container.querySelector('[data-builder-composer-add-menu="true"]');
     expect(menu).not.toBeNull();
     expect(menu?.textContent).toContain('Files and folders');
-    expect(menu?.textContent).toContain('Brief');
+    expect(menu?.textContent).not.toContain('Brief');
     expect(menu?.textContent).toContain('Plan mode');
     expect(menu?.textContent).not.toContain('Approval mode');
     expect(menu?.textContent).not.toContain('Read-only chat');
     expect(menu?.textContent).not.toContain('Ask before write');
     expect(menu?.textContent).not.toContain('Allow current project');
 
-    click(container, '[data-builder-composer-add-brief="true"]');
-    expect(onSelectBriefMode).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-builder-composer-add-brief="true"]')).toBeNull();
     expect(onSelectPlanMode).not.toHaveBeenCalled();
     expect(onSelectApprovalMode).not.toHaveBeenCalled();
     expect(onSubmitInstruction).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-composer-add-menu="true"]')).toBeNull();
 
-    click(container, '[data-builder-composer-add-menu-button="true"]');
     click(container, '[data-builder-composer-add-plan-mode="true"]');
 
     expect(onSelectPlanMode).toHaveBeenCalledOnce();
-    expect(onSelectBriefMode).toHaveBeenCalledOnce();
     expect(onSelectApprovalMode).not.toHaveBeenCalled();
     expect(onSubmitInstruction).not.toHaveBeenCalled();
   });

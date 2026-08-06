@@ -138,7 +138,6 @@ export type BuilderPageProps = {
   onDismissPlanSourceReadApproval?: () => void;
   onDismissCurrentProjectWriteApproval?: () => void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
-  onSelectBriefMode?: () => void;
   onSelectPlanMode?: () => void;
   onClearComposerMode?: () => void;
   onSubmitInstruction?: () => void;
@@ -1950,7 +1949,6 @@ export function BuilderPage({
   onOpenProject,
   onOpenProjectLocation,
   onSelectApprovalMode,
-  onSelectBriefMode,
   onSelectPlanMode,
   onClearComposerMode,
   onSubmitInstruction,
@@ -2879,7 +2877,6 @@ export function BuilderPage({
       onInstructionChange={onInstructionChange}
       onOpenProject={onOpenProject}
       onSelectApprovalMode={onSelectApprovalMode}
-      onSelectBriefMode={onSelectBriefMode}
       onSelectPlanMode={onSelectPlanMode}
       onSubmitInstruction={onSubmitInstruction}
       savedProject={saved === null
