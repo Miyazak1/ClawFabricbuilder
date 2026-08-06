@@ -76,7 +76,9 @@ describe('Builder desktop layout styles', () => {
     const source = styles();
     const sidebar = styleBlock(source, '.cf-builder-artifact-sidebar');
     const handle = styleBlock(source, '.cf-builder-artifact-resize-handle');
-    const tabs = styleBlock(source, '.cf-builder-artifact-tabs');
+    const viewMenuWrap = styleBlock(source, '.cf-builder-artifact-view-menu-wrap');
+    const viewButton = styleBlock(source, '.cf-builder-artifact-view-button');
+    const viewMenu = styleBlock(source, '.cf-builder-artifact-view-menu');
     const tab = styleBlock(source, '.cf-builder-artifact-tab');
     const tabLabel = styleBlock(source, '.cf-builder-artifact-tab > span');
     const body = styleBlock(source, '.cf-builder-artifact-body');
@@ -93,10 +95,15 @@ describe('Builder desktop layout styles', () => {
     expect(handle).toContain('touch-action: none;');
     expect(styleBlock(source, '.cf-builder-artifact-resize-handle::after'))
       .toContain('background: rgba(36, 37, 34, 0.22);');
-    expect(tabs).toContain('display: grid;');
-    expect(tabs).toContain('grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));');
-    expect(tabs).toContain('overflow: visible;');
-    expect(tabs).not.toContain('overflow-x: auto;');
+    expect(source).not.toContain('.cf-builder-artifact-tabs');
+    expect(viewMenuWrap).toContain('position: relative;');
+    expect(viewMenuWrap).toContain('flex: 1 1 auto;');
+    expect(viewButton).toContain('max-width: 100%;');
+    expect(viewButton).toContain('overflow: hidden;');
+    expect(viewButton).toContain('text-overflow: ellipsis;');
+    expect(viewMenu).toContain('position: absolute;');
+    expect(viewMenu).toContain('display: grid;');
+    expect(viewMenu).not.toContain('overflow-x: auto;');
     expect(tab).toContain('min-width: 0;');
     expect(tab).not.toContain('flex: 0 0 auto;');
     expect(tabLabel).toContain('text-overflow: ellipsis;');
@@ -424,6 +431,7 @@ describe('Builder desktop layout styles', () => {
     const artifactDisclosure = styleBlock(source, '.cf-builder-artifact-source-disclosure');
     const artifactBody = styleBlock(source, '.cf-builder-artifact-source-disclosure .cf-builder-source-body');
     const artifactCode = styleBlock(source, '.cf-builder-artifact-source-disclosure .cf-builder-source-code');
+    const artifactCodeText = styleBlock(source, '.cf-builder-artifact-source-disclosure .cf-builder-source-code code');
 
     expect(disclosure).toContain('border-top: 1px solid var(--cf-border);');
     expect(disclosure).toContain('border-bottom: 1px solid var(--cf-border);');
@@ -438,13 +446,22 @@ describe('Builder desktop layout styles', () => {
     expect(body).toContain('border-top: 1px solid var(--cf-border);');
     expect(body).toContain('padding: 10px 0 0;');
     expect(artifactDisclosure).toContain('height: 100%;');
+    expect(artifactDisclosure).toContain('min-width: 0;');
     expect(artifactDisclosure).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(artifactDisclosure).toContain('overflow: hidden;');
     expect(artifactBody).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(artifactBody).toContain('height: 100%;');
+    expect(artifactBody).toContain('min-width: 0;');
     expect(artifactBody).toContain('overflow: hidden;');
     expect(artifactCode).toContain('height: 100%;');
+    expect(artifactCode).toContain('min-width: 0;');
     expect(artifactCode).toContain('max-height: none;');
+    expect(artifactCode).toContain('max-width: 100%;');
     expect(artifactCode).toContain('overflow: auto;');
+    expect(artifactCode).toContain('overflow-wrap: anywhere;');
+    expect(artifactCode).toContain('white-space: pre-wrap;');
+    expect(artifactCodeText).toContain('display: block;');
+    expect(artifactCodeText).toContain('min-width: 0;');
   });
 
   it('keeps the draft-gated composer as a lightweight status row', () => {

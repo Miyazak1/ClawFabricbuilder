@@ -2938,8 +2938,13 @@ describe('BuilderPage v2', () => {
     expect(sidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('permissions');
     expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
       .toContain('Permissions');
-    expect(container.querySelector('[data-builder-artifact-tab="permissions"]')?.getAttribute('aria-selected'))
+    expect(container.querySelector('[data-builder-artifact-view-button="true"]')?.textContent)
+      .toContain('Permissions');
+    expect(container.querySelector('[data-builder-artifact-tab="permissions"]')).toBeNull();
+    click(container, '[data-builder-artifact-view-button="true"]');
+    expect(container.querySelector('[data-builder-artifact-tab="permissions"]')?.getAttribute('aria-checked'))
       .toBe('true');
+    click(container, '[data-builder-artifact-view-button="true"]');
     expect(permissionsPanel).not.toBeNull();
     expect(permissionsPanel?.textContent).toContain('Project boundary');
     expect(permissionsPanel?.textContent).toContain('Saved project');
@@ -4150,6 +4155,7 @@ describe('BuilderPage v2', () => {
     expect(previewFrame?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
     expect(inspectedContainer.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('preview');
+    click(inspectedContainer, '[data-builder-artifact-view-button="true"]');
     click(inspectedContainer, '[data-builder-artifact-tab="versions"]');
     expect(inspectedContainer.querySelector('[data-builder-version-card="Version 2"]')?.textContent)
       .toContain('Current');
@@ -4498,6 +4504,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('preview');
     expect(container.querySelector('details[data-builder-source-flow="true"]')).toBeNull();
+    click(container, '[data-builder-artifact-view-button="true"]');
     click(container, '[data-builder-artifact-tab="source"]');
     const source = container.querySelector<HTMLDetailsElement>('details[data-builder-source-flow="true"]');
     expect(source).not.toBeNull();

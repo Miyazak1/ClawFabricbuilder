@@ -1853,6 +1853,43 @@ function BuilderArtifactSidebar({
   widthMaximum: number;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!viewMenuOpen) return undefined;
+    function closeViewMenu(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        target.closest('[data-builder-artifact-view-menu="true"], [data-builder-artifact-view-button="true"]')
+        !== null
+      ) {
+        return;
+      }
+      setViewMenuOpen(false);
+    }
+    function closeViewMenuOnEscape(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setViewMenuOpen(false);
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLButtonElement>('[data-builder-artifact-view-button="true"]')
+          ?.focus({ preventScroll: true });
+      });
+    }
+    document.addEventListener('pointerdown', closeViewMenu);
+    window.addEventListener('keydown', closeViewMenuOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeViewMenu);
+      window.removeEventListener('keydown', closeViewMenuOnEscape);
+    };
+  }, [viewMenuOpen]);
+
+  function selectArtifactView(tab: BuilderArtifactTab): void {
+    onSelectTab(tab);
+    setViewMenuOpen(false);
+  }
+
   return (
     <aside
       aria-label="Project artifact"
@@ -1881,22 +1918,44 @@ function BuilderArtifactSidebar({
           <h3 className="cf-builder-artifact-title">{artifactTabLabel(activeTab)}</h3>
         </div>
         <div className="cf-builder-artifact-header-actions">
-          <div className="cf-builder-artifact-tabs" role="tablist" aria-label="Artifact views">
-            {tabs.map((tab) => (
-              <button
-                aria-selected={activeTab === tab}
-                className="cf-builder-artifact-tab"
-                data-active={activeTab === tab ? 'true' : undefined}
-                data-builder-artifact-tab={tab}
-                key={tab}
-                onClick={() => onSelectTab(tab)}
-                role="tab"
-                type="button"
+          <div className="cf-builder-artifact-view-menu-wrap">
+            <button
+              aria-expanded={viewMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Artifact view menu"
+              className="cf-builder-artifact-view-button"
+              data-builder-artifact-view-button="true"
+              onClick={() => setViewMenuOpen((open) => !open)}
+              type="button"
+            >
+              <ArtifactTabIcon tab={activeTab} />
+              <span>{artifactTabLabel(activeTab)}</span>
+              <ChevronDown aria-hidden="true" className="size-3" />
+            </button>
+            {viewMenuOpen ? (
+              <div
+                aria-label="Artifact views"
+                className="cf-builder-artifact-view-menu"
+                data-builder-artifact-view-menu="true"
+                role="menu"
               >
-                <ArtifactTabIcon tab={tab} />
-                <span>{artifactTabLabel(tab)}</span>
-              </button>
-            ))}
+                {tabs.map((tab) => (
+                  <button
+                    aria-checked={activeTab === tab}
+                    className="cf-builder-artifact-tab"
+                    data-active={activeTab === tab ? 'true' : undefined}
+                    data-builder-artifact-tab={tab}
+                    key={tab}
+                    onClick={() => selectArtifactView(tab)}
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    <ArtifactTabIcon tab={tab} />
+                    <span>{artifactTabLabel(tab)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           {activeTab === 'preview' ? (
             <button
