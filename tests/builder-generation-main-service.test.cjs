@@ -4414,6 +4414,8 @@ test('uses the Working Context State service as contextual submit route evidence
     contextSnapshotInputs.push(input);
     return recordRunContextSnapshot(input);
   };
+  const providerDisclosureStatusRecords = [];
+  const providerDisclosureStatusClears = [];
   const providerDisclosureInputs = [];
   const permissionReads = [];
   const permissionEvaluator = createBuilderPermissionEvaluator({
@@ -4474,6 +4476,22 @@ test('uses the Working Context State service as contextual submit route evidence
         },
       },
       providerContextDisclosureDecisionService,
+      providerContextDisclosureStatusService: {
+        record_current_provider_context_disclosure_status(input) {
+          providerDisclosureStatusRecords.push(input);
+          return {
+            result_version: 'builder-provider-context-disclosure-status-service.v1',
+            operation: 'provider_context_disclosure_status_recorded',
+          };
+        },
+        clear_current_provider_context_disclosure_status_for_conversation(input) {
+          providerDisclosureStatusClears.push(input);
+          return {
+            result_version: 'builder-provider-context-disclosure-status-service.v1',
+            operation: 'provider_context_disclosure_status_cleared',
+          };
+        },
+      },
     }),
     transport: async (input) => {
       transportInput = input;
@@ -4512,6 +4530,30 @@ test('uses the Working Context State service as contextual submit route evidence
     context_digest: contextSnapshotInputs[0].context_assembly.context_digest,
   });
   assert.equal(contextSnapshotInputs[0].provider_context_projection.provider_context, null);
+  assert.equal(providerDisclosureStatusRecords.length, 1);
+  assert.equal(
+    providerDisclosureStatusRecords[0].context_assembly,
+    contextSnapshotInputs[0].context_assembly,
+  );
+  assert.equal(
+    providerDisclosureStatusRecords[0].provider_context_projection,
+    contextSnapshotInputs[0].provider_context_projection,
+  );
+  assert.deepEqual(
+    {
+      project_id: providerDisclosureStatusRecords[0].project_id,
+      conversation_id: providerDisclosureStatusRecords[0].conversation_id,
+    },
+    {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    },
+  );
+  assert.equal(providerDisclosureStatusRecords[0].recorded_at_ms >= 10_000, true);
+  assert.deepEqual(providerDisclosureStatusClears, [{
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  }]);
   assert.equal(providerDisclosureInputs.length, 1);
   assert.deepEqual(providerDisclosureInputs[0], {
     policy_version: BUILDER_PERMISSION_POLICY_VERSION,

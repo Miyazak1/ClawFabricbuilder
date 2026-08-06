@@ -844,7 +844,13 @@ Evidence requirements:
   by a generation Run Snapshot rather than reassembling context during
   read_stream. It stores only the renderer-safe status projection and exposes no
   request id, assembly id, digest, provider-context body, permission grant,
-  provider dispatch, SQLite write, IPC/preload channel, or prompt bridge;
+  provider dispatch, SQLite write, IPC/preload channel, or prompt bridge.
+  Generation main can now optionally feed that service immediately after a Run
+  Snapshot succeeds, using the exact Context Assembly and Provider Context
+  Projection objects already snapshotted for the run, then clear the current
+  status on terminal completion, failure, or cancel. Status service failures are
+  ignored because the Run Snapshot remains the authority and this status is only
+  a current-run UI projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

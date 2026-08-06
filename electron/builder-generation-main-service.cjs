@@ -82,6 +82,7 @@ const OPTION_KEYS = Object.freeze([
   'sessionTaskAddressBindingService',
   'workingContextStateService',
   'providerContextDisclosureDecisionService',
+  'providerContextDisclosureStatusService',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
@@ -1121,6 +1122,12 @@ function sanitizeOptions(value) {
   ) {
     fail();
   }
+  if (
+    keys.includes('providerContextDisclosureStatusService')
+    && !isPlainObject(descriptors.providerContextDisclosureStatusService.value)
+  ) {
+    fail();
+  }
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1148,6 +1155,9 @@ function sanitizeOptions(value) {
       : {}),
     ...(keys.includes('providerContextDisclosureDecisionService')
       ? { providerContextDisclosureDecisionService: descriptors.providerContextDisclosureDecisionService.value }
+      : {}),
+    ...(keys.includes('providerContextDisclosureStatusService')
+      ? { providerContextDisclosureStatusService: descriptors.providerContextDisclosureStatusService.value }
       : {}),
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
@@ -1620,6 +1630,18 @@ function createBuilderGenerationMainService(rawOptions) {
     : ownMethod(
       options.providerContextDisclosureDecisionService,
       'decide',
+    );
+  const recordProviderContextDisclosureStatus = options.providerContextDisclosureStatusService === undefined
+    ? null
+    : ownMethod(
+      options.providerContextDisclosureStatusService,
+      'record_current_provider_context_disclosure_status',
+    );
+  const clearProviderContextDisclosureStatus = options.providerContextDisclosureStatusService === undefined
+    ? null
+    : ownMethod(
+      options.providerContextDisclosureStatusService,
+      'clear_current_provider_context_disclosure_status_for_conversation',
     );
   const pendingDrafts = new Map();
   const inFlight = new Map();
@@ -2101,6 +2123,59 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
+  function conversationStatusScope(conversationContext) {
+    return Object.freeze({
+      project_id: conversationContext.project.project_id,
+      conversation_id: conversationContext.conversation.conversation_id,
+    });
+  }
+
+  function recordProviderContextDisclosureStatusForSnapshot(
+    conversationContext,
+    contextAssembly,
+    providerContextProjection,
+  ) {
+    if (
+      recordProviderContextDisclosureStatus === null
+      || contextAssembly === null
+      || providerContextProjection === null
+    ) return;
+    try {
+      Reflect.apply(
+        recordProviderContextDisclosureStatus,
+        options.providerContextDisclosureStatusService,
+        [{
+          ...conversationStatusScope(conversationContext),
+          context_assembly: contextAssembly,
+          provider_context_projection: providerContextProjection,
+          recorded_at_ms: Math.max(
+            safeTimestamp(Date.now()),
+            valueAt(providerContextProjection, 'projected_at_ms'),
+          ),
+        }],
+      );
+    } catch {
+      // Provider context disclosure status is UI-only; Run Snapshot remains the authority.
+    }
+  }
+
+  function clearProviderContextDisclosureStatusForContext(conversationContext) {
+    if (clearProviderContextDisclosureStatus === null || conversationContext === undefined) return;
+    try {
+      Reflect.apply(
+        clearProviderContextDisclosureStatus,
+        options.providerContextDisclosureStatusService,
+        [conversationStatusScope(conversationContext)],
+      );
+    } catch {
+      // Stale status cleanup must not change generation completion semantics.
+    }
+  }
+
+  function clearProviderContextDisclosureStatusForKey(key) {
+    clearProviderContextDisclosureStatusForContext(activeContexts.get(key));
+  }
+
   async function recordConversationContextSnapshot(conversationContext) {
     const workingContextState = workingContextStateForSnapshot(conversationContext);
     const contextAssembly = contextAssemblyForSnapshot(conversationContext, workingContextState);
@@ -2117,6 +2192,11 @@ function createBuilderGenerationMainService(rawOptions) {
     );
     if (providerContextProjection !== null) {
       providerContextProjections.set(snapshottedContext, providerContextProjection);
+      recordProviderContextDisclosureStatusForSnapshot(
+        snapshottedContext,
+        contextAssembly,
+        providerContextProjection,
+      );
     }
     return snapshottedContext;
   }
@@ -2798,6 +2878,7 @@ function createBuilderGenerationMainService(rawOptions) {
         [{ context: conversationContext, failure_code: failureCodeFrom(error) }],
       );
       retryableContexts.set(key, failedContext);
+      clearProviderContextDisclosureStatusForContext(failedContext);
     } catch {
       throw new BuilderGenerationMainServiceError();
     }
@@ -3027,6 +3108,7 @@ function createBuilderGenerationMainService(rawOptions) {
         if (error instanceof BuilderGenerationMainServiceError) throw error;
         throw new BuilderGenerationMainServiceError();
       }).finally(() => {
+        clearProviderContextDisclosureStatusForKey(key);
         activeContexts.delete(key);
         if (inFlight.get(key) === operation) inFlight.delete(key);
       });
@@ -3123,6 +3205,7 @@ function createBuilderGenerationMainService(rawOptions) {
       pendingRetryContexts.delete(key);
       pendingGenerateRouteDecisionHints.delete(key);
       pendingGenerateQueuedFollowups.delete(key);
+      clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -3225,6 +3308,7 @@ function createBuilderGenerationMainService(rawOptions) {
       throw error;
     }).finally(() => {
       pendingDraftContinuationContexts.delete(key);
+      clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -3321,6 +3405,7 @@ function createBuilderGenerationMainService(rawOptions) {
       throw error;
     }).finally(() => {
       pendingPlanRequests.delete(key);
+      clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -3424,6 +3509,7 @@ function createBuilderGenerationMainService(rawOptions) {
       pendingDraftAnswerContexts.delete(key);
       pendingAnswerRouteDecisionHints.delete(key);
       pendingAnswerQueuedFollowups.delete(key);
+      clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
@@ -3531,6 +3617,7 @@ function createBuilderGenerationMainService(rawOptions) {
         throw new BuilderGenerationMainServiceError();
       }
       activeContexts.set(key, cancelledContext);
+      clearProviderContextDisclosureStatusForContext(cancelledContext);
       cancelled = true;
     }
     if (!cancelled) {
