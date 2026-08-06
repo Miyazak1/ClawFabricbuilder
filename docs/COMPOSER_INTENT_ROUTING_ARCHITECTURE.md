@@ -40,7 +40,7 @@ ClawFabric's conclusion:
 Natural-language input stays single-composer.
 Internal routing is explicit and testable.
 Permissions are evaluated after intent, before side effects.
-Task/brief state makes contextual execution possible.
+Internal Working Context State makes contextual execution possible.
 ```
 
 Pi adds one important correction to the active-run model: "the user typed again
@@ -130,7 +130,7 @@ Route context includes:
 - current conversation and active turn state;
 - composer add-menu selections and active mode chips;
 - active task capsule when present;
-- visible working brief and confidence;
+- internal Working Context State and renderer-safe status projection;
 - approved plan or rejected plan state;
 - current draft/candidate/review state;
 - current permission policy;
@@ -464,12 +464,13 @@ This creates a different contract from the existing routes:
 - `goal` is a future persistent-agent workflow with continuation, progress
   reporting, verification evidence, and done/blocked terminal states.
 
-The current composer `Brief` entry only feeds the Task Capsule / Working Brief
-path. It must not be presented as Goal mode until the persistent-agent runtime,
-permission admission, progress projection, and completion/blockage semantics are
+Brief only feeds the Task Capsule / Working Brief path and should stay an
+internal context state, not a user-selectable composer mode. It must not be
+presented as Goal mode until the persistent-agent runtime, permission
+admission, progress projection, and completion/blockage semantics are
 implemented.
 
-## Task And Brief Requirements
+## Task And Working Context Requirements
 
 The router needs a Task Capsule before it can support mature contextual
 execution.
@@ -496,6 +497,12 @@ while they are chatting. The system must still be able to explain, inspect, and
 correct brief state through a future Task/Logs or memory disclosure surface.
 Any correction removes contextual-build readiness for that task without deleting
 the underlying conversation.
+
+User-facing UI should project this as ordinary state only: `Direction updated`,
+`Ready to execute current direction`, `Using approved plan`, `Direction changed`,
+or `Needs confirmation`. The projection is read-only evidence; it is not a
+composer mode, permission grant, Save action, publish action, or context-clear
+authority.
 
 Current checkpoint: main-owned contextual submit admission now evaluates the
 latest relevant Task Stream fact, not the first historical ready brief. A newer

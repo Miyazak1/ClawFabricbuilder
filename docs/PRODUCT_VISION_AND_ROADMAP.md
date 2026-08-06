@@ -49,6 +49,12 @@ Reusable work must also have a result-centered package shape before it becomes a
 community object. The Work Capsule model is defined in
 [Work Capsule Architecture](WORK_CAPSULE_ARCHITECTURE.md).
 
+Builder also needs an internal context-management layer. The product should not
+ask ordinary users to manage a `Brief` mode. Chat and planning automatically
+update Working Context State, and execution can use it only when it is current
+and ready. The model is defined in
+[Working Context State Architecture](WORKING_CONTEXT_STATE_ARCHITECTURE.md).
+
 In this roadmap, a **Goal** is not a plan, todo title, working brief, or single
 build instruction. It is the persistent-agent contract: the agent keeps moving
 through planned steps, execution, verification, repair, and progress reporting

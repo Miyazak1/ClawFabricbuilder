@@ -33,6 +33,14 @@ small sidecars/workers/libraries with independent gates, package evidence,
 restart behavior, and authority boundaries. The decision is recorded in
 [Native Kernel Strategy](NATIVE_KERNEL_STRATEGY.md).
 
+Brief is not a user-facing mode. Builder's near-term context-management path is
+Working Context State: an internal main-owned layer that separates raw history,
+compaction summaries, current task semantics, approved plans, run context
+snapshots, and later project memory. Frontend surfaces may show natural-language
+status chips such as `Direction updated` or `Using approved plan`, but they must
+not expose Brief as a primary composer action. The architecture is recorded in
+[Working Context State Architecture](WORKING_CONTEXT_STATE_ARCHITECTURE.md).
+
 ## Verified Starting Point
 
 The standalone Builder has a dedicated desktop shell, encrypted provider
@@ -746,18 +754,16 @@ Evidence requirements:
   or receipt evidence as memory UI. A short phrase such as "按刚才方案做" can use
   the internal brief only when the sanitized conversation facts support it. This
   keeps ordinary chat natural while preserving the main-owned submit guard above;
-- the current explicit brief-entry checkpoint makes `Brief` in the
-  composer `+` menu a real user-visible path into that same task capsule flow.
-  Selecting it never sends a message, creates a draft, saves a revision, grants
-  write permission, or adds a second submit button. It only scaffolds the current
-  composer text into an explicit brief-update phrase such as
+- the current internal brief checkpoint keeps Brief out of the composer `+`
+  menu. A user can still update context with natural-language wording such as
   "保存这个方向，后面按这个来：...". Renderer routing and the main-owned submit
   fallback both recognize the fixed public `explicit_brief` signal and route it
   to `update_brief` / `brief_update`, so the durable task capsule remains
-  main-owned and no hidden renderer-only route truth is introduced. This is not
-  Goal mode: a Goal is a future persistent-agent commitment to continue working,
-  verify, and report progress until done or blocked, not a working brief or
-  one-shot build request;
+  main-owned and no hidden renderer-only route truth is introduced. This path
+  never creates a draft, saves a revision, grants write permission, or adds a
+  second submit button. It is not Goal mode: a Goal is a future
+  persistent-agent commitment to continue working, verify, and report progress
+  until done or blocked, not a working brief or one-shot build request;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

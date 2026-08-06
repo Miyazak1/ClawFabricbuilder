@@ -28,9 +28,9 @@ The product should support three time horizons:
 
 1. **Current creation loop**: select a project folder, chat, generate a draft,
    preview, review changes, save or discard.
-2. **Working builder loop**: chat creates a persistent working brief; explicit
-   execution generates from that brief; preview and changes live in an artifact
-   workspace.
+2. **Working builder loop**: chat maintains internal Working Context State;
+   explicit execution generates only when that state is current and ready;
+   preview and changes live in an artifact workspace.
 3. **Long-term visual builder loop**: the user can click or annotate preview
    elements, request localized edits, compare versions, run real previews,
    publish, and return to earlier checkpoints.
@@ -213,12 +213,13 @@ The composer contains:
 
 - workspace context bar: current project/source folder state, local context, and
   a clear-current-workspace control when no unsaved draft is awaiting review;
-- add menu: attachments, source context, plan mode, brief, and later plugin/tool
+- add menu: attachments, source context, plan mode, and later plugin/tool
   entries;
 - explicit plan command;
 - permission mode control;
 - send button;
-- contextual status such as `Discussing`, `Ready to build`, `Building draft`,
+- contextual status such as `Direction updated`,
+  `Ready to execute current direction`, `Using approved plan`, `Building draft`,
   or `Review draft`.
 
 ### Composer Add Menu
@@ -231,11 +232,6 @@ MVP entries:
 
 - **Files and folders**: choose or attach source context, then show it as a
   composer chip. Reading content still follows permission rules.
-- **Brief**: save the current discussion as internal working memory for later
-  execution. The default composer should not expose a `Current brief` block or
-  ask users to manage agent memory during normal chat. On-demand inspection and
-  correction belongs in a future Task/Logs or memory disclosure surface. This is
-  not Goal mode.
 - **Plan mode**: make the next submitted message route to `plan`, even if the
   wording is ordinary. It should appear as an active composer chip and be
   removable before sending.
@@ -244,7 +240,7 @@ Approval mode is adjacent to the `+` menu rather than hidden inside it. The
 bottom-left composer tools should read as:
 
 ```text
-[Files/Brief/Plan] [Approval mode]
+[Files/Plan] [Approval mode]
 ```
 
 This keeps added context and execution policy separate: `+` changes what is
@@ -263,9 +259,39 @@ Interaction rules:
 - choosing an entry creates a visible chip, opens a picker, or changes a
   composer mode;
 - every entry must have a route/permission meaning, not just visual state;
+- Brief, WorkingBrief, and Task Capsule state are internal context management,
+  not user-selectable composer modes;
 - Esc closes the menu and returns focus to the composer;
 - the menu should be keyboard navigable and should not overlap the fixed
   composer in a way that blocks typing.
+
+### Internal Working Context
+
+Brief, WorkingBrief, and Task Capsule are automatic context management, not
+ordinary user modes. The user should be able to say things like "remember this
+direction" or "use what we just discussed" in natural language, and the router
+can record or use the internal working context when the sanitized task stream
+supports it.
+
+The UI should surface simple state, such as `Context updated`, `Direction
+changed`, `Plan ready`, `Using approved plan`, or `Needs clarification`.
+Context compaction remains separate: compaction saves tokens, while Working
+Context State decides task semantics and readiness.
+
+Status projection should be deliberately small:
+
+| Internal context state | Composer/task chip | User action |
+| --- | --- | --- |
+| `discussing` | `Direction updated` | Continue chatting or ask for a plan |
+| `ready` | `Ready to execute current direction` | Send an explicit execution request |
+| `stale` | `Direction changed` | Confirm the new direction before build |
+| `approved_plan_ready` | `Using approved plan` | Execute, revise, or reject the plan |
+| `needs_clarification` | `Needs confirmation` | Answer the open question |
+
+The chip is a read-only explanation. It must not submit, build, approve, clear
+memory, grant permissions, save, publish, or mutate files. A later click target
+may open `Artifact Workspace -> Logs / Task -> Current direction`, but
+correction still happens through natural language.
 
 Plan mode can be invoked in two ways:
 
@@ -278,8 +304,8 @@ Plan mode can be invoked in two ways:
 Plan mode is read-only with respect to source files. If making a useful plan
 requires reading selected project files, the app may ask for source-read
 approval, but it must not write files, save a version, run commands, or publish.
-Approving a plan creates an execution-ready brief; source changes still require
-explicit execution intent plus write permission.
+Approving a plan creates an `approved_plan_ready` context state; source changes
+still require explicit execution intent plus write permission.
 
 Plan mode may run for either a saved project or a bound local workspace before
 Version 1 exists. Source folders define the read boundary; Save Version is the
@@ -712,8 +738,9 @@ Scope:
 - provide future on-demand inspection/correction once the Task Capsule is
   durable enough to explain what memory is being used;
 - feed the brief into build execution.
-- introduce the composer `+` menu as the place for Brief and Plan mode
-  entries, while keeping plugin/tool entries hidden until their gates exist.
+- keep Brief as internal working context rather than a composer `+` menu entry;
+- introduce the composer `+` menu as the place for Plan mode, while keeping
+  plugin/tool entries hidden until their gates exist.
 
 Exit criteria:
 
@@ -734,10 +761,10 @@ Current checkpoint:
 - the user can keep chatting naturally while the router uses the internal brief
   to decide whether short phrases such as `按刚才方案做` have enough context to
   build;
-- the composer `+` menu now enables `Brief` as a visible brief-update
-  scaffold. It does not send by itself or add a second send button; it turns the
-  current composer text into an explicit user-visible "save this direction"
-  message that renderer and main both classify as `update_brief`;
+- the composer `+` menu exposes Plan mode but not Brief. Brief updates remain a
+  natural-language path such as "保存这个方向，后面按这个来：..."; renderer and
+  main both classify that public signal as `update_brief` / `brief_update`
+  without creating a draft or adding a second submit button;
 - provider, credential, source tree, Git, digest, and receipt details remain
   hidden from all default composer memory surfaces;
 - the Artifact Logs surface can show a read-only `Current direction` summary
@@ -748,8 +775,8 @@ Current checkpoint:
 Goal mode remains a separate future agent workflow. A Goal is not a plan,
 working brief, title, or one-shot build request: it means the agent accepts a
 bounded objective, breaks it into steps, executes, verifies, reports progress,
-and continues until the objective is done or explicitly blocked. The current
-Brief entry must not be presented as that commitment.
+and continues until the objective is done or explicitly blocked. Internal Brief
+state must not be presented as that commitment.
 
 ### Slice 3 - Artifact Drawer
 
