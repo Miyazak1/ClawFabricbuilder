@@ -73,6 +73,7 @@ import type {
   BuilderComposerMode,
   BuilderComposerWorkingBrief,
 } from '../features/builder/presentation/BuilderComposer';
+import { composerStatusFromContextProjection } from '../features/builder/domain/builderContextStatusProjection';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -756,6 +757,11 @@ function composerWorkingContextStatus(
     || conversationSnapshot.conversation?.state !== 'ready'
     || conversationSnapshot.project_id !== visibleProjectId
   ) return projectSnapshot.draft !== null ? 'ready_to_execute' : null;
+
+  const projectedStatus = composerStatusFromContextProjection(
+    conversationSnapshot.conversation.context_status_projection,
+  );
+  if (projectedStatus !== null) return projectedStatus;
 
   let latestStatus: BuilderComposerContextStatus = projectSnapshot.draft !== null ? 'ready_to_execute' : null;
   for (const item of conversationSnapshot.conversation.conversation.items) {

@@ -233,6 +233,7 @@ async function setup(options: Readonly<{
   restoreAvailable?: boolean;
   runningActivity?: boolean;
   readOnlyPageQuestionActivity?: boolean;
+  taskStreamWireOverride?: unknown;
   validHistoryPreview?: boolean;
   multipleWorkspaceOnlyCatalog?: boolean;
   workspaceOnlyCatalog?: boolean;
@@ -744,6 +745,8 @@ async function setup(options: Readonly<{
                 answerText: '我是DeepSeek最新版本模型，由深度求索公司创造。我可以回答问题、提供建议、协助创作等。',
                 questionText: latestAnswerInstruction,
               })
+            : options.taskStreamWireOverride !== undefined
+              ? options.taskStreamWireOverride
             : options.answerActivity === true
               ? createAnswerTaskStreamWire()
               : options.readOnlyPageQuestionActivity === true
@@ -2899,6 +2902,51 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route')).toBe('answer');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('reply');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('chat_default');
+  });
+
+  it('uses main-owned context status projection before falling back to task stream inference', async () => {
+    const taskStreamWire = {
+      ...createContextualBuildTaskStreamWire(),
+      context_status_projection: {
+        projection_version: 'builder-context-status-projection.v1',
+        label: 'Handoff received',
+        tone: 'warning',
+        next_action_hint: 'Review the handoff before the next change.',
+        has_pending_handoff: true,
+        pending_handoff_count: 1,
+        needs_confirmation: true,
+        can_contextual_execute: false,
+        authority: {
+          projection_authority: 'main_owned_context_status_projection_v1',
+          working_context_state: 'verified_not_exposed',
+          pending_handoff_packets: 'pending_count_only',
+          renderer_authority: 'not_present',
+          ipc_authority: 'not_present',
+          provider_dispatch: false,
+          tool_dispatch: false,
+          source_read: 'not_present',
+          source_write: 'not_present',
+          git_mutation: false,
+          permission_grant: false,
+          revision_admission: 'not_created',
+          secret_access: 'not_present',
+        },
+      },
+    };
+    const { container } = await setup({
+      initiallySaved: true,
+      taskStreamWireOverride: taskStreamWire,
+    });
+    await openSavedProject(container);
+
+    await waitFor(() => {
+      const status = container.querySelector('[data-builder-composer-status="true"]');
+      expect(status?.textContent).toContain('Handoff received');
+      expect(status?.getAttribute('data-builder-composer-context-status')).toBe('handoff_received');
+    });
+    expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .not.toContain('Ready to execute current direction');
+    expect(container.textContent).not.toMatch(/WorkingContext|builder-handoff-packet|sha256:|provider_secret|credential/iu);
   });
 
   it('keeps current brief memory hidden before contextual execution', async () => {
