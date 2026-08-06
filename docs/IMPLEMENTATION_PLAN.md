@@ -54,6 +54,12 @@ The maturity gate for this area is not the presence of summaries alone. Builder
 needs bounded contracts and services for compaction summaries, handoff packets,
 Working Context State assembly, renderer-safe status projection, and Run
 Context Snapshot references before the system should be considered mature.
+Current OpenCode, Pi, and DotCraft comparisons support keeping vector retrieval
+out of the v1 execution path: their core context loops emphasize durable
+sessions, instructions, compaction, branching, handoff, and reviewable project
+memory, while embedding/vector recall appears mainly in plugins or extensions.
+Builder may add vector recall later, but only as an inspectable candidate input
+to Context Assembly, never as readiness, permission, or plan authority.
 The recommended implementation order is: compaction contract, handoff packet
 contract, Working Context State service, Context Assembler, Run Snapshot refs,
 then the default UI projection and inspection surface.

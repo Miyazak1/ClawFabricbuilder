@@ -343,6 +343,25 @@ exact UI or storage layout.
 | Zep / Graphiti temporal memory | Tracks facts with time and provenance; old facts are invalidated rather than deleted | Corrections and handoffs must preserve history while changing current validity |
 | DeepSeek Context Caching | Reuses stable prompt prefixes to reduce cost and latency | Cache is an optimization only; it never decides ready/stale, permission, or plan approval |
 
+### Vector Retrieval Boundary
+
+Open source coding-agent references reinforce the same boundary:
+
+| Reference | Uses vector storage in the core context loop? | Builder interpretation |
+| --- | --- | --- |
+| OpenCode core | No public default vector database requirement; context continuity centers on conversation history, instructions, permissions, and compaction | Do not make vector retrieval part of v1 execution authority |
+| OpenCode memory plugins | Yes, plugin-level memory can add embedding/vector-backed recall | Treat vector recall as optional extension input, not as the source of truth |
+| Pi core | No public default vector database requirement; Pi emphasizes JSONL session history, branching/forking, queued input, and compaction | Match the durable session and compaction shape before adding semantic recall |
+| Pi memory packages / Magic Context integrations | Yes, extension packages can add semantic/deep memory using embeddings | Keep retrieval pluggable and inspectable when added |
+| DotCraft | No public default vector database requirement; it emphasizes project-local state, sessions, memories, Dreams, and handoff/export | Prefer reviewable project/task memory over opaque automatic recall in the near-term product |
+
+Therefore Builder's near-term rule is: vector stores are allowed only as a
+candidate recall layer after the deterministic context path is mature. Recalled
+items must enter Context Assembly with source refs, recency/provenance metadata,
+and conflict handling. They must never directly mark context `ready`, approve a
+plan, grant permission, override a newer user correction, or replace
+compaction/handoff facts.
+
 This makes Builder's target architecture:
 
 ```text
