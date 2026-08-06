@@ -369,17 +369,19 @@ describe('BuilderComposer', () => {
     expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('Dashboard v2');
   });
 
-  it('keeps passive composer status out of the default toolbar', () => {
+  it('projects safe working context status chips in the composer context bar', () => {
     const ready = render(
       <BuilderComposer
         {...props({
-          composerContextStatus: 'ready_to_build',
+          composerContextStatus: 'ready_to_execute',
           instruction: '',
         })}
       />,
     );
 
-    expect(ready.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    const readyStatus = ready.querySelector('[data-builder-composer-status="true"]');
+    expect(readyStatus?.textContent).toContain('Ready to execute current direction');
+    expect(readyStatus?.getAttribute('data-builder-composer-context-status')).toBe('ready_to_execute');
     expect(ready.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
     const contextBar = ready.querySelector('[data-builder-composer-context-bar="true"]');
     const workspaceChip = ready.querySelector('[data-builder-workspace-chip="true"]');
@@ -387,20 +389,44 @@ describe('BuilderComposer', () => {
     expect(contextBar).not.toBeNull();
     expect(workspaceChip?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
     expect(workspaceChip?.closest('.cf-builder-composer-footer')).not.toBe(footer);
+    expect(readyStatus?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
+    expect(readyStatus?.closest('.cf-builder-composer-footer')).not.toBe(footer);
     expect(ready.querySelector('[data-builder-submit-turn="true"]')).not.toBeNull();
 
-    const draft = render(
+    const approved = render(
       <BuilderComposer
         {...props({
-          composerContextStatus: 'ready_to_build',
-          hasUnsavedDraft: true,
+          composerContextStatus: 'using_approved_plan',
           instruction: '',
         })}
       />,
     );
 
-    expect(draft.querySelector('[data-builder-composer-status="true"]')).toBeNull();
-    expect(draft.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
+    expect(approved.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .toContain('Using approved plan');
+    expect(approved.textContent).not.toMatch(/Brief|WorkingContext|Task Capsule|receipt|provider|credential/iu);
+
+    const changed = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'direction_changed',
+          instruction: '',
+        })}
+      />,
+    );
+    expect(changed.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .toContain('Direction changed');
+
+    const confirmation = render(
+      <BuilderComposer
+        {...props({
+          composerContextStatus: 'needs_confirmation',
+          instruction: '',
+        })}
+      />,
+    );
+    expect(confirmation.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .toContain('Needs confirmation');
   });
 
   it('clears the selected workspace from the context bar without touching the footer', () => {
@@ -689,7 +715,7 @@ describe('BuilderComposer', () => {
     const container = render(
       <BuilderComposer
         {...props({
-          composerContextStatus: 'ready_to_build',
+          composerContextStatus: 'ready_to_execute',
           instruction: '',
         })}
       />,
@@ -699,6 +725,8 @@ describe('BuilderComposer', () => {
     expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
     expect(container.textContent).not.toContain('Current brief');
     expect(container.textContent).not.toContain('starfield hero');
+    expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+      .toContain('Ready to execute current direction');
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
   });
 });

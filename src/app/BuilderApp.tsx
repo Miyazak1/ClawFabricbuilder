@@ -68,7 +68,11 @@ import {
   type BuilderPlanReviewInFlight,
   type BuilderPlanSourceReadApprovalPrompt,
 } from '../features/builder/presentation/BuilderPage';
-import type { BuilderComposerMode, BuilderComposerWorkingBrief } from '../features/builder/presentation/BuilderComposer';
+import type {
+  BuilderComposerContextStatus,
+  BuilderComposerMode,
+  BuilderComposerWorkingBrief,
+} from '../features/builder/presentation/BuilderComposer';
 import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -741,6 +745,45 @@ function composerWorkingBrief(
   ));
 }
 
+function composerWorkingContextStatus(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): BuilderComposerContextStatus {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (
+    visibleProjectId === null
+    || conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+  ) return projectSnapshot.draft !== null ? 'ready_to_execute' : null;
+
+  let latestStatus: BuilderComposerContextStatus = projectSnapshot.draft !== null ? 'ready_to_execute' : null;
+  for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'task_brief_updated') {
+      latestStatus = item.brief.contextual_build_ready
+        ? 'ready_to_execute'
+        : 'direction_changed';
+      continue;
+    }
+    if (item.item_kind === 'run_completed') {
+      if (item.result_kind === 'candidate' && item.candidate !== null) {
+        latestStatus = 'ready_to_execute';
+        continue;
+      }
+      if (item.result_kind === 'plan') {
+        latestStatus = 'needs_confirmation';
+      }
+      continue;
+    }
+    if (item.item_kind === 'plan_reviewed') {
+      latestStatus = item.plan_state === 'approved'
+        ? 'using_approved_plan'
+        : 'direction_changed';
+    }
+  }
+  return latestStatus;
+}
+
 function composerIntentContext(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
@@ -1029,16 +1072,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.workspace,
     visibleHistoryProjectId(project.snapshot),
   );
-  const currentComposerIntentContext = composerIntentContext(
-    conversation.snapshot,
-    project.snapshot,
-    composerMode,
-    currentProjectWriteApprovalStatus,
-    effectiveApprovalMode(approvalMode, project.snapshot, currentProjectWriteApprovalStatus),
-  );
-  const composerContextStatus = currentComposerIntentContext.hasPriorBuildContext
-    ? 'ready_to_build'
-    : null;
+  const composerContextStatus = composerWorkingContextStatus(conversation.snapshot, project.snapshot);
   const projectSnapshotRef = useRef(project.snapshot);
   const conversationSnapshotRef = useRef(conversation.snapshot);
 

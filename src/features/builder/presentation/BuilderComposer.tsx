@@ -33,7 +33,13 @@ type SavedComposerProject = Readonly<{
   title: string;
 }>;
 
-export type BuilderComposerContextStatus = 'ready_to_build' | null;
+export type BuilderComposerContextStatus =
+  | 'direction_changed'
+  | 'direction_updated'
+  | 'needs_confirmation'
+  | 'ready_to_execute'
+  | 'using_approved_plan'
+  | null;
 
 export type BuilderComposerWorkingBrief = Readonly<{
   key: string;
@@ -107,6 +113,15 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
   return 'Ask before write';
 }
 
+function composerContextStatusLabel(status: BuilderComposerContextStatus): string | null {
+  if (status === 'direction_changed') return 'Direction changed';
+  if (status === 'direction_updated') return 'Direction updated';
+  if (status === 'needs_confirmation') return 'Needs confirmation';
+  if (status === 'ready_to_execute') return 'Ready to execute current direction';
+  if (status === 'using_approved_plan') return 'Using approved plan';
+  return null;
+}
+
 export function BuilderComposer({
   activeRunFollowupQueued = false,
   approvalMode = 'ask_before_write',
@@ -120,6 +135,7 @@ export function BuilderComposer({
   catalogBusy,
   catalogProjects,
   catalogWorkspaceProjects,
+  composerContextStatus = null,
   composerMode = null,
   composerRouteDecision = null,
   hasUnsavedDraft,
@@ -190,6 +206,7 @@ export function BuilderComposer({
   const workspaceEnvironmentLabels = [
     savedProject !== null || workingProject !== null ? 'Local' : null,
   ].filter((label): label is string => label !== null);
+  const contextStatusLabel = composerContextStatusLabel(composerContextStatus);
   const hasWorkspaceSelection = savedProject !== null || workingProject !== null;
   const canClearWorkspaceSelection = hasWorkspaceSelection
     && !hasUnsavedDraft
@@ -520,6 +537,16 @@ export function BuilderComposer({
                   {label}
                 </span>
               ))}
+            </span>
+          ) : null}
+          {contextStatusLabel !== null ? (
+            <span
+              className="cf-builder-composer-context-pill"
+              data-builder-composer-context-status={composerContextStatus}
+              data-builder-composer-status="true"
+              role="status"
+            >
+              {contextStatusLabel}
             </span>
           ) : null}
           {canClearWorkspaceSelection ? (

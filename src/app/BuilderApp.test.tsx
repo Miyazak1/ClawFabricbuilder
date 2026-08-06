@@ -2736,7 +2736,8 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
-      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
     });
     expect(container.textContent).not.toMatch(/working_brief|recent_chat_proposal|builder-conversation/iu);
 
@@ -2794,7 +2795,8 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
@@ -2906,7 +2908,8 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
@@ -3065,7 +3068,8 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
-      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -3730,7 +3734,8 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
