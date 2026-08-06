@@ -484,6 +484,7 @@ describe('Builder desktop layout styles', () => {
     const workspaceCopy = styleBlock(source, '.cf-builder-workspace-chip-copy');
     const workspaceLabel = styleBlock(source, '.cf-builder-workspace-chip-label');
     const workspaceDetail = styleBlock(source, '.cf-builder-workspace-chip-detail');
+    const workspaceOrigin = styleBlock(source, '.cf-builder-workspace-chip-origin');
     const picker = styleBlock(source, '.cf-builder-workspace-picker');
     const approvalButton = styleBlock(source, '.cf-builder-composer-approval-button');
     const approvalMenu = styleBlockContaining(source, '.cf-builder-composer-approval-menu', 'min-width: 230px;');
@@ -498,10 +499,13 @@ describe('Builder desktop layout styles', () => {
     expect(workspaceChip).toContain('min-height: 34px;');
     expect(workspaceChip).toContain('padding: 3px 8px;');
     expect(workspaceCopy).toContain('display: grid;');
+    expect(workspaceCopy).toContain('flex: 1 1 auto;');
     expect(workspaceCopy).toContain('gap: 1px;');
     expect(workspaceLabel).toContain('white-space: nowrap;');
     expect(workspaceDetail).toContain('white-space: nowrap;');
     expect(workspaceDetail).toContain('line-height: 1.15;');
+    expect(workspaceOrigin).toContain('flex: 0 0 auto;');
+    expect(workspaceOrigin).toContain('white-space: nowrap;');
     expect(picker).toContain('bottom: calc(100% - 44px);');
     expect(picker).not.toContain('top: 48px;');
     expect(approvalButton).toContain('min-height: 28px;');

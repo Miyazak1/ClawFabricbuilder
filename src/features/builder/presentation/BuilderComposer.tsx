@@ -197,11 +197,9 @@ export function BuilderComposer({
     : workingProject !== null
       ? sourceFolderBoundaryLabel(workingProject.source_folders[0]?.name)
       : 'Chat only until you choose a folder';
-  const workspaceEnvironmentLabels = [
-    savedProject !== null || workingProject !== null ? 'Local' : null,
-  ].filter((label): label is string => label !== null);
-  const contextStatusLabel = composerContextStatusLabel(composerContextStatus);
   const hasWorkspaceSelection = savedProject !== null || workingProject !== null;
+  const workspaceOriginLabel = hasWorkspaceSelection ? 'Local' : null;
+  const contextStatusLabel = composerContextStatusLabel(composerContextStatus);
   const canClearWorkspaceSelection = hasWorkspaceSelection
     && !hasUnsavedDraft
     && typeof onClearWorkspaceSelection === 'function';
@@ -522,17 +520,13 @@ export function BuilderComposer({
               <span className="cf-builder-workspace-chip-label">{workspaceLabel}</span>
               <span className="cf-builder-workspace-chip-detail">{workspaceDetail}</span>
             </span>
+            {workspaceOriginLabel !== null ? (
+              <span className="cf-builder-workspace-chip-origin" data-builder-workspace-origin="true">
+                {workspaceOriginLabel}
+              </span>
+            ) : null}
             <ChevronDown aria-hidden="true" className="size-3.5" />
           </button>
-          {workspaceEnvironmentLabels.length > 0 ? (
-            <span className="cf-builder-composer-context-pills" data-builder-composer-context-pills="true">
-              {workspaceEnvironmentLabels.map((label) => (
-                <span className="cf-builder-composer-context-pill" key={label}>
-                  {label}
-                </span>
-              ))}
-            </span>
-          ) : null}
           {contextStatusLabel !== null ? (
             <span
               className="cf-builder-composer-context-pill"

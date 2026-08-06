@@ -391,6 +391,7 @@ describe('BuilderComposer', () => {
     expect(workspaceChip?.closest('.cf-builder-composer-footer')).not.toBe(footer);
     expect(readyStatus?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
     expect(readyStatus?.closest('.cf-builder-composer-footer')).not.toBe(footer);
+    expect(ready.querySelector('[data-builder-composer-context-pills="true"]')).toBeNull();
     expect(ready.querySelector('[data-builder-submit-turn="true"]')).not.toBeNull();
 
     const approved = render(
@@ -459,9 +460,13 @@ describe('BuilderComposer', () => {
     const clear = container.querySelector<HTMLButtonElement>('[data-builder-clear-workspace-selection="true"]');
     const contextBar = container.querySelector('[data-builder-composer-context-bar="true"]');
     const footer = container.querySelector('.cf-builder-composer-footer');
+    const workspaceOrigin = container.querySelector('[data-builder-workspace-origin="true"]');
     expect(clear).not.toBeNull();
     expect(clear?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
     expect(clear?.closest('.cf-builder-composer-footer')).not.toBe(footer);
+    expect(workspaceOrigin?.textContent).toContain('Local');
+    expect(workspaceOrigin?.closest('[data-builder-workspace-chip="true"]')).not.toBeNull();
+    expect(workspaceOrigin?.closest('[data-builder-composer-context-pills="true"]')).toBeNull();
 
     click(container, '[data-builder-clear-workspace-selection="true"]');
 
