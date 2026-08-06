@@ -366,6 +366,9 @@ During an active run:
 - direct corrections about the in-flight result -> `steer` only when the active
   run supports safe steering;
 - independent next questions or next tasks -> `queue_followup`;
+- imported handoff packets -> pending handoff context by default, not
+  `steer`, `queue_followup`, or `build`, unless the user explicitly asks to
+  interrupt or continue from that handoff;
 - `继续`, `再试一次`, `按这个改` -> steer or queued input only when supported and
   only after the route context proves what is active;
 - while a read-only answer is active, a clear build/change instruction must not
@@ -383,6 +386,15 @@ Until the provider/tool protocol can prove steer acceptance, the product should
 prefer `queue_followup` for non-cancel input during active work. This keeps the
 conversation usable without pretending that the current provider request can be
 edited in place.
+
+Current handoff checkpoint: handoff is a context-ingestion event, not a user
+submit. If another task inserts a handoff while this task is answering,
+planning, building, awaiting permission, or reviewing, Builder records the
+HandoffPacket as pending and surfaces a compact `Handoff received` status. The
+current admitted work continues to its next safe terminal boundary. After that,
+the router reconciles the handoff against current-session messages, approved
+plan head, draft/review state, and permission state before any side-effecting
+route can use it. Conflicts downgrade to `clarify` / `Needs confirmation`.
 
 ## Permission Admission
 

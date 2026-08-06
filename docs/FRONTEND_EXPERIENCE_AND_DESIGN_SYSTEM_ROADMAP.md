@@ -313,6 +313,20 @@ missing or newer user messages contradict it, the composer should show
 `Needs confirmation` and route short phrases such as `继续` to clarification
 instead of build.
 
+Handoff timing should respect the user's current flow:
+
+- while the assistant is building, planning, awaiting approval, or reviewing a
+  draft, show `Handoff received` without stealing focus;
+- do not rewrite the composer input, auto-send a follow-up, or mutate the
+  active run;
+- after the current work reaches a terminal or review boundary, show a compact
+  task-stream item such as `Handoff ready to review`;
+- if the handoff is compatible, the next natural message can continue from it;
+- if it conflicts with local direction, keep `Needs confirmation` until the
+  user resolves the conflict in natural language;
+- the Logs/Task inspection surface should reveal source task, commit refs,
+  changed files, and verification evidence on demand.
+
 Plan mode can be invoked in two ways:
 
 1. **Explicit UI**: choose `Plan mode` from the `+` menu. The composer shows a

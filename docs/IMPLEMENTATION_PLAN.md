@@ -45,6 +45,11 @@ separate facts: compaction keeps long work inside model context, while handoff
 imports provenance-bound context from another task, fork, branch, or delegated
 agent. Neither can silently grant permission, approve a plan, or override a
 newer current-session correction.
+Handoff insertion during active work defaults to pending inbox state: finish the
+current admitted run or reach a safe review/terminal boundary, then reconcile
+the handoff against current-session facts before any later execution can use it.
+Only explicit user interruption or a verified safety/permission blocker can
+change that schedule.
 
 ## Verified Starting Point
 

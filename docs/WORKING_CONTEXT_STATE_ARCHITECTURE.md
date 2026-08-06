@@ -178,6 +178,65 @@ Handoff rules:
   `source_thread_id`, commit refs, or verification evidence;
 - run snapshots must record when execution used imported handoff context.
 
+### Handoff Scheduling
+
+Incoming handoff should not behave like an ordinary newest user message. It is
+an inbox event that must be scheduled against the current task state.
+
+Handoff lifecycle:
+
+```text
+received
+-> classified
+-> pending | adopted | needs_confirmation | rejected | superseded
+-> consumed | archived
+```
+
+Default scheduling policy:
+
+| Current session state | Handoff behavior |
+| --- | --- |
+| Idle or read-only chat | Classify immediately, then adopt or ask for confirmation |
+| Planning | Queue as pending context; reconcile before plan approval or revision |
+| Building / provider running | Queue as pending context; do not mutate the in-flight provider request |
+| Awaiting permission | Show `Handoff received`; do not alter the pending permission request |
+| Reviewing draft | Attach as review context; require confirmation before changing the draft |
+| User explicitly says to handle it now | Route through normal cancel/steer/queue rules before any side effect |
+
+The ordinary answer to "should this task finish its current work first?" is
+yes. Finish or reach a safe terminal boundary, then reconcile the handoff before
+starting the next side-effecting turn. This keeps current-run evidence stable
+and prevents imported context from changing work that has already been admitted.
+
+Exceptions are narrow:
+
+- if the user explicitly says `先停下，处理那个交接`, route through cancel or
+  queued follow-up according to the active-run policy;
+- if the handoff reports a verified safety, permission, or destructive-action
+  blocker for the exact current Task Address, pause before the next write and
+  show `Needs confirmation`;
+- if the active segment supports proven safe steering, a handoff may become
+  steering input only after the user or supervising task explicitly admits it.
+
+Reconciliation order after the current work reaches a terminal state:
+
+```text
+1. Load latest current-session user messages and task facts.
+2. Load pending HandoffPacket records in insertion order.
+3. Verify source refs, commit refs, changed files, and verification evidence.
+4. Classify each handoff as info, correction, plan evidence, result evidence,
+   requested next action, or conflict.
+5. Compare against the current Working Context State and approved-plan head.
+6. Adopt non-conflicting info into Working Context State references.
+7. Mark conflicts as `needs_confirmation`.
+8. Before build, write a Run Context Snapshot that names adopted handoff refs.
+```
+
+Handoff adoption must be explicit in facts even when the UI is quiet. A later
+run should be able to answer: which current-session instruction admitted this
+work, which imported packet contributed context, and why no newer local
+correction blocked it.
+
 ## Working Context Shape
 
 The eventual pure main-side contract should be exact, bounded, and
