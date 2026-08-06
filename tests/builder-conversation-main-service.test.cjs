@@ -1667,6 +1667,89 @@ test('records task capsule source message ids in run context snapshots', () => {
   }
 });
 
+test('does not cite stale task capsule brief after a newer not-ready correction', () => {
+  const item = fixture();
+  try {
+    const prior = item.service.begin_question({
+      project_id: PROJECT_ID,
+      question: '我想先聊一下这个作品集首页怎么做。',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'update_brief',
+        confidence: 'medium',
+        matched_signals: ['exploratory_work'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'brief_update',
+      },
+    });
+    const priorTerminal = item.service.complete_explanation({
+      context: prior,
+      assistant_text: '可以先做一个带星空 hero、项目卡片和联系入口的单页作品集。',
+    });
+    const readyBriefEvent = priorTerminal.events.at(-2);
+    assert.equal(readyBriefEvent.event_type, 'task_brief_updated');
+    assert.equal(readyBriefEvent.payload.task_capsule.status, 'ready');
+
+    const correction = item.service.begin_question({
+      project_id: PROJECT_ID,
+      question: '等等，先不要按这个做，我要重新整理方向。',
+      request_digest: `${QUESTION_DIGEST.slice(0, -1)}2`,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'update_brief',
+        confidence: 'high',
+        matched_signals: ['brief_correction'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: [],
+        permission_result: 'not_required',
+        dispatch: 'brief_update',
+      },
+    });
+    const correctionTerminal = item.service.complete_explanation({
+      context: correction,
+      assistant_text: '旧方向先不执行。我们先重新确认新的目标和范围。',
+    });
+    const correctionBriefEvent = correctionTerminal.events.at(-2);
+    assert.equal(correctionBriefEvent.event_type, 'task_brief_updated');
+    assert.equal(correctionBriefEvent.payload.task_capsule.status, 'discussing');
+
+    const work = item.service.begin_work({
+      project_id: PROJECT_ID,
+      instruction: '新建一个干净的项目首页。',
+      request_digest: REQUEST_DIGEST,
+      base_revision: null,
+      route_decision_hint: {
+        route: 'build',
+        confidence: 'high',
+        matched_signals: ['clear_build'],
+        downgraded_from: null,
+        downgrade_reason: null,
+        required_permissions: ['write_project'],
+        permission_result: 'allowed',
+        dispatch: 'build',
+      },
+    });
+    const snapshotted = item.service.record_run_context_snapshot({ context: work });
+    const snapshot = snapshotted.events.at(-1).payload.snapshot;
+
+    assert.deepEqual(snapshot.included_message_ids, [work.ids.message_id]);
+    assert.deepEqual(snapshot.brief_reference, {
+      status: 'not_available',
+      task_id: null,
+      source_message_id: null,
+      last_route_decision_id: null,
+      contextual_build_ready: false,
+    });
+  } finally {
+    item.close();
+  }
+});
+
 test('records a proposed plan from a run-bound plan record after successful tool context', async () => {
   const item = fixture();
   let restartedDatabase = null;

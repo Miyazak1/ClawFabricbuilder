@@ -931,10 +931,16 @@ function createBuilderConversationMainService(rawOptions) {
     let capsule = null;
     for (const event of events) {
       if (event.event_type === 'task_brief_updated') {
-        capsule = {
-          message_id: event.payload.message_id,
-          task_capsule: event.payload.task_capsule,
-        };
+        const taskCapsule = event.payload.task_capsule;
+        capsule = (
+          taskCapsule.status === 'ready'
+          && taskCapsule.current_brief.use_when_instruction_is_contextual === true
+        )
+          ? {
+            message_id: event.payload.message_id,
+            task_capsule: taskCapsule,
+          }
+          : null;
       }
     }
     return capsule;

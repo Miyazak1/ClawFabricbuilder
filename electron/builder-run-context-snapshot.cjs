@@ -426,6 +426,14 @@ function createBuilderRunContextSnapshot(input) {
   });
   const taskCapsuleReference = valueAt(source, 'latest_task_capsule');
   const taskCapsule = taskCapsuleReference === null ? null : valueAt(taskCapsuleReference, 'task_capsule');
+  if (taskCapsule !== null) {
+    const currentBrief = valueAt(taskCapsule, 'current_brief');
+    if (
+      valueAt(taskCapsule, 'status') !== 'ready'
+      || !isPlainObject(currentBrief)
+      || valueAt(currentBrief, 'use_when_instruction_is_contextual') !== true
+    ) fail();
+  }
   const sourceMessageId = taskCapsuleReference === null
     ? null
     : safePattern(valueAt(taskCapsuleReference, 'message_id'), MESSAGE_ID_PATTERN);

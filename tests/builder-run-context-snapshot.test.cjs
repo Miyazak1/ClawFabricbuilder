@@ -66,6 +66,10 @@ function latestTaskCapsule() {
     message_id: BRIEF_MESSAGE_ID,
     task_capsule: {
       task_id: TASK_ID,
+      status: 'ready',
+      current_brief: {
+        use_when_instruction_is_contextual: true,
+      },
       last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
     },
   };
@@ -76,6 +80,10 @@ function priorBriefTaskCapsule() {
     message_id: BRIEF_MESSAGE_ID,
     task_capsule: {
       task_id: OTHER_TASK_ID,
+      status: 'ready',
+      current_brief: {
+        use_when_instruction_is_contextual: true,
+      },
       last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
     },
   };
@@ -196,6 +204,38 @@ test('keeps prior brief task ids while rejecting mismatched route identities', (
     })),
     BuilderRunContextSnapshotError,
   );
+});
+
+test('rejects not-ready task capsule references before recording run context', () => {
+  for (const latest_task_capsule of [
+    {
+      message_id: BRIEF_MESSAGE_ID,
+      task_capsule: {
+        task_id: TASK_ID,
+        status: 'discussing',
+        current_brief: {
+          use_when_instruction_is_contextual: false,
+        },
+        last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
+      },
+    },
+    {
+      message_id: BRIEF_MESSAGE_ID,
+      task_capsule: {
+        task_id: TASK_ID,
+        status: 'ready',
+        current_brief: {
+          use_when_instruction_is_contextual: false,
+        },
+        last_route_decision_id: BRIEF_ROUTE_DECISION_ID,
+      },
+    },
+  ]) {
+    assert.throws(
+      () => createBuilderRunContextSnapshot(snapshotInput({ latest_task_capsule })),
+      BuilderRunContextSnapshotError,
+    );
+  }
 });
 
 test('binds snapshot id and digest to the canonical body', () => {
