@@ -265,11 +265,51 @@ function runtimeWithService(service, probes = {}) {
             probes.workingContextStateOptions = options;
             assert.equal(options.task_capsule_store, context.__taskCapsuleStore);
             assert.equal(options.session_task_address_store, context.__sessionTaskAddressStore);
+            assert.equal(options.context_compaction_summary_store, context.__contextCompactionSummaryStore);
+            assert.equal(options.handoff_packet_store, context.__handoffPacketStore);
             context.__workingContextStateService = {
               service_version: 'builder-working-context-state-service.v1',
               read_current_working_context_state_for_conversation() {},
             };
             return context.__workingContextStateService;
+          },
+        };
+      }
+      if (specifier === './builder-context-compaction-summary-store.cjs') {
+        return {
+          createBuilderContextCompactionSummaryStore: (databasePath) => {
+            probes.contextCompactionSummaryDatabasePath = databasePath;
+            context.__contextCompactionSummaryStore = {
+              closed: false,
+              store_version: 'builder-context-compaction-summary-store.v1',
+              record_context_compaction_summary() {},
+              read_context_compaction_summary() {},
+              read_latest_context_compaction_summary() {},
+              close() {
+                this.closed = true;
+                return true;
+              },
+            };
+            return context.__contextCompactionSummaryStore;
+          },
+        };
+      }
+      if (specifier === './builder-handoff-packet-store.cjs') {
+        return {
+          createBuilderHandoffPacketStore: (databasePath) => {
+            probes.handoffPacketDatabasePath = databasePath;
+            context.__handoffPacketStore = {
+              closed: false,
+              store_version: 'builder-handoff-packet-store.v1',
+              record_handoff_packet() {},
+              read_handoff_packet() {},
+              list_pending_handoff_packets() {},
+              close() {
+                this.closed = true;
+                return true;
+              },
+            };
+            return context.__handoffPacketStore;
           },
         };
       }
@@ -1944,10 +1984,14 @@ test('closes project main authority when generation channel registration fails',
   assert.equal(harness.context.__projectMainAuthority.closed, false);
   assert.equal(harness.context.__taskCapsuleStore.closed, false);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, false);
+  assert.equal(harness.context.__contextCompactionSummaryStore.closed, false);
+  assert.equal(harness.context.__handoffPacketStore.closed, false);
   assert.throws(() => runtime.register(), {
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   assert.deepEqual([...ipcMain.handlers.keys()], []);
+  assert.equal(harness.context.__handoffPacketStore.closed, true);
+  assert.equal(harness.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, true);
   assert.equal(harness.context.__taskCapsuleStore.closed, true);
   assert.equal(harness.context.__projectMainAuthority.closed, true);
@@ -1981,12 +2025,20 @@ test('composes project main authority and closes it on dispose', (t) => {
     path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite'));
   assert.equal(probes.sessionTaskAddressDatabasePath,
     path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite'));
+  assert.equal(probes.contextCompactionSummaryDatabasePath,
+    path.join(userDataPath, 'builder-context-compaction-summaries-v1', 'context-compaction-summaries.sqlite'));
+  assert.equal(probes.handoffPacketDatabasePath,
+    path.join(userDataPath, 'builder-handoff-packets-v1', 'handoff-packets.sqlite'));
   assert.equal(probes.taskCapsuleRecordingOptions.task_capsule_store,
     runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.workingContextStateOptions.task_capsule_store,
     runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.workingContextStateOptions.session_task_address_store,
     runtimeModule.context.__sessionTaskAddressStore);
+  assert.equal(probes.workingContextStateOptions.context_compaction_summary_store,
+    runtimeModule.context.__contextCompactionSummaryStore);
+  assert.equal(probes.workingContextStateOptions.handoff_packet_store,
+    runtimeModule.context.__handoffPacketStore);
   assert.equal(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(probes.serviceOptions.conversationService,
@@ -2012,6 +2064,8 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__conversationService);
   assert.equal(typeof runtimeModule.context.__conversationService.read_stream, 'function');
   assert.equal(runtime.dispose(), false);
+  assert.equal(runtimeModule.context.__handoffPacketStore.closed, true);
+  assert.equal(runtimeModule.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(runtimeModule.context.__sessionTaskAddressStore.closed, true);
   assert.equal(runtimeModule.context.__taskCapsuleStore.closed, true);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);

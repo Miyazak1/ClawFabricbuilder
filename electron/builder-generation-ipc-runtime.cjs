@@ -109,6 +109,12 @@ const {
   createBuilderSessionTaskAddressBindingService,
 } = require('./builder-session-task-address-binding-service.cjs');
 const {
+  createBuilderContextCompactionSummaryStore,
+} = require('./builder-context-compaction-summary-store.cjs');
+const {
+  createBuilderHandoffPacketStore,
+} = require('./builder-handoff-packet-store.cjs');
+const {
   createBuilderWorkingContextStateService,
 } = require('./builder-working-context-state-service.cjs');
 
@@ -117,6 +123,10 @@ const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
 const TASK_CAPSULE_DATABASE = 'task-capsules.sqlite';
 const SESSION_TASK_ADDRESS_DIRECTORY = 'builder-session-task-addresses-v1';
 const SESSION_TASK_ADDRESS_DATABASE = 'session-task-addresses.sqlite';
+const CONTEXT_COMPACTION_SUMMARY_DIRECTORY = 'builder-context-compaction-summaries-v1';
+const CONTEXT_COMPACTION_SUMMARY_DATABASE = 'context-compaction-summaries.sqlite';
+const HANDOFF_PACKET_DIRECTORY = 'builder-handoff-packets-v1';
+const HANDOFF_PACKET_DATABASE = 'handoff-packets.sqlite';
 const LOCAL_BUILDER_AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174002';
 const OPTION_KEYS = Object.freeze([
   'fetchImpl',
@@ -1022,6 +1032,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let permissionFactStore = null;
   let taskCapsuleStore = null;
   let sessionTaskAddressStore = null;
+  let contextCompactionSummaryStore = null;
+  let handoffPacketStore = null;
   let projectMainAuthority = null;
   let service;
   let adapter;
@@ -1081,9 +1093,21 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const sessionTaskAddressBindingService = createBuilderSessionTaskAddressBindingService({
       address_store: sessionTaskAddressStore,
     });
+    const contextCompactionSummaryRoot = path.join(options.userDataPath, CONTEXT_COMPACTION_SUMMARY_DIRECTORY);
+    fs.mkdirSync(contextCompactionSummaryRoot, { recursive: true, mode: 0o700 });
+    contextCompactionSummaryStore = createBuilderContextCompactionSummaryStore(
+      path.join(contextCompactionSummaryRoot, CONTEXT_COMPACTION_SUMMARY_DATABASE),
+    );
+    const handoffPacketRoot = path.join(options.userDataPath, HANDOFF_PACKET_DIRECTORY);
+    fs.mkdirSync(handoffPacketRoot, { recursive: true, mode: 0o700 });
+    handoffPacketStore = createBuilderHandoffPacketStore(
+      path.join(handoffPacketRoot, HANDOFF_PACKET_DATABASE),
+    );
     const workingContextStateService = createBuilderWorkingContextStateService({
       task_capsule_store: taskCapsuleStore,
       session_task_address_store: sessionTaskAddressStore,
+      context_compaction_summary_store: contextCompactionSummaryStore,
+      handoff_packet_store: handoffPacketStore,
     });
     const conversationService = createBuilderConversationMainService({
       metadataAuthority: projectMainAuthority.metadata_authority,
@@ -1710,6 +1734,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
+    try { handoffPacketStore?.close(); } catch { /* fixed failure below */ }
+    try { contextCompactionSummaryStore?.close(); } catch { /* fixed failure below */ }
     try { sessionTaskAddressStore?.close(); } catch { /* fixed failure below */ }
     try { taskCapsuleStore?.close(); } catch { /* fixed failure below */ }
     try { permissionFactStore?.close(); } catch { /* fixed failure below */ }
@@ -1837,6 +1863,28 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
   }
 
+  function closeContextCompactionSummaryStore() {
+    if (contextCompactionSummaryStore === null) return true;
+    try {
+      contextCompactionSummaryStore.close();
+      contextCompactionSummaryStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function closeHandoffPacketStore() {
+    if (handoffPacketStore === null) return true;
+    try {
+      handoffPacketStore.close();
+      handoffPacketStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return Object.freeze({
     runtime_version: BUILDER_GENERATION_IPC_RUNTIME_VERSION,
     channels: Object.freeze(handlers.map(({ channel }) => channel)),
@@ -1852,11 +1900,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return true;
       } catch {
         const removed = removeInstalledHandlers();
-        const addressesClosed = closeSessionTaskAddressStore();
+        const handoffsClosed = closeHandoffPacketStore();
+        const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
+        const addressesClosed = compactionsClosed ? closeSessionTaskAddressStore() : false;
         const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        state = removed && addressesClosed && taskCapsulesClosed && permissionsClosed && closed
+        state = removed && handoffsClosed && compactionsClosed && addressesClosed
+          && taskCapsulesClosed && permissionsClosed && closed
           ? 'disposed'
           : 'cleanup_required';
         fail();
@@ -1865,11 +1916,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     dispose() {
       if (state === 'disposed') return false;
       if (state === 'idle') {
-        const addressesClosed = closeSessionTaskAddressStore();
+        const handoffsClosed = closeHandoffPacketStore();
+        const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
+        const addressesClosed = compactionsClosed ? closeSessionTaskAddressStore() : false;
         const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        if (!addressesClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
+        if (!handoffsClosed || !compactionsClosed || !addressesClosed
+          || !taskCapsulesClosed || !permissionsClosed || !closed) {
           state = 'cleanup_required';
           fail();
         }
@@ -1878,11 +1932,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       }
       const cancelled = cancelActiveRequests();
       const removed = removeInstalledHandlers();
-      const addressesClosed = cancelled ? closeSessionTaskAddressStore() : false;
+      const handoffsClosed = cancelled ? closeHandoffPacketStore() : false;
+      const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
+      const addressesClosed = compactionsClosed ? closeSessionTaskAddressStore() : false;
       const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
       const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
       const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-      if (!cancelled || !removed || !addressesClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
+      if (!cancelled || !removed || !handoffsClosed || !compactionsClosed || !addressesClosed
+        || !taskCapsulesClosed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();
       }
@@ -1900,6 +1957,10 @@ module.exports = Object.freeze({
   METADATA_DATABASE,
   TASK_CAPSULE_DIRECTORY,
   TASK_CAPSULE_DATABASE,
+  CONTEXT_COMPACTION_SUMMARY_DIRECTORY,
+  CONTEXT_COMPACTION_SUMMARY_DATABASE,
+  HANDOFF_PACKET_DIRECTORY,
+  HANDOFF_PACKET_DATABASE,
   BuilderGenerationIpcRuntimeError,
   ANSWER_DRAFT_CHANNEL,
   createBuilderGenerationIpcRuntime,
