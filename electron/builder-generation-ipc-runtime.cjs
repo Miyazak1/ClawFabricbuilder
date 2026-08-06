@@ -1057,12 +1057,6 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         // Activity notifications are opportunistic; the read IPC remains authoritative.
       }
     }
-    const conversationService = createBuilderConversationMainService({
-      metadataAuthority: projectMainAuthority.metadata_authority,
-      createUuid: randomUUID,
-      nowMs: () => Date.now(),
-      onTaskStreamChanged: publishTaskStreamChanged,
-    });
     const permissionRoot = path.join(options.userDataPath, PERMISSION_DIRECTORY);
     fs.mkdirSync(permissionRoot, { recursive: true, mode: 0o700 });
     permissionFactStore = createBuilderPermissionFactStore(path.join(permissionRoot, PERMISSION_DATABASE));
@@ -1090,6 +1084,13 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const workingContextStateService = createBuilderWorkingContextStateService({
       task_capsule_store: taskCapsuleStore,
       session_task_address_store: sessionTaskAddressStore,
+    });
+    const conversationService = createBuilderConversationMainService({
+      metadataAuthority: projectMainAuthority.metadata_authority,
+      createUuid: randomUUID,
+      nowMs: () => Date.now(),
+      onTaskStreamChanged: publishTaskStreamChanged,
+      workingContextStateService,
     });
     const permissionEvaluator = permissionFactStore.create_evaluator();
     const permissionAdmission = createBuilderToolPermissionAdmission({

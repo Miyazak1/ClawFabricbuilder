@@ -339,6 +339,7 @@ function runtimeWithService(service, probes = {}) {
               context.__projectMainAuthority.metadata_authority,
             );
             assert.equal(typeof options.onTaskStreamChanged, 'function');
+            assert.equal(options.workingContextStateService, context.__workingContextStateService);
             context.__conversationService = {
               begin_work() {},
               begin_queued_followup_work() {},

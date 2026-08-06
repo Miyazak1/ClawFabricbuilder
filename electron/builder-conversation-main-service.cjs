@@ -47,6 +47,9 @@ const {
   projectBuilderTaskStream,
 } = require('./builder-task-stream-projection.cjs');
 const {
+  sanitizeBuilderContextStatusProjection,
+} = require('./builder-context-status-projection.cjs');
+const {
   createBuilderApprovedPlanContinuationAdmission,
 } = require('./builder-approved-plan-continuation-admission.cjs');
 const {
@@ -66,7 +69,11 @@ const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-ser
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
 const APPROVED_PLAN_READ_RESULT_VERSION = 'builder-conversation-approved-plan-read-result.v1';
 const REQUIRED_OPTION_KEYS = Object.freeze(['metadataAuthority', 'createUuid', 'nowMs']);
-const OPTION_KEYS = Object.freeze([...REQUIRED_OPTION_KEYS, 'onTaskStreamChanged']);
+const OPTION_KEYS = Object.freeze([
+  ...REQUIRED_OPTION_KEYS,
+  'onTaskStreamChanged',
+  'workingContextStateService',
+]);
 const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
 const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
 const ROUTE_DECISION_HINT_KEYS = Object.freeze([
@@ -557,6 +564,9 @@ function sanitizeOptions(value) {
   const onTaskStreamChanged = keys.includes('onTaskStreamChanged')
     ? valueAt(value, 'onTaskStreamChanged')
     : null;
+  const workingContextStateService = keys.includes('workingContextStateService')
+    ? valueAt(value, 'workingContextStateService')
+    : null;
   if (
     typeof createUuid !== 'function'
     || utilTypes.isProxy(createUuid)
@@ -565,6 +575,10 @@ function sanitizeOptions(value) {
     || (
       onTaskStreamChanged !== null
       && (typeof onTaskStreamChanged !== 'function' || utilTypes.isProxy(onTaskStreamChanged))
+    )
+    || (
+      workingContextStateService !== null
+      && (!isPlainObject(workingContextStateService) || utilTypes.isProxy(workingContextStateService))
     )
   ) fail();
   return Object.freeze({
@@ -576,6 +590,10 @@ function sanitizeOptions(value) {
     createUuid,
     nowMs,
     onTaskStreamChanged,
+    workingContextStateService,
+    readCurrentWorkingContextStateForConversation: workingContextStateService === null
+      ? null
+      : ownMethod(workingContextStateService, 'read_current_working_context_state_for_conversation'),
   });
 }
 
@@ -857,6 +875,40 @@ function createBuilderConversationMainService(rawOptions) {
     } catch (error) {
       if (ownCode(error) === 'builder_product_metadata_not_found') return null;
       fail();
+    }
+  }
+
+  function currentContextStatusProjection(projectId, conversationId) {
+    if (options.readCurrentWorkingContextStateForConversation === null) return undefined;
+    try {
+      const result = Reflect.apply(
+        options.readCurrentWorkingContextStateForConversation,
+        options.workingContextStateService,
+        [{
+          project_id: projectId,
+          conversation_id: conversationId,
+          objective_summary: null,
+          confirmed_constraints: [],
+          rejected_constraints: [],
+          open_questions: [],
+          latest_user_intent: null,
+          source_refs: [],
+          compaction_refs: [],
+          handoff_refs: [],
+          approved_plan_ref: null,
+          base_revision_ref: null,
+          invalidated_by: null,
+          updated_at_ms: 0,
+        }],
+      );
+      if (!isPlainObject(result) || utilTypes.isProxy(result)) return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(result, 'context_status_projection');
+      if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+        return undefined;
+      }
+      return sanitizeBuilderContextStatusProjection(descriptor.value);
+    } catch {
+      return undefined;
     }
   }
 
@@ -2937,8 +2989,14 @@ function createBuilderConversationMainService(rawOptions) {
       const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
       const conversationId = `builder-conversation:${projectUuid(projectId)}`;
       const state = load(projectId, conversationId);
+      const contextStatusProjection = state === null
+        ? undefined
+        : currentContextStatusProjection(projectId, conversationId);
       return projectBuilderTaskStream({
         project_id: projectId,
+        ...(contextStatusProjection === undefined
+          ? {}
+          : { context_status_projection: contextStatusProjection }),
         conversation: state === null ? null : {
           conversation_id: state.conversation.conversation_id,
           created_at_ms: state.conversation.created_at_ms,

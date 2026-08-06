@@ -136,6 +136,42 @@ function begin(service, baseRevision = null, instruction = 'Build a focused time
   });
 }
 
+function contextStatusProjection(overrides = {}) {
+  const base = {
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Handoff received',
+    tone: 'warning',
+    next_action_hint: 'Review the handoff before the next change.',
+    has_pending_handoff: true,
+    pending_handoff_count: 1,
+    needs_confirmation: true,
+    can_contextual_execute: false,
+    authority: {
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'pending_count_only',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function beginQuestion(service, baseRevision = null, question = 'What changed in this project?') {
   return service.begin_question({
     project_id: PROJECT_ID,
@@ -3173,6 +3209,81 @@ test('returns a legal empty stream when the project has no conversation', () => 
       message: 'Project activity is unavailable.',
       retryable: true,
     });
+  } finally {
+    item.close();
+  }
+});
+
+test('read_stream carries main-owned Working Context status projection when available', () => {
+  const requests = [];
+  const item = fixture(1, 1_000, {
+    workingContextStateService: {
+      read_current_working_context_state_for_conversation(request) {
+        requests.push(request);
+        return {
+          context_status_projection: contextStatusProjection(),
+        };
+      },
+    },
+  });
+  try {
+    const context = begin(item.service);
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0], {
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      objective_summary: null,
+      confirmed_constraints: [],
+      rejected_constraints: [],
+      open_questions: [],
+      latest_user_intent: null,
+      source_refs: [],
+      compaction_refs: [],
+      handoff_refs: [],
+      approved_plan_ref: null,
+      base_revision_ref: null,
+      invalidated_by: null,
+      updated_at_ms: 0,
+    });
+    assert.equal(stream.context_status_projection.label, 'Handoff received');
+    assert.equal(stream.context_status_projection.pending_handoff_count, 1);
+    assert.equal(stream.context_status_projection.can_contextual_execute, false);
+    assert.doesNotMatch(
+      JSON.stringify(stream.context_status_projection),
+      /WorkingContext|Task Capsule|builder-handoff-packet|builder-task-address:|builder-conversation:|sha256:|provider_(?:secret|config|envelope)|credential|source_tree/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
+test('read_stream keeps activity available when Working Context status projection is absent or invalid', () => {
+  let calls = 0;
+  const item = fixture(1, 1_000, {
+    workingContextStateService: {
+      read_current_working_context_state_for_conversation() {
+        calls += 1;
+        return {
+          context_status_projection: contextStatusProjection({
+            authority: {
+              source_read: 'allowed',
+            },
+          }),
+        };
+      },
+    },
+  });
+  try {
+    assert.equal(item.service.read_stream({ project_id: PROJECT_ID }).conversation, null);
+    assert.equal(calls, 0);
+
+    begin(item.service);
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(calls, 1);
+    assert.equal(stream.conversation.head_sequence, 2);
+    assert.equal(Object.hasOwn(stream, 'context_status_projection'), false);
   } finally {
     item.close();
   }
