@@ -55,6 +55,9 @@ const {
   createBuilderGenerationIpcRuntime,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
 const {
+  BUILDER_PERMISSION_POLICY_VERSION,
+} = require('../electron/builder-permission-authority-contract.cjs');
+const {
   createBuilderProductMetadataDatabase,
 } = require('../electron/builder-product-metadata-database.cjs');
 
@@ -221,6 +224,10 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
             assert.equal(options.sessionTaskAddressRecordingService, context.__sessionTaskAddressRecordingService);
             assert.equal(options.workingContextStateService, context.__workingContextStateService);
+            assert.equal(
+              options.providerContextDisclosureDecisionService,
+              context.__providerContextDisclosureDecisionService,
+            );
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
@@ -574,6 +581,27 @@ function runtimeWithService(service, probes = {}) {
                 };
               },
             };
+          },
+        };
+      }
+      if (specifier === './builder-provider-context-disclosure-decision.cjs') {
+        return {
+          createBuilderProviderContextDisclosureDecisionService: (options) => {
+            probes.providerContextDisclosureDecisionOptions = options;
+            context.__providerContextDisclosureDecisionService = {
+              service_version: 'builder-provider-context-disclosure-decision.v1',
+              decide(request) {
+                probes.providerContextDisclosureDecisionRequests ??= [];
+                probes.providerContextDisclosureDecisionRequests.push(request);
+                return {
+                  result_version: 'builder-provider-context-disclosure-decision.v1',
+                  disclosure_decision: {
+                    decision: 'denied',
+                  },
+                };
+              },
+            };
+            return context.__providerContextDisclosureDecisionService;
           },
         };
       }
@@ -2051,6 +2079,30 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__taskCapsuleRecordingService);
   assert.equal(probes.serviceOptions.workingContextStateService,
     runtimeModule.context.__workingContextStateService);
+  assert.equal(probes.serviceOptions.providerContextDisclosureDecisionService,
+    runtimeModule.context.__providerContextDisclosureDecisionService);
+  assert.equal(probes.providerContextDisclosureDecisionOptions.actor_id,
+    'builder-user:00000000-0000-4000-8000-000000000001');
+  assert.equal(typeof probes.providerContextDisclosureDecisionOptions.evaluate_permission, 'function');
+  assert.equal(typeof probes.providerContextDisclosureDecisionOptions.now_ms, 'function');
+  const disclosurePermissionDecision = probes.providerContextDisclosureDecisionOptions.evaluate_permission({
+    action: 'context.disclose',
+    resource: {
+      resource_kind: 'provider',
+      project_id: PROJECT_ID,
+      resource_id: 'provider:configured/contextual_build',
+    },
+    now_ms: 12345,
+  });
+  assert.equal(disclosurePermissionDecision.decision, 'denied');
+  const permissionEvaluateRequest = probes.permissionEvaluateRequests.at(-1);
+  assert.equal(permissionEvaluateRequest.policy_version, BUILDER_PERMISSION_POLICY_VERSION);
+  assert.equal(permissionEvaluateRequest.actor_id, 'builder-user:00000000-0000-4000-8000-000000000001');
+  assert.equal(permissionEvaluateRequest.action, 'context.disclose');
+  assert.equal(permissionEvaluateRequest.resource.resource_kind, 'provider');
+  assert.equal(permissionEvaluateRequest.resource.project_id, PROJECT_ID);
+  assert.equal(permissionEvaluateRequest.resource.resource_id, 'provider:configured/contextual_build');
+  assert.equal(permissionEvaluateRequest.now_ms, 12345);
   assert.equal(probes.saveOptions.generationDrafts, service);
   assert.equal(probes.saveOptions.gitAuthority,
     runtimeModule.context.__projectMainAuthority.git_authority);
@@ -3048,6 +3100,8 @@ test('contains no preload, renderer, settings write, generic provider, or legacy
   assert.doesNotMatch(source, /createBuilderProductMetadataDatabase/u);
   assert.doesNotMatch(source, /createBuilderProjectReadAuthority/u);
   assert.match(source, /createBuilderGenerationMainService/u);
+  assert.match(source, /createBuilderProviderContextDisclosureDecisionService/u);
+  assert.match(source, /providerContextDisclosureDecisionService/u);
   assert.match(source, /createBuilderTaskCapsuleStore/u);
   assert.match(source, /createBuilderTaskCapsuleRecordingService/u);
   assert.match(source, /createBuilderSessionTaskAddressStore/u);

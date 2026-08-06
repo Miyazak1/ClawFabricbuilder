@@ -91,6 +91,9 @@ const {
   createBuilderToolPermissionAdmission,
 } = require('./builder-tool-permission-admission.cjs');
 const {
+  createBuilderProviderContextDisclosureDecisionService,
+} = require('./builder-provider-context-disclosure-decision.cjs');
+const {
   createBuilderToolSourceContextCollector,
 } = require('./builder-tool-source-context-collector.cjs');
 const {
@@ -1130,6 +1133,19 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       },
       now_ms: () => Date.now(),
     });
+    const providerContextDisclosureDecisionService = createBuilderProviderContextDisclosureDecisionService({
+      actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+      evaluate_permission(request) {
+        return permissionEvaluator.evaluate({
+          policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+          actor_id: LOCAL_BUILDER_USER_ACTOR_ID,
+          action: request.action,
+          resource: request.resource,
+          now_ms: request.now_ms,
+        });
+      },
+      now_ms: () => Date.now(),
+    });
     const sourceContextCollector = createBuilderToolSourceContextCollector({
       conversation_service: conversationService,
       permission_admission: permissionAdmission,
@@ -1149,6 +1165,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       sessionTaskAddressRecordingService,
       sessionTaskAddressBindingService,
       workingContextStateService,
+      providerContextDisclosureDecisionService,
       transport: createBuilderOpenAICompatibleTransport({ fetchImpl: options.fetchImpl }),
       onGenerationStarted(event) {
         const started = generationStartedEvent(event);

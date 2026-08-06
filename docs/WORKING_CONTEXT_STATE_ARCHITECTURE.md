@@ -544,6 +544,9 @@ Current checkpoint:
   projection time), never the provider-context body. It is still not consumed by
   the provider prompt path; current provider prompt assembly still uses the
   older generation context path.
+- Generation IPC runtime now constructs the disclosure decision service from
+  the main-owned permission fact store/evaluator, so packaged desktop generation
+  follows the same deny-by-default `context.disclose` provider-context gate.
 
 ### 5. Frontend Projection
 

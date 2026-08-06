@@ -804,7 +804,11 @@ Evidence requirements:
   the snapshot records only a safe provider-context projection ref
   (`projection_id`, status, blocked reason, and projection time), never the
   provider-context body. It does not yet replace the generation provider prompt
-  path, and it performs no provider dispatch, tool dispatch, Git/source
+  path. Generation IPC runtime now constructs the disclosure decision service
+  from the main-owned permission fact store/evaluator, so packaged desktop
+  generation also defaults provider-context disclosure to denied unless a
+  durable `context.disclose` provider permission fact allows it. It performs no
+  provider dispatch, tool dispatch, Git/source
   mutation, permission grant, IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
