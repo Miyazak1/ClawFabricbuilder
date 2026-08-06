@@ -495,11 +495,67 @@ const STATUS_KEYS = Object.freeze([
   'status_version',
 ]);
 const TASK_STREAM_KEYS = Object.freeze(['authority', 'conversation', 'project_id', 'stream_version']);
+const TASK_STREAM_OPTIONAL_KEYS = Object.freeze([
+  'context_status_projection',
+  'provider_context_disclosure_status_projection',
+]);
 const TASK_STREAM_AUTHORITY_KEYS = Object.freeze([
   'candidate_source',
   'conversation',
   'project_revision',
   'project_source',
+]);
+const TASK_STREAM_CONTEXT_STATUS_PROJECTION_KEYS = Object.freeze([
+  'projection_version',
+  'label',
+  'tone',
+  'next_action_hint',
+  'has_pending_handoff',
+  'pending_handoff_count',
+  'needs_confirmation',
+  'can_contextual_execute',
+  'authority',
+]);
+const TASK_STREAM_CONTEXT_STATUS_AUTHORITY_KEYS = Object.freeze([
+  'projection_authority',
+  'working_context_state',
+  'pending_handoff_packets',
+  'renderer_authority',
+  'ipc_authority',
+  'provider_dispatch',
+  'tool_dispatch',
+  'source_read',
+  'source_write',
+  'git_mutation',
+  'permission_grant',
+  'revision_admission',
+  'secret_access',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_PROJECTION_KEYS = Object.freeze([
+  'projection_version',
+  'label',
+  'tone',
+  'next_action_hint',
+  'needs_user_approval',
+  'can_use_provider_context',
+  'blocked_reason',
+  'request_available',
+  'authority',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_AUTHORITY_KEYS = Object.freeze([
+  'projection_authority',
+  'disclosure_request_preparation',
+  'renderer_authority',
+  'provider_context_body',
+  'provider_dispatch',
+  'tool_dispatch',
+  'source_read',
+  'source_write',
+  'git_mutation',
+  'sqlite_write',
+  'permission_grant',
+  'revision_admission',
+  'secret_access',
 ]);
 const TASK_STREAM_CONVERSATION_KEYS = Object.freeze([
   'conversation_id',
@@ -828,6 +884,31 @@ function exactDataObject(value, expectedKeys, code = 'canary_evidence_failed') {
     ) fail(code);
     const descriptors = Object.getOwnPropertyDescriptors(value);
     for (const key of expectedKeys) {
+      const descriptor = descriptors[key];
+      if (!descriptor || !descriptor.enumerable || 'get' in descriptor || 'set' in descriptor) {
+        fail(code);
+      }
+    }
+    return descriptors;
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail(code);
+  }
+}
+
+function exactDataObjectWithOptional(value, requiredKeys, optionalKeys, code = 'canary_evidence_failed') {
+  try {
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || isObjectProxy(value)) fail(code);
+    const allowedKeys = [...requiredKeys, ...optionalKeys];
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length < requiredKeys.length
+      || keys.length > allowedKeys.length
+      || keys.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))
+      || requiredKeys.some((key) => !keys.includes(key))
+    ) fail(code);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const key of keys) {
       const descriptor = descriptors[key];
       if (!descriptor || !descriptor.enumerable || 'get' in descriptor || 'set' in descriptor) {
         fail(code);
@@ -3290,8 +3371,205 @@ function sanitizeStatus(value) {
   });
 }
 
+const TASK_STREAM_CONTEXT_STATUS_EXPECTED = Object.freeze([
+  Object.freeze({
+    label: 'No direction yet',
+    tone: 'neutral',
+    next_action_hint: 'Describe what you want to make or change.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: false,
+  }),
+  Object.freeze({
+    label: 'Direction updated',
+    tone: 'info',
+    next_action_hint: 'Ask me to make the change when the direction is ready.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: false,
+  }),
+  Object.freeze({
+    label: 'Ready to execute current direction',
+    tone: 'success',
+    next_action_hint: 'You can ask me to make the change.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: true,
+  }),
+  Object.freeze({
+    label: 'Direction changed',
+    tone: 'warning',
+    next_action_hint: 'Confirm the new direction before I change files.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: true,
+    can_contextual_execute: false,
+  }),
+  Object.freeze({
+    label: 'Using approved plan',
+    tone: 'success',
+    next_action_hint: 'You can ask me to apply the approved plan.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: true,
+  }),
+  Object.freeze({
+    label: 'Needs confirmation',
+    tone: 'warning',
+    next_action_hint: 'Answer the open question before I change files.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: true,
+    can_contextual_execute: false,
+  }),
+  Object.freeze({
+    label: 'Handoff received',
+    tone: 'warning',
+    next_action_hint: 'Review the handoff before the next change.',
+    has_pending_handoff: true,
+    pending_handoff_count: 'positive',
+    needs_confirmation: true,
+    can_contextual_execute: false,
+  }),
+]);
+
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_EXPECTED = Object.freeze([
+  Object.freeze({
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+  }),
+  Object.freeze({
+    label: 'AI context not allowed',
+    tone: 'neutral',
+    next_action_hint: 'Builder will continue without sharing the current task context.',
+    needs_user_approval: false,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_denied',
+    request_available: true,
+  }),
+  Object.freeze({
+    label: 'AI context allowed',
+    tone: 'success',
+    next_action_hint: 'Builder can use the approved task context for this AI request.',
+    needs_user_approval: false,
+    can_use_provider_context: true,
+    blocked_reason: null,
+    request_available: false,
+  }),
+]);
+
+function dataValue(descriptors, key) {
+  const descriptor = descriptors[key];
+  if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail('canary_evidence_failed');
+  return descriptor.value;
+}
+
+function exactAuthority(value, keys, expected) {
+  const descriptors = exactDataObject(value, keys);
+  for (const key of keys) {
+    if (dataValue(descriptors, key) !== expected[key]) fail('canary_evidence_failed');
+  }
+}
+
+function sanitizeTaskStreamContextStatusProjection(value) {
+  if (value === null) return null;
+  const descriptors = exactDataObject(value, TASK_STREAM_CONTEXT_STATUS_PROJECTION_KEYS);
+  if (dataValue(descriptors, 'projection_version') !== 'builder-context-status-projection.v1') {
+    fail('canary_evidence_failed');
+  }
+  exactAuthority(dataValue(descriptors, 'authority'), TASK_STREAM_CONTEXT_STATUS_AUTHORITY_KEYS, {
+    projection_authority: 'main_owned_context_status_projection_v1',
+    working_context_state: 'verified_not_exposed',
+    pending_handoff_packets: dataValue(descriptors, 'has_pending_handoff') === true
+      ? 'pending_count_only'
+      : 'none',
+    renderer_authority: 'not_present',
+    ipc_authority: 'not_present',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    source_read: 'not_present',
+    source_write: 'not_present',
+    git_mutation: false,
+    permission_grant: false,
+    revision_admission: 'not_created',
+    secret_access: 'not_present',
+  });
+  const pendingHandoffCount = dataValue(descriptors, 'pending_handoff_count');
+  const matched = TASK_STREAM_CONTEXT_STATUS_EXPECTED.find((expected) => (
+    dataValue(descriptors, 'label') === expected.label
+    && dataValue(descriptors, 'tone') === expected.tone
+    && dataValue(descriptors, 'next_action_hint') === expected.next_action_hint
+    && dataValue(descriptors, 'has_pending_handoff') === expected.has_pending_handoff
+    && (expected.pending_handoff_count === 'positive'
+      ? Number.isSafeInteger(pendingHandoffCount) && pendingHandoffCount >= 1 && pendingHandoffCount <= 128
+      : pendingHandoffCount === expected.pending_handoff_count)
+    && dataValue(descriptors, 'needs_confirmation') === expected.needs_confirmation
+    && dataValue(descriptors, 'can_contextual_execute') === expected.can_contextual_execute
+  ));
+  if (matched === undefined) fail('canary_evidence_failed');
+  return Object.freeze({
+    can_contextual_execute: matched.can_contextual_execute,
+    has_pending_handoff: matched.has_pending_handoff,
+    label: matched.label,
+    needs_confirmation: matched.needs_confirmation,
+    pending_handoff_count: pendingHandoffCount,
+    tone: matched.tone,
+  });
+}
+
+function sanitizeTaskStreamProviderContextDisclosureStatusProjection(value) {
+  if (value === null) return null;
+  const descriptors = exactDataObject(value, TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_PROJECTION_KEYS);
+  if (
+    dataValue(descriptors, 'projection_version')
+    !== 'builder-provider-context-disclosure-status-projection.v1'
+  ) fail('canary_evidence_failed');
+  exactAuthority(dataValue(descriptors, 'authority'), TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_AUTHORITY_KEYS, {
+    projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+    disclosure_request_preparation: 'verified_not_exposed',
+    renderer_authority: 'not_present',
+    provider_context_body: 'not_present',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    source_read: 'not_present',
+    source_write: 'not_present',
+    git_mutation: false,
+    sqlite_write: false,
+    permission_grant: false,
+    revision_admission: 'not_created',
+    secret_access: 'not_present',
+  });
+  const matched = TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_EXPECTED.find((expected) => (
+    dataValue(descriptors, 'label') === expected.label
+    && dataValue(descriptors, 'tone') === expected.tone
+    && dataValue(descriptors, 'next_action_hint') === expected.next_action_hint
+    && dataValue(descriptors, 'needs_user_approval') === expected.needs_user_approval
+    && dataValue(descriptors, 'can_use_provider_context') === expected.can_use_provider_context
+    && dataValue(descriptors, 'blocked_reason') === expected.blocked_reason
+    && dataValue(descriptors, 'request_available') === expected.request_available
+  ));
+  if (matched === undefined) fail('canary_evidence_failed');
+  return Object.freeze({
+    blocked_reason: matched.blocked_reason,
+    can_use_provider_context: matched.can_use_provider_context,
+    label: matched.label,
+    needs_user_approval: matched.needs_user_approval,
+    request_available: matched.request_available,
+    tone: matched.tone,
+  });
+}
+
 function sanitizeTaskStream(value, expectedProjectId) {
-  const descriptors = exactDataObject(value, TASK_STREAM_KEYS);
+  const descriptors = exactDataObjectWithOptional(value, TASK_STREAM_KEYS, TASK_STREAM_OPTIONAL_KEYS);
   const streamVersion = descriptors.stream_version.value;
   const projectId = safeProjectId(descriptors.project_id.value);
   const authorityDescriptors = exactDataObject(
@@ -3317,6 +3595,20 @@ function sanitizeTaskStream(value, expectedProjectId) {
       project_source: 'not_included',
     }),
     conversation,
+    ...(Object.hasOwn(descriptors, 'context_status_projection')
+      ? {
+        context_status_projection:
+          sanitizeTaskStreamContextStatusProjection(descriptors.context_status_projection.value),
+      }
+      : {}),
+    ...(Object.hasOwn(descriptors, 'provider_context_disclosure_status_projection')
+      ? {
+        provider_context_disclosure_status_projection:
+          sanitizeTaskStreamProviderContextDisclosureStatusProjection(
+            descriptors.provider_context_disclosure_status_projection.value,
+          ),
+      }
+      : {}),
     project_id: projectId,
     stream_version: streamVersion,
   });

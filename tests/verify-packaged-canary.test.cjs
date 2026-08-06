@@ -1529,6 +1529,68 @@ function bridgeEvidence(
   };
 }
 
+function contextStatusProjection(overrides = {}) {
+  const { authority: authorityOverrides = {}, ...projectionOverrides } = overrides;
+  return {
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Ready to execute current direction',
+    tone: 'success',
+    next_action_hint: 'You can ask me to make the change.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: true,
+    authority: {
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'none',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+      ...authorityOverrides,
+    },
+    ...projectionOverrides,
+  };
+}
+
+function providerContextDisclosureStatusProjection(overrides = {}) {
+  const { authority: authorityOverrides = {}, ...projectionOverrides } = overrides;
+  return {
+    projection_version: 'builder-provider-context-disclosure-status-projection.v1',
+    label: 'Allow AI to use current context',
+    tone: 'warning',
+    next_action_hint: 'Review this before Builder shares the current task context.',
+    needs_user_approval: true,
+    can_use_provider_context: false,
+    blocked_reason: 'context_disclosure_not_approved',
+    request_available: true,
+    authority: {
+      projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
+      disclosure_request_preparation: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+      ...authorityOverrides,
+    },
+    ...projectionOverrides,
+  };
+}
+
 function replaceTaskStreamItems(evidence, items) {
   const conversation = evidence.task_stream.conversation;
   conversation.items = items.map((item, index) => ({ ...item, sequence: index + 1 }));
@@ -3406,6 +3468,63 @@ test('keeps task stream latest plan review aligned to review order', () => {
   assert.equal(facts.counts.plan_reviewed_count, 2);
   assert.equal(facts.counts.plan_approved_count, 1);
   assert.equal(facts.counts.plan_rejected_count, 1);
+});
+
+test('sanitizes optional task stream status projections without exposing private context', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const raw = bridgeEvidence(projectId, true, 1, 1, 0);
+  raw.task_stream.context_status_projection = contextStatusProjection();
+  raw.task_stream.provider_context_disclosure_status_projection =
+    providerContextDisclosureStatusProjection();
+
+  const evidence = assertReadEvidence(raw);
+
+  assert.deepEqual(evidence.task_stream.context_status_projection, {
+    can_contextual_execute: true,
+    has_pending_handoff: false,
+    label: 'Ready to execute current direction',
+    needs_confirmation: false,
+    pending_handoff_count: 0,
+    tone: 'success',
+  });
+  assert.deepEqual(evidence.task_stream.provider_context_disclosure_status_projection, {
+    blocked_reason: 'context_disclosure_not_approved',
+    can_use_provider_context: false,
+    label: 'Allow AI to use current context',
+    needs_user_approval: true,
+    request_available: true,
+    tone: 'warning',
+  });
+  assert.doesNotMatch(
+    JSON.stringify({
+      context_status_projection: evidence.task_stream.context_status_projection,
+      provider_context_disclosure_status_projection:
+        evidence.task_stream.provider_context_disclosure_status_projection,
+    }),
+    /builder-context-assembly|builder-provider-context-disclosure-request|builder-task-address:|builder-conversation:|sha256:|"provider_context":|provider_prompt_context|api[_-]?key|credential|source_tree|permission_id/iu,
+  );
+});
+
+test('rejects forged optional task stream status projections before canary evidence is trusted', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const forgedContext = bridgeEvidence(projectId, true, 1, 1, 0);
+  forgedContext.task_stream.context_status_projection = contextStatusProjection({
+    authority: { source_read: 'allowed' },
+  });
+  assert.throws(
+    () => assertReadEvidence(forgedContext),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const forgedProvider = bridgeEvidence(projectId, true, 1, 1, 0);
+  forgedProvider.task_stream.provider_context_disclosure_status_projection =
+    providerContextDisclosureStatusProjection({
+      provider_prompt_context: 'Private task context.',
+    });
+  assert.throws(
+    () => assertReadEvidence(forgedProvider),
+    (error) => error.code === 'canary_evidence_failed',
+  );
 });
 
 test('approves current-project write prompt after approving a plan', async (t) => {
