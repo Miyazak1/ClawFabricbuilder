@@ -550,6 +550,11 @@ Current checkpoint:
 - Host adapter/provider prompt consumption remains deliberately closed: a
   provider context projection is audit evidence for Run Snapshot only until a
   separate explicit disclosure UX and prompt-bridge checkpoint are approved.
+- `builder-provider-context-disclosure-request.v1` now defines the local
+  approval-request surface needed before that UX exists. It summarizes purpose,
+  segment kinds/counts, budget, and permission gate, but includes no raw context
+  text, source files, assembly ids, digests, provider-context body, permission
+  grant, provider dispatch, or IPC/preload path.
 
 ### 5. Frontend Projection
 

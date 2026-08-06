@@ -810,8 +810,12 @@ Evidence requirements:
   durable `context.disclose` provider permission fact allows it. Host adapter
   prompt consumption remains closed and rejects context objects that try to
   smuggle provider-context projection into the prompt path before a separate
-  explicit disclosure UX and prompt-bridge checkpoint. It performs no
-  provider dispatch, tool dispatch, Git/source
+  explicit disclosure UX and prompt-bridge checkpoint. The local disclosure
+  request checkpoint adds `builder-provider-context-disclosure-request.v1`,
+  which summarizes purpose, segment kinds/counts, budget, and permission gate
+  for a future approval UI without raw context text, source files, assembly ids,
+  digests, provider-context body, permission grant, provider dispatch, or IPC.
+  It performs no provider dispatch, tool dispatch, Git/source
   mutation, permission grant, IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
