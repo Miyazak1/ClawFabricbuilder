@@ -136,6 +136,15 @@ test('build and package scripts require production artifact verification', () =>
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.match(packageJson.scripts.pack, /verify:package/u);
   assert.match(packageJson.scripts.dist, /verify:package/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run lint/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run test:unit/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run test:boundaries/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run dist/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-launch/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-canary(?:\s|$)/u);
+  assert.doesNotMatch(packageJson.scripts['verify:release'], /deepseek/u);
+  assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:release/u);
+  assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:packaged-canary:deepseek/u);
   const verifier = fs.readFileSync(path.join(root, 'scripts', 'verify-package.cjs'), 'utf8');
   assert.match(verifier, /connect-src 'none'/u);
   assert.match(verifier, /CompanyName:\s*'ClawFabric'/u);
