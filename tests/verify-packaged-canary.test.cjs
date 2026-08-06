@@ -722,6 +722,7 @@ class FakePage {
     this.draftFailuresRemaining = 0;
     this.keepPasswordValue = false;
     this.lastFailedDraftTarget = null;
+    this.latestPlanReviewDecision = null;
     this.liveOutputTextOverride = null;
     this.liveOutputVisible = false;
     this.approvedPlanReviews = 0;
@@ -796,6 +797,7 @@ class FakePage {
       this.planTurns = 0;
       this.approvedPlanReviews = 0;
       this.rejectedPlanReviews = 0;
+      this.latestPlanReviewDecision = null;
       this.briefCorrectionActive = false;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
@@ -843,6 +845,7 @@ class FakePage {
         throw new Error('plan unavailable');
       }
       this.approvedPlanReviews += 1;
+      this.latestPlanReviewDecision = 'approved';
       const candidateTurns = Math.max(this.savedRevision + 1, this.candidateTurns + 1, 1);
       if (
         this.requireCurrentProjectWriteApproval === true
@@ -860,12 +863,13 @@ class FakePage {
         throw new Error('plan unavailable');
       }
       this.rejectedPlanReviews += 1;
+      this.latestPlanReviewDecision = 'rejected';
     };
     this.composerStatusText = () => {
       if (this.unsavedDraftVisible === true) return 'Ready to execute current direction';
       if (this.planTurns > this.approvedPlanReviews + this.rejectedPlanReviews) return 'Needs confirmation';
-      if (this.rejectedPlanReviews > 0) return 'Direction changed';
-      if (this.approvedPlanReviews > 0) return 'Using approved plan';
+      if (this.latestPlanReviewDecision === 'rejected') return 'Direction changed';
+      if (this.latestPlanReviewDecision === 'approved') return 'Using approved plan';
       if (this.briefCorrectionActive === true) return 'Direction changed';
       if (this.candidateTurns > 0) return 'Ready to execute current direction';
       return null;
@@ -1849,6 +1853,7 @@ function fakeElectron(page) {
     approvedPlanReviews: 0,
     briefCorrectionActive: false,
     candidateTurns: 0,
+    latestPlanReviewDecision: null,
     planTurns: 0,
     questionTurns: 0,
     rejectedPlanReviews: 0,
@@ -1865,6 +1870,7 @@ function fakeElectron(page) {
       activePage.briefCorrectionActive = durableStore.briefCorrectionActive;
       activePage.changesPanelVisible = false;
       activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
+      activePage.latestPlanReviewDecision = durableStore.latestPlanReviewDecision;
       activePage.planTurns = durableStore.planTurns;
       activePage.questionTurns = durableStore.questionTurns;
       activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
@@ -1903,11 +1909,13 @@ function fakeElectron(page) {
         durableStore.planTurns = 0;
         durableStore.approvedPlanReviews = 0;
         durableStore.rejectedPlanReviews = 0;
+        durableStore.latestPlanReviewDecision = null;
         durableStore.briefCorrectionActive = false;
         activePage.questionTurns = 0;
         activePage.planTurns = 0;
         activePage.approvedPlanReviews = 0;
         activePage.rejectedPlanReviews = 0;
+        activePage.latestPlanReviewDecision = null;
         activePage.briefCorrectionActive = false;
       };
       activePage.recordPlanAttempt = () => {
@@ -1919,7 +1927,9 @@ function fakeElectron(page) {
           throw new Error('plan unavailable');
         }
         durableStore.approvedPlanReviews += 1;
+        durableStore.latestPlanReviewDecision = 'approved';
         activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
+        activePage.latestPlanReviewDecision = durableStore.latestPlanReviewDecision;
         activePage.recordCandidateAttempt(Math.max(durableStore.revision + 1, durableStore.candidateTurns + 1, 1));
       };
       activePage.recordPlanRejection = () => {
@@ -1927,7 +1937,9 @@ function fakeElectron(page) {
           throw new Error('plan unavailable');
         }
         durableStore.rejectedPlanReviews += 1;
+        durableStore.latestPlanReviewDecision = 'rejected';
         activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
+        activePage.latestPlanReviewDecision = durableStore.latestPlanReviewDecision;
       };
       fake.pages.push(activePage);
       const requestListeners = [];
@@ -3301,6 +3313,27 @@ test('rejects a saved-project plan without creating a draft', async (t) => {
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
     ['Send', 'Reject', 'Send'],
   );
+});
+
+test('tracks the latest fake plan review decision for composer status', () => {
+  const page = new FakePage();
+  page.draftSaved = true;
+  page.savedRevision = 1;
+  page.candidateTurns = 1;
+
+  page.recordPlanAttempt();
+  page.recordPlanRejection();
+  assert.equal(page.composerStatusText(), 'Direction changed');
+
+  page.requireCurrentProjectWriteApproval = true;
+  page.recordPlanAttempt();
+  page.recordPlanApproval();
+
+  assert.equal(page.approvedPlanReviews, 1);
+  assert.equal(page.rejectedPlanReviews, 1);
+  assert.equal(page.currentProjectWriteApprovalVisible, true);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.equal(page.composerStatusText(), 'Using approved plan');
 });
 
 test('approves current-project write prompt after approving a plan', async (t) => {
