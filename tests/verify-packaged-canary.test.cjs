@@ -31,6 +31,7 @@ const {
   approvePlanViaUi,
   askInitialChatQuestionViaUi,
   askProjectQuestionViaUi,
+  askRejectedPlanContextualSubmitViaUi,
   captureSavedActivityEvidence,
   capturePreviewEvidence,
   captureGuardedUserDataRoot,
@@ -612,7 +613,13 @@ class FakeRole {
         else this.page.recordPlanAttempt();
       }
       else if (route === 'question' || route === 'brief_correction') this.page.recordQuestion();
-      else if (route === 'contextual_build' && this.page.briefCorrectionActive === true) {
+      else if (
+        route === 'contextual_build'
+        && (
+          this.page.briefCorrectionActive === true
+          || this.page.rejectedPlanReviews > 0
+        )
+      ) {
         this.page.recordQuestion();
       }
       else if (route === 'plan') this.page.recordPlanAttempt();
@@ -3270,9 +3277,29 @@ test('rejects a saved-project plan without creating a draft', async (t) => {
   assert.equal(rejected.task_stream.plan_rejected_count, 1);
   assert.equal(rejected.task_stream.candidate_ready_count, 2);
   assert.equal(rejected.task_stream.revision_unchanged, true);
+
+  const afterRejectedContextual = await askRejectedPlanContextualSubmitViaUi(
+    page,
+    currentRevision,
+    '按这个做',
+    2,
+    2,
+    1,
+    2,
+  );
+
+  assert.equal(page.questionTurns, 2);
+  assert.equal(page.candidateTurns, 2);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.equal(afterRejectedContextual.contextual_submit_answered, true);
+  assert.equal(afterRejectedContextual.composer_status_text, 'Direction changed');
+  assert.equal(afterRejectedContextual.task_stream.latest_plan_review, 'rejected');
+  assert.equal(afterRejectedContextual.task_stream.plan_rejected_count, 1);
+  assert.equal(afterRejectedContextual.task_stream.candidate_ready_count, 2);
+  assert.equal(afterRejectedContextual.task_stream.answer_count, 2);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Send', 'Reject'],
+    ['Send', 'Reject', 'Send'],
   );
 });
 

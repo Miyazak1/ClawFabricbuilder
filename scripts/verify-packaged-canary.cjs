@@ -2622,6 +2622,65 @@ async function askProjectQuestionViaUi(
   }
 }
 
+async function askRejectedPlanContextualSubmitViaUi(
+  page,
+  currentProject,
+  question = '按这个做',
+  expectedCandidateTurns = currentProject.revision_number,
+  expectedQuestionTurns = 1,
+  expectedPlanTurns = 1,
+  expectedVisibleAnswers = expectedQuestionTurns,
+) {
+  try {
+    await page.locator(SELECTORS.idea).fill(question);
+    await clickByRole(page, 'button', 'Send');
+    const answer = waitForVisibleQuestionAnswers(page, expectedVisibleAnswers);
+    const alert = page.getByRole('alert').waitFor({ state: 'visible' })
+      .then(() => 'alert', () => 'alert_unavailable');
+    const outcome = await Promise.race([answer, alert]);
+    if (outcome !== 'answer') await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
+    await assertNoQuestionAnswerFailureNotice(page);
+    const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
+    if (visibleAnswerCount < expectedVisibleAnswers) {
+      await failQuestionWithDiagnostic(page, 'answer_count_short', expectedVisibleAnswers);
+    }
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
+    await expectComposerStatus(page, 'Direction changed');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) {
+      if (error.code !== 'canary_question_failed' || error.diagnostic !== undefined) throw error;
+      await failQuestionWithDiagnostic(page, 'question_failed', expectedVisibleAnswers);
+    }
+    await failQuestionWithDiagnostic(page, 'exception', expectedVisibleAnswers);
+  }
+  try {
+    const evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
+    assertExactRevision(evidence, currentProject);
+    return Object.freeze({
+      answer_failure_notice_absent: true,
+      composer_status_text: await readComposerStatus(page),
+      contextual_submit_answered: true,
+      saved_revision_unchanged: true,
+      task_stream: assertTaskStreamRejectedPlanFacts(
+        evidence,
+        currentProject,
+        expectedCandidateTurns,
+        expectedQuestionTurns,
+        expectedPlanTurns,
+      ),
+      unsaved_draft_visible: false,
+      visible_answer_count: expectedVisibleAnswers,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) {
+      if (error.code === 'canary_question_evidence_failed') throw error;
+      fail('canary_question_evidence_failed');
+    }
+    fail('canary_question_evidence_failed');
+  }
+}
+
 async function createUpdateDraftViaUi(
   page,
   currentProject,
@@ -5894,6 +5953,7 @@ module.exports = {
   approvePlanViaUi,
   askInitialChatQuestionViaUi,
   askProjectQuestionViaUi,
+  askRejectedPlanContextualSubmitViaUi,
   captureGuardedUserDataRoot,
   capturePreviewEvidence,
   captureSavedActivityEvidence,
