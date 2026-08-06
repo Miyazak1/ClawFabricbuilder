@@ -5329,11 +5329,18 @@ async function runPackagedCanary(rawInput, options = {}) {
       1,
       2,
     );
+    const correctionQuestion = await askProjectQuestionViaUi(
+      page,
+      initialRevision,
+      '等等，先不要按这个做，我要重新整理方向。',
+      1,
+      3,
+    );
     const pendingUpdateDraft = await createUpdateDraftViaUi(
       page,
       initialRevision,
       CANARY_UPDATE_INSTRUCTION,
-      2,
+      3,
     );
     const pendingUpdateEvidence = await readSanitizedBridgeEvidence(
       page,
@@ -5342,7 +5349,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
     if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
-    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 2);
+    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 3);
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
     if (!staticPreviewSrcdocChanged(pendingUpdatePreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
@@ -5362,7 +5369,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
     await assertCustomChromeControls(pendingRestartPage);
     await openProjectFromCatalogById(pendingRestartPage, initialRevision, 'canary_restart_open_failed');
-    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 2);
+    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 3);
     const pendingRestartProject = projectFromReadEvidence(pendingRestart.evidence, 1);
     if (!sameCatalogProjectRevision(pendingRestartProject, initialProject)) {
       fail('canary_pending_draft_restart_failed');
@@ -5393,7 +5400,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const updatedRevision = exactRevisionFromReadEvidence(updatedCurrentEvidence, updatedProject);
     assertRevisionAdvance(initialRevision, updatedRevision);
-    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 2);
+    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 3);
     const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (!staticPreviewSrcdocChanged(updatedPreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
@@ -5426,7 +5433,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       await failRestartVersion(restartedPage);
     }
     const restartProject = projectFromReadEvidence(restartEvidence, 2);
-    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 2);
+    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 3);
     const restartPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     const history = await inspectHistoryVersionViaUi(
       restartedPage,
@@ -5436,7 +5443,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartPreviewEvidence,
       restartTaskStream,
       gate,
-      2,
+      3,
     );
     const network = recorder.snapshot();
     if (network.renderer_unexpected_network_count !== 0) fail('canary_evidence_failed');
@@ -5457,7 +5464,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       updatedRevision,
       CANARY_RESTART_CONTINUATION_INSTRUCTION,
       2,
-      2,
+      3,
       1,
     );
     const planProposalProject = projectFromReadEvidence(
@@ -5475,7 +5482,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartedPage,
       updatedRevision,
       3,
-      2,
+      3,
       1,
     );
     const restartContinuationEvidence = await readSanitizedBridgeEvidence(
@@ -5492,7 +5499,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartContinuationEvidence,
       updatedRevision,
       3,
-      2,
+      3,
       {
         approvedPlanReviews: 1,
         planTurns: 1,
@@ -5537,6 +5544,7 @@ async function runPackagedCanary(rawInput, options = {}) {
         initial_chat_followup: initialChatFollowup,
         after_initial_save: question,
         after_initial_save_followup: followupQuestion,
+        after_initial_save_correction: correctionQuestion,
       }),
       preview: Object.freeze({
         initial: initialPreviewEvidence,
@@ -5584,9 +5592,12 @@ async function runPackagedCanary(rawInput, options = {}) {
         updated: updatedTaskStream,
         restart: restartTaskStream,
         restart_continuation: restartContinuationTaskStream,
+        brief_correction: correctionQuestion.task_stream,
         pending_update_advanced_candidate_count: pendingUpdateTaskStream.candidate_ready_count
           === initialTaskStream.candidate_ready_count + 1,
         question_did_not_advance_candidate_count: question.task_stream.candidate_ready_count
+          === initialTaskStream.candidate_ready_count,
+        brief_correction_did_not_advance_candidate_count: correctionQuestion.task_stream.candidate_ready_count
           === initialTaskStream.candidate_ready_count,
         pending_update_restart_unchanged: true,
         update_advanced_candidate_count: updatedTaskStream.candidate_ready_count
