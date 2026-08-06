@@ -781,6 +781,17 @@ Evidence requirements:
   second submit button. It is not Goal mode: a Goal is a future
   persistent-agent commitment to continue working, verify, and report progress
   until done or blocked, not a working brief or one-shot build request;
+- the current Context Assembler contract checkpoint adds
+  `builder-context-assembler.v1` as a pure main-side assembly contract. It
+  verifies caller-provided Working Context State, approved plan/current result
+  refs, selected source summaries, compaction summaries, adopted handoff
+  packets, workspace/write-permission state, and context budget; emits bounded
+  model context segments, omitted refs, a digest, a permission gate, and Run
+  Snapshot refs; and refuses side-effecting contextual build assembly when the
+  current context is stale, unclear, missing a workspace, or denied write
+  permission. It does not yet replace the generation provider prompt path, and
+  it performs no provider dispatch, tool dispatch, SQLite write, Git/source
+  mutation, permission grant, IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

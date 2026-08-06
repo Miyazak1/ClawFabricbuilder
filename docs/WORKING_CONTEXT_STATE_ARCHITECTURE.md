@@ -325,7 +325,7 @@ projection, run-audit evidence, and regression tests.
 | Run Context Snapshot | Implemented foundation | Needs refs to compaction and handoff before it can audit full context assembly |
 | Auto Compaction | Architecture only | Not mature until contract, store, digest, budget, and stale-state tests exist |
 | Handoff Packet | Architecture only | Not mature until inbox, adoption, conflict reconciliation, and run-snapshot refs exist |
-| Context Assembler | Missing center | Highest-priority architecture gap; current logic is still spread across services |
+| Context Assembler | Pure contract foundation | `builder-context-assembler.v1` now defines bounded model context segments, omitted refs, budget, digest, permission gate, and run snapshot refs; generation dispatch still needs to consume it |
 | User inspection/correction | Partial UI direction | Needs Logs/Task surface for what context will be used and how to correct it |
 
 ## Mature Solution Comparison
@@ -510,6 +510,19 @@ Assembler behavior:
 - refuses side-effecting assembly when context is `stale` or
   `needs_clarification`;
 - emits snapshot refs before provider dispatch.
+
+Current checkpoint:
+
+- `builder-context-assembler.v1` exists as a pure main-side contract.
+- It accepts caller-provided Working Context State, selected source summaries,
+  compaction summaries, adopted handoff packets, permission/workspace state,
+  and a bounded context budget.
+- It emits deterministic `model_context_segments`, `omitted_refs`,
+  `context_budget`, `context_digest`, `run_snapshot_refs`, and a permission
+  gate without reading SQLite, dispatching a provider/tool, mutating Git/source,
+  granting permission, or opening IPC/preload.
+- It is not yet wired into generation dispatch; current provider prompt
+  assembly still uses the older generation context path.
 
 ### 5. Frontend Projection
 
