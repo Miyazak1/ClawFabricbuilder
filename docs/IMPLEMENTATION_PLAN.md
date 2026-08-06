@@ -868,7 +868,14 @@ Evidence requirements:
   function, and returns only `approval_recorded` or `already_approved`. It does
   not expose request ids, permission ids, provider-context bodies, source refs,
   IPC/preload channels, UI controls, provider dispatch, prompt bridge, source
-  mutation, Git mutation, SQLite writes, or revision admission. The renderer now
+  mutation, Git mutation, SQLite writes, or revision admission.
+  `builder-provider-context-disclosure-current-approval-gate.v1` composes the
+  in-memory preparation reader with that approval service for the current
+  `{project_id, conversation_id}` only. It fails closed when no matching current
+  preparation exists, when the preparation is already ready, or when the blocked
+  reason is not `context_disclosure_not_approved`, and it still opens no
+  IPC/preload/UI command, prompt bridge, provider dispatch, permission fact
+  exposure, source/Git mutation, SQLite write, or revision admission. The renderer now
   gives that main-owned status
   precedence in the composer context chip while it is present, using only the
   safe label and next-action hint and never exposing request ids, context
