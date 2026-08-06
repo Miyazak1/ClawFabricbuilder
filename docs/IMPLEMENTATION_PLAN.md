@@ -807,7 +807,10 @@ Evidence requirements:
   path. Generation IPC runtime now constructs the disclosure decision service
   from the main-owned permission fact store/evaluator, so packaged desktop
   generation also defaults provider-context disclosure to denied unless a
-  durable `context.disclose` provider permission fact allows it. It performs no
+  durable `context.disclose` provider permission fact allows it. Host adapter
+  prompt consumption remains closed and rejects context objects that try to
+  smuggle provider-context projection into the prompt path before a separate
+  explicit disclosure UX and prompt-bridge checkpoint. It performs no
   provider dispatch, tool dispatch, Git/source
   mutation, permission grant, IPC/preload registration, or renderer projection;
 - the current natural plan request checkpoint routes explicit plan-first wording

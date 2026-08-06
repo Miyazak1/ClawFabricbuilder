@@ -1201,6 +1201,39 @@ test('fails closed on base, config, secret, transport, and provider response dri
   }
 });
 
+test('keeps provider context projection out of the provider prompt path until explicitly wired', async () => {
+  let transportCalls = 0;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildGenerationContext: (raw) => ({
+      ...contextFor(raw),
+      provider_context_projection: {
+        projection_version: 'builder-provider-context-projection.v1',
+        projection_status: 'ready',
+        provider_context: {
+          context_version: 'builder-provider-context.v1',
+          source: 'context_assembler',
+          purpose: 'contextual_build',
+          segments: [{ kind: 'working_context_objective', text: 'Private task context.' }],
+        },
+      },
+    }),
+    transport: async () => {
+      transportCalls += 1;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  }));
+
+  await assert.rejects(adapter.generate(request()), (error) => {
+    assert.equal(error.code, 'builder_generation_base_unavailable');
+    assert.doesNotMatch(`${error.message}:${error.stack}`, /Private task context|provider-context/iu);
+    return true;
+  });
+  assert.equal(transportCalls, 0);
+});
+
 test('maps timeout and provider failures without reflecting raw errors', async () => {
   for (const [transportCode, expected] of [
     ['builder_provider_timeout', 'builder_generation_timeout'],

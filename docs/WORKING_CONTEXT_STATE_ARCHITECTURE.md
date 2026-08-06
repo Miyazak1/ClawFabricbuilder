@@ -547,6 +547,9 @@ Current checkpoint:
 - Generation IPC runtime now constructs the disclosure decision service from
   the main-owned permission fact store/evaluator, so packaged desktop generation
   follows the same deny-by-default `context.disclose` provider-context gate.
+- Host adapter/provider prompt consumption remains deliberately closed: a
+  provider context projection is audit evidence for Run Snapshot only until a
+  separate explicit disclosure UX and prompt-bridge checkpoint are approved.
 
 ### 5. Frontend Projection
 
