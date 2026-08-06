@@ -62,6 +62,42 @@ const {
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
 const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs');
 
+const FAKE_CANARY_BRIEF_CORRECTION_PATTERNS = Object.freeze([
+  /^(?:等一下|等等|先等等|先别|先不要|不要|别).{0,64}(?:按|照|做|写|执行|实现|开始|这个|刚才|方案|计划|方向|目标|需求).*/u,
+  /(?:撤回|推翻|作废|不要了|不算了|先不做|先别做|先不要做|别按|不要按|别照|不要照|重新整理|重新确认|换个方向|改方向)/u,
+  /^(?:wait|hold on|actually|scratch that|not that|pause|do not|don'?t).{0,96}(?:brief|plan|direction|approach|that|it|execute|implement|build)/u,
+]);
+const FAKE_CANARY_WORK_DISCUSSION_PATTERNS = Object.freeze([
+  /(?:先聊|先讨论|先确定|讨论一下|聊一下|确认一下|想先聊|我们先确定|先看看|你觉得|你建议|怎么样|如何设计|怎么设计|怎么做|方案如何|风格怎么|需求怎么)/u,
+  /\b(?:discuss|brainstorm|figure out|talk through|what do you think|how should|how would|should we|could we|can we|requirements|style direction)\b/u,
+]);
+const FAKE_CANARY_PLAN_PATTERNS = Object.freeze([
+  /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))/u,
+  /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
+]);
+
+function normalizeFakeCanaryInstruction(instruction) {
+  return instruction
+    .trim()
+    .normalize('NFKC')
+    .toLocaleLowerCase('en-US')
+    .replace(/\s+/gu, ' ');
+}
+
+function routeFakeCanarySendInstruction(instruction) {
+  const normalized = normalizeFakeCanaryInstruction(instruction);
+  if (normalized.length === 0) return 'question';
+  if (FAKE_CANARY_BRIEF_CORRECTION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return 'question';
+  }
+  if (FAKE_CANARY_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) return 'plan';
+  if (FAKE_CANARY_WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return 'question';
+  }
+  if (/[?\uFF1F]\s*$/u.test(normalized)) return 'question';
+  return 'build';
+}
+
 function reviewDiffEvidence() {
   return {
     activity_review_do_not_overlap: true,
@@ -542,12 +578,14 @@ class FakeRole {
     }
     if (this.name === 'Send') {
       const instruction = this.page.values.get(SELECTORS.idea) ?? '';
+      const route = routeFakeCanarySendInstruction(instruction);
       if (this.page.planModeActive === true) {
         this.page.planModeActive = false;
         if (this.page.requirePlanSourceReadApproval === true) this.page.planSourceReadApprovalVisible = true;
         else this.page.recordPlanAttempt();
       }
-      else if (/[?\uFF1F]\s*$/u.test(instruction)) this.page.recordQuestion();
+      else if (route === 'question') this.page.recordQuestion();
+      else if (route === 'plan') this.page.recordPlanAttempt();
       else if (
         !this.page.workspaceBound
         && (
@@ -2830,6 +2868,46 @@ test('keeps consecutive saved-project chat answers visible without creating a dr
   assert.equal(page.candidateTurns, 1);
   assert.equal(page.savedRevision, 1);
   assert.equal(page.unsavedDraftVisible, false);
+});
+
+test('keeps saved-project brief corrections read-only without creating a draft', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+    1,
+    0,
+  ).current.product_revision_receipt;
+
+  const correction = await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    '等等，先不要按这个做，我要重新整理方向。',
+    1,
+    1,
+  );
+  const evidence = await readSanitizedBridgeEvidence(page, firstRevision.project_id);
+
+  assert.equal(correction.visible_answer_count, 1);
+  assert.equal(correction.task_stream.answer_count, 1);
+  assert.equal(correction.task_stream.explanation_result_count, 1);
+  assert.equal(page.questionTurns, 1);
+  assert.equal(page.candidateTurns, 1);
+  assert.equal(page.savedRevision, 1);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.deepEqual(
+    assertTaskStreamExplanationFacts(evidence, firstRevision, 1, 1),
+    correction.task_stream,
+  );
+  assert.equal(
+    page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
+    false,
+  );
 });
 
 test('rejects explanations that are not bound to a taskless question turn', () => {
