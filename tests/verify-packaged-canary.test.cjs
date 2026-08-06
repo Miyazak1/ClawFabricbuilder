@@ -723,6 +723,7 @@ class FakePage {
     this.keepPasswordValue = false;
     this.lastFailedDraftTarget = null;
     this.latestPlanReviewDecision = null;
+    this.planReviewDecisions = [];
     this.liveOutputTextOverride = null;
     this.liveOutputVisible = false;
     this.approvedPlanReviews = 0;
@@ -798,6 +799,7 @@ class FakePage {
       this.approvedPlanReviews = 0;
       this.rejectedPlanReviews = 0;
       this.latestPlanReviewDecision = null;
+      this.planReviewDecisions = [];
       this.briefCorrectionActive = false;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
@@ -846,6 +848,7 @@ class FakePage {
       }
       this.approvedPlanReviews += 1;
       this.latestPlanReviewDecision = 'approved';
+      this.planReviewDecisions.push('approved');
       const candidateTurns = Math.max(this.savedRevision + 1, this.candidateTurns + 1, 1);
       if (
         this.requireCurrentProjectWriteApproval === true
@@ -864,6 +867,7 @@ class FakePage {
       }
       this.rejectedPlanReviews += 1;
       this.latestPlanReviewDecision = 'rejected';
+      this.planReviewDecisions.push('rejected');
     };
     this.composerStatusText = () => {
       if (this.unsavedDraftVisible === true) return 'Ready to execute current direction';
@@ -1082,6 +1086,7 @@ function taskStreamConversation(
   planTurns = 0,
   approvedPlanReviews = 0,
   rejectedPlanReviews = 0,
+  planReviewDecisions = null,
 ) {
   const items = [];
   const userMessageIds = [
@@ -1120,25 +1125,40 @@ function taskStreamConversation(
   ];
   const planUserMessageIds = [
     'builder-message:24242424-2424-4242-8424-242424242424',
+    'builder-message:46464646-4646-4646-8646-464646464646',
+    'builder-message:50505050-5050-4050-8050-505050505050',
   ];
   const planAssistantMessageIds = [
     'builder-message:25252525-2525-4252-8525-252525252525',
+    'builder-message:47474747-4747-4747-8747-474747474747',
+    'builder-message:51515151-5151-4151-8151-515151515151',
   ];
   const planTurnIds = [
     'builder-turn:26262626-2626-4262-8626-262626262626',
+    'builder-turn:48484848-4848-4848-8848-484848484848',
+    'builder-turn:52525252-5252-4252-8252-525252525252',
   ];
   const planTaskIds = [
     'builder-task:27272727-2727-4272-8727-272727272727',
+    'builder-task:49494949-4949-4949-8949-494949494949',
+    'builder-task:53535353-5353-4353-8353-535353535353',
   ];
   const planRunIds = [
     'builder-run:28282828-2828-4282-8828-282828282828',
+    'builder-run:54545454-5454-4454-8454-545454545454',
+    'builder-run:58585858-5858-4858-8858-585858585858',
   ];
   const planStepIds = [
     'builder-run-step:29292929-2929-4292-8929-292929292929',
+    'builder-run-step:55555555-5555-4555-8555-555555555555',
+    'builder-run-step:59595959-5959-4959-8959-595959595959',
   ];
   const planToolCallIds = [
     'builder-tool-call:30303030-3030-4030-8030-303030303030',
+    'builder-tool-call:56565656-5656-4656-8656-565656565656',
+    'builder-tool-call:60606060-6060-4060-8060-606060606060',
   ];
+  const planDecisions = Array.isArray(planReviewDecisions) ? planReviewDecisions : null;
   let sequence = 0;
   function takeSequence() {
     sequence += 1;
@@ -1365,7 +1385,14 @@ function taskStreamConversation(
         outcome: 'plan_proposed',
       },
     );
-    if (index <= approvedPlanReviews) {
+    const decision = planDecisions === null
+      ? (index <= approvedPlanReviews
+        ? 'approved'
+        : index <= approvedPlanReviews + rejectedPlanReviews
+          ? 'rejected'
+          : null)
+      : (planDecisions[index - 1] ?? null);
+    if (decision === 'approved') {
       items.push({
         item_kind: 'plan_reviewed',
         sequence: takeSequence(),
@@ -1374,7 +1401,7 @@ function taskStreamConversation(
         decision: 'approved',
         plan_state: 'approved',
       });
-    } else if (index <= approvedPlanReviews + rejectedPlanReviews) {
+    } else if (decision === 'rejected') {
       items.push({
         item_kind: 'plan_reviewed',
         sequence: takeSequence(),
@@ -1421,6 +1448,7 @@ function bridgeEvidence(
   planTurns = 0,
   approvedPlanReviews = 0,
   rejectedPlanReviews = 0,
+  planReviewDecisions = null,
 ) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
@@ -1449,6 +1477,7 @@ function bridgeEvidence(
           planTurns,
           approvedPlanReviews,
           rejectedPlanReviews,
+          planReviewDecisions,
         )
         : null,
       authority: {
@@ -1724,6 +1753,8 @@ function installBridge(page) {
           page.questionTurns,
           page.planTurns,
           page.approvedPlanReviews,
+          page.rejectedPlanReviews,
+          page.planReviewDecisions,
         ).current;
       },
       openLocation() { throw new Error('must not open locations through bridge canary fixture'); },
@@ -1736,6 +1767,8 @@ function installBridge(page) {
           page.questionTurns,
           page.planTurns,
           page.approvedPlanReviews,
+          page.rejectedPlanReviews,
+          page.planReviewDecisions,
         ).catalog;
       },
       async listWorkspaces() {
@@ -1760,6 +1793,8 @@ function installBridge(page) {
           page.questionTurns,
           page.planTurns,
           page.approvedPlanReviews,
+          page.rejectedPlanReviews,
+          page.planReviewDecisions,
         ).current;
       },
       async loadRevision(request) {
@@ -1772,6 +1807,8 @@ function installBridge(page) {
             page.questionTurns,
             page.planTurns,
             page.approvedPlanReviews,
+            page.rejectedPlanReviews,
+            page.planReviewDecisions,
           ).current,
           operation: 'revision_loaded',
         };
@@ -1785,6 +1822,8 @@ function installBridge(page) {
           page.questionTurns,
           page.planTurns,
           page.approvedPlanReviews,
+          page.rejectedPlanReviews,
+          page.planReviewDecisions,
         );
         const current = evidence.current?.current ?? null;
         const receipt = evidence.current?.product_revision_receipt ?? null;
@@ -1835,6 +1874,7 @@ function installBridge(page) {
           page.planTurns,
           page.approvedPlanReviews,
           page.rejectedPlanReviews,
+          page.planReviewDecisions,
         )
           .task_stream;
       },
@@ -1854,6 +1894,7 @@ function fakeElectron(page) {
     briefCorrectionActive: false,
     candidateTurns: 0,
     latestPlanReviewDecision: null,
+    planReviewDecisions: [],
     planTurns: 0,
     questionTurns: 0,
     rejectedPlanReviews: 0,
@@ -1871,6 +1912,7 @@ function fakeElectron(page) {
       activePage.changesPanelVisible = false;
       activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
       activePage.latestPlanReviewDecision = durableStore.latestPlanReviewDecision;
+      activePage.planReviewDecisions = [...durableStore.planReviewDecisions];
       activePage.planTurns = durableStore.planTurns;
       activePage.questionTurns = durableStore.questionTurns;
       activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
@@ -1910,12 +1952,14 @@ function fakeElectron(page) {
         durableStore.approvedPlanReviews = 0;
         durableStore.rejectedPlanReviews = 0;
         durableStore.latestPlanReviewDecision = null;
+        durableStore.planReviewDecisions = [];
         durableStore.briefCorrectionActive = false;
         activePage.questionTurns = 0;
         activePage.planTurns = 0;
         activePage.approvedPlanReviews = 0;
         activePage.rejectedPlanReviews = 0;
         activePage.latestPlanReviewDecision = null;
+        activePage.planReviewDecisions = [];
         activePage.briefCorrectionActive = false;
       };
       activePage.recordPlanAttempt = () => {
@@ -1928,8 +1972,10 @@ function fakeElectron(page) {
         }
         durableStore.approvedPlanReviews += 1;
         durableStore.latestPlanReviewDecision = 'approved';
+        durableStore.planReviewDecisions.push('approved');
         activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
         activePage.latestPlanReviewDecision = durableStore.latestPlanReviewDecision;
+        activePage.planReviewDecisions = [...durableStore.planReviewDecisions];
         activePage.recordCandidateAttempt(Math.max(durableStore.revision + 1, durableStore.candidateTurns + 1, 1));
       };
       activePage.recordPlanRejection = () => {
@@ -1938,8 +1984,10 @@ function fakeElectron(page) {
         }
         durableStore.rejectedPlanReviews += 1;
         durableStore.latestPlanReviewDecision = 'rejected';
+        durableStore.planReviewDecisions.push('rejected');
         activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
         activePage.latestPlanReviewDecision = durableStore.latestPlanReviewDecision;
+        activePage.planReviewDecisions = [...durableStore.planReviewDecisions];
       };
       fake.pages.push(activePage);
       const requestListeners = [];
@@ -1969,6 +2017,8 @@ function fakeElectron(page) {
               durableStore.questionTurns,
               durableStore.planTurns,
               durableStore.approvedPlanReviews,
+              durableStore.rejectedPlanReviews,
+              durableStore.planReviewDecisions,
             );
           };
           activePage.artifactsAllowed = true;
@@ -3334,6 +3384,28 @@ test('tracks the latest fake plan review decision for composer status', () => {
   assert.equal(page.currentProjectWriteApprovalVisible, true);
   assert.equal(page.unsavedDraftVisible, false);
   assert.equal(page.composerStatusText(), 'Using approved plan');
+});
+
+test('keeps task stream latest plan review aligned to review order', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = assertReadEvidence(bridgeEvidence(
+    projectId,
+    true,
+    2,
+    3,
+    0,
+    2,
+    1,
+    1,
+    ['rejected', 'approved'],
+  ));
+  const facts = evidence.task_stream.conversation.item_facts;
+
+  assert.equal(facts.latestPlanReview.decision, 'approved');
+  assert.equal(facts.latestPlanReview.plan_state, 'approved');
+  assert.equal(facts.counts.plan_reviewed_count, 2);
+  assert.equal(facts.counts.plan_approved_count, 1);
+  assert.equal(facts.counts.plan_rejected_count, 1);
 });
 
 test('approves current-project write prompt after approving a plan', async (t) => {
