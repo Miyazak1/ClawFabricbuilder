@@ -75,6 +75,10 @@ const FAKE_CANARY_PLAN_PATTERNS = Object.freeze([
   /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))/u,
   /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
 ]);
+const FAKE_CANARY_CONTEXTUAL_BUILD_PATTERNS = Object.freeze([
+  /^(?:就这样(?:写|做|改|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)|开始(?:写|做|改|实现|执行)|可以开始了)[。.!！]*$/u,
+  /^(?:(?:好|好的|可以|行|嗯)[，,\s]*)?(?:(?:就)?(?:照|按)(?:这个|刚才(?:说的|聊的|讨论的|确认的)?|上面(?:说的)?|前面(?:说的)?|我们刚才(?:说的|聊的|讨论的|确认的)?)(?:方案|计划)?(?:写|做|改|实现|执行|来)|(?:开始|执行)(?:吧|了)?|可以开始(?:了|吧)?)[。.!！]*$/u,
+]);
 
 function normalizeFakeCanaryInstruction(instruction) {
   return instruction
@@ -88,11 +92,14 @@ function routeFakeCanarySendInstruction(instruction) {
   const normalized = normalizeFakeCanaryInstruction(instruction);
   if (normalized.length === 0) return 'question';
   if (FAKE_CANARY_BRIEF_CORRECTION_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return 'question';
+    return 'brief_correction';
   }
   if (FAKE_CANARY_PLAN_PATTERNS.some((pattern) => pattern.test(normalized))) return 'plan';
   if (FAKE_CANARY_WORK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return 'question';
+  }
+  if (FAKE_CANARY_CONTEXTUAL_BUILD_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return 'contextual_build';
   }
   if (/[?\uFF1F]\s*$/u.test(normalized)) return 'question';
   return 'build';
@@ -584,7 +591,10 @@ class FakeRole {
         if (this.page.requirePlanSourceReadApproval === true) this.page.planSourceReadApprovalVisible = true;
         else this.page.recordPlanAttempt();
       }
-      else if (route === 'question') this.page.recordQuestion();
+      else if (route === 'question' || route === 'brief_correction') this.page.recordQuestion();
+      else if (route === 'contextual_build' && this.page.briefCorrectionActive === true) {
+        this.page.recordQuestion();
+      }
       else if (route === 'plan') this.page.recordPlanAttempt();
       else if (
         !this.page.workspaceBound
@@ -663,6 +673,7 @@ class FakePage {
     this.changesDisclosureOpen = false;
     this.changesTextOverride = null;
     this.composerAddMenuVisible = false;
+    this.briefCorrectionActive = false;
     this.currentProjectWriteApprovalVisible = false;
     this.currentProjectWriteApproved = false;
     this.draftSaved = false;
@@ -755,6 +766,7 @@ class FakePage {
       this.questionTurns = 0;
       this.planTurns = 0;
       this.approvedPlanReviews = 0;
+      this.briefCorrectionActive = false;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
       this.liveOutputVisible = true;
@@ -788,6 +800,10 @@ class FakePage {
     };
     this.recordQuestion = () => {
       this.questionTurns += 1;
+      const instruction = this.values.get(SELECTORS.idea) ?? '';
+      if (routeFakeCanarySendInstruction(instruction) === 'brief_correction') {
+        this.briefCorrectionActive = true;
+      }
     };
     this.recordPlanAttempt = () => {
       this.planTurns += 1;
@@ -1030,21 +1046,25 @@ function taskStreamConversation(
     'builder-message:15151515-1515-4515-8515-151515151515',
     'builder-message:33333333-3333-4333-8333-333333333333',
     'builder-message:37373737-3737-4737-8737-373737373737',
+    'builder-message:41414141-4141-4141-8141-414141414141',
   ];
   const questionAssistantMessageIds = [
     'builder-message:16161616-1616-4616-8616-161616161616',
     'builder-message:34343434-3434-4434-8434-343434343434',
     'builder-message:38383838-3838-4838-8838-383838383838',
+    'builder-message:42424242-4242-4242-8242-424242424242',
   ];
   const questionTurnIds = [
     'builder-turn:17171717-1717-4717-8717-171717171717',
     'builder-turn:35353535-3535-4535-8535-353535353535',
     'builder-turn:39393939-3939-4939-8939-393939393939',
+    'builder-turn:43434343-4343-4343-8343-434343434343',
   ];
   const questionRunIds = [
     'builder-run:18181818-1818-4818-8818-181818181818',
     'builder-run:36363636-3636-4636-8636-363636363636',
     'builder-run:40404040-4040-4040-8040-404040404040',
+    'builder-run:45454545-4545-4545-8545-454545454545',
   ];
   const planUserMessageIds = [
     'builder-message:24242424-2424-4242-8424-242424242424',
@@ -1767,6 +1787,7 @@ function installBridge(page) {
 function fakeElectron(page) {
   const durableStore = {
     approvedPlanReviews: 0,
+    briefCorrectionActive: false,
     candidateTurns: 0,
     planTurns: 0,
     questionTurns: 0,
@@ -1780,6 +1801,7 @@ function fakeElectron(page) {
       fake.launches.push(options);
       const activePage = fake.launches.length === 1 ? page : new FakePage();
       activePage.candidateTurns = durableStore.candidateTurns;
+      activePage.briefCorrectionActive = durableStore.briefCorrectionActive;
       activePage.changesPanelVisible = false;
       activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
       activePage.planTurns = durableStore.planTurns;
@@ -1807,15 +1829,22 @@ function fakeElectron(page) {
       };
       activePage.recordQuestion = () => {
         durableStore.questionTurns += 1;
+        const instruction = activePage.values.get(SELECTORS.idea) ?? '';
+        if (routeFakeCanarySendInstruction(instruction) === 'brief_correction') {
+          durableStore.briefCorrectionActive = true;
+          activePage.briefCorrectionActive = true;
+        }
         activePage.questionTurns = durableStore.questionTurns;
       };
       activePage.resetNewProjectConversation = () => {
         durableStore.questionTurns = 0;
         durableStore.planTurns = 0;
         durableStore.approvedPlanReviews = 0;
+        durableStore.briefCorrectionActive = false;
         activePage.questionTurns = 0;
         activePage.planTurns = 0;
         activePage.approvedPlanReviews = 0;
+        activePage.briefCorrectionActive = false;
       };
       activePage.recordPlanAttempt = () => {
         durableStore.planTurns += 1;
@@ -2912,6 +2941,91 @@ test('keeps saved-project brief corrections read-only without creating a draft',
     page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
     false,
   );
+});
+
+test('keeps stale contextual build requests read-only after brief correction', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+    1,
+    0,
+  ).current.product_revision_receipt;
+
+  await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    '等等，先不要按这个做，我要重新整理方向。',
+    1,
+    1,
+  );
+  const stale = await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    '按刚才方案做',
+    1,
+    2,
+  );
+
+  assert.equal(page.briefCorrectionActive, true);
+  assert.equal(stale.visible_answer_count, 2);
+  assert.equal(stale.task_stream.answer_count, 2);
+  assert.equal(page.questionTurns, 2);
+  assert.equal(page.candidateTurns, 1);
+  assert.equal(page.savedRevision, 1);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.equal(
+    page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
+    false,
+  );
+});
+
+test('keeps saved-project discussion correction and stale contextual turns in one read-only stream', async (t) => {
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  await generateProjectViaUi(page, 'Make a focus timer.');
+  const firstRevision = bridgeEvidence(
+    'builder-project:11111111-1111-4111-8111-111111111111',
+    true,
+    1,
+    1,
+    0,
+  ).current.product_revision_receipt;
+
+  await askProjectQuestionViaUi(page, firstRevision, CANARY_QUESTION, 1, 1);
+  await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    'Can we keep discussing the audience before changing files?',
+    1,
+    2,
+  );
+  await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    '等等，先不要按这个做，我要重新整理方向。',
+    1,
+    3,
+  );
+  const stale = await askProjectQuestionViaUi(
+    page,
+    firstRevision,
+    '按刚才方案做',
+    1,
+    4,
+  );
+
+  assert.equal(stale.task_stream.answer_count, 4);
+  assert.equal(stale.task_stream.candidate_ready_count, 1);
+  assert.equal(page.candidateTurns, 1);
+  assert.equal(page.unsavedDraftVisible, false);
 });
 
 test('rejects explanations that are not bound to a taskless question turn', () => {
@@ -4451,14 +4565,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       plan_review_actions_visible: true,
       saved_revision_unchanged: true,
       task_stream: {
-        answer_count: 3,
+        answer_count: 4,
         accepted_review_count: 2,
         candidate_ready_count: 2,
         candidate_reviewed_count: 2,
         candidate_result_count: 2,
-        explanation_result_count: 3,
-        head_sequence: 28,
-        item_count: 28,
+        explanation_result_count: 4,
+        head_sequence: 32,
+        item_count: 32,
         latest_plan_review: 'pending',
         plan_ready_count: 1,
         plan_result_count: 1,
@@ -4555,6 +4669,28 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       ui_answer_observed: true,
       visible_answer_count: 3,
     },
+    after_initial_save_stale_contextual: {
+      answer_failure_notice_absent: true,
+      saved_revision_unchanged: true,
+      task_stream: {
+        answer_count: 4,
+        accepted_review_count: 1,
+        candidate_ready_count: 1,
+        candidate_reviewed_count: 1,
+        candidate_result_count: 1,
+        explanation_result_count: 4,
+        head_sequence: 21,
+        item_count: 21,
+        latest_candidate_review: 'accepted',
+        revision_unchanged: true,
+        run_progress_count: 0,
+        source_availability: 'not_loaded',
+        tool_request_count: 0,
+        tool_result_count: 0,
+      },
+      ui_answer_observed: true,
+      visible_answer_count: 4,
+    },
   });
   assert.deepEqual(result.task_stream, {
     initial: {
@@ -4591,14 +4727,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     pending_update: {
-      answer_count: 3,
+      answer_count: 4,
       accepted_review_count: 1,
       candidate_ready_count: 2,
       candidate_reviewed_count: 1,
       candidate_result_count: 2,
-      explanation_result_count: 3,
-      head_sequence: 21,
-      item_count: 21,
+      explanation_result_count: 4,
+      head_sequence: 25,
+      item_count: 25,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       run_progress_count: 0,
@@ -4608,14 +4744,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     pending_update_restart: {
-      answer_count: 3,
+      answer_count: 4,
       accepted_review_count: 1,
       candidate_ready_count: 2,
       candidate_reviewed_count: 1,
       candidate_result_count: 2,
-      explanation_result_count: 3,
-      head_sequence: 21,
-      item_count: 21,
+      explanation_result_count: 4,
+      head_sequence: 25,
+      item_count: 25,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       run_progress_count: 0,
@@ -4625,14 +4761,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     updated: {
-      answer_count: 3,
+      answer_count: 4,
       accepted_review_count: 2,
       candidate_ready_count: 2,
       candidate_reviewed_count: 2,
       candidate_result_count: 2,
-      explanation_result_count: 3,
-      head_sequence: 22,
-      item_count: 22,
+      explanation_result_count: 4,
+      head_sequence: 26,
+      item_count: 26,
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
@@ -4642,14 +4778,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     restart: {
-      answer_count: 3,
+      answer_count: 4,
       accepted_review_count: 2,
       candidate_ready_count: 2,
       candidate_reviewed_count: 2,
       candidate_result_count: 2,
-      explanation_result_count: 3,
-      head_sequence: 22,
-      item_count: 22,
+      explanation_result_count: 4,
+      head_sequence: 26,
+      item_count: 26,
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
@@ -4659,14 +4795,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     restart_continuation: {
-      answer_count: 3,
+      answer_count: 4,
       accepted_review_count: 2,
       candidate_ready_count: 3,
       candidate_reviewed_count: 2,
       candidate_result_count: 3,
-      explanation_result_count: 3,
-      head_sequence: 33,
-      item_count: 33,
+      explanation_result_count: 4,
+      head_sequence: 37,
+      item_count: 37,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       latest_plan_review: 'approved',
@@ -4697,9 +4833,26 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_request_count: 0,
       tool_result_count: 0,
     },
+    stale_contextual_after_correction: {
+      answer_count: 4,
+      accepted_review_count: 1,
+      candidate_ready_count: 1,
+      candidate_reviewed_count: 1,
+      candidate_result_count: 1,
+      explanation_result_count: 4,
+      head_sequence: 21,
+      item_count: 21,
+      latest_candidate_review: 'accepted',
+      revision_unchanged: true,
+      run_progress_count: 0,
+      source_availability: 'not_loaded',
+      tool_request_count: 0,
+      tool_result_count: 0,
+    },
     pending_update_advanced_candidate_count: true,
     question_did_not_advance_candidate_count: true,
     brief_correction_did_not_advance_candidate_count: true,
+    stale_contextual_after_correction_did_not_advance_candidate_count: true,
     pending_update_restart_unchanged: true,
     restart_continuation_advanced_candidate_count: true,
     restart_unchanged: true,
@@ -4877,12 +5030,16 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.question.after_initial_save_followup.visible_answer_count, 2);
   assert.equal(result.question.after_initial_save_correction.visible_answer_count, 3);
   assert.equal(result.question.after_initial_save_correction.saved_revision_unchanged, true);
+  assert.equal(result.question.after_initial_save_stale_contextual.visible_answer_count, 4);
+  assert.equal(result.question.after_initial_save_stale_contextual.saved_revision_unchanged, true);
   assert.equal(result.task_stream.question_did_not_advance_candidate_count, true);
   assert.equal(result.task_stream.brief_correction_did_not_advance_candidate_count, true);
   assert.equal(result.task_stream.brief_correction.answer_count, 3);
+  assert.equal(result.task_stream.stale_contextual_after_correction_did_not_advance_candidate_count, true);
+  assert.equal(result.task_stream.stale_contextual_after_correction.answer_count, 4);
   assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
-  assert.equal(result.task_stream.updated.answer_count, 3);
+  assert.equal(result.task_stream.updated.answer_count, 4);
   assert.equal(result.task_stream.restart_continuation.candidate_ready_count, 3);
   assert.equal(result.task_stream.restart_continuation.accepted_review_count, 2);
   assert.equal(result.task_stream.restart_continuation_advanced_candidate_count, true);
@@ -4905,6 +5062,7 @@ test('copies only saved provider profile files and runs without provider input o
     'Send',
     'Send',
     'New project',
+    'Send',
     'Send',
     'Send',
     'Send',
