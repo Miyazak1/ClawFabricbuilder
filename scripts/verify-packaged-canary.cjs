@@ -83,6 +83,8 @@ const SELECTORS = Object.freeze({
   currentProjectWriteApproval: '[data-builder-current-project-write-approval="true"]',
   planApproved: '[data-builder-activity-card="Plan approved"]',
   planProposed: '[data-builder-activity-card="Plan proposed"]',
+  planRejected: '[data-builder-activity-card="Plan rejected"]',
+  rejectPlan: '[data-builder-reject-plan="true"]',
   planReviewActions: '[data-builder-plan-review-actions="true"]',
   planSourceReadApproval: '[data-builder-plan-source-read-approval="true"]',
   questionAnswerFailedNotice: '[data-builder-conversation-notice="answer_failed"]',
@@ -2795,6 +2797,46 @@ async function approvePlanViaUi(
   }
 }
 
+async function rejectPlanViaUi(
+  page,
+  currentProject,
+  expectedCandidateTurns,
+  expectedQuestionTurns = 0,
+  expectedPlanTurns = 1,
+) {
+  try {
+    await clickByRole(page, 'button', 'Reject');
+    await page.locator(SELECTORS.planRejected).waitFor({ state: 'visible' });
+    await expectComposerStatus(page, 'Direction changed');
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden' });
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_plan_review_failed');
+  }
+
+  try {
+    const evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
+    assertExactRevision(evidence, currentProject);
+    return Object.freeze({
+      composer_status_text: await readComposerStatus(page),
+      plan_rejected: true,
+      saved_revision_unchanged: true,
+      task_stream: assertTaskStreamRejectedPlanFacts(
+        evidence,
+        currentProject,
+        expectedCandidateTurns,
+        expectedQuestionTurns,
+        expectedPlanTurns,
+      ),
+      unsaved_draft_visible: false,
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_plan_review_failed');
+  }
+}
+
 async function saveUpdateDraftViaUi(page, currentProject) {
   try {
     await clickSaveVersionViaUi(page);
@@ -4757,6 +4799,107 @@ function assertTaskStreamPlanFacts(
   });
 }
 
+function assertTaskStreamRejectedPlanFacts(
+  evidence,
+  expectedRevision,
+  expectedCandidateTurns,
+  expectedQuestionTurns = 0,
+  expectedPlanTurns = 1,
+) {
+  const sanitized = assertReadEvidence(evidence);
+  const stream = sanitized.task_stream;
+  const current = sanitized.current;
+  if (
+    stream === null
+    || current === null
+    || stream.project_id !== expectedRevision.project_id
+    || current.product_revision_receipt.project_id !== expectedRevision.project_id
+    || current.product_revision_receipt.revision_number !== expectedRevision.revision_number
+    || current.product_revision_receipt.revision_receipt_digest !== expectedRevision.revision_receipt_digest
+    || current.product_revision_receipt.commit_oid !== expectedRevision.commit_oid
+    || current.product_revision_receipt.tree_oid !== expectedRevision.tree_oid
+    || expectedPlanTurns < 1
+    || stream.conversation === null
+    || stream.conversation.conversation_id !== expectedRevision.conversation_id
+    || stream.conversation.recorded_active_turn_id !== null
+  ) fail('canary_evidence_failed');
+
+  const conversation = stream.conversation;
+  const facts = conversation.item_facts;
+  const counts = facts.counts;
+  const planOptions = taskStreamPlanOptions({
+    planTurns: expectedPlanTurns,
+    rejectedPlanReviews: 1,
+    requireToolActivity: true,
+  });
+  const expectedAcceptedReviews = expectedRevision.revision_number;
+  const { expectedItemCount, expectedTurnCount, expectedUserMessageCount } = expectedTaskStreamItemCount(
+    counts,
+    expectedCandidateTurns,
+    expectedQuestionTurns,
+    expectedAcceptedReviews,
+    planOptions,
+  );
+  if (
+    conversation.window.first_sequence !== 1
+    || conversation.window.last_sequence !== expectedItemCount
+    || conversation.window.has_earlier !== false
+    || conversation.head_sequence !== expectedItemCount
+    || conversation.item_count !== expectedItemCount
+    || counts.user_message_count !== expectedUserMessageCount
+    || counts.submitted_message_count !== expectedTurnCount
+    || counts.run_started_count !== expectedTurnCount
+    || counts.run_completed_count !== expectedTurnCount
+    || counts.turn_completed_count !== expectedTurnCount
+    || counts.candidate_result_count !== expectedCandidateTurns
+    || counts.candidate_ready_count !== expectedCandidateTurns
+    || counts.explanation_result_count !== expectedQuestionTurns
+    || counts.answer_count !== expectedQuestionTurns
+    || counts.candidate_reviewed_count !== expectedAcceptedReviews
+    || counts.candidate_accepted_count !== expectedAcceptedReviews
+    || counts.candidate_rejected_count !== 0
+  ) fail('canary_evidence_failed');
+  assertTaskStreamPlanCounts(counts, expectedTurnCount, planOptions);
+
+  const latestPlan = facts.latestPlan;
+  const latestPlanReview = facts.latestPlanReview;
+  const latestTurn = facts.latestTurn;
+  if (
+    latestPlan === null
+    || latestPlanReview === null
+    || latestTurn === null
+    || latestPlan.terminal_status !== 'succeeded'
+    || latestPlan.result_kind !== 'plan'
+    || latestPlan.candidate !== null
+    || latestPlan.assistant_message === null
+    || latestTurn.turn_id !== latestPlan.turn_id
+    || latestTurn.run_id !== latestPlan.run_id
+    || latestTurn.outcome !== 'plan_proposed'
+    || latestPlanReview.turn_id !== latestPlan.turn_id
+    || latestPlanReview.run_id !== latestPlan.run_id
+    || latestPlanReview.decision !== 'rejected'
+    || latestPlanReview.plan_state !== 'rejected'
+    || latestTurn.sequence >= latestPlanReview.sequence
+  ) fail('canary_evidence_failed');
+
+  return Object.freeze({
+    answer_count: counts.answer_count,
+    accepted_review_count: counts.candidate_accepted_count,
+    candidate_ready_count: counts.candidate_ready_count,
+    candidate_reviewed_count: counts.candidate_reviewed_count,
+    candidate_result_count: counts.candidate_result_count,
+    explanation_result_count: counts.explanation_result_count,
+    head_sequence: conversation.head_sequence,
+    item_count: conversation.item_count,
+    ...planTaskStreamReturnFields(counts, planOptions, latestPlanReview),
+    revision_unchanged: true,
+    run_progress_count: counts.run_progress_count,
+    tool_request_count: counts.tool_request_count,
+    tool_result_count: counts.tool_result_count,
+    tool_result_succeeded_count: counts.tool_result_succeeded_count,
+  });
+}
+
 function assertTaskStreamPendingCandidateFacts(
   evidence,
   expectedSavedRevision,
@@ -5768,6 +5911,7 @@ module.exports = {
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
   retryFailedDraftViaUi,
+  rejectPlanViaUi,
   runCli,
   runPackagedCanary,
   sanitizeInput,

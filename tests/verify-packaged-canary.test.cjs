@@ -51,6 +51,7 @@ const {
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
   retryFailedDraftViaUi,
+  rejectPlanViaUi,
   runCli,
   runPackagedCanary,
   sanitizeLaunchEnvironment,
@@ -483,10 +484,11 @@ class FakeLocator {
       this.selector === SELECTORS.planProposed
       || this.selector === SELECTORS.planReviewActions
       || this.selector === SELECTORS.approvePlan
+      || this.selector === SELECTORS.rejectPlan
     ) {
       this.page.assertSelectorVisibility(
         this.selector,
-        this.page.planTurns > this.page.approvedPlanReviews,
+        this.page.planTurns > this.page.approvedPlanReviews + this.page.rejectedPlanReviews,
         state,
       );
       return;
@@ -511,6 +513,14 @@ class FakeLocator {
       this.page.assertSelectorVisibility(
         this.selector,
         this.page.approvedPlanReviews > 0,
+        state,
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.planRejected) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.rejectedPlanReviews > 0,
         state,
       );
       return;
@@ -626,6 +636,7 @@ class FakeRole {
       else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
     }
     if (this.name === 'Approve plan') this.page.recordPlanApproval();
+    if (this.name === 'Reject') this.page.recordPlanRejection();
     if (this.name === 'Retry') this.page.retryCandidateAttempt();
     if (this.name === 'Back to current') {
       this.page.historyViewingRevision = null;
@@ -707,6 +718,7 @@ class FakePage {
     this.liveOutputTextOverride = null;
     this.liveOutputVisible = false;
     this.approvedPlanReviews = 0;
+    this.rejectedPlanReviews = 0;
     this.planTurns = 0;
     this.pendingWorkspaceGateInstruction = null;
     this.pendingCurrentProjectWriteInstruction = null;
@@ -776,6 +788,7 @@ class FakePage {
       this.questionTurns = 0;
       this.planTurns = 0;
       this.approvedPlanReviews = 0;
+      this.rejectedPlanReviews = 0;
       this.briefCorrectionActive = false;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
@@ -819,7 +832,9 @@ class FakePage {
       this.planTurns += 1;
     };
     this.recordPlanApproval = () => {
-      if (this.planTurns <= this.approvedPlanReviews) throw new Error('plan unavailable');
+      if (this.planTurns <= this.approvedPlanReviews + this.rejectedPlanReviews) {
+        throw new Error('plan unavailable');
+      }
       this.approvedPlanReviews += 1;
       const candidateTurns = Math.max(this.savedRevision + 1, this.candidateTurns + 1, 1);
       if (
@@ -833,9 +848,16 @@ class FakePage {
       }
       this.recordCandidateAttempt(candidateTurns);
     };
+    this.recordPlanRejection = () => {
+      if (this.planTurns <= this.approvedPlanReviews + this.rejectedPlanReviews) {
+        throw new Error('plan unavailable');
+      }
+      this.rejectedPlanReviews += 1;
+    };
     this.composerStatusText = () => {
       if (this.unsavedDraftVisible === true) return 'Ready to execute current direction';
-      if (this.planTurns > this.approvedPlanReviews) return 'Needs confirmation';
+      if (this.planTurns > this.approvedPlanReviews + this.rejectedPlanReviews) return 'Needs confirmation';
+      if (this.rejectedPlanReviews > 0) return 'Direction changed';
       if (this.approvedPlanReviews > 0) return 'Using approved plan';
       if (this.briefCorrectionActive === true) return 'Direction changed';
       if (this.candidateTurns > 0) return 'Ready to execute current direction';
@@ -1048,6 +1070,7 @@ function taskStreamConversation(
   questionTurns = 0,
   planTurns = 0,
   approvedPlanReviews = 0,
+  rejectedPlanReviews = 0,
 ) {
   const items = [];
   const userMessageIds = [
@@ -1340,6 +1363,15 @@ function taskStreamConversation(
         decision: 'approved',
         plan_state: 'approved',
       });
+    } else if (index <= approvedPlanReviews + rejectedPlanReviews) {
+      items.push({
+        item_kind: 'plan_reviewed',
+        sequence: takeSequence(),
+        turn_id: turnId,
+        run_id: runId,
+        decision: 'rejected',
+        plan_state: 'rejected',
+      });
     }
   }
   if (candidateTurns >= 1) pushCandidateTurn(1);
@@ -1377,6 +1409,7 @@ function bridgeEvidence(
   questionTurns = 0,
   planTurns = 0,
   approvedPlanReviews = 0,
+  rejectedPlanReviews = 0,
 ) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
@@ -1404,6 +1437,7 @@ function bridgeEvidence(
           questionTurns,
           planTurns,
           approvedPlanReviews,
+          rejectedPlanReviews,
         )
         : null,
       authority: {
@@ -1789,6 +1823,7 @@ function installBridge(page) {
           page.questionTurns,
           page.planTurns,
           page.approvedPlanReviews,
+          page.rejectedPlanReviews,
         )
           .task_stream;
       },
@@ -1809,6 +1844,7 @@ function fakeElectron(page) {
     candidateTurns: 0,
     planTurns: 0,
     questionTurns: 0,
+    rejectedPlanReviews: 0,
     revision: 0,
   };
   const fake = {
@@ -1824,6 +1860,7 @@ function fakeElectron(page) {
       activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
       activePage.planTurns = durableStore.planTurns;
       activePage.questionTurns = durableStore.questionTurns;
+      activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
       activePage.savedRevision = durableStore.revision;
       activePage.savedActivityRevision = durableStore.revision;
       activePage.draftSaved = durableStore.revision > 0;
@@ -1858,10 +1895,12 @@ function fakeElectron(page) {
         durableStore.questionTurns = 0;
         durableStore.planTurns = 0;
         durableStore.approvedPlanReviews = 0;
+        durableStore.rejectedPlanReviews = 0;
         durableStore.briefCorrectionActive = false;
         activePage.questionTurns = 0;
         activePage.planTurns = 0;
         activePage.approvedPlanReviews = 0;
+        activePage.rejectedPlanReviews = 0;
         activePage.briefCorrectionActive = false;
       };
       activePage.recordPlanAttempt = () => {
@@ -1869,10 +1908,19 @@ function fakeElectron(page) {
         activePage.planTurns = durableStore.planTurns;
       };
       activePage.recordPlanApproval = () => {
-        if (durableStore.planTurns <= durableStore.approvedPlanReviews) throw new Error('plan unavailable');
+        if (durableStore.planTurns <= durableStore.approvedPlanReviews + durableStore.rejectedPlanReviews) {
+          throw new Error('plan unavailable');
+        }
         durableStore.approvedPlanReviews += 1;
         activePage.approvedPlanReviews = durableStore.approvedPlanReviews;
         activePage.recordCandidateAttempt(Math.max(durableStore.revision + 1, durableStore.candidateTurns + 1, 1));
+      };
+      activePage.recordPlanRejection = () => {
+        if (durableStore.planTurns <= durableStore.approvedPlanReviews + durableStore.rejectedPlanReviews) {
+          throw new Error('plan unavailable');
+        }
+        durableStore.rejectedPlanReviews += 1;
+        activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
       };
       fake.pages.push(activePage);
       const requestListeners = [];
@@ -3189,6 +3237,42 @@ test('proposes and approves a saved-project plan before creating a draft', async
     SELECTORS.composerAddMenuButton,
     SELECTORS.composerAddPlanMode,
   ]);
+});
+
+test('rejects a saved-project plan without creating a draft', async (t) => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+  page.draftSaved = true;
+  page.savedRevision = 2;
+  page.candidateTurns = 2;
+  page.questionTurns = 1;
+  page.versionLabel = 'Version 2';
+
+  const currentRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+  const plan = await proposePlanViaUi(page, currentRevision, 'Add a completed summary.', 2, 1, 1);
+  assert.equal(plan.composer_status_text, 'Needs confirmation');
+
+  const rejected = await rejectPlanViaUi(page, currentRevision, 2, 1, 1);
+
+  assert.equal(page.approvedPlanReviews, 0);
+  assert.equal(page.rejectedPlanReviews, 1);
+  assert.equal(page.candidateTurns, 2);
+  assert.equal(page.unsavedDraftVisible, false);
+  assert.equal(rejected.composer_status_text, 'Direction changed');
+  assert.equal(rejected.plan_rejected, true);
+  assert.equal(rejected.saved_revision_unchanged, true);
+  assert.equal(rejected.unsaved_draft_visible, false);
+  assert.equal(rejected.task_stream.latest_plan_review, 'rejected');
+  assert.equal(rejected.task_stream.plan_reviewed_count, 1);
+  assert.equal(rejected.task_stream.plan_approved_count, 0);
+  assert.equal(rejected.task_stream.candidate_ready_count, 2);
+  assert.equal(rejected.task_stream.revision_unchanged, true);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
+    ['Send', 'Reject'],
+  );
 });
 
 test('approves current-project write prompt after approving a plan', async (t) => {
