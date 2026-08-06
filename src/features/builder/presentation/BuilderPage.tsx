@@ -119,6 +119,7 @@ export type BuilderPageProps = {
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
   providerContextDisclosureStatus?: BuilderProviderContextDisclosureStatusProjectionWire | null;
+  providerContextDisclosureApprovalState?: 'idle' | 'approving' | 'failed';
   composerMode?: BuilderComposerMode | null;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
@@ -133,6 +134,7 @@ export type BuilderPageProps = {
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onApproveCurrentProjectWrite?: () => Promise<unknown> | void;
+  onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
   onClearWorkspaceSelection?: () => void;
@@ -1572,7 +1574,9 @@ function BuilderArtifactPermissionsPanel({
   currentProjectWriteApproval,
   hasSavedProject,
   hasUnsavedDraft,
+  onApproveProviderContextDisclosure,
   planSourceReadApproval,
+  providerContextDisclosureApprovalState,
   providerContextDisclosureStatus,
   workingProject,
 }: Readonly<{
@@ -1580,7 +1584,9 @@ function BuilderArtifactPermissionsPanel({
   currentProjectWriteApproval: BuilderCurrentProjectWriteApprovalPrompt | null;
   hasSavedProject: boolean;
   hasUnsavedDraft: boolean;
+  onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
+  providerContextDisclosureApprovalState: 'idle' | 'approving' | 'failed';
   providerContextDisclosureStatus: BuilderProviderContextDisclosureStatusProjectionWire | null;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
@@ -1629,6 +1635,25 @@ function BuilderArtifactPermissionsPanel({
           <dd>
             <strong>{aiContextPermissionLabel(providerContextDisclosureStatus)}</strong>
             <span>{aiContextPermissionStatus(providerContextDisclosureStatus)}</span>
+            {providerContextDisclosureStatus?.needs_user_approval === true
+              && providerContextDisclosureStatus.request_available ? (
+                <button
+                  className="cf-builder-secondary-button cf-builder-permission-action"
+                  data-builder-approve-provider-context-disclosure="true"
+                  disabled={providerContextDisclosureApprovalState === 'approving'}
+                  onClick={() => { void onApproveProviderContextDisclosure?.(); }}
+                  type="button"
+                >
+                  {providerContextDisclosureApprovalState === 'approving'
+                    ? 'Recording approval...'
+                    : 'Allow AI context'}
+                </button>
+              ) : null}
+            {providerContextDisclosureApprovalState === 'failed' ? (
+              <span data-builder-provider-context-disclosure-approval-error="true">
+                Approval was not recorded. Try again.
+              </span>
+            ) : null}
           </dd>
         </div>
         <div className="cf-builder-permission-row" data-builder-permission-row="future-tools">
@@ -1794,6 +1819,7 @@ function BuilderArtifactSidebar({
   inspectedRevisionReceiptDigest,
   liveOutput,
   onExpandPreview,
+  onApproveProviderContextDisclosure,
   onInspectRevision,
   onOpenFile,
   onRefreshHistory,
@@ -1804,6 +1830,7 @@ function BuilderArtifactSidebar({
   onSelectTab,
   onSourceOpenChange,
   planSourceReadApproval,
+  providerContextDisclosureApprovalState,
   providerContextDisclosureStatus,
   preview,
   previewPanelRef,
@@ -1830,6 +1857,7 @@ function BuilderArtifactSidebar({
   inspectedRevisionReceiptDigest: string | null;
   liveOutput: BuilderLiveOutputSnapshot | null;
   onExpandPreview: () => void;
+  onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
   onRefreshHistory?: () => Promise<unknown> | void;
@@ -1840,6 +1868,7 @@ function BuilderArtifactSidebar({
   onSelectTab: (tab: BuilderArtifactTab) => void;
   onSourceOpenChange: (open: boolean) => void;
   planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
+  providerContextDisclosureApprovalState: 'idle' | 'approving' | 'failed';
   providerContextDisclosureStatus: BuilderProviderContextDisclosureStatusProjectionWire | null;
   preview: BuilderProjectControllerSnapshot['preview'];
   previewPanelRef?: Ref<HTMLElement>;
@@ -2020,7 +2049,9 @@ function BuilderArtifactSidebar({
             currentProjectWriteApproval={currentProjectWriteApproval}
             hasSavedProject={hasSavedProject}
             hasUnsavedDraft={hasUnsavedDraft}
+            onApproveProviderContextDisclosure={onApproveProviderContextDisclosure}
             planSourceReadApproval={planSourceReadApproval}
+            providerContextDisclosureApprovalState={providerContextDisclosureApprovalState}
             providerContextDisclosureStatus={providerContextDisclosureStatus}
             workingProject={workingProject}
           />
@@ -2037,9 +2068,11 @@ export function BuilderPage({
   composerRouteDecision = null,
   composerContextStatus = null,
   providerContextDisclosureStatus = null,
+  providerContextDisclosureApprovalState = 'idle',
   composerMode = null,
   currentProjectWriteApproval = null,
   onApproveCurrentProjectWrite,
+  onApproveProviderContextDisclosure,
   onApprovePlanSourceRead,
   onCancel,
   onCreateProject,
@@ -2138,7 +2171,8 @@ export function BuilderPage({
     || workingProject !== null
     || hasUnsavedDraft
     || planSourceReadApproval !== null
-    || currentProjectWriteApproval !== null;
+    || currentProjectWriteApproval !== null
+    || providerContextDisclosureStatus !== null;
   const planReviewTarget = pendingPlanReviewTarget(activity);
   const planReviewBusy = planReviewTarget !== null
     && planReviewInFlight !== null
@@ -3116,6 +3150,7 @@ export function BuilderPage({
       inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
       liveOutput={visibleLiveOutput}
       onExpandPreview={openExpandedPreview}
+      onApproveProviderContextDisclosure={onApproveProviderContextDisclosure}
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
       onRefreshHistory={onRefreshHistory}
@@ -3126,6 +3161,7 @@ export function BuilderPage({
       onSelectTab={openArtifactTab}
       onSourceOpenChange={setSourceDisclosureOpen}
       planSourceReadApproval={planSourceReadApproval}
+      providerContextDisclosureApprovalState={providerContextDisclosureApprovalState}
       providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
       preview={preview}
       previewPanelRef={resultFlowRef}

@@ -134,6 +134,7 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   providerSettings: null,
   permissions: null,
   planReview: null,
+  providerContextDisclosureApproval: null,
   taskStream: null,
   windowControls: null,
 });
@@ -144,8 +145,12 @@ type BuilderWindowControlsBridge = Readonly<{
   readState(): Promise<unknown>;
   toggleMaximize(): Promise<unknown>;
 }>;
+type BuilderProviderContextDisclosureApprovalBridge = Readonly<{
+  approveCurrent(request: Readonly<{ project_id: string; conversation_id: string }>): Promise<unknown>;
+}>;
 
 const WINDOW_CONTROL_KEYS = new Set(['close', 'minimize', 'readState', 'toggleMaximize']);
+const PROVIDER_CONTEXT_DISCLOSURE_APPROVAL_KEYS = new Set(['approveCurrent']);
 const WINDOW_CONTROL_RESULT_KEYS = new Set(['result_version', 'ok']);
 const WINDOW_STATE_KEYS = new Set(['state_version', 'maximized']);
 const COMPOSER_BRIEF_MAX_TEXT_LENGTH = 260;
@@ -833,6 +838,20 @@ function composerIntentContext(
   });
 }
 
+function safeProviderContextDisclosureApproval(
+  value: unknown,
+): BuilderProviderContextDisclosureApprovalBridge | null {
+  if (!isPlainObject(value)) return null;
+  const descriptors = ownDataDescriptors(value, PROVIDER_CONTEXT_DISCLOSURE_APPROVAL_KEYS);
+  if (descriptors === null || typeof descriptors.approveCurrent.value !== 'function') {
+    return null;
+  }
+  return Object.freeze({
+    approveCurrent:
+      descriptors.approveCurrent.value as BuilderProviderContextDisclosureApprovalBridge['approveCurrent'],
+  });
+}
+
 function effectiveApprovalMode(
   mode: BuilderComposerApprovalMode,
   projectSnapshot: BuilderVisibleProjectSnapshot,
@@ -917,6 +936,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
   const windowControls = useMemo(() => safeWindowControls(root.windowControls), [root]);
+  const providerContextDisclosureApproval = useMemo(
+    () => safeProviderContextDisclosureApproval(root.providerContextDisclosureApproval),
+    [root],
+  );
   const catalog = useBuilderProjectCatalogController(ports.workspace);
   const [view, setView] = useState<BuilderAppView>('project');
   const [projectId, setProjectId] = useState<string | undefined>();
@@ -945,6 +968,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderCurrentProjectWriteApprovalPrompt | null>(null);
   const [currentProjectWriteApprovalStatus, setCurrentProjectWriteApprovalStatus] =
     useState<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
+  const [providerContextDisclosureApprovalState, setProviderContextDisclosureApprovalState] =
+    useState<'idle' | 'approving' | 'failed'>('idle');
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const initialWorkspaceAutoOpenRef = useRef(false);
@@ -2240,6 +2265,39 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     conversation.snapshot,
     project.snapshot,
   );
+  const visibleProviderContextDisclosureApprovalState =
+    composerProviderContextStatus?.needs_user_approval === true
+      ? providerContextDisclosureApprovalState
+      : 'idle';
+
+  const approveProviderContextDisclosure = useCallback(async () => {
+    const conversationSnapshot = conversation.snapshot;
+    const providerContextStatus = composerProviderContextStatus;
+    if (
+      providerContextDisclosureApproval === null
+      || providerContextStatus === null
+      || providerContextStatus.needs_user_approval !== true
+      || providerContextStatus.request_available !== true
+      || conversationSnapshot.project_id === null
+      || conversationSnapshot.conversation === null
+      || conversationSnapshot.conversation.conversation === null
+    ) return;
+    setProviderContextDisclosureApprovalState('approving');
+    try {
+      await providerContextDisclosureApproval.approveCurrent({
+        project_id: conversationSnapshot.project_id,
+        conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
+      });
+      setProviderContextDisclosureApprovalState('idle');
+      await conversation.refresh();
+    } catch {
+      setProviderContextDisclosureApprovalState('failed');
+    }
+  }, [
+    composerProviderContextStatus,
+    conversation,
+    providerContextDisclosureApproval,
+  ]);
 
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
@@ -2361,6 +2419,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
               composerContextStatus={composerContextStatus}
               providerContextDisclosureStatus={composerProviderContextStatus}
+              providerContextDisclosureApprovalState={visibleProviderContextDisclosureApprovalState}
               composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
               currentProjectWriteApproval={currentProjectWriteApproval}
@@ -2373,6 +2432,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               workspaceNewProjectRequest={workspaceNewProjectRequest}
               workspacePickerRequest={workspacePickerRequest}
               onApproveCurrentProjectWrite={approveCurrentProjectWrite}
+              onApproveProviderContextDisclosure={approveProviderContextDisclosure}
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}
               onClearComposerMode={clearComposerMode}

@@ -2989,6 +2989,8 @@ describe('BuilderPage v2', () => {
     expect(row?.textContent).toContain('Allow AI to use current context');
     expect(row?.textContent)
       .toContain('Builder needs your approval before sharing current task context with the AI service.');
+    expect(row?.querySelector('[data-builder-approve-provider-context-disclosure="true"]')?.textContent)
+      .toContain('Allow AI context');
     expect(row?.textContent).not.toMatch(
       /builder-provider-context|builder-context|sha256:|request_id|assembly_id|context_digest|authority|provider_context|source_tree|credential/iu,
     );

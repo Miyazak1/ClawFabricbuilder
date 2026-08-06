@@ -315,6 +315,9 @@ const planReviewChannels = [
 const permissionChannels = [
   'clawfabric-builder:permissions:evaluate',
 ];
+const providerContextDisclosureApprovalChannels = [
+  'clawfabric-builder:provider-context-disclosure:approve-current',
+];
 const windowControlsChannels = [
   'clawfabric-builder:window-controls:minimize',
   'clawfabric-builder:window-controls:toggle-maximize',
@@ -328,6 +331,7 @@ const preloadChannels = [
   ...taskStreamChannels,
   ...planReviewChannels,
   ...permissionChannels,
+  ...providerContextDisclosureApprovalChannels,
   ...windowControlsChannels,
 ];
 
@@ -412,6 +416,9 @@ const providerSettingsProperty = preloadRoot.properties.find((property) => prope
 const taskStreamProperty = preloadRoot.properties.find((property) => property.name.text === 'taskStream');
 const planReviewProperty = preloadRoot.properties.find((property) => property.name.text === 'planReview');
 const permissionsProperty = preloadRoot.properties.find((property) => property.name.text === 'permissions');
+const providerContextDisclosureApprovalProperty = preloadRoot.properties.find(
+  (property) => property.name.text === 'providerContextDisclosureApproval',
+);
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
 assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
@@ -420,15 +427,19 @@ assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
 assert.equal(ts.isPropertyAssignment(taskStreamProperty), true);
 assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
+assert.equal(ts.isPropertyAssignment(providerContextDisclosureApprovalProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v21');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v22');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
 const taskStreamBridge = frozenObjectLiteral(taskStreamProperty.initializer);
 const planReviewBridge = frozenObjectLiteral(planReviewProperty.initializer);
 const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
+const providerContextDisclosureApprovalBridge = frozenObjectLiteral(
+  providerContextDisclosureApprovalProperty.initializer,
+);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, [
   'open',
@@ -468,8 +479,10 @@ exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'statu
 exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
+exactObjectKeys(providerContextDisclosureApprovalBridge, ['approveCurrent']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
+  'invoke',
   'invoke',
   'invoke',
   'invoke',
@@ -585,6 +598,10 @@ assert.equal(preloadConstants.get('READ_TASK_STREAM_CHANNEL'), taskStreamChannel
 assert.equal(preloadConstants.get('TASK_STREAM_CHANGED_CHANNEL'), taskStreamChannels[1]);
 assert.equal(preloadConstants.get('REVIEW_PLAN_CHANNEL'), planReviewChannels[0]);
 assert.equal(preloadConstants.get('EVALUATE_PERMISSION_CHANNEL'), permissionChannels[0]);
+assert.equal(
+  preloadConstants.get('APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL'),
+  providerContextDisclosureApprovalChannels[0],
+);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
@@ -640,6 +657,12 @@ exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['reques
 exactSubscribeMethod(taskStreamBridge, 'subscribeChanged', 'TASK_STREAM_CHANGED_CHANNEL');
 exactInvokeMethod(planReviewBridge, 'review', 'REVIEW_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(permissionsBridge, 'evaluate', 'EVALUATE_PERMISSION_CHANNEL', ['request']);
+exactInvokeMethod(
+  providerContextDisclosureApprovalBridge,
+  'approveCurrent',
+  'APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL',
+  ['request'],
+);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);

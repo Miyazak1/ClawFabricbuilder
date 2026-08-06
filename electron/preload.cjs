@@ -44,13 +44,15 @@ const READ_TASK_STREAM_CHANNEL = 'clawfabric-builder:task-stream:read';
 const TASK_STREAM_CHANGED_CHANNEL = 'clawfabric-builder:task-stream:changed';
 const REVIEW_PLAN_CHANNEL = 'clawfabric-builder:plan-review:review';
 const EVALUATE_PERMISSION_CHANNEL = 'clawfabric-builder:permissions:evaluate';
+const APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL =
+  'clawfabric-builder:provider-context-disclosure:approve-current';
 const MINIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:minimize';
 const TOGGLE_MAXIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:toggle-maximize';
 const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v21',
+  bridgeVersion: 'builder-preload.v22',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -189,6 +191,11 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
   permissions: Object.freeze({
     evaluate(request) {
       return ipcRenderer.invoke(EVALUATE_PERMISSION_CHANNEL, request);
+    },
+  }),
+  providerContextDisclosureApproval: Object.freeze({
+    approveCurrent(request) {
+      return ipcRenderer.invoke(APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL, request);
     },
   }),
   windowControls: Object.freeze({

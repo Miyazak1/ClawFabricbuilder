@@ -1489,9 +1489,10 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v21',
+      bridge_version: 'builder-preload.v22',
       legacy_namespaces_absent: true,
       plan_review_namespace: 'review_method_only',
+      provider_context_disclosure_approval_namespace: 'approve_current_method_only',
     },
     catalog: {
       authority_evidence: {
@@ -1774,7 +1775,7 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v21',
+    bridgeVersion: 'builder-preload.v22',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -1924,6 +1925,9 @@ function installBridge(page) {
     },
     permissions: {
       async evaluate() { throw new Error('must not ask permissions through bridge'); },
+    },
+    providerContextDisclosureApproval: {
+      async approveCurrent() { throw new Error('must not approve provider context through bridge'); },
     },
     taskStream: {
       async read(request) {
@@ -2488,7 +2492,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v21');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v22');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -2877,7 +2881,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(evaluateEvents.length, 1);
   assert.doesNotMatch(
     evaluateEvents[0][1],
-    /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent/u,
+    /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent/u,
   );
 });
 
@@ -4515,6 +4519,14 @@ test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
     () => assertReadEvidence(missingPlanReview),
     (error) => error.code === 'canary_evidence_failed',
   );
+
+  const forgedProviderContextDisclosureApproval = bridgeEvidence(projectId);
+  forgedProviderContextDisclosureApproval
+    .bridge_contract.provider_context_disclosure_approval_namespace = 'approve_and_read_request';
+  assert.throws(
+    () => assertReadEvidence(forgedProviderContextDisclosureApproval),
+    (error) => error.code === 'canary_evidence_failed',
+  );
 });
 
 test('rejects every forged Version 2 parent-chain facet', () => {
@@ -6041,12 +6053,14 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v21['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v22['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);
   assert.match(preloadSource, /preparePlanSourceReadApproval/u);
   assert.match(preloadSource, /approvePlanSourceRead/u);
+  assert.match(preloadSource, /providerContextDisclosureApproval/u);
+  assert.match(preloadSource, /provider-context-disclosure:approve-current/u);
   assert.match(preloadSource, /prepareCurrentProjectWriteApproval/u);
   assert.match(preloadSource, /approveCurrentProjectWrite/u);
   assert.match(preloadSource, /code-generator:prepare-plan-source-read-approval/u);

@@ -714,6 +714,32 @@ async function setup(options: Readonly<{
       },
     };
   });
+  const approveCurrentProviderContextDisclosure = vi.fn(async (request: unknown) => ({
+    result_version: 'builder-provider-context-disclosure-current-approval-gate.v1',
+    project_id: (request as { project_id: string }).project_id,
+    conversation_id: (request as { conversation_id: string }).conversation_id,
+    operation: 'approval_recorded',
+    approval_scope: 'configured_provider_purpose',
+    provider_scope: 'configured_provider',
+    purpose: 'contextual_build',
+    authority: {
+      current_approval_gate: 'main_owned_current_disclosure_preparation_gate_v1',
+      status_service: 'main_only_in_memory_preparation_reader',
+      approval_service: 'main_owned_prepared_disclosure_request_approval_v1',
+      renderer_authority: 'not_accepted',
+      provider_context_body: 'not_present',
+      provider_dispatch: false,
+      prompt_bridge: false,
+      tool_dispatch: false,
+      source_read: 'not_performed',
+      source_write: 'not_performed',
+      git_mutation: false,
+      sqlite_write: false,
+      revision_admission: 'not_created',
+      ipc_registration: 'not_performed',
+      preload_exposure: false,
+    },
+  }));
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
@@ -949,6 +975,9 @@ async function setup(options: Readonly<{
     planReview: {
       review: reviewPlan,
     },
+    providerContextDisclosureApproval: {
+      approveCurrent: approveCurrentProviderContextDisclosure,
+    },
     taskStream: {
       read: readTaskStream,
       subscribeChanged(listener: (event: unknown) => void) {
@@ -1001,6 +1030,7 @@ async function setup(options: Readonly<{
     approvePlanSourceRead,
     prepareCurrentProjectWriteApproval,
     approveCurrentProjectWrite,
+    approveCurrentProviderContextDisclosure,
     submit,
     retry,
     steer,
@@ -3022,6 +3052,37 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('Ready to execute current direction');
     expect(container.textContent)
       .not.toMatch(/builder-provider-context|builder-context-assembly|sha256:|provider_secret|credential|permission_id/iu);
+  });
+
+  it('approves current provider context disclosure from the permissions panel only by project and conversation', async () => {
+    const taskStreamWire = {
+      ...createContextualBuildTaskStreamWire(),
+      provider_context_disclosure_status_projection: providerContextDisclosureStatusProjection(),
+    };
+    const { approveCurrentProviderContextDisclosure, container } = await setup({
+      initiallySaved: true,
+      taskStreamWireOverride: taskStreamWire,
+    });
+    await openSavedProject(container);
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="permissions"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-approve-provider-context-disclosure="true"]'))
+        .not.toBeNull();
+    });
+
+    click(container, '[data-builder-approve-provider-context-disclosure="true"]');
+
+    await waitFor(() => {
+      expect(approveCurrentProviderContextDisclosure).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+      });
+    });
+    expect(JSON.stringify(approveCurrentProviderContextDisclosure.mock.calls)).not.toMatch(
+      /builder-provider-context-disclosure-request|builder-context-assembly|sha256:|provider_context|source_tree|credential|permission_id/iu,
+    );
   });
 
   it('keeps current brief memory hidden before contextual execution', async () => {

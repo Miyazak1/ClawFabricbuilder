@@ -46,7 +46,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v21/u);
+  assert.match(preload, /builder-preload\.v22/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /openLocation/u);
@@ -112,12 +112,15 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:plan-review:review/u);
   assert.match(preload, /permissions/u);
   assert.match(preload, /clawfabric-builder:permissions:evaluate/u);
+  assert.match(preload, /providerContextDisclosureApproval/u);
+  assert.match(preload, /approveCurrent/u);
+  assert.match(preload, /clawfabric-builder:provider-context-disclosure:approve-current/u);
   assert.match(preload, /windowControls/u);
   assert.match(preload, /clawfabric-builder:window-controls:minimize/u);
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 38);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 39);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')

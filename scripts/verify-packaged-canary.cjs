@@ -378,6 +378,7 @@ const BRIDGE_CONTRACT_KEYS = Object.freeze([
   'bridge_version',
   'legacy_namespaces_absent',
   'plan_review_namespace',
+  'provider_context_disclosure_approval_namespace',
 ]);
 const CATALOG_RESULT_KEYS = Object.freeze(['authority_evidence', 'operation', 'projects', 'result_version']);
 const CATALOG_PROJECT_KEYS = Object.freeze([
@@ -3227,6 +3228,22 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
       const reviewDescriptor = planReviewDescriptors === null
         ? null
         : planReviewDescriptors.review;
+      const providerContextDisclosureApproval = bridge.providerContextDisclosureApproval;
+      const providerContextDisclosureApprovalDescriptors =
+        providerContextDisclosureApproval !== null
+          && (
+            typeof providerContextDisclosureApproval === 'object'
+            || typeof providerContextDisclosureApproval === 'function'
+          )
+          ? Object.getOwnPropertyDescriptors(providerContextDisclosureApproval)
+          : null;
+      const providerContextDisclosureApprovalKeys =
+        providerContextDisclosureApprovalDescriptors === null
+          ? []
+          : Reflect.ownKeys(providerContextDisclosureApprovalDescriptors);
+      const approveCurrentDescriptor = providerContextDisclosureApprovalDescriptors === null
+        ? null
+        : providerContextDisclosureApprovalDescriptors.approveCurrent;
       const bridge_contract = {
         bridge_version: bridge.bridgeVersion,
         legacy_namespaces_absent: !Object.hasOwn(bridge, 'projectCatalog')
@@ -3239,6 +3256,15 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
           && typeof reviewDescriptor.value === 'function'
           ? 'review_method_only'
           : 'unavailable',
+        provider_context_disclosure_approval_namespace:
+          providerContextDisclosureApprovalKeys.length === 1
+          && providerContextDisclosureApprovalKeys[0] === 'approveCurrent'
+          && approveCurrentDescriptor !== null
+          && approveCurrentDescriptor.enumerable === true
+          && Object.hasOwn(approveCurrentDescriptor, 'value')
+          && typeof approveCurrentDescriptor.value === 'function'
+            ? 'approve_current_method_only'
+            : 'unavailable',
       };
       const status = await bridge.providerSettings.status();
       const catalog = await bridge.projectWorkspace.listCurrent();
@@ -3311,14 +3337,17 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v21'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v22'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.plan_review_namespace.value !== 'review_method_only'
+    || bridgeContractDescriptors.provider_context_disclosure_approval_namespace.value
+      !== 'approve_current_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v21',
+    bridge_version: 'builder-preload.v22',
     legacy_namespaces_absent: true,
     plan_review_namespace: 'review_method_only',
+    provider_context_disclosure_approval_namespace: 'approve_current_method_only',
   });
   const status = sanitizeStatus(evidenceDescriptors.status.value);
   const catalog = sanitizeCatalog(evidenceDescriptors.catalog.value);
