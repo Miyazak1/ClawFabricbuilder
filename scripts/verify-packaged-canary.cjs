@@ -541,7 +541,34 @@ const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_PROJECTION_KEYS = Object.fr
   'can_use_provider_context',
   'blocked_reason',
   'request_available',
+  'inspection',
   'authority',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_INSPECTION_KEYS = Object.freeze([
+  'title',
+  'summary',
+  'details',
+  'purpose',
+  'provider_scope',
+  'context_surface',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_CONTEXT_SURFACE_KEYS = Object.freeze([
+  'working_context_state_status',
+  'segment_count',
+  'segment_kinds',
+  'omitted_ref_count',
+  'budget',
+  'permission_gate',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_BUDGET_KEYS = Object.freeze([
+  'used_prompt_bytes',
+  'max_prompt_bytes',
+  'reserved_response_bytes',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_PERMISSION_GATE_KEYS = Object.freeze([
+  'workspace_state',
+  'write_permission',
+  'side_effect_ready',
 ]);
 const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_AUTHORITY_KEYS = Object.freeze([
   'projection_authority',
@@ -557,6 +584,24 @@ const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_AUTHORITY_KEYS = Object.fre
   'permission_grant',
   'revision_admission',
   'secret_access',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_SEGMENT_KINDS = Object.freeze([
+  'approved_plan',
+  'compaction_summary',
+  'current_result',
+  'handoff_summary',
+  'latest_user_message',
+  'selected_source_summary',
+  'working_context_constraints',
+  'working_context_objective',
+]);
+const TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_WORKING_CONTEXT_STATES = Object.freeze([
+  'approved_plan_ready',
+  'discussing',
+  'empty',
+  'needs_clarification',
+  'ready',
+  'stale',
 ]);
 const TASK_STREAM_CONVERSATION_KEYS = Object.freeze([
   'conversation_id',
@@ -3509,6 +3554,128 @@ function exactAuthority(value, keys, expected) {
   }
 }
 
+function safeProviderContextDisclosureCopy(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9 .,;:/()_-]{1,240}$/u.test(value)) {
+    fail('canary_evidence_failed');
+  }
+  return value;
+}
+
+function safeProviderContextDisclosureEnum(value, allowed) {
+  if (typeof value !== 'string' || !allowed.includes(value)) fail('canary_evidence_failed');
+  return value;
+}
+
+function safeProviderContextDisclosureCount(value, minimum, maximum) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    fail('canary_evidence_failed');
+  }
+  return value;
+}
+
+function sanitizeProviderContextDisclosureBudget(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_BUDGET_KEYS);
+  const maxPromptBytes = safeProviderContextDisclosureCount(
+    dataValue(descriptors, 'max_prompt_bytes'),
+    512,
+    65_536,
+  );
+  return Object.freeze({
+    used_prompt_bytes: safeProviderContextDisclosureCount(
+      dataValue(descriptors, 'used_prompt_bytes'),
+      0,
+      maxPromptBytes,
+    ),
+    max_prompt_bytes: maxPromptBytes,
+    reserved_response_bytes: safeProviderContextDisclosureCount(
+      dataValue(descriptors, 'reserved_response_bytes'),
+      0,
+      65_536,
+    ),
+  });
+}
+
+function sanitizeProviderContextDisclosurePermissionGate(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_PERMISSION_GATE_KEYS);
+  const sideEffectReady = dataValue(descriptors, 'side_effect_ready');
+  if (typeof sideEffectReady !== 'boolean') fail('canary_evidence_failed');
+  return Object.freeze({
+    workspace_state: safeProviderContextDisclosureEnum(
+      dataValue(descriptors, 'workspace_state'),
+      ['bound', 'missing'],
+    ),
+    write_permission: safeProviderContextDisclosureEnum(
+      dataValue(descriptors, 'write_permission'),
+      ['allowed', 'ask', 'denied', 'not_required'],
+    ),
+    side_effect_ready: sideEffectReady,
+  });
+}
+
+function sanitizeProviderContextDisclosureSegmentKinds(value) {
+  if (!Array.isArray(value) || value.length > 16) fail('canary_evidence_failed');
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) {
+    fail('canary_evidence_failed');
+  }
+  const kinds = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      fail('canary_evidence_failed');
+    }
+    kinds.push(safeProviderContextDisclosureEnum(
+      descriptor.value,
+      TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_SEGMENT_KINDS,
+    ));
+  }
+  return Object.freeze(kinds);
+}
+
+function sanitizeProviderContextDisclosureContextSurface(value) {
+  const descriptors = exactDataObject(value, TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_CONTEXT_SURFACE_KEYS);
+  const segmentKinds = sanitizeProviderContextDisclosureSegmentKinds(
+    dataValue(descriptors, 'segment_kinds'),
+  );
+  const segmentCount = safeProviderContextDisclosureCount(dataValue(descriptors, 'segment_count'), 0, 16);
+  if (segmentCount !== segmentKinds.length) fail('canary_evidence_failed');
+  return Object.freeze({
+    working_context_state_status: safeProviderContextDisclosureEnum(
+      dataValue(descriptors, 'working_context_state_status'),
+      TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_WORKING_CONTEXT_STATES,
+    ),
+    segment_count: segmentCount,
+    segment_kinds: segmentKinds,
+    omitted_ref_count: safeProviderContextDisclosureCount(
+      dataValue(descriptors, 'omitted_ref_count'),
+      0,
+      16,
+    ),
+    budget: sanitizeProviderContextDisclosureBudget(dataValue(descriptors, 'budget')),
+    permission_gate: sanitizeProviderContextDisclosurePermissionGate(dataValue(descriptors, 'permission_gate')),
+  });
+}
+
+function sanitizeProviderContextDisclosureInspection(value) {
+  if (value === null) return null;
+  const descriptors = exactDataObject(value, TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_INSPECTION_KEYS);
+  return Object.freeze({
+    title: safeProviderContextDisclosureCopy(dataValue(descriptors, 'title')),
+    summary: safeProviderContextDisclosureCopy(dataValue(descriptors, 'summary')),
+    details: safeProviderContextDisclosureCopy(dataValue(descriptors, 'details')),
+    purpose: safeProviderContextDisclosureEnum(
+      dataValue(descriptors, 'purpose'),
+      ['answer', 'plan', 'contextual_build'],
+    ),
+    provider_scope: dataValue(descriptors, 'provider_scope') === 'configured_provider'
+      ? 'configured_provider'
+      : fail('canary_evidence_failed'),
+    context_surface: sanitizeProviderContextDisclosureContextSurface(
+      dataValue(descriptors, 'context_surface'),
+    ),
+  });
+}
+
 function sanitizeTaskStreamContextStatusProjection(value) {
   if (value === null) return null;
   const descriptors = exactDataObject(value, TASK_STREAM_CONTEXT_STATUS_PROJECTION_KEYS);
@@ -3564,7 +3731,7 @@ function sanitizeTaskStreamProviderContextDisclosureStatusProjection(value) {
   ) fail('canary_evidence_failed');
   exactAuthority(dataValue(descriptors, 'authority'), TASK_STREAM_PROVIDER_CONTEXT_DISCLOSURE_STATUS_AUTHORITY_KEYS, {
     projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
-    disclosure_request_preparation: 'verified_not_exposed',
+    disclosure_request_preparation: 'verified_safe_inspection_only',
     renderer_authority: 'not_present',
     provider_context_body: 'not_present',
     provider_dispatch: false,
@@ -3587,9 +3754,15 @@ function sanitizeTaskStreamProviderContextDisclosureStatusProjection(value) {
     && dataValue(descriptors, 'request_available') === expected.request_available
   ));
   if (matched === undefined) fail('canary_evidence_failed');
+  const inspection = sanitizeProviderContextDisclosureInspection(dataValue(descriptors, 'inspection'));
+  if (
+    (matched.can_use_provider_context && inspection !== null)
+    || (!matched.can_use_provider_context && inspection === null)
+  ) fail('canary_evidence_failed');
   return Object.freeze({
     blocked_reason: matched.blocked_reason,
     can_use_provider_context: matched.can_use_provider_context,
+    inspection,
     label: matched.label,
     needs_user_approval: matched.needs_user_approval,
     request_available: matched.request_available,

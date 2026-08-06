@@ -2201,6 +2201,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.45;
 }
 
+.cf-builder-permission-inspection {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding-top: 4px;
+}
+
 .cf-builder-current-direction {
   display: grid;
   min-width: 0;

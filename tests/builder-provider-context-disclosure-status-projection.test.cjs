@@ -139,7 +139,19 @@ test('projects missing approval into a renderer-safe approval-needed status', ()
   assert.equal(projected.can_use_provider_context, false);
   assert.equal(projected.blocked_reason, 'context_disclosure_not_approved');
   assert.equal(projected.request_available, true);
+  assert.equal(projected.inspection.title, 'Share current task context with the configured AI provider');
+  assert.equal(projected.inspection.purpose, 'contextual_build');
+  assert.equal(projected.inspection.provider_scope, 'configured_provider');
+  assert.deepEqual(projected.inspection.context_surface.segment_kinds, [
+    'latest_user_message',
+    'working_context_objective',
+    'working_context_constraints',
+    'approved_plan',
+    'selected_source_summary',
+  ]);
+  assert.equal(projected.inspection.context_surface.permission_gate.write_permission, 'ask');
   assert.equal(projected.authority.permission_grant, false);
+  assert.equal(projected.authority.disclosure_request_preparation, 'verified_safe_inspection_only');
   assert.equal(projected.authority.provider_dispatch, false);
   assert.deepEqual(
     sanitizeBuilderProviderContextDisclosureStatusProjection(structuredClone(projected)),
@@ -147,7 +159,7 @@ test('projects missing approval into a renderer-safe approval-needed status', ()
   );
   assert.doesNotMatch(
     JSON.stringify(projected),
-    /Apply the approved plan|private dashboard|Private source summary|builder-provider-context-disclosure-request|builder-context-assembly|sha256:|"provider_context":|api[_-]?key|credential|source_tree/iu,
+    /Apply the approved plan|private dashboard|Private source summary|builder-provider-context-disclosure-request|builder-context-assembly|sha256:|"provider_context":|api[_-]?key|credential|source_tree|request_id|preparation_id/iu,
   );
 });
 
@@ -161,6 +173,7 @@ test('projects denied and ready preparations without turning either into a grant
   assert.equal(denied.can_use_provider_context, false);
   assert.equal(denied.blocked_reason, 'context_disclosure_denied');
   assert.equal(denied.request_available, true);
+  assert.notEqual(denied.inspection, null);
   assert.equal(denied.authority.permission_grant, false);
 
   const ready = projectBuilderProviderContextDisclosureStatus({
@@ -177,6 +190,7 @@ test('projects denied and ready preparations without turning either into a grant
   assert.equal(ready.needs_user_approval, false);
   assert.equal(ready.can_use_provider_context, true);
   assert.equal(ready.blocked_reason, null);
+  assert.equal(ready.inspection, null);
   assert.equal(ready.request_available, false);
   assert.equal(ready.authority.permission_grant, false);
 });
@@ -199,6 +213,17 @@ test('fails closed for forged projection surfaces and hostile input', () => {
     authority: {
       ...projected.authority,
       permission_grant: true,
+    },
+  }));
+  assertProjectionError(() => sanitizeBuilderProviderContextDisclosureStatusProjection({
+    ...projected,
+    inspection: null,
+  }));
+  assertProjectionError(() => sanitizeBuilderProviderContextDisclosureStatusProjection({
+    ...projected,
+    inspection: {
+      ...projected.inspection,
+      details: 'This request includes sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     },
   }));
   assertProjectionError(() => projectBuilderProviderContextDisclosureStatus(new Proxy({

@@ -19,8 +19,27 @@ const PROJECTION_KEYS = Object.freeze([
   'can_use_provider_context',
   'blocked_reason',
   'request_available',
+  'inspection',
   'authority',
 ]);
+const INSPECTION_KEYS = Object.freeze([
+  'title',
+  'summary',
+  'details',
+  'purpose',
+  'provider_scope',
+  'context_surface',
+]);
+const CONTEXT_SURFACE_KEYS = Object.freeze([
+  'working_context_state_status',
+  'segment_count',
+  'segment_kinds',
+  'omitted_ref_count',
+  'budget',
+  'permission_gate',
+]);
+const BUDGET_KEYS = Object.freeze(['used_prompt_bytes', 'max_prompt_bytes', 'reserved_response_bytes']);
+const PERMISSION_GATE_KEYS = Object.freeze(['workspace_state', 'write_permission', 'side_effect_ready']);
 const AUTHORITY_KEYS = Object.freeze([
   'projection_authority',
   'disclosure_request_preparation',
@@ -39,7 +58,7 @@ const AUTHORITY_KEYS = Object.freeze([
 
 const AUTHORITY = Object.freeze({
   projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
-  disclosure_request_preparation: 'verified_not_exposed',
+  disclosure_request_preparation: 'verified_safe_inspection_only',
   renderer_authority: 'not_present',
   provider_context_body: 'not_present',
   provider_dispatch: false,
@@ -79,6 +98,30 @@ const COPY = Object.freeze({
     request_available: false,
   }),
 });
+const PURPOSES = Object.freeze(['answer', 'plan', 'contextual_build']);
+const SEGMENT_KINDS = Object.freeze([
+  'latest_user_message',
+  'working_context_objective',
+  'working_context_constraints',
+  'approved_plan',
+  'current_result',
+  'selected_source_summary',
+  'compaction_summary',
+  'handoff_summary',
+]);
+const WORKING_CONTEXT_STATES = Object.freeze([
+  'empty',
+  'discussing',
+  'ready',
+  'stale',
+  'approved_plan_ready',
+  'needs_clarification',
+]);
+const WORKSPACE_STATES = Object.freeze(['bound', 'missing']);
+const WRITE_PERMISSIONS = Object.freeze(['not_required', 'allowed', 'ask', 'denied']);
+const SAFE_COPY_PATTERN = /^[A-Za-z0-9 .,;:/()_-]{1,240}$/u;
+const FORBIDDEN_SAFE_COPY_PATTERN =
+  /\b(?:sha256|digest|request_id|preparation_id|assembly_id|projection_id):/iu;
 
 class BuilderProviderContextDisclosureStatusProjectionError extends Error {
   constructor() {
@@ -138,6 +181,97 @@ function safeNullableBlockedReason(value) {
   return safeEnum(value, ['context_disclosure_not_approved', 'context_disclosure_denied']);
 }
 
+function safeCount(value, minimum, maximum) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) fail();
+  return value;
+}
+
+function safeCopy(value) {
+  if (
+    typeof value !== 'string'
+    || !SAFE_COPY_PATTERN.test(value)
+    || FORBIDDEN_SAFE_COPY_PATTERN.test(value)
+  ) fail();
+  return value;
+}
+
+function denseSegmentKinds(value) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > 16) fail();
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== value.length + 1 || ownKeys.some((key) => typeof key === 'symbol')) fail();
+  const result = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+    result.push(safeEnum(descriptor.value, SEGMENT_KINDS));
+  }
+  return freezeDeep(result);
+}
+
+function sanitizeBudget(value) {
+  const source = exactObject(value, BUDGET_KEYS);
+  const maxPromptBytes = safeCount(valueAt(source, 'max_prompt_bytes'), 512, 65_536);
+  return freezeDeep({
+    used_prompt_bytes: safeCount(valueAt(source, 'used_prompt_bytes'), 0, maxPromptBytes),
+    max_prompt_bytes: maxPromptBytes,
+    reserved_response_bytes: safeCount(valueAt(source, 'reserved_response_bytes'), 0, 65_536),
+  });
+}
+
+function sanitizePermissionGate(value) {
+  const source = exactObject(value, PERMISSION_GATE_KEYS);
+  const sideEffectReady = valueAt(source, 'side_effect_ready');
+  if (typeof sideEffectReady !== 'boolean') fail();
+  return freezeDeep({
+    workspace_state: safeEnum(valueAt(source, 'workspace_state'), WORKSPACE_STATES),
+    write_permission: safeEnum(valueAt(source, 'write_permission'), WRITE_PERMISSIONS),
+    side_effect_ready: sideEffectReady,
+  });
+}
+
+function sanitizeContextSurface(value) {
+  const source = exactObject(value, CONTEXT_SURFACE_KEYS);
+  const segmentKinds = denseSegmentKinds(valueAt(source, 'segment_kinds'));
+  const segmentCount = safeCount(valueAt(source, 'segment_count'), 0, 16);
+  if (segmentCount !== segmentKinds.length) fail();
+  return freezeDeep({
+    working_context_state_status: safeEnum(valueAt(source, 'working_context_state_status'), WORKING_CONTEXT_STATES),
+    segment_count: segmentCount,
+    segment_kinds: segmentKinds,
+    omitted_ref_count: safeCount(valueAt(source, 'omitted_ref_count'), 0, 16),
+    budget: sanitizeBudget(valueAt(source, 'budget')),
+    permission_gate: sanitizePermissionGate(valueAt(source, 'permission_gate')),
+  });
+}
+
+function sanitizeInspection(value) {
+  if (value === null) return null;
+  const source = exactObject(value, INSPECTION_KEYS);
+  return freezeDeep({
+    title: safeCopy(valueAt(source, 'title')),
+    summary: safeCopy(valueAt(source, 'summary')),
+    details: safeCopy(valueAt(source, 'details')),
+    purpose: safeEnum(valueAt(source, 'purpose'), PURPOSES),
+    provider_scope: valueAt(source, 'provider_scope') === 'configured_provider'
+      ? 'configured_provider'
+      : fail(),
+    context_surface: sanitizeContextSurface(valueAt(source, 'context_surface')),
+  });
+}
+
+function inspectionFor(preparation) {
+  const request = preparation.provider_context_disclosure_request;
+  if (request === null) return null;
+  return sanitizeInspection({
+    title: request.user_copy.title,
+    summary: request.user_copy.summary,
+    details: request.user_copy.details,
+    purpose: request.disclosure_request.purpose,
+    provider_scope: request.disclosure_request.provider_scope,
+    context_surface: request.context_surface,
+  });
+}
+
 function sanitizeAuthority(value) {
   exactObject(value, AUTHORITY_KEYS);
   for (const key of AUTHORITY_KEYS) {
@@ -172,10 +306,13 @@ function assertProjection(value) {
     || valueAt(source, 'request_available') !== matched.request_available
   ) fail();
   const blockedReason = safeNullableBlockedReason(valueAt(source, 'blocked_reason'));
+  const inspection = sanitizeInspection(valueAt(source, 'inspection'));
   if (
     (label === COPY.ready.label && blockedReason !== null)
     || (label === COPY.denied.label && blockedReason !== 'context_disclosure_denied')
     || (label === COPY.needs_approval.label && blockedReason !== 'context_disclosure_not_approved')
+    || (label === COPY.ready.label && inspection !== null)
+    || (label !== COPY.ready.label && inspection === null)
   ) fail();
   return freezeDeep({
     projection_version: PROVIDER_CONTEXT_DISCLOSURE_STATUS_PROJECTION_VERSION,
@@ -186,6 +323,7 @@ function assertProjection(value) {
     can_use_provider_context: matched.can_use_provider_context,
     blocked_reason: blockedReason,
     request_available: matched.request_available,
+    inspection,
     authority: sanitizeAuthority(valueAt(source, 'authority')),
   });
 }
@@ -206,6 +344,7 @@ function projectBuilderProviderContextDisclosureStatus(rawInput) {
       can_use_provider_context: copy.can_use_provider_context,
       blocked_reason: preparation.blocked_reason,
       request_available: copy.request_available,
+      inspection: inspectionFor(preparation),
       authority: { ...AUTHORITY },
     });
   } catch {

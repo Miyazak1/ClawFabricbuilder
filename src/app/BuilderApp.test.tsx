@@ -149,9 +149,32 @@ function providerContextDisclosureStatusProjection() {
     can_use_provider_context: false,
     blocked_reason: 'context_disclosure_not_approved',
     request_available: true,
+    inspection: {
+      title: 'Share current task context with the configured AI provider',
+      summary: 'Allow Builder to build with current context using a bounded local context summary.',
+      details: 'This request does not include source files, secrets, ids, digests, or raw context text.',
+      purpose: 'contextual_build',
+      provider_scope: 'configured_provider',
+      context_surface: {
+        working_context_state_status: 'approved_plan_ready',
+        segment_count: 3,
+        segment_kinds: ['latest_user_message', 'working_context_objective', 'approved_plan'],
+        omitted_ref_count: 0,
+        budget: {
+          used_prompt_bytes: 512,
+          max_prompt_bytes: 4096,
+          reserved_response_bytes: 1024,
+        },
+        permission_gate: {
+          workspace_state: 'bound',
+          write_permission: 'ask',
+          side_effect_ready: false,
+        },
+      },
+    },
     authority: {
       projection_authority: 'main_owned_provider_context_disclosure_status_projection_v1',
-      disclosure_request_preparation: 'verified_not_exposed',
+      disclosure_request_preparation: 'verified_safe_inspection_only',
       renderer_authority: 'not_present',
       provider_context_body: 'not_present',
       provider_dispatch: false,

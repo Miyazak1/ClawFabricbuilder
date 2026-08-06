@@ -68,7 +68,10 @@ import {
   type BuilderSourceTreeChange,
   type BuilderSourceTreeChanges,
 } from '../domain/builderSourceTreeChanges';
-import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../domain/builderProviderContextDisclosureStatusProjection';
+import type {
+  BuilderProviderContextDisclosureInspectionWire,
+  BuilderProviderContextDisclosureStatusProjectionWire,
+} from '../domain/builderProviderContextDisclosureStatusProjection';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
 import {
   BuilderComposer,
@@ -1569,6 +1572,51 @@ function aiContextPermissionStatusCode(
   return status.needs_user_approval ? 'needs_approval' : 'denied';
 }
 
+function aiContextPurposeLabel(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): string {
+  const purpose = status?.inspection?.purpose ?? null;
+  if (purpose === 'answer') return 'Answer with current context';
+  if (purpose === 'plan') return 'Plan with current context';
+  if (purpose === 'contextual_build') return 'Build with current context';
+  return 'Current AI request';
+}
+
+function aiContextSegmentLabel(
+  kind: BuilderProviderContextDisclosureInspectionWire['context_surface']['segment_kinds'][number],
+): string {
+  if (kind === 'latest_user_message') return 'latest message';
+  if (kind === 'working_context_objective') return 'current goal';
+  if (kind === 'working_context_constraints') return 'confirmed constraints';
+  if (kind === 'approved_plan') return 'approved plan';
+  if (kind === 'current_result') return 'current result';
+  if (kind === 'selected_source_summary') return 'project summary';
+  if (kind === 'compaction_summary') return 'conversation summary';
+  return 'handoff summary';
+}
+
+function aiContextInspectionIncludes(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): string {
+  const surface = status?.inspection?.context_surface ?? null;
+  if (surface === null || surface.segment_kinds.length === 0) return 'No task summary is prepared.';
+  return surface.segment_kinds.map(aiContextSegmentLabel).join(', ');
+}
+
+function aiContextInspectionScope(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): string {
+  const surface = status?.inspection?.context_surface ?? null;
+  if (surface === null) return 'No bounded context request is prepared.';
+  const workspace = surface.permission_gate.workspace_state === 'bound'
+    ? 'current project'
+    : 'no project folder';
+  const writeState = surface.permission_gate.side_effect_ready
+    ? 'changes can continue under the current approval'
+    : 'it will still ask before writing';
+  return `${aiContextPurposeLabel(status)} for the configured AI service, scoped to ${workspace}; ${writeState}.`;
+}
+
 function BuilderArtifactPermissionsPanel({
   approvalMode,
   currentProjectWriteApproval,
@@ -1635,6 +1683,17 @@ function BuilderArtifactPermissionsPanel({
           <dd>
             <strong>{aiContextPermissionLabel(providerContextDisclosureStatus)}</strong>
             <span>{aiContextPermissionStatus(providerContextDisclosureStatus)}</span>
+            {providerContextDisclosureStatus?.inspection !== null
+              && providerContextDisclosureStatus?.inspection !== undefined ? (
+                <div
+                  className="cf-builder-permission-inspection"
+                  data-builder-provider-context-disclosure-inspection="true"
+                >
+                  <span>{aiContextInspectionScope(providerContextDisclosureStatus)}</span>
+                  <span>Includes: {aiContextInspectionIncludes(providerContextDisclosureStatus)}.</span>
+                  <span>{providerContextDisclosureStatus.inspection.details}</span>
+                </div>
+              ) : null}
             {providerContextDisclosureStatus?.needs_user_approval === true
               && providerContextDisclosureStatus.request_available ? (
                 <button

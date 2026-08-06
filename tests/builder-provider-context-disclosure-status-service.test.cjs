@@ -129,6 +129,14 @@ test('records and reads only renderer-safe provider context disclosure status', 
   assert.equal(recorded.provider_context_disclosure_status_projection.needs_user_approval, true);
   assert.equal(recorded.provider_context_disclosure_status_projection.can_use_provider_context, false);
   assert.equal(recorded.provider_context_disclosure_status_projection.request_available, true);
+  assert.equal(
+    recorded.provider_context_disclosure_status_projection.inspection.summary,
+    'Allow Builder to build with current context using a bounded local context summary.',
+  );
+  assert.equal(
+    recorded.provider_context_disclosure_status_projection.inspection.context_surface.segment_count,
+    4,
+  );
 
   const read = service.read_current_provider_context_disclosure_status_for_conversation({
     project_id: PROJECT_ID,
@@ -141,7 +149,7 @@ test('records and reads only renderer-safe provider context disclosure status', 
   );
   assert.doesNotMatch(
     JSON.stringify(read),
-    /builder-context-assembly:|builder-provider-context-projection:|builder-provider-context-disclosure-request|builder-provider-context-disclosure-request-preparation:|context_digest|assembly_id|request_id|provider_context_segments|"provider_context":|api[_-]?key|credential|source_tree/iu,
+    /builder-context-assembly:|builder-provider-context-projection:|builder-provider-context-disclosure-request:|builder-provider-context-disclosure-request-preparation:|context_digest|assembly_id|request_id|preparation_id|provider_context_segments|"provider_context":|api[_-]?key|credential|source_tree/iu,
   );
 
   const preparation = service.read_current_provider_context_disclosure_request_preparation_for_conversation({
@@ -189,6 +197,7 @@ test('records approved provider context disclosure as ready and clears stale cur
   assert.equal(read.provider_context_disclosure_status_projection.needs_user_approval, false);
   assert.equal(read.provider_context_disclosure_status_projection.can_use_provider_context, true);
   assert.equal(read.provider_context_disclosure_status_projection.blocked_reason, null);
+  assert.equal(read.provider_context_disclosure_status_projection.inspection, null);
   const preparation = service.read_current_provider_context_disclosure_request_preparation_for_conversation({
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
