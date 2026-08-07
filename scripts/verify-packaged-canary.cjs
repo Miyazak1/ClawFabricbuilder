@@ -1890,7 +1890,7 @@ async function waitForGenerationTerminal(page) {
   const outcome = await Promise.race([alert, preview]);
   if (outcome === 'static_preview' || outcome === 'preview_unavailable') return;
   if (outcome === 'alert') fail('canary_generation_terminal_failed');
-  fail('canary_preview_failed');
+  failWithDiagnostic('canary_preview_failed', await collectPreviewSurfaceDiagnostic(page));
 }
 
 async function captureGenerationLiveOutputViaUi(page, failureCode) {
@@ -6062,6 +6062,30 @@ async function hasVisiblePreviewSurface(page) {
   }
 }
 
+async function readArtifactActiveTab(page) {
+  try {
+    const activeTab = await page.locator(SELECTORS.artifactSidebar)
+      .getAttribute('data-builder-artifact-tab-active');
+    return typeof activeTab === 'string' ? activeTab : null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForArtifactPreviewTab(page) {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() <= deadline) {
+    if (await readArtifactActiveTab(page) === 'preview') return true;
+    if (await hasVisiblePreviewSurface(page)) return true;
+    if (typeof page.waitForTimeout === 'function') {
+      await page.waitForTimeout(100);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  return false;
+}
+
 const PREVIEW_SURFACE_DIAGNOSTIC_SELECTORS = Object.freeze({
   artifact_sidebar: SELECTORS.artifactSidebar,
   artifact_tab_preview: SELECTORS.artifactTabPreview,
@@ -6107,6 +6131,7 @@ async function collectPreviewSurfaceDiagnostic(page) {
   }
   return Object.freeze({
     diagnostic_version: 'builder-canary-preview-surface-diagnostic.v1',
+    artifact_active_tab: await readArtifactActiveTab(page),
     selectors: Object.freeze(selectors),
   });
 }
@@ -6119,22 +6144,28 @@ async function openPreviewSurfaceViaUi(page) {
   if (await hasVisiblePreviewSurface(page)) return;
   const attempts = [
     async () => {
-      await page.locator(SELECTORS.previewOpenArtifact).click({ timeout: 1000 });
+      await page.locator(SELECTORS.previewOpenArtifact).click({ timeout: 3000 });
+      if (await waitForArtifactPreviewTab(page)) return true;
+      return false;
     },
     async () => {
-      await page.locator(SELECTORS.artifactViewButton).click({ timeout: 1000 });
+      await page.locator(SELECTORS.artifactViewButton).click({ timeout: 3000 });
       await page.locator(SELECTORS.artifactViewMenu).waitFor({ state: 'visible', timeout: 3000 });
       await page.locator(SELECTORS.artifactTabPreview).click({ timeout: 3000 });
+      if (await waitForArtifactPreviewTab(page)) return true;
+      return false;
     },
     async () => {
-      await page.locator(SELECTORS.workspaceMenuButton).click({ timeout: 1000 });
+      await page.locator(SELECTORS.workspaceMenuButton).click({ timeout: 3000 });
       await page.locator(SELECTORS.workspaceMenu).waitFor({ state: 'visible', timeout: 3000 });
       await page.locator(SELECTORS.workspaceControlPreview).click({ timeout: 3000 });
+      if (await waitForArtifactPreviewTab(page)) return true;
+      return false;
     },
   ];
   for (const attempt of attempts) {
     try {
-      await attempt();
+      if (await attempt()) return;
       if (await hasVisiblePreviewSurface(page)) return;
     } catch {
       // Try the next public preview entry point before reporting the fixed preview surface failure.
@@ -6253,7 +6284,7 @@ async function capturePreviewEvidence(page, gate) {
     if (error instanceof BuilderPackagedCanaryError
       && error.code === 'canary_secret_source_invalid') throw error;
     if (error instanceof BuilderPackagedCanaryError && PREVIEW_FAILURE_CODES.has(error.code)) throw error;
-    fail('canary_preview_failed');
+    failWithDiagnostic('canary_preview_failed', await collectPreviewSurfaceDiagnostic(page));
   }
 }
 
@@ -6264,6 +6295,21 @@ function samePreviewEvidence(left, right) {
 function staticPreviewSrcdocChanged(left, right) {
   if (left.preview_mode !== 'static_frame' || right.preview_mode !== 'static_frame') return true;
   return left.srcdoc_digest !== right.srcdoc_digest;
+}
+
+function previewComparisonDiagnostic(comparison, before, after) {
+  return Object.freeze({
+    diagnostic_version: 'builder-canary-preview-comparison-diagnostic.v1',
+    comparison,
+    before: Object.freeze({
+      preview_mode: before.preview_mode,
+      srcdoc_digest: before.srcdoc_digest,
+    }),
+    after: Object.freeze({
+      preview_mode: after.preview_mode,
+      srcdoc_digest: after.srcdoc_digest,
+    }),
+  });
 }
 
 async function openProjectFromCatalogById(page, project, failureCode = 'canary_restart_failed') {
@@ -6483,7 +6529,10 @@ async function runPackagedCanary(rawInput, options = {}) {
     const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 0);
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
     if (!staticPreviewSrcdocChanged(pendingUpdatePreviewEvidence, initialPreviewEvidence)) {
-      fail('canary_preview_failed');
+      failWithDiagnostic(
+        'canary_preview_failed',
+        previewComparisonDiagnostic('pending_update_changed_srcdoc', initialPreviewEvidence, pendingUpdatePreviewEvidence),
+      );
     }
     await closeApp(app);
     app = null;
@@ -6534,7 +6583,10 @@ async function runPackagedCanary(rawInput, options = {}) {
     const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 0);
     const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (!staticPreviewSrcdocChanged(updatedPreviewEvidence, initialPreviewEvidence)) {
-      fail('canary_preview_failed');
+      failWithDiagnostic(
+        'canary_preview_failed',
+        previewComparisonDiagnostic('updated_changed_srcdoc', initialPreviewEvidence, updatedPreviewEvidence),
+      );
     }
     await closeApp(app);
     app = null;
@@ -6641,7 +6693,14 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const restartContinuationPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     if (!staticPreviewSrcdocChanged(restartContinuationPreviewEvidence, restartPreviewEvidence)) {
-      fail('canary_preview_failed');
+      failWithDiagnostic(
+        'canary_preview_failed',
+        previewComparisonDiagnostic(
+          'restart_continuation_changed_srcdoc',
+          restartPreviewEvidence,
+          restartContinuationPreviewEvidence,
+        ),
+      );
     }
     const restartContinuationAdvancedCandidateCount = (
       restartContinuationTaskStream.candidate_ready_count === restartTaskStream.candidate_ready_count + 1
