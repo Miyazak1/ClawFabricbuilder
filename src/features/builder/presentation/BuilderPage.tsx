@@ -1894,7 +1894,6 @@ function BuilderArtifactSidebar({
   onResizeStart,
   resizing,
   onSelectFile,
-  onSelectTab,
   onSourceOpenChange,
   planSourceReadApproval,
   providerContextDisclosureApprovalState,
@@ -1906,7 +1905,6 @@ function BuilderArtifactSidebar({
   sourceDisclosureOpen,
   sourceDisclosureRef,
   sourceFile,
-  tabs,
   width,
   widthMaximum,
   workingProject,
@@ -1933,7 +1931,6 @@ function BuilderArtifactSidebar({
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   resizing: boolean;
   onSelectFile?: (file: BuilderFileName) => void;
-  onSelectTab: (tab: BuilderArtifactTab) => void;
   onSourceOpenChange: (open: boolean) => void;
   planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
   providerContextDisclosureApprovalState: 'idle' | 'approving' | 'failed';
@@ -1945,48 +1942,10 @@ function BuilderArtifactSidebar({
   sourceDisclosureOpen: boolean;
   sourceDisclosureRef: Ref<HTMLDetailsElement>;
   sourceFile: BuilderProjectSourceFile | null;
-  tabs: readonly BuilderArtifactTab[];
   width: number;
   widthMaximum: number;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
-  const [viewMenuOpen, setViewMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (!viewMenuOpen) return undefined;
-    function closeViewMenu(event: PointerEvent): void {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (
-        target.closest('[data-builder-artifact-view-menu="true"], [data-builder-artifact-view-button="true"]')
-        !== null
-      ) {
-        return;
-      }
-      setViewMenuOpen(false);
-    }
-    function closeViewMenuOnEscape(event: KeyboardEvent): void {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setViewMenuOpen(false);
-      window.requestAnimationFrame(() => {
-        document.querySelector<HTMLButtonElement>('[data-builder-artifact-view-button="true"]')
-          ?.focus({ preventScroll: true });
-      });
-    }
-    document.addEventListener('pointerdown', closeViewMenu);
-    window.addEventListener('keydown', closeViewMenuOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeViewMenu);
-      window.removeEventListener('keydown', closeViewMenuOnEscape);
-    };
-  }, [viewMenuOpen]);
-
-  function selectArtifactView(tab: BuilderArtifactTab): void {
-    onSelectTab(tab);
-    setViewMenuOpen(false);
-  }
-
   return (
     <aside
       aria-label="Project artifact"
@@ -2010,65 +1969,20 @@ function BuilderArtifactSidebar({
         title="Resize artifact panel"
         type="button"
       />
-      <header className="cf-builder-artifact-header">
-        <div className="min-w-0">
-          <p className="cf-builder-artifact-kicker">Artifact</p>
-          <h3 className="cf-builder-artifact-title">{artifactTabLabel(activeTab)}</h3>
+      {activeTab === 'preview' ? (
+        <div className="cf-builder-artifact-utility-bar">
+          <button
+            aria-label="Expand preview"
+            className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
+            data-builder-expand-preview="true"
+            onClick={onExpandPreview}
+            title="Expand preview"
+            type="button"
+          >
+            <Maximize2 aria-hidden="true" className="size-3.5" />
+          </button>
         </div>
-        <div className="cf-builder-artifact-header-actions">
-          <div className="cf-builder-artifact-view-menu-wrap">
-            <button
-              aria-expanded={viewMenuOpen}
-              aria-haspopup="menu"
-              aria-label="Artifact view menu"
-              className="cf-builder-artifact-view-button"
-              data-builder-artifact-view-button="true"
-              onClick={() => setViewMenuOpen((open) => !open)}
-              type="button"
-            >
-              <ArtifactTabIcon tab={activeTab} />
-              <span>{artifactTabLabel(activeTab)}</span>
-              <ChevronDown aria-hidden="true" className="size-3" />
-            </button>
-            {viewMenuOpen ? (
-              <div
-                aria-label="Artifact views"
-                className="cf-builder-artifact-view-menu"
-                data-builder-artifact-view-menu="true"
-                role="menu"
-              >
-                {tabs.map((tab) => (
-                  <button
-                    aria-checked={activeTab === tab}
-                    className="cf-builder-artifact-tab"
-                    data-active={activeTab === tab ? 'true' : undefined}
-                    data-builder-artifact-tab={tab}
-                    key={tab}
-                    onClick={() => selectArtifactView(tab)}
-                    role="menuitemradio"
-                    type="button"
-                  >
-                    <ArtifactTabIcon tab={tab} />
-                    <span>{artifactTabLabel(tab)}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          {activeTab === 'preview' ? (
-            <button
-              aria-label="Expand preview"
-              className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-              data-builder-expand-preview="true"
-              onClick={onExpandPreview}
-              title="Expand preview"
-              type="button"
-            >
-              <Maximize2 aria-hidden="true" className="size-3.5" />
-            </button>
-          ) : null}
-        </div>
-      </header>
+      ) : null}
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
         {activeTab === 'preview' ? (
           <BuilderResultPanel panelRef={previewPanelRef} placement="artifact" projection={preview} />
@@ -3253,7 +3167,6 @@ export function BuilderPage({
       onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
       resizing={artifactResizing}
       onSelectFile={onSelectFile}
-      onSelectTab={openArtifactTab}
       onSourceOpenChange={setSourceDisclosureOpen}
       planSourceReadApproval={planSourceReadApproval}
       providerContextDisclosureApprovalState={providerContextDisclosureApprovalState}
@@ -3265,7 +3178,6 @@ export function BuilderPage({
       sourceDisclosureOpen={sourceDisclosureOpen}
       sourceDisclosureRef={sourceDisclosureRef}
       sourceFile={sourceFile}
-      tabs={artifactTabs}
       width={artifactWidth}
       widthMaximum={artifactWidthMaximum}
       workingProject={workingProject}
