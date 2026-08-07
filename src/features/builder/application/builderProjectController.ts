@@ -87,6 +87,14 @@ export type BuilderProjectControllerSnapshot = Readonly<{
   workingProject: BuilderWorkingProject | null;
 }>;
 
+const PLAN_PROPOSAL_READY_STATUSES = new Set<BuilderProjectControllerStatus>([
+  'ready',
+  'preview_unavailable',
+  'answer_failed',
+  'submit_failed',
+  'generation_failed',
+]);
+
 export type BuilderProjectControllerDependencies = Readonly<{
   generator: BuilderCodeGeneratorPort;
   workspace: BuilderProjectWorkspacePort;
@@ -1170,7 +1178,7 @@ export function createBuilderProjectController(
       || current.draft !== null
       || current.inspectedRevision !== null
       || (current.savedProject === null && current.workingProjectId === null)
-      || !['ready', 'preview_unavailable'].includes(current.status)
+      || !PLAN_PROPOSAL_READY_STATUSES.has(current.status)
     ) return current;
     const retained = current.savedProject;
     const targetProjectId = retained?.target.project_id ?? current.workingProjectId;

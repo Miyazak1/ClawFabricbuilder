@@ -877,6 +877,14 @@ function shouldClearSubmittedIdea(snapshot: BuilderVisibleProjectSnapshot): bool
   );
 }
 
+const PLAN_PROPOSAL_READY_STATUSES = new Set([
+  'ready',
+  'preview_unavailable',
+  'answer_failed',
+  'submit_failed',
+  'generation_failed',
+]);
+
 function appendLiveOutputText(current: string, delta: string): string | null {
   const next = `${current}${delta}`;
   if (LIVE_OUTPUT_ENCODER.encode(next).byteLength > MAX_LIVE_OUTPUT_TEXT_BYTES) return null;
@@ -1636,7 +1644,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       || currentSnapshot.draft !== null
       || currentSnapshot.inspectedRevision !== null
       || fallbackProjectId === null
-      || !['ready', 'preview_unavailable'].includes(currentSnapshot.status)
+      || !PLAN_PROPOSAL_READY_STATUSES.has(currentSnapshot.status)
       || submittedIdea.trim().length === 0
     ) return false;
     setApprovedPlanContinuationFailure(null);

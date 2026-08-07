@@ -4215,6 +4215,127 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
+  it('keeps submit available for a plan request after a direction update in an unsaved workspace', async () => {
+    const {
+      answer,
+      container,
+      generate,
+      listWorkspaces,
+      open,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      saveDraft,
+      submit,
+    } = await setup({
+      briefUpdateActivity: true,
+      planAfterPropose: true,
+      workspaceOnlyCatalog: true,
+    });
+    await waitFor(() => {
+      expect(listWorkspaces).toHaveBeenCalled();
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('Unsaved dashboard');
+    });
+
+    setComposerInstruction(container, '我打算做一个博客，给我一些建议');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({
+        instruction: '我打算做一个博客，给我一些建议',
+      });
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
+    });
+
+    setComposerInstruction(container, '帮我做成计划');
+    await waitForComposerSubmitReady(container);
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
+      .toBe(false);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+        instruction: '帮我做成计划',
+      });
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('explicit_plan');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('routes plan requests after a recorded direction update even when the public answer result failed', async () => {
+    const {
+      answer,
+      container,
+      generate,
+      listWorkspaces,
+      open,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      saveDraft,
+      submit,
+    } = await setup({
+      briefUpdateActivity: true,
+      failFirstAnswer: true,
+      planAfterPropose: true,
+      workspaceOnlyCatalog: true,
+    });
+    await waitFor(() => {
+      expect(listWorkspaces).toHaveBeenCalled();
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('Unsaved dashboard');
+    });
+
+    const firstInstruction = '我想先聊一下这个作品集首页怎么做，目标是星空背景和项目列表。';
+    setComposerInstruction(container, firstInstruction);
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: firstInstruction });
+      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
+        .toContain('Ready to execute current direction');
+    });
+    expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
+
+    setComposerInstruction(container, '帮我做成计划');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+        instruction: '帮我做成计划',
+      });
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(answer).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('explicit_plan');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+  });
+
   it('routes the add-menu Plan mode through plan evidence even for build-like wording', async () => {
     const {
       container,

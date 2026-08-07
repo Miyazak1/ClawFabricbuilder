@@ -576,6 +576,38 @@ describe('Builder project controller v2', () => {
     expect(result.answer).toBeNull();
   });
 
+  it('proposes a plan after a non-mutating answer failure on a bound local project', async () => {
+    const { answer, controller, generate, proposePlan, saveDraft, submit } = setup({
+      answer: async () => {
+        throw new BuilderGenerationDiagnosticError('builder_generation_structured_response_invalid');
+      },
+      createLocalProject: async () => createLocalProjectSelection({
+        projectId: PROJECT_ID,
+        title: 'Unsaved dashboard',
+        sourceFolderName: 'site-source',
+      }),
+    });
+    await controller.createLocalProject('Unsaved dashboard');
+    const failed = await controller.answer('我想先聊一下这个作品集首页怎么做，目标是星空背景和项目列表。');
+
+    const result = await controller.proposePlan('帮我做成计划');
+
+    expect(failed.status).toBe('answer_failed');
+    expect(failed.workingProjectId).toBe(PROJECT_ID);
+    expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      version: 'builder-generation-request.v2',
+      instruction: '帮我做成计划',
+      existing_project_id: PROJECT_ID,
+    }));
+    expect(answer).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('ready');
+    expect(result.workingProjectId).toBe(PROJECT_ID);
+    expect(result.draft).toBeNull();
+  });
+
   it('discards an unsaved draft by draft_id without saving it', async () => {
     const { controller, rejectDraft, saveDraft } = setup();
     await controller.open(PROJECT_ID);
