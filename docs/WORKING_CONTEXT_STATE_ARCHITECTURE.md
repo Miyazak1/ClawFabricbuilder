@@ -612,7 +612,9 @@ Current checkpoint:
   then returns a digest-bound prompt descriptor plus admission source refs. It
   still performs no IPC/preload registration, provider dispatch, tool dispatch,
   source/Git/SQLite mutation, permission grant, revision admission, or secret
-  access.
+  access. The current host adapter still rejects this descriptor if it appears
+  as ordinary generation context material; a later prompt bridge must provide a
+  separate explicit adapter path before provider dispatch can consume it.
 
 ### Provider Context Egress Consent
 

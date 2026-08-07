@@ -1230,6 +1230,16 @@ test('rejects provider context prompt bridge material before explicit prompt wir
         },
       },
     ],
+    [
+      'provider_context_prompt_bridge_descriptor',
+      {
+        result_version: 'builder-provider-context-prompt-bridge-descriptor.v1',
+        descriptor_id: 'builder-provider-context-prompt-bridge-descriptor:test',
+        prompt_descriptor: {
+          user_instruction: 'Private task context.',
+        },
+      },
+    ],
   ];
 
   for (const [key, payload] of cases) {

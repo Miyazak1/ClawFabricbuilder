@@ -927,7 +927,10 @@ Evidence requirements:
   verified prompt-bridge admission to that provider-context prompt descriptor.
   It records the admission source refs and descriptor digest, but still performs
   no IPC/preload registration, provider dispatch, tool dispatch, source/Git/
-  SQLite mutation, permission grant, revision admission, or secret access;
+  SQLite mutation, permission grant, revision admission, or secret access.
+  Host adapter prompt consumption remains closed, and ordinary generation
+  context still rejects any attempt to carry this descriptor as extra context
+  material;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works
