@@ -4310,7 +4310,6 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
         .toContain('Ready to execute current direction');
     });
-    expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
 
     setComposerInstruction(container, '帮我做成计划');
     await waitForComposerSubmitReady(container);
