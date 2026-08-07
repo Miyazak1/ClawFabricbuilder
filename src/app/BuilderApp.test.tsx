@@ -4087,12 +4087,6 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-        ?.call(textarea, 'Plan the next project update.');
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new Event('change', { bubbles: true }));
-    });
     await waitFor(() => {
       expect(container.querySelector('[data-builder-composer-add-menu-button="true"]')).not.toBeNull();
     });
@@ -4108,6 +4102,13 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
         .toContain('Plan mode');
     });
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Plan the next project update.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {

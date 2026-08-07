@@ -2033,7 +2033,7 @@ describe('BuilderPage v2', () => {
     const savedContainer = render(
       <BuilderPage
         activeFile={null}
-        instruction="Plan the next project update."
+        instruction=""
         onSelectPlanMode={onSelectPlanMode}
         onSubmitInstruction={onSubmitInstruction}
         snapshot={saved}
@@ -2047,6 +2047,7 @@ describe('BuilderPage v2', () => {
       '[data-builder-composer-add-plan-mode="true"]',
     );
     expect(planMode).not.toBeNull();
+    expect(planMode?.disabled).toBe(false);
     expect(planMode?.closest('[data-builder-composer="true"]')).not.toBeNull();
     click(savedContainer, '[data-builder-composer-add-plan-mode="true"]');
     expect(onSelectPlanMode).toHaveBeenCalledOnce();

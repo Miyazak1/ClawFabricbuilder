@@ -2279,8 +2279,7 @@ export function BuilderPage({
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory
-    && (status === 'ready' || status === 'preview_unavailable')
-    && instruction.trim().length > 0;
+    && (status === 'ready' || status === 'preview_unavailable');
   const changes = useMemo(() => createBuilderSourceTreeChanges(
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,
