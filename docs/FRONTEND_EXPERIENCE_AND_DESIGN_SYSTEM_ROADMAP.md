@@ -851,15 +851,28 @@ Exit criteria:
 
 Scope:
 
+- keep the current static iframe preview as the safe fallback;
 - add robust preview device controls;
-- support runtime preview/open-in-browser where allowed;
-- prepare element selection and visual annotation metadata.
+- define Live Preview V1 as a local static-web runtime for `index.html`, CSS,
+  JavaScript, canvas, Three.js, and WebGL;
+- render V1 through an isolated Electron preview browser surface backed by a
+  read-only local static server;
+- defer Vite/React/Three.js dev-server adapters to Live Preview V2;
+- defer backend/full-stack preview to Live Preview V3, after sandbox and
+  environment-permission gates;
+- prepare element selection and visual annotation metadata only after the
+  preview surface can provide bounded DOM, screenshot, console, and pixel
+  evidence.
 
 Exit criteria:
 
 - long pages, canvas, and 3D previews can be inspected;
 - preview errors explain whether static, runtime, network, or generated-code
   limits caused the issue;
+- generated preview code has no app IPC, preload bridge, Node integration,
+  filesystem authority, or secret access;
+- canary evidence proves JavaScript execution, nonblank WebGL/canvas pixels,
+  screenshot capture, console/error capture, and restart recovery;
 - selected preview element context can be represented without granting hidden
   source authority.
 

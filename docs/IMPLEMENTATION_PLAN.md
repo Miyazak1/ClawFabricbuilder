@@ -1987,13 +1987,45 @@ static preview.
 Add explicit preview/test adapters for named project types. A language or
 project type is runnable only when its adapter and verification gate exist.
 
-### Gate R2 - Generated-Code Sandbox
+### Gate R2 - Live Preview V1: Static Web Runtime
+
+After the packaged provider canary and save/restart recovery loop are stable,
+add a separate Live Preview track for static web projects. This is not part of
+the current package gate.
+
+Live Preview V1 supports `index.html`, CSS, JavaScript, canvas, Three.js, and
+WebGL through a local read-only static server and an isolated Electron preview
+browser surface. The current static iframe preview remains the fallback.
+
+Required boundaries:
+
+- source is served read-only from an admitted project revision or draft;
+- preview traffic is loopback/local only unless a later network permission gate
+  explicitly admits more;
+- generated code receives no app IPC, no preload bridge, no Node integration,
+  no filesystem authority, and no secrets;
+- preview lifecycle owns start, reload, stop, port allocation, timeout, and
+  crash recovery;
+- canary evidence proves JavaScript execution, nonblank WebGL/canvas pixels,
+  screenshot capture, console/error capture, and restart recovery.
+
+### Gate R3 - Live Preview V2: Dev Server Adapters
+
+Add named dev-server adapters after V1. Initial targets are Vite, React, and
+Three.js projects detected from `package.json` and source shape. Each adapter
+must declare install/start commands, port policy, log bounds, refresh behavior,
+and failure projection before it can be used.
+
+The agent may use DOM, console, network-error, screenshot, and canvas-pixel
+evidence to repair generated UI only through the normal review/save flow.
+
+### Gate R4 - Generated-Code Sandbox
 
 Prove termination, CPU/memory/output bounds, minimal environment,
 filesystem/network/process deny-by-default, secret isolation, and sanitized
 results in a standalone execution boundary.
 
-### Gate R3 - Workflow Version and Composition
+### Gate R5 - Workflow Version and Composition
 
 Introduce immutable Workflow Version authority binding ordered Tasks, typed
 inputs/outputs, dependency plan, Permission requirements, retry/cancellation,
@@ -2003,7 +2035,7 @@ Each workflow execution produces a parent Run and step Runs. Restart must
 restore durable state without repeating completed effects. Workflow publish and
 reuse depend on the same Review and Publication gates as projects.
 
-### Gate R4 - Multi-Language Execution
+### Gate R6 - Multi-Language Execution
 
 Add languages only with real runtime availability, adapter identity, package
 evidence, sandbox compatibility, and deterministic verification. Stored code is
@@ -2020,7 +2052,7 @@ Navigation follows real evidence:
 5. `Spaces` and `Inbox` - after B2.
 6. `Share` - after C1.
 7. `Explore` - after C2.
-8. `Workflows` - after R3.
+8. `Workflows` - after R5.
 
 Future destinations may exist in internal descriptors, but empty or disabled
 areas should not be presented as shipped capabilities.

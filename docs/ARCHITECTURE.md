@@ -13,6 +13,13 @@ The first product loop is: describe an idea, generate a code draft, review the
 working tree diff, save a Git-backed revision receipt, reopen it, revise it,
 and inspect a static preview.
 
+The first release preview is intentionally static. Generated JavaScript,
+Three.js, WebGL, canvas animation, dev servers, and backend code are not
+executed inside the preview surface yet. Live Preview is a later runtime gate:
+it must use an isolated preview browser/runtime boundary, keep app IPC and
+secrets out of generated code, and preserve static preview as the fallback when
+runtime admission is unavailable.
+
 The desktop application owns six narrow authorities:
 
 1. Builder provider settings and encrypted credentials.
