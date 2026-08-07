@@ -187,6 +187,29 @@
       }
     },
     {
+      "name": "convert-to-plan request is explicit plan in renderer and read-only fallback in submit",
+      "instruction": "做成plan",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
       "name": "natural implementation analysis request is explicit plan without write admission",
       "instruction": "先分析一下实现方案",
       "context": {
