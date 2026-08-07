@@ -25,6 +25,12 @@ Artifact, Review, verification, and Session/Task Address facts; it is not a
 social feed item, raw transcript export, source zip, autonomous experiment
 branch, or publish action.
 
+Draft Checkpoint is the bridge between fluid AI editing and formal saved
+versions. Mutating AI turns should be able to create automatic local recovery
+points for undo, compare, restore, and restart recovery, but those checkpoints
+must not become implicit Project Revisions or hidden auto-saves. The decision is
+recorded in [Draft Checkpoint Architecture](DRAFT_CHECKPOINT_ARCHITECTURE.md).
+
 There is no near-term native rewrite gate. The implementation continues through
 the existing Electron, React, TypeScript, and Node/Electron main-side contract
 architecture until a measured bottleneck or isolation boundary justifies a
@@ -287,8 +293,10 @@ Bind an accepted candidate to an explicit Save decision through Git candidate
 persistence, SQLite Project Revision selection, and a separate `main`/working
 tree projection. Then add version comparison, duplicate,
 restore-as-new-version, read-only History, export, explicit Review, and
-preview/export Artifact records. History is derived from verified facts; it is
-not a second activity database.
+preview/export Artifact records. Add Draft Checkpoints as cleanup-managed local
+recovery facts over verified candidate evidence so users can compare, restore,
+or continue without making every AI edit a formal version. History is derived
+from verified facts; it is not a second activity database.
 
 Evidence requirements:
 
@@ -298,6 +306,13 @@ Evidence requirements:
 - Save binds the accepted candidate, Task, Run, Review decision, base commit,
   candidate commit/tree/parent evidence, and selected Project Revision receipt;
 - candidate persistence alone never updates `main` or makes a Revision current;
+- Draft Checkpoint recording references verified candidate or internal snapshot
+  evidence but never selects the current Project Revision, updates `main`,
+  publishes, shares, grants permission, or creates a Work Capsule;
+- checkpoint restore creates a new draft path or candidate and never rewrites
+  old Project Revisions;
+- checkpoint retention keeps active and recently restorable draft facts, and
+  destructive cleanup fails closed for active or pending Runs;
 - SQLite selection is the product fact; `main` and working tree are
   expected-old projections that can be rebuilt after drift or interruption;
 - orphan Git candidates remain invisible, selected receipts with missing Git

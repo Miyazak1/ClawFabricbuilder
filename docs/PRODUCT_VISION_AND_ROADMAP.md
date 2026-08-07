@@ -49,6 +49,12 @@ Reusable work must also have a result-centered package shape before it becomes a
 community object. The Work Capsule model is defined in
 [Work Capsule Architecture](WORK_CAPSULE_ARCHITECTURE.md).
 
+Builder should also separate automatic recovery from formal milestones. AI
+mutating turns may create local Draft Checkpoints for undo, compare, restore,
+and restart recovery, while `Save version` remains the explicit Project
+Revision milestone. The model is defined in
+[Draft Checkpoint Architecture](DRAFT_CHECKPOINT_ARCHITECTURE.md).
+
 Builder also needs an internal context-management layer. The product should not
 ask ordinary users to manage a `Brief` mode. Chat and planning automatically
 update Working Context State, and execution can use it only when it is current
@@ -203,6 +209,8 @@ User experience:
   of isolated one-shot prompts;
 - questions and explanations that do not create source changes;
 - code candidates that are previewed before explicit Save;
+- automatic Draft Checkpoints for undo, compare, restore, and restart recovery
+  without treating every AI edit as a formal version;
 - version history, comparison, restore, duplicate, and export;
 - a clear Activity/History view for saved versions and generation outcomes;
 - explicit review before replacing a saved version;
@@ -233,6 +241,9 @@ Required facts:
   with its Artifact, Review, verification, public summary, and Session/Task
   Address references. They are local derived projections, not publish actions,
   social posts, autonomous experiment branches, or source authority.
+- Draft Checkpoints may reference Git candidate evidence for local undo and
+  recovery, but they are cleanup-managed draft facts and not Project Revisions,
+  Work Capsules, publishable artifacts, or hidden auto-saves.
 
 This stage spans common foundation Gates F0-F7 in the implementation plan;
 individual Git kernel, SQLite metadata, conversation, History, Version, and provider improvements may ship
