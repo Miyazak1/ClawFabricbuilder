@@ -182,6 +182,12 @@ Current checkpoint:
   manifest/admission pair plus `builder-openai-compatible-transport.v1`. It is
   still descriptor evidence only: it does not dispatch the provider, normalize
   runtime events, read credentials, or alter the current release path.
+- `builder-provider-runtime-event-normalizer.v1` adds the first pure main-side
+  normalized event contract for that adapter. It can normalize request start,
+  display delta, completion, and failure events while keeping completed raw
+  provider text as digest/byte-count evidence only. It is not yet wired into
+  the generation host adapter, Task Stream, live output UI, package canary, or
+  real-provider release path.
 
 ### Gate F2 - Generation, IPC, and Frontend Cutover
 

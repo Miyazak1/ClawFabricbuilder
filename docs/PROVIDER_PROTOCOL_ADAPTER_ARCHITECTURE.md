@@ -351,6 +351,25 @@ Current checkpoint:
 - prove unknown event and malformed chunk handling;
 - keep raw provider body out of renderer replay.
 
+Current checkpoint:
+
+- `builder-provider-runtime-event-normalizer.v1` accepts a verified provider
+  protocol adapter descriptor plus bounded `builder-provider-adapter-event.v1`
+  inputs and emits normalized runtime events:
+  `provider_request_started`, `provider_text_delta`,
+  `provider_response_completed`, and `provider_response_failed`.
+- The normalizer verifies streaming capability before accepting text deltas,
+  rejects raw provider-envelope shaped payloads, rejects wrong transport
+  versions, rejects unknown failure codes, and fails closed on future event
+  timestamps or forged normalized event ids.
+- Completed responses expose only transport version, generated-text digest, and
+  generated-text byte count. They do not copy the raw provider body, prompt,
+  credential, endpoint, generated source text, provider envelope, Review, Save,
+  or Revision authority into the normalized event.
+- This checkpoint is not yet wired into the current generation host adapter,
+  Task Stream projection, live output UI, package canary, or real-provider
+  release path. It is the pure contract foundation for that later bridge.
+
 ### P4 - Add Responses Adapter Shadow Canary
 
 - disabled by default;
