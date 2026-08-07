@@ -104,7 +104,7 @@ export type BuilderPlanReviewInFlight = Readonly<{
 export type BuilderPlanSourceReadApprovalPrompt = Readonly<{
   project_id: string;
   instruction: string;
-  file_count: number;
+  file_count: number | null;
   state: 'pending' | 'approving' | 'failed';
 }>;
 
@@ -2907,11 +2907,17 @@ export function BuilderPage({
         </div>
         <div className="min-w-0">
           <h2 className="cf-builder-review-title">Allow project reading?</h2>
-          <p className="cf-builder-review-summary">
-            I need to read {planSourceReadApproval.file_count === 1
-              ? 'one project file'
-              : `${planSourceReadApproval.file_count} project files`} to make a useful plan.
-          </p>
+          {planSourceReadApproval.file_count === null ? (
+            <p className="cf-builder-review-summary">
+              I could not prepare project reading for this plan.
+            </p>
+          ) : (
+            <p className="cf-builder-review-summary">
+              I need to read {planSourceReadApproval.file_count === 1
+                ? 'one project file'
+                : `${planSourceReadApproval.file_count} project files`} to make a useful plan.
+            </p>
+          )}
           <p className="cf-builder-review-note">
             This only prepares the plan. It will not change files or save a version.
           </p>
@@ -2920,7 +2926,7 @@ export function BuilderPage({
       <div className="cf-builder-review-actions" data-builder-plan-source-read-actions="true">
         {planSourceReadApproval.state === 'failed' ? (
           <p className="cf-builder-review-note" role="alert">
-            I could not record that approval. Try again.
+            I could not prepare or record that approval. Try again.
           </p>
         ) : null}
         <button

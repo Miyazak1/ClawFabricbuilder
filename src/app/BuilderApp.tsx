@@ -1724,7 +1724,19 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       await runPlanProposal(submittedIdea, commandEpoch, fallbackProjectId);
       return true;
     } catch {
-      if (workspaceEpochRef.current === commandEpoch) setIdea(submittedIdea);
+      if (workspaceEpochRef.current === commandEpoch) {
+        const failed = Object.freeze({
+          project_id: fallbackProjectId,
+          instruction: submittedIdea,
+          file_count: null,
+          state: 'failed' as const,
+        });
+        planSourceReadApprovalRef.current = failed;
+        setPlanSourceReadApproval(failed);
+        composerModeRef.current = null;
+        setComposerMode(null);
+        setIdea('');
+      }
       return true;
     }
   }, [ports.generator, runPlanProposal]);

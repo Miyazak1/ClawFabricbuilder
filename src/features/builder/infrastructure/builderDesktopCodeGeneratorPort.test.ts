@@ -311,7 +311,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         result_version: 'builder-plan-source-read-approval-status.v1',
         project_id: (request as { project_id: string }).project_id,
         state: 'approval_required',
-        file_count: 3,
+        file_count: 1232,
         approval_scope: 'current_project_plan_source_read',
         authority: 'main_selected_project_bounded_filesystem_read_v1',
       },
@@ -323,7 +323,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         result_version: 'builder-plan-source-read-approval-result.v1',
         project_id: (request as { project_id: string }).project_id,
         operation: 'approval_recorded',
-        file_count: 3,
+        file_count: 1232,
         approval_scope: 'current_project_plan_source_read',
         authority: 'main_selected_project_bounded_filesystem_read_v1',
       },
@@ -380,7 +380,9 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(approvePlanSourceRead).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     expect(status.state).toBe('approval_required');
+    expect(status.file_count).toBe(1232);
     expect(approved.operation).toBe('approval_recorded');
+    expect(approved.file_count).toBe(1232);
     expect(JSON.stringify({ status, approved })).not.toMatch(/permission_id|resource_id|source_tree/iu);
     expect(Object.isFrozen(status)).toBe(true);
     expect(Object.isFrozen(approved)).toBe(true);

@@ -305,8 +305,15 @@ function safeDraftId(value: unknown): string {
   return value;
 }
 
+const MAX_PLAN_SOURCE_READ_APPROVAL_FILE_COUNT = 10_000;
+
 function safePlanSourceReadFileCount(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > 8) {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || value < 1
+    || value > MAX_PLAN_SOURCE_READ_APPROVAL_FILE_COUNT
+  ) {
     throw portError();
   }
   return value;
