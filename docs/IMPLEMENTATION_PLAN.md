@@ -177,6 +177,11 @@ Current checkpoint:
   capabilities without reading credentials, dispatching a provider, opening
   IPC/preload, mutating source/Git/SQLite, granting permission, or selecting a
   Revision.
+- `builder-provider-protocol-adapter-descriptor.v1` names the current
+  OpenAI-compatible Chat Completions adapter and binds it to that verified
+  manifest/admission pair plus `builder-openai-compatible-transport.v1`. It is
+  still descriptor evidence only: it does not dispatch the provider, normalize
+  runtime events, read credentials, or alter the current release path.
 
 ### Gate F2 - Generation, IPC, and Frontend Cutover
 

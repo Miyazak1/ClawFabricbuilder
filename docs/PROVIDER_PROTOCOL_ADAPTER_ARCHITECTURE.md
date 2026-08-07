@@ -326,6 +326,25 @@ Current checkpoint:
   normalization;
 - keep behavior-compatible with the current release canary.
 
+Current checkpoint:
+
+- `builder-provider-protocol-adapter-descriptor.v1` names the current adapter
+  as `builder-provider-protocol-adapter:openai-chat-completions-v1`, binds it
+  to `openai_chat_completions.v1`, and records the current
+  `builder-openai-compatible-transport.v1` transport version.
+- The descriptor requires a verified capability manifest and capability
+  admission for the same provider config digest before it can describe the
+  adapter. Manifest/admission drift, provider switch, unsupported adapter
+  family, stale assessment, forged response/stream/tool shapes, and attempted
+  executable tool claims fail closed.
+- The descriptor records current request/response/stream shapes
+  (`messages_json_object`, `choices_message_content`, and optional
+  `sse_choices_delta`) while keeping provider tool calls blocked and usage
+  metrics not normalized at this checkpoint.
+- This checkpoint performs no network request, provider dispatch,
+  credential readback, IPC/preload registration, prompt bridge, source/Git/
+  SQLite mutation, permission grant, Review, Save, or Revision selection.
+
 ### P3 - Add Runtime Event Normalizer
 
 - normalize Chat Completions events before UI/task projection;
