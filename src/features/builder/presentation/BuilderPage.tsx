@@ -21,7 +21,6 @@ import {
   History,
   ListChecks,
   LockKeyhole,
-  Maximize2,
   Menu,
   Minimize2,
   PanelRightClose,
@@ -1976,23 +1975,14 @@ function BuilderArtifactSidebar({
         title="Resize artifact panel"
         type="button"
       />
-      {activeTab === 'preview' ? (
-        <div className="cf-builder-artifact-utility-bar">
-          <button
-            aria-label="Expand preview"
-            className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-            data-builder-expand-preview="true"
-            onClick={onExpandPreview}
-            title="Expand preview"
-            type="button"
-          >
-            <Maximize2 aria-hidden="true" className="size-3.5" />
-          </button>
-        </div>
-      ) : null}
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
         {activeTab === 'preview' ? (
-          <BuilderResultPanel panelRef={previewPanelRef} placement="artifact" projection={preview} />
+          <BuilderResultPanel
+            onExpandPreview={onExpandPreview}
+            panelRef={previewPanelRef}
+            placement="artifact"
+            projection={preview}
+          />
         ) : null}
         {activeTab === 'changes' ? (
           <div className="cf-builder-artifact-changes" data-builder-changes-flow="true">

@@ -80,13 +80,12 @@ describe('Builder desktop layout styles', () => {
     const source = styles();
     const sidebar = styleBlock(source, '.cf-builder-artifact-sidebar');
     const handle = styleBlock(source, '.cf-builder-artifact-resize-handle');
-    const utilityBar = styleBlock(source, '.cf-builder-artifact-utility-bar');
     const body = styleBlock(source, '.cf-builder-artifact-body');
 
     expect(source).toContain('.cf-builder-chat-shell {');
     expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, var(--cf-builder-artifact-width, 480px));');
     expect(source).toContain('.cf-builder-chat-shell[data-builder-artifact-sidebar-visible="false"]');
-    expect(sidebar).toContain('grid-template-rows: auto minmax(0, 1fr);');
+    expect(sidebar).toContain('grid-template-rows: minmax(0, 1fr);');
     expect(sidebar).toContain('overflow: hidden;');
     expect(sidebar).toContain('border-left: 1px solid var(--cf-border);');
     expect(handle).toContain('cursor: col-resize;');
@@ -100,8 +99,7 @@ describe('Builder desktop layout styles', () => {
     expect(source).not.toContain('.cf-builder-artifact-view-button');
     expect(source).not.toContain('.cf-builder-artifact-view-menu');
     expect(source).not.toContain('.cf-builder-artifact-tab');
-    expect(utilityBar).toContain('display: flex;');
-    expect(utilityBar).toContain('justify-content: flex-end;');
+    expect(source).not.toContain('.cf-builder-artifact-utility-bar');
     expect(body).toContain('grid-template-rows: minmax(0, 1fr);');
     expect(source).not.toContain(
       '.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"]',
@@ -364,6 +362,7 @@ describe('Builder desktop layout styles', () => {
     expect(result).toContain('overflow: visible;');
     expect(toolbar).toContain('border-bottom: 0;');
     expect(toolbar).toContain('background: transparent;');
+    expect(toolbar).toContain('justify-content: space-between;');
     expect(body).toContain('padding: 0;');
     expect(previewFrame).toContain('min-height: clamp(260px, 34vh, 420px);');
     expect(previewFrame).not.toContain('48vh');

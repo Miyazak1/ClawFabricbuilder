@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createRef, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BuilderResultPanel } from './BuilderResultPanel';
 
@@ -50,5 +50,23 @@ describe('BuilderResultPanel', () => {
     expect(panel?.className).not.toContain('cf-builder-flow-card');
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('Preview unavailable');
+  });
+
+  it('keeps artifact preview expansion in the result toolbar', () => {
+    const onExpandPreview = vi.fn();
+    const container = render(
+      <BuilderResultPanel
+        onExpandPreview={onExpandPreview}
+        placement="artifact"
+        projection={null}
+      />,
+    );
+
+    const expand = container.querySelector<HTMLButtonElement>('[data-builder-expand-preview="true"]');
+    expect(expand).not.toBeNull();
+    expect(expand?.closest('.cf-builder-result-toolbar')).not.toBeNull();
+    expect(expand?.closest('[data-builder-result-placement="artifact"]')).not.toBeNull();
+    act(() => expand?.click());
+    expect(onExpandPreview).toHaveBeenCalledOnce();
   });
 });
