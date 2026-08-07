@@ -167,6 +167,18 @@ writes no Git ref, performs no Save, selects no Project Revision, dispatches no
 provider/tool, mutates no source, publishes nothing, and creates no Work
 Capsule.
 
+Current recording service checkpoint:
+`builder-draft-checkpoint-recording-service.v1` now records a Draft Checkpoint
+from verified candidate evidence into the main-owned store, reads it back,
+confirms the latest checkpoint for the Task Address, and returns bounded
+evidence for restart-safe recovery. It is still a pure main-side service: no
+IPC/preload surface, no renderer-owned facts, no provider/model/tool dispatch,
+no source write, no Git mutation, no permission grant, no Review decision, no
+Save, no Project Revision selection, no publication, and no Work Capsule
+creation. This service is the contract slice that later mutating Run lifecycle
+code may call after candidate verification; it is not yet wired into runtime
+generation or UI restore/compare actions.
+
 Current status projection checkpoint:
 `builder-draft-checkpoint-status-projection.v1` turns a verified latest/read
 store result into renderer-safe copy such as `Checkpoint saved`, compare/restore
