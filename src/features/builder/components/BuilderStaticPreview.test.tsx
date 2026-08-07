@@ -44,9 +44,8 @@ describe('BuilderStaticPreview', () => {
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
     expect(limitation?.getAttribute('role')).toBe('status');
     expect(limitation?.textContent).toContain('Static preview');
-    expect(limitation?.textContent).toContain('visible HTML/CSS is shown here');
-    expect(limitation?.textContent).toContain('Interactive JavaScript is disabled');
-    expect(limitation?.textContent).toContain('files were generated');
+    expect(limitation?.textContent).toContain('HTML and CSS are shown here');
+    expect(limitation?.textContent).toContain('JavaScript is disabled');
     expect(limitation?.textContent)
       .toContain('live preview support');
     expect(limitation?.textContent)

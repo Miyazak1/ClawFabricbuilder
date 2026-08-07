@@ -105,9 +105,8 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
             >
               <h3 className="cf-builder-preview-runtime-title">Static preview</h3>
               <p className="cf-builder-preview-note">
-                The files were generated and the visible HTML/CSS is shown here. Interactive
-                JavaScript is disabled in this preview, so controls or animations may need live
-                preview support before saving.
+                HTML and CSS are shown here. JavaScript is disabled, so controls or animations may
+                need live preview support before saving.
               </p>
               {projection.preview_runtime_limitations.length > 0 ? (
                 <ul className="cf-builder-preview-limitation-list">

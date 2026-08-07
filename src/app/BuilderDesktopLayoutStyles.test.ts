@@ -417,9 +417,11 @@ describe('Builder desktop layout styles', () => {
     const runtimeNotice = styleBlock(source, '.cf-builder-preview-runtime-notice');
     const unavailable = styleBlock(source, '.cf-builder-preview-unavailable');
 
-    expect(runtimeNotice).toContain('border-left: 3px solid var(--cf-warning-border);');
-    expect(runtimeNotice).not.toContain('border: 1px solid var(--cf-warning-border);');
-    expect(runtimeNotice).not.toContain('border-radius: 7px;');
+    expect(runtimeNotice).toContain('border: 1px solid color-mix(in srgb, var(--cf-warning-border) 28%, var(--cf-border));');
+    expect(runtimeNotice).toContain('border-radius: 7px;');
+    expect(runtimeNotice).toContain('background: color-mix(in srgb, var(--cf-warning-soft) 18%, var(--cf-surface));');
+    expect(runtimeNotice).toContain('padding: 8px 10px;');
+    expect(runtimeNotice).not.toContain('border-left: 3px');
     expect(unavailable).toContain('border-top: 1px solid var(--cf-border);');
     expect(unavailable).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(unavailable).not.toContain('border-radius');
