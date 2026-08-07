@@ -471,6 +471,53 @@ describe('Builder project controller v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
+  it('continues an approved plan for a bound local project before the first saved version', async () => {
+    const sourceTree = await createSourceTree();
+    const { controller, createLocalProject, generate, generateApprovedPlan, saveDraft } = setup({
+      createLocalProject: async () => createLocalProjectSelection(),
+      generateApprovedPlan: async () => ({
+        ...await createGenerationDraft(
+          await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID),
+          sourceTree,
+        ),
+        base_revision_evidence: null,
+      }),
+    });
+
+    const bound = await controller.createLocalProject('Focus timer');
+    expect(bound.workingProjectId).toBe(PROJECT_ID);
+
+    const result = await controller.generateApprovedPlan({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: null,
+      project_title: 'Focus timer',
+    });
+    expect(result).toMatchObject({
+      status: 'draft_ready',
+      savedProject: null,
+      workingProjectId: PROJECT_ID,
+      draft: {
+        project_id: PROJECT_ID,
+        existing_project_id: PROJECT_ID,
+        base_revision_evidence: null,
+      },
+    });
+    expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('retries approved-plan continuation through the approved-plan generator only', async () => {
     let attempts = 0;
     const { controller, generate, generateApprovedPlan, retry, saveDraft } = setup({

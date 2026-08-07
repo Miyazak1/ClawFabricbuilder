@@ -663,7 +663,7 @@ export async function sanitizeBuilderApprovedPlanGenerationDraft(
       base_revision_evidence: sanitizeBaseEvidence(
         source.base_revision_evidence,
         request.project_id,
-        true,
+        source.base_revision_evidence !== null,
       ),
       source_tree: sourceTree,
       admissions: {

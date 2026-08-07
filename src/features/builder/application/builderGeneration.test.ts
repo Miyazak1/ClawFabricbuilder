@@ -145,7 +145,7 @@ describe('Builder generation v2', () => {
     expect(Object.isFrozen(result.source_tree.files)).toBe(true);
   });
 
-  it('accepts an approved-plan draft only for the saved project base', async () => {
+  it('accepts an approved-plan draft for the saved project base', async () => {
     const hostRequest = await createBuilderGenerationRequest(
       'Review the approved plan.',
       PROJECT_ID,
@@ -168,7 +168,31 @@ describe('Builder generation v2', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
-  it('rejects approved-plan drafts without saved-base evidence or with hidden authority fields', async () => {
+  it('accepts an approved-plan draft before the first saved version', async () => {
+    const hostRequest = await createBuilderGenerationRequest(
+      'Review the approved plan.',
+      PROJECT_ID,
+    );
+    const wire = {
+      ...await createGenerationDraft(hostRequest),
+      base_revision_evidence: null,
+    };
+    const request = {
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    };
+    const result = await sanitizeBuilderApprovedPlanGenerationDraft(structuredClone(wire), request);
+
+    expect(result.project_id).toBe(PROJECT_ID);
+    expect(result.existing_project_id).toBe(PROJECT_ID);
+    expect(result.base_revision_evidence).toBeNull();
+    expect(result.restart_restore).toBe('not_persisted');
+    expect(result.admissions.save).toBe('not_performed');
+  });
+
+  it('rejects approved-plan drafts with hidden authority fields or identity drift', async () => {
     const hostRequest = await createBuilderGenerationRequest(
       'Review the approved plan.',
       PROJECT_ID,
@@ -182,7 +206,6 @@ describe('Builder generation v2', () => {
     };
     for (const forged of [
       { ...draft, existing_project_id: null },
-      { ...draft, base_revision_evidence: null },
       { ...draft, source_receipt: 'renderer-owned' },
       { ...draft, project_id: 'builder-project:223e4567-e89b-42d3-a456-426614174000' },
     ]) {

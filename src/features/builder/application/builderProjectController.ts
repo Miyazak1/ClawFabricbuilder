@@ -1341,10 +1341,14 @@ export function createBuilderProjectController(
     }
     if (retryable.kind === 'approved_plan') {
       if (current.status !== 'generation_failed') return current;
+      const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
       if (
-        retained === null
-        || retained.target.project_id !== retryable.request.project_id
-        || retained.target.conversation_id !== retryable.request.conversation_id
+        targetProjectId === null
+        || targetProjectId !== retryable.request.project_id
+        || (
+          retained !== null
+          && retained.target.conversation_id !== retryable.request.conversation_id
+        )
       ) return current;
       const before = current;
       return run(async (operationEpoch) => {
@@ -1357,6 +1361,8 @@ export function createBuilderProjectController(
           null,
           null,
           false,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
         activeGeneration = Object.freeze({
           before,
@@ -1385,6 +1391,8 @@ export function createBuilderProjectController(
             null,
             null,
             retryableGeneration !== null,
+            unsavedWorkingProjectId(retained, null, targetProjectId),
+            unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
           ));
         }
       });
@@ -1456,20 +1464,35 @@ export function createBuilderProjectController(
     request: BuilderApprovedPlanGenerationRequest,
   ): Promise<BuilderProjectControllerSnapshot> {
     const retained = current.savedProject;
+    const targetProjectId = retained?.target.project_id ?? current.workingProjectId;
     if (
       disposed
       || current.busy
       || current.draft !== null
       || current.inspectedRevision !== null
-      || retained === null
+      || targetProjectId === null
       || !['ready', 'preview_unavailable'].includes(current.status)
-      || retained.target.project_id !== request.project_id
-      || retained.target.conversation_id !== request.conversation_id
+      || targetProjectId !== request.project_id
+      || (
+        retained !== null
+        && retained.target.conversation_id !== request.conversation_id
+      )
     ) return current;
     retryableGeneration = null;
     const before = withoutRetryableGeneration(current);
     return run(async (operationEpoch) => {
-      publish(snapshot('generating', retained, null, current.preview, null));
+      publish(snapshot(
+        'generating',
+        retained,
+        null,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        unsavedWorkingProjectId(retained, null, targetProjectId),
+        unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+      ));
       activeGeneration = Object.freeze({
         before,
         projectId: request.project_id,
@@ -1497,6 +1520,8 @@ export function createBuilderProjectController(
           null,
           null,
           retryableGeneration !== null,
+          unsavedWorkingProjectId(retained, null, targetProjectId),
+          unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
         ));
       }
     });

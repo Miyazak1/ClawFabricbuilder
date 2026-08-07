@@ -3223,7 +3223,7 @@ test('keeps convert-to-plan requests out of the submit build fallback', async ()
   });
 
   const answer = await service.submit(request({
-    instruction: '做成plan',
+    instruction: '我打算做一个技术博客，静态的，帮我做成计划',
     existingProjectId: PROJECT_ID,
   }));
 

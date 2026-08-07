@@ -4677,6 +4677,52 @@ describe('BuilderApp v2', () => {
     );
   });
 
+  it('executes an approved plan for a bound local workspace before the first saved version', async () => {
+    const {
+      container,
+      generate,
+      generateApprovedPlan,
+      listWorkspaces,
+      open,
+      reviewPlan,
+      saveDraft,
+    } = await setup({
+      pendingPlanActivity: true,
+      workspaceOnlyCatalog: true,
+    });
+    await waitFor(() => {
+      expect(listWorkspaces).toHaveBeenCalled();
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+        .toContain('Source folder:');
+      expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+
+    click(container, 'Approve plan');
+
+    await waitFor(() => {
+      expect(reviewPlan).toHaveBeenCalledOnce();
+      expect(generateApprovedPlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
+        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+    });
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
+    );
+  });
+
   it('keeps approved plan continuation retryable when the draft is not created', async () => {
     const {
       container,

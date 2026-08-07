@@ -210,6 +210,29 @@
       }
     },
     {
+      "name": "project description ending in convert-to-plan is explicit plan without write admission",
+      "instruction": "我打算做一个技术博客，静态的，帮我做成计划",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
       "name": "natural implementation analysis request is explicit plan without write admission",
       "instruction": "先分析一下实现方案",
       "context": {
