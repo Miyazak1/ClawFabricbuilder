@@ -141,6 +141,9 @@ describe('routeBuilderComposerIntent', () => {
 
   it.each([
     '先规划一下这个项目',
+    '先帮我梳理一下实现步骤',
+    '请先整理这个页面方案',
+    '拆解下项目思路',
     '先做个方案',
     '帮我先做下方案',
     '请先不要写代码，列步骤',
@@ -219,7 +222,7 @@ describe('routeBuilderComposerIntent', () => {
   });
 
   it('routes natural-language plan requests to plan without write admission', () => {
-    expect(decideBuilderComposerIntent('帮我先做下方案', {
+    expect(decideBuilderComposerIntent('先帮我梳理一下实现步骤', {
       hasWorkspace: true,
       hasWritePermission: true,
     })).toMatchObject({

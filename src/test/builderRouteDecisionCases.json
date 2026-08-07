@@ -164,6 +164,29 @@
       }
     },
     {
+      "name": "natural planning step request is explicit plan without write admission",
+      "instruction": "先帮我梳理一下实现步骤",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["explicit_plan"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "resultKind": "explanation"
+      }
+    },
+    {
       "name": "future goal request remains read-only clarification",
       "instruction": "进入目标模式，一直帮我改到完成为止",
       "context": {

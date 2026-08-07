@@ -3101,7 +3101,7 @@ test('keeps natural-language plan requests out of the submit build fallback', as
   });
 
   const answer = await service.submit(request({
-    instruction: '帮我先做下方案',
+    instruction: '先帮我梳理一下实现步骤',
     existingProjectId: PROJECT_ID,
   }));
 

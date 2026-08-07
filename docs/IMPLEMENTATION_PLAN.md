@@ -932,7 +932,8 @@ Evidence requirements:
   context still rejects any attempt to carry this descriptor as extra context
   material;
 - the current natural plan request checkpoint routes explicit plan-first wording
-  such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
+  such as "帮我先做下方案", "先帮我梳理一下实现步骤", "先给我一个方案",
+  or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works
   for either a saved project or a bound local workspace before its first saved
   version; Save Version is not a planning prerequisite. The main-owned

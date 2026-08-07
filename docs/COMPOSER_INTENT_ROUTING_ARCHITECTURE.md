@@ -240,7 +240,8 @@ direct build request. This keeps the visible mode chip, route evidence, and
 main work dispatch aligned.
 
 Current natural plan request checkpoint: explicit plan wording such as
-`帮我先做下方案`, `先给我一个方案`, or `Plan this first` also routes to
+`帮我先做下方案`, `先帮我梳理一下实现步骤`, `先给我一个方案`,
+or `Plan this first` also routes to
 `plan` in the renderer for a saved project or a bound local workspace that has
 not been saved as Version 1 yet. Save Version is not a planning prerequisite.
 The main-owned `submit` fallback recognizes the same public intent shape but
