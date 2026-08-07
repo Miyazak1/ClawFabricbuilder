@@ -450,6 +450,12 @@ type SubmitInstructionText = (
   options?: SubmitInstructionTextOptions,
 ) => Promise<void>;
 
+type LockedComposerSubmit = Readonly<{
+  epoch: number;
+  instruction: string;
+  options: SubmitInstructionTextOptions;
+}>;
+
 type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
   project_id: string;
   instruction: string;
@@ -956,8 +962,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
   const [composerMode, setComposerMode] = useState<BuilderComposerMode | null>(null);
   const [approvalMode, setApprovalMode] = useState<BuilderComposerApprovalMode>('ask_before_write');
+  const [submitInFlight, setSubmitInFlight] = useState(false);
   const [composerRouteDecision, setComposerRouteDecision] =
     useState<BuilderComposerRouteDecisionEvidence | null>(null);
+  const [lockedComposerSubmit, setLockedComposerSubmit] =
+    useState<LockedComposerSubmit | null>(null);
   const [queuedActiveRunFollowup, setQueuedActiveRunFollowup] =
     useState<QueuedActiveRunFollowup | null>(null);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
@@ -997,6 +1006,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const submitInstructionTextRef = useRef<SubmitInstructionText | null>(null);
   const restoreAttemptKeysRef = useRef(new Set<string>());
   const submitInFlightRef = useRef(false);
+  const submitInFlightInstructionRef = useRef<string | null>(null);
+  const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
+  const publishSubmitInFlight = useCallback((inFlight: boolean) => {
+    submitInFlightRef.current = inFlight;
+    setSubmitInFlight(inFlight);
+  }, []);
+  const publishLockedComposerSubmit = useCallback((lockedSubmit: LockedComposerSubmit | null) => {
+    lockedComposerSubmitRef.current = lockedSubmit;
+    setLockedComposerSubmit(lockedSubmit);
+  }, []);
   const publishQueuedActiveRunFollowup = useCallback((queued: QueuedActiveRunFollowup | null) => {
     queuedActiveRunFollowupRef.current = queued;
     setQueuedActiveRunFollowup(queued);
@@ -1163,6 +1182,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [publishQueuedActiveRunFollowup, queuedActiveRunFollowup]);
 
   useEffect(() => {
+    if (lockedComposerSubmit === null) return undefined;
+    const dispatchLockedSubmit = () => {
+      const pending = lockedComposerSubmitRef.current;
+      if (pending === null) return;
+      if (workspaceEpochRef.current !== pending.epoch) {
+        publishLockedComposerSubmit(null);
+        return;
+      }
+      if (submitInFlightRef.current) return;
+      publishLockedComposerSubmit(null);
+      void submitInstructionTextRef.current?.(pending.instruction, pending.options);
+    };
+    const initialHandle = window.setTimeout(dispatchLockedSubmit, 0);
+    const intervalHandle = window.setInterval(dispatchLockedSubmit, 50);
+    return () => {
+      window.clearTimeout(initialHandle);
+      window.clearInterval(intervalHandle);
+    };
+  }, [lockedComposerSubmit, publishLockedComposerSubmit]);
+
+  useEffect(() => {
     if (!catalogNewProjectPending) return;
     if (project.snapshot.busy || project.snapshot.status !== 'new') return;
     const handle = window.setTimeout(() => {
@@ -1262,6 +1302,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     planSourceReadApprovalRef.current = null;
     currentProjectWriteApprovalRef.current = null;
     currentProjectWriteApprovalStatusRef.current = null;
+    submitInFlightInstructionRef.current = null;
+    publishLockedComposerSubmit(null);
     publishQueuedActiveRunFollowup(null);
     setPlanReviewFailure(null);
     setPlanReviewRecorded(null);
@@ -1272,14 +1314,19 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setCurrentProjectWriteApprovalStatus(null);
     publishPlanReviewInFlight(null);
     restoreAttemptKeysRef.current.clear();
-    submitInFlightRef.current = false;
+    publishSubmitInFlight(false);
     setWorkspaceEpoch(workspaceEpochRef.current);
     setProjectId(nextProjectId);
     if (options.preserveIdea !== true) setIdea('');
     setActiveFile(null);
     setLiveOutput(null);
     setView('project');
-  }, [publishPlanReviewInFlight, publishQueuedActiveRunFollowup]);
+  }, [
+    publishLockedComposerSubmit,
+    publishPlanReviewInFlight,
+    publishQueuedActiveRunFollowup,
+    publishSubmitInFlight,
+  ]);
 
   const openProject = useCallback((nextProjectId: string) => {
     resetWorkspace(nextProjectId);
@@ -1346,7 +1393,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (projectTitle.trim().length === 0) return;
     if (submitInFlightRef.current) return;
     const commandEpoch = workspaceEpochRef.current;
-    submitInFlightRef.current = true;
+    publishSubmitInFlight(true);
     try {
       setView('project');
       const result = await project.createLocalProject(projectTitle);
@@ -1466,7 +1513,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       await readActivityAfterTerminal(buildResult, commandEpoch);
       setLiveOutput(null);
     } finally {
-      submitInFlightRef.current = false;
+      publishSubmitInFlight(false);
     }
   }, [
     catalog,
@@ -1474,6 +1521,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     idea,
     ports.generator,
     project,
+    publishSubmitInFlight,
     readActivityAfterTerminal,
   ]);
 
@@ -1685,7 +1733,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     submittedIdea,
     options = Object.freeze({}),
   ) => {
-    if (submitInFlightRef.current || submittedIdea.trim().length === 0) return;
+    const trimmedSubmittedIdea = submittedIdea.trim();
+    if (trimmedSubmittedIdea.length === 0) return;
+    if (submitInFlightRef.current) {
+      if (submitInFlightInstructionRef.current?.trim() !== trimmedSubmittedIdea) {
+        publishLockedComposerSubmit(Object.freeze({
+          epoch: workspaceEpochRef.current,
+          instruction: submittedIdea,
+          options: Object.freeze({ ...options }),
+        }));
+      }
+      return;
+    }
     publishQueuedActiveRunFollowup(null);
     setAnswerFailureRecordedSuccess(false);
     let decision = decideBuilderComposerIntent(
@@ -1735,13 +1794,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     );
     if (pendingPlan !== null && isBuilderComposerContextualBuildIntent(submittedIdea)) {
       publishRouteDecision(decision);
-      submitInFlightRef.current = true;
+      submitInFlightInstructionRef.current = submittedIdea;
+      publishSubmitInFlight(true);
       setIdea('');
       setLiveOutput(null);
       try {
         await reviewPlan(pendingPlan);
       } finally {
-        submitInFlightRef.current = false;
+        submitInFlightInstructionRef.current = null;
+        publishSubmitInFlight(false);
       }
       return;
     }
@@ -1774,7 +1835,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     const commandEpoch = workspaceEpochRef.current;
-    submitInFlightRef.current = true;
+    submitInFlightInstructionRef.current = submittedIdea;
+    publishSubmitInFlight(true);
     try {
       if (composerModeRef.current === 'plan' || decision.dispatch === 'plan') {
         publishRouteDecision(decision);
@@ -1882,7 +1944,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setLiveOutput(null);
     } finally {
       if (workspaceEpochRef.current === commandEpoch) {
-        submitInFlightRef.current = false;
+        submitInFlightInstructionRef.current = null;
+        publishSubmitInFlight(false);
       }
     }
   }, [
@@ -1890,6 +1953,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.generator,
     createComposerRouteEvidence,
     publishQueuedActiveRunFollowup,
+    publishLockedComposerSubmit,
+    publishSubmitInFlight,
     readActivityAfterTerminal,
     reviewPlan,
     submitPlanInstruction,
@@ -2026,7 +2091,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const prompt = planSourceReadApprovalRef.current;
     if (prompt === null || submitInFlightRef.current || prompt.state === 'approving') return;
     const commandEpoch = workspaceEpochRef.current;
-    submitInFlightRef.current = true;
+    publishSubmitInFlight(true);
     const approving = Object.freeze({ ...prompt, state: 'approving' as const });
     planSourceReadApprovalRef.current = approving;
     setPlanSourceReadApproval(approving);
@@ -2045,16 +2110,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     } finally {
       if (workspaceEpochRef.current === commandEpoch) {
-        submitInFlightRef.current = false;
+        publishSubmitInFlight(false);
       }
     }
-  }, [ports.generator, runPlanProposal]);
+  }, [ports.generator, publishSubmitInFlight, runPlanProposal]);
 
   const approveCurrentProjectWrite = useCallback(async () => {
     const prompt = currentProjectWriteApprovalRef.current;
     if (prompt === null || submitInFlightRef.current || prompt.state === 'approving') return;
     const commandEpoch = workspaceEpochRef.current;
-    submitInFlightRef.current = true;
+    publishSubmitInFlight(true);
     const approving = Object.freeze({ ...prompt, state: 'approving' as const });
     currentProjectWriteApprovalRef.current = approving;
     setCurrentProjectWriteApproval(approving);
@@ -2108,13 +2173,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     } finally {
       if (workspaceEpochRef.current === commandEpoch) {
-        submitInFlightRef.current = false;
+        publishSubmitInFlight(false);
       }
     }
   }, [
     createComposerRouteEvidence,
     ports.generator,
     project,
+    publishSubmitInFlight,
     readActivityAfterTerminal,
   ]);
 
@@ -2428,6 +2494,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               providerContextDisclosureApprovalState={visibleProviderContextDisclosureApprovalState}
               composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
+              composerSubmitLocked={submitInFlight}
               currentProjectWriteApproval={currentProjectWriteApproval}
               instruction={idea}
               liveOutput={liveOutput}

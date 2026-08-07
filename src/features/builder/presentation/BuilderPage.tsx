@@ -123,6 +123,7 @@ export type BuilderPageProps = {
   providerContextDisclosureStatus?: BuilderProviderContextDisclosureStatusProjectionWire | null;
   providerContextDisclosureApprovalState?: 'idle' | 'approving' | 'failed';
   composerMode?: BuilderComposerMode | null;
+  composerSubmitLocked?: boolean;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   answerFailureRecordedSuccess?: boolean;
@@ -2050,6 +2051,7 @@ export function BuilderPage({
   providerContextDisclosureStatus = null,
   providerContextDisclosureApprovalState = 'idle',
   composerMode = null,
+  composerSubmitLocked = false,
   currentProjectWriteApproval = null,
   onApproveCurrentProjectWrite,
   onApproveProviderContextDisclosure,
@@ -2124,6 +2126,7 @@ export function BuilderPage({
   const canSubmit = typeof onSubmitInstruction === 'function'
     && GENERATABLE_STATUSES.has(status)
     && !viewingHistory
+    && !composerSubmitLocked
     && instruction.trim().length > 0;
   const canSubmitComposer = canSubmit || (canAddContext && instruction.trim().length > 0);
   const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
