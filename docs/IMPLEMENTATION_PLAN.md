@@ -921,6 +921,13 @@ Evidence requirements:
   unchanged, and no IPC/preload/provider dispatch path consumes this variant
   yet. This gives the future bridge a tested prompt shape without making
   Working Context State silently enter provider prompts;
+- the current prompt-bridge descriptor checkpoint adds
+  `builder-provider-context-prompt-bridge-descriptor.v1` as the main-only fact
+  that binds a generation request, base source tree, conversation events, and
+  verified prompt-bridge admission to that provider-context prompt descriptor.
+  It records the admission source refs and descriptor digest, but still performs
+  no IPC/preload registration, provider dispatch, tool dispatch, source/Git/
+  SQLite mutation, permission grant, revision admission, or secret access;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

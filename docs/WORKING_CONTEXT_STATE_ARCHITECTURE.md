@@ -606,6 +606,13 @@ Current checkpoint:
   kernel-level prompt-shape contract for the future bridge; the default prompt
   descriptor stays unchanged, and no IPC/preload/provider dispatch path consumes
   it yet.
+- `builder-provider-context-prompt-bridge-descriptor.v1` now wraps that kernel
+  variant as a main-only descriptor fact. It accepts the generation request,
+  base source tree, conversation events, and verified prompt-bridge admission,
+  then returns a digest-bound prompt descriptor plus admission source refs. It
+  still performs no IPC/preload registration, provider dispatch, tool dispatch,
+  source/Git/SQLite mutation, permission grant, revision admission, or secret
+  access.
 
 ### Provider Context Egress Consent
 
