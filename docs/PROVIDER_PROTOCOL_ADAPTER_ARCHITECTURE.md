@@ -26,6 +26,19 @@ added as independent protocol adapters after the current provider canary and
 save/restart loop are stable. They must not be mixed into the current chat
 transport with conditionals that blur protocol semantics.
 
+The practical rule is:
+
+```text
+ship current chat path -> name and normalize it -> shadow-test Responses ->
+promote only after package and real-provider canaries prove the full Builder loop
+```
+
+Codex and other mature coding agents can move faster at the protocol layer
+because their current provider/runtime contracts are already built around that
+shape. Builder should not copy that endpoint choice before its own Chat
+Completions release loop, Review, Save, restart recovery, and provider canary
+are stable under release canaries.
+
 ## Non-Goals
 
 - no near-term provider main-path rewrite;
@@ -50,6 +63,36 @@ Builder should treat these as adapter inputs, not product commitments:
 | OpenAI Responses-style APIs | Response objects and streaming events can express richer output items, tool calls, previous response references, prompt refs, and cache hints. | Add as a separate adapter with explicit capability gates. Hosted response state can optimize provider interaction but cannot replace Builder Session/Task/Run facts. |
 | Anthropic Messages | Messages use content blocks, SSE event names, tool-use blocks, thinking/text deltas, and provider-specific stop/error semantics. | Add as a separate adapter and normalizer. Do not force it through an OpenAI-compatible request/response model. |
 | Codex, Claude Code, DotCraft, Pi, OpenCode style agents | Mature products separate internal run semantics from provider-specific transports. | Builder should normalize provider output into local Run/Review/Tool/Artifact facts before it affects work. |
+
+### DeepSeek API Interpretation
+
+DeepSeek currently exposes more than one useful surface, and Builder should not
+treat them as interchangeable:
+
+| DeepSeek surface | What it is for | Builder posture |
+| --- | --- | --- |
+| `/chat/completions` | The existing OpenAI-compatible message-list API. It supports ordinary chat generation, streaming chunks, JSON output, function/tool-call style output, reasoning/thinking controls, and provider-side cache usage reporting. | Keep this as the near-term default. Builder sends assembled messages and owns all durable state. |
+| `/responses` | A Responses-style API intended to fit newer agent/Codex-like event flows. Its event and parameter semantics are not identical to every OpenAI Responses feature, and model/tool support may differ by provider release. | Add only through `openai_responses.v1` with a capability manifest and shadow canary. Do not retrofit it into the chat adapter. |
+| Anthropic-compatible base URL | DeepSeek documents Anthropic-format access for compatible clients. This is an API shape, not Claude itself. | Treat as `anthropic_messages.v1` only after a separate adapter exists. |
+| FIM `/completions` | Fill-in-the-middle code completion. | Not part of the current agent build loop. Consider later for editor-style inline completion, not project generation. |
+
+This means DeepSeek Responses does not remove the need for Builder's own
+Conversation, Working Context, compaction, handoff, Permission, Review, Git, or
+SQLite state. Even when a provider offers hosted response state or cache hints,
+those are transport optimizations and diagnostics, not product authority.
+
+### Competitor Protocol Pattern
+
+The mature pattern across current coding-agent tools is a provider abstraction
+with explicit protocol and model capability metadata:
+
+| Product / project | Provider handling pattern | Builder decision |
+| --- | --- | --- |
+| Codex | Current open-source Codex provider metadata is Responses-centered; provider config records the wire protocol and rejects the old chat wire path in current source. | Useful long-term signal: Responses is the right shape for agentic event streams. Not a reason to rewrite Builder's near-term release path. |
+| Claude / Claude Code | Claude's public Messages API is native and stateless: callers send prior turns in `messages`; system prompt is top-level; tool/thinking events use Anthropic-specific content blocks and SSE semantics. | Use a native Anthropic Messages adapter. Do not squeeze Claude through OpenAI Chat Completions. |
+| DotCraft | Configuration makes `Protocol` explicit: `anthropic`, `openai-chat-completions`, or `openai-responses`; model capability catalog and provider preferences sit above protocol details. | Copy the shape, not the implementation: explicit protocol field plus capability manifest. |
+| Pi | Provider/model config has an `api` type such as `anthropic-messages`, `openai-completions`, `openai-responses`, or `google-generative-ai`; custom providers normalize streams into an internal assistant-message event vocabulary and use compaction on context overflow. | Strong reference for a Runtime Event Normalizer and capability/compat flags. |
+| OpenCode | Uses provider packages and model capability metadata. For custom providers, OpenAI-compatible chat and OpenAI Responses use different runtime packages. | Confirms that chat-compatible and responses-compatible are separate adapters, even when both are "OpenAI-like". |
 
 ## Layer Model
 
@@ -87,6 +130,22 @@ timeout_ms
 retry_policy
 known_limitations
 ```
+
+Recommended protocol identifiers:
+
+```text
+openai_chat_completions.v1
+openai_responses.v1
+anthropic_messages.v1
+deepseek_chat_completions.v1 preset over openai_chat_completions.v1
+deepseek_responses.v1 preset over openai_responses.v1
+```
+
+The `deepseek_*` names are presets/capability profiles, not separate product
+authorities. They let Builder model provider-specific quirks such as thinking
+fields, model availability, cache reporting, stream endings, unsupported
+parameters, and tool support while reusing the protocol adapter where the wire
+shape is compatible.
 
 Rules:
 
@@ -243,6 +302,8 @@ publish, or Save from a provider event is forbidden.
 - pure main-side contract;
 - no network, no IPC/preload, no provider dispatch, no credential readback;
 - tests for unsupported capabilities, provider digest drift, and redaction.
+- include DeepSeek Chat Completions and DeepSeek Responses preset manifests,
+  but keep Responses disabled outside canary/test paths.
 
 ### P2 - Name the Current Adapter
 
@@ -264,6 +325,8 @@ publish, or Save from a provider event is forbidden.
 - no hosted provider state as Builder authority;
 - compare output quality, stream stability, usage, and failure semantics against
   the Chat Completions path.
+- first targets: OpenAI Responses-compatible fixture, then DeepSeek Responses
+  canary if credentials/model support are explicitly available.
 
 ### P5 - Add Anthropic Messages Adapter Shadow Canary
 
@@ -313,10 +376,22 @@ explicitly opened.
 
 ## References
 
-- DeepSeek API: Chat Completions, multi-round conversation, and context caching
-  describe a stateless `/chat/completions` path plus provider-side cache
-  optimization.
-- OpenAI Responses API documentation describes response objects, streaming
-  events, previous response references, prompt cache hints, and tool limits.
-- Anthropic Claude Messages documentation describes `/v1/messages`, content
-  blocks, SSE event flow, and tool-use streaming.
+- [DeepSeek Chat Completions](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion)
+  and [DeepSeek Responses](https://api-docs.deepseek.com/zh-cn/api/create-response)
+  are separate API surfaces.
+- [DeepSeek model/API guide](https://api-docs.deepseek.com/zh-cn/guides/reasoning_model)
+  documents OpenAI-format and Anthropic-format base URLs plus thinking controls.
+- [OpenAI Codex provider source](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs)
+  shows provider metadata and current Responses wire preference.
+- [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
+  documents response objects, streaming events, previous response references,
+  and provider-managed response state.
+- [Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create)
+  documents `/v1/messages` and stateless multi-turn requests.
+- [DotCraft configuration](https://www.dotcraft.net/developing/configuration)
+  documents explicit provider `Protocol` values.
+- [Pi providers](https://pi.dev/docs/latest/providers) and
+  [Pi custom providers](https://pi.dev/docs/latest/custom-provider) document
+  multi-protocol provider configuration and stream normalization.
+- [OpenCode providers](https://dev.opencode.ai/docs/providers) document separate
+  provider packages for OpenAI-compatible chat and Responses-style models.
