@@ -2570,6 +2570,80 @@ test('records a main-only plan proposal from collected source context without so
   );
 });
 
+test('records a plan proposal for a bound local project before the first saved revision', async () => {
+  const readAttempts = [];
+  const identityReads = [];
+  const collected = [];
+  const transportInputs = [];
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: {
+        load_current(query) {
+          readAttempts.push(query);
+          const error = new Error('current revision missing');
+          error.code = 'builder_project_read_not_found';
+          throw error;
+        },
+      },
+      projectIdentityAuthority: {
+        load_project_identity(query) {
+          identityReads.push(query);
+          return {
+            result_version: 'builder-product-metadata-result.v4',
+            operation: 'project_identity_loaded',
+            project: {
+              project_id: query.project_id,
+              created_at_ms: 1,
+              current_revision_receipt_digest: null,
+              current_revision_number: 0,
+            },
+            metadata_evidence: {},
+          };
+        },
+      },
+      sourceContextCollector: {
+        collect_project_source_context(input) {
+          collected.push(input);
+          return sourceContextResult(input.context, []);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      assert.match(input.messages[0].content, /builder_project_plan_proposal/u);
+      assert.match(input.messages[1].content, /Plan a fresh local blog/u);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerPlan()),
+      };
+    },
+  });
+  const raw = request({
+    instruction: 'Plan a fresh local blog.',
+    existingProjectId: PROJECT_ID,
+  });
+
+  const result = await service.propose_plan({
+    request: raw,
+    resource_ids: [],
+  });
+
+  assert.deepEqual(readAttempts, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(identityReads, [{ project_id: PROJECT_ID }]);
+  assert.equal(result.result_kind, 'plan');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.begin[0].base_revision, null);
+  assert.deepEqual(collected.map((entry) => entry.resource_ids), [[]]);
+  assert.equal(lifecycle.calls.plan.length, 1);
+  assert.equal(lifecycle.calls.plan[0].plan_proposal_record.context_binding.file_count, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(transportInputs.length, 1);
+});
+
 test('fails plan proposal closed without collector, existing project, or valid resource ids', async () => {
   const reads = [];
   const lifecycle = conversationService();

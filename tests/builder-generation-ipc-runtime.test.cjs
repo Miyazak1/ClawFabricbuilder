@@ -676,6 +676,26 @@ function runtimeWithService(service, probes = {}) {
                 append_conversation_events() {},
                 load_conversation() {},
                 load_conversation_candidate_by_draft() {},
+                load_project_workspace(body) {
+                  probes.loadProjectWorkspaceRequests ??= [];
+                  probes.loadProjectWorkspaceRequests.push({ project_id: body.project_id });
+                  if (typeof probes.loadProjectWorkspace === 'function') {
+                    return probes.loadProjectWorkspace(body);
+                  }
+                  context.__workspaceProjectId = body.project_id;
+                  return vm.runInContext(`({
+                    result_version: "builder-product-metadata-result.v1",
+                    operation: "project_workspace_bound",
+                    workspace: {
+                      project_id: __workspaceProjectId,
+                      project_title: __workspaceTitle,
+                      project_root_path: __workspaceRoot,
+                      source_folders: [{ name: __workspaceFolder, status: "selected" }],
+                      bound_at_ms: 1,
+                      binding_status: "bound"
+                    }
+                  })`, context);
+                },
                 load_project_identity(body) {
                   probes.loadProjectIdentityRequests ??= [];
                   probes.loadProjectIdentityRequests.push({ project_id: body.project_id });
@@ -1447,6 +1467,148 @@ test('selects only currently supported plan context resources from the saved sou
   runtime.dispose();
 });
 
+test('allows a first plan proposal for an empty selected source folder', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    generate_approved_plan() { throw new Error('unexpected approved plan generate'); },
+    async propose_plan(body) {
+      probes.proposePlanBody = body;
+      return { result_kind: 'plan' };
+    },
+    submit() { throw new Error('unexpected submit'); },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
+    steer() { return { request_id: hostRequestDigest(), steered: false }; },
+    queue_followup() { return { request_id: hostRequestDigest(), queued: false, queued_followup: null }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: true,
+        reason: 'ready',
+        supports_cancel: true,
+      };
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  probes.loadCurrent = (body) => {
+    harness.context.__readProjectId = body.project_id;
+    return vm.runInContext(
+      `({
+        product_revision_receipt: { project_id: __readProjectId },
+        source_tree: { files: [] }
+      })`,
+      harness.context,
+    );
+  };
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+  await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Plan my empty static blog project." })', harness.context),
+  );
+
+  assert.deepEqual(Array.from(probes.proposePlanBody.resource_ids), []);
+  assert.equal(probes.proposePlanBody.request.existing_project_id, PROJECT_ID);
+  runtime.dispose();
+});
+
+test('proposes a plan for a newly bound local workspace before the first saved revision', async (t) => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-plan-workspace-'));
+  const selectedProjectRootPath = fs.realpathSync.native(projectRoot);
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    generate_approved_plan() { throw new Error('unexpected approved plan generate'); },
+    async propose_plan(body) {
+      probes.proposePlanBody = body;
+      return { result_kind: 'plan' };
+    },
+    submit() { throw new Error('unexpected submit'); },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
+    steer() { return { request_id: hostRequestDigest(), steered: false }; },
+    queue_followup() { return { request_id: hostRequestDigest(), queued: false, queued_followup: null }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: true,
+        reason: 'ready',
+        supports_cancel: true,
+      };
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  probes.loadCurrent = () => {
+    const error = new Error('missing current revision');
+    error.code = 'builder_project_read_not_found';
+    throw error;
+  };
+  harness.context.__selectedProjectRootPath = selectedProjectRootPath;
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+    showOpenDialog: async () => vm.runInContext(
+      '({ canceled: false, filePaths: [__selectedProjectRootPath] })',
+      harness.context,
+    ),
+  });
+  runtime.register();
+
+  const selected = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ project_id: null, project_title: "New project" })', harness.context),
+  );
+  const approvalStatus = await ipcMain.handlers.get(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: ${JSON.stringify(selected.project_id)} })`, harness.context),
+  );
+  const proposal = await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "Plan a technical blog." })', harness.context),
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(approvalStatus)), {
+    result_version: 'builder-plan-source-read-approval-status.v1',
+    project_id: selected.project_id,
+    state: 'ready',
+    file_count: 0,
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(proposal)), { result_kind: 'plan' });
+  assert.deepEqual(Array.from(probes.proposePlanBody.resource_ids), []);
+  assert.equal(probes.proposePlanBody.request.existing_project_id, selected.project_id);
+  assert.equal(JSON.stringify(approvalStatus).includes(selectedProjectRootPath), false);
+  runtime.dispose();
+});
+
 test('prepares and records bounded plan source-read approval without renderer resource authority', async (t) => {
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
@@ -1562,6 +1724,90 @@ test('prepares and records bounded plan source-read approval without renderer re
     authority: 'main_selected_project_bounded_filesystem_read_v1',
   });
   assert.doesNotMatch(JSON.stringify(approved), /permission_id|resource_id|source_tree|credential|provider/iu);
+  runtime.dispose();
+});
+
+test('does not require plan source-read approval before planning an empty selected source folder', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    generate_approved_plan() { throw new Error('unexpected approved plan generate'); },
+    propose_plan() { throw new Error('unexpected plan before approval'); },
+    submit() { throw new Error('unexpected submit'); },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: false }; },
+    steer() { return { request_id: hostRequestDigest(), steered: false }; },
+    queue_followup() { return { request_id: hostRequestDigest(), queued: false, queued_followup: null }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: true,
+        reason: 'ready',
+        supports_cancel: true,
+      };
+    },
+  };
+  const grantCalls = [];
+  const harness = runtimeWithService(service, probes);
+  probes.loadCurrent = (body) => {
+    harness.context.__readProjectId = body.project_id;
+    return vm.runInContext(
+      `({
+        product_revision_receipt: { project_id: __readProjectId },
+        source_tree: { files: [] }
+      })`,
+      harness.context,
+    );
+  };
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval: async (body) => {
+      grantCalls.push(body);
+      return grantPermissionForExplicitApproval(body);
+    },
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+  const approvalRequest = vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context);
+  const status = await ipcMain.handlers.get(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    approvalRequest,
+  );
+  const approved = await ipcMain.handlers.get(APPROVE_PLAN_SOURCE_READ_CHANNEL)(
+    { sender: mainWindow.webContents },
+    approvalRequest,
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(status)), {
+    result_version: 'builder-plan-source-read-approval-status.v1',
+    project_id: PROJECT_ID,
+    state: 'ready',
+    file_count: 0,
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(approved)), {
+    result_version: 'builder-plan-source-read-approval-result.v1',
+    project_id: PROJECT_ID,
+    operation: 'already_approved',
+    file_count: 0,
+    approval_scope: 'current_project_plan_source_read',
+    authority: 'main_selected_project_bounded_filesystem_read_v1',
+  });
+  assert.deepEqual(probes.permissionEvaluateRequests ?? [], []);
+  assert.deepEqual(grantCalls, []);
   runtime.dispose();
 });
 

@@ -497,7 +497,6 @@ function verifyPlanAdmission(state, turn, run, payload) {
     || admission.head_sequence !== priorHead.sequence
     || admission.head_digest !== headDigest(priorHead)
     || admission.file_count !== admission.tool_reads.length
-    || run.tool_calls.length < 1
     || run.tool_calls.length !== admission.tool_reads.length
   ) fail();
   const byToolCallId = new Map();

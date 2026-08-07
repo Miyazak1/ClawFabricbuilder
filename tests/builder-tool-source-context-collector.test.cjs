@@ -265,7 +265,6 @@ test('denies before recording tool facts and rejects hostile collector requests 
     for (const invalid of [
       null,
       {},
-      { context, resource_ids: [] },
       { context, resource_ids: ['project:/src/app.tsx', 'project:/src/app.tsx'] },
       { context, resource_ids: ['project:/../secret.txt'] },
       { context: { ...context, mode: 'question' }, resource_ids: ['project:/src/app.tsx'] },
@@ -282,6 +281,27 @@ test('denies before recording tool facts and rejects hostile collector requests 
       );
     }
     assert.equal(getterCalls, 0);
+    assert.equal(item.permissionCalls.length, 0);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+  } finally {
+    item.close();
+  }
+});
+
+test('collects an empty project source context without reading files or recording tool events', async () => {
+  const item = fixture();
+  try {
+    const context = begin(item.conversation);
+    const result = await item.collector.collect_project_source_context({
+      context,
+      resource_ids: [],
+    });
+
+    assert.equal(result.result_version, 'builder-tool-source-context-result.v1');
+    assert.equal(result.operation, 'project_source_context_collected');
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(result.private_source_context.files, []);
+    assert.deepEqual(result.reads, []);
     assert.equal(item.permissionCalls.length, 0);
     assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
   } finally {

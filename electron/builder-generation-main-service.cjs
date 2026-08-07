@@ -1048,7 +1048,7 @@ function safeApprovedPlanPublicText(value) {
 }
 
 function safeResourceIds(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 1 || value.length > 8) fail();
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > 8) fail();
   const keys = Reflect.ownKeys(value);
   if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) fail();
   const seen = new Set();
@@ -2718,9 +2718,12 @@ function createBuilderGenerationMainService(rawOptions) {
       pendingPlanRequests.delete(key);
       const projectId = request.existing_project_id;
       setupPhase = 'plan_load_existing_base';
-      const base = sanitizeReadResult(
-        await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: projectId }]),
+      const base = await loadBaseForExistingProject(
         projectId,
+        loadCurrentProject,
+        loadProjectIdentity,
+        options.projectReadAuthority,
+        options.projectIdentityAuthority,
       );
       setupPhase = 'plan_begin_work';
       let conversationContext = Reflect.apply(

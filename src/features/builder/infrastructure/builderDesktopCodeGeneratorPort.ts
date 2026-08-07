@@ -311,7 +311,7 @@ function safePlanSourceReadFileCount(value: unknown): number {
   if (
     typeof value !== 'number'
     || !Number.isSafeInteger(value)
-    || value < 1
+    || value < 0
     || value > MAX_PLAN_SOURCE_READ_APPROVAL_FILE_COUNT
   ) {
     throw portError();

@@ -2078,6 +2078,12 @@ function createBuilderConversationMainService(rawOptions) {
 
   function planToolReadEvidence(run, sourceContext) {
     if (
+      sourceContext.context_binding.file_count === 0
+      && sourceContext.context_binding.total_content_bytes === 0
+      && sourceContext.reads.length === 0
+      && run.tool_calls.length === 0
+    ) return freezeDeep([]);
+    if (
       run.tool_calls.length < 1
       || sourceContext.reads.length !== run.tool_calls.length
       || sourceContext.context_binding.file_count !== sourceContext.reads.length

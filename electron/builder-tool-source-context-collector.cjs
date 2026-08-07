@@ -189,7 +189,7 @@ function newId(createUuid, prefix) {
 }
 
 function safeResourceIds(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 1 || value.length > MAX_CONTEXT_FILES) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length > MAX_CONTEXT_FILES) {
     fail();
   }
   const keys = Reflect.ownKeys(value);

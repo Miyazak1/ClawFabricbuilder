@@ -1187,7 +1187,7 @@ assert.match(packagedConversationReplay, /tool_result_record:\s*null/u);
 assert.match(packagedConversationReplay, /toolResultRecordDigests/u);
 assert.match(packagedConversationReplay, /tool_calls:\s*\[\]/u);
 assert.match(packagedConversationReplay, /function verifyPlanAdmission/u);
-assert.match(packagedConversationReplay, /run\.tool_calls\.length < 1/u);
+assert.match(packagedConversationReplay, /run\.tool_calls\.length !== admission\.tool_reads\.length/u);
 assert.match(packagedConversationReplay, /admission\.head_digest !== headDigest\(priorHead\)/u);
 assert.match(packagedConversationReplay, /toolCall\.resource\.resource_id !== read\.resource_id/u);
 assert.match(packagedConversationReplay, /resultRecord\.record_digest !== read\.tool_result_record_digest/u);

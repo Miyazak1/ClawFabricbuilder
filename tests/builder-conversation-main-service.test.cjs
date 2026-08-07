@@ -2143,6 +2143,45 @@ test('records a proposed plan from a run-bound plan record after successful tool
   }
 });
 
+test('records a proposed plan from an empty run-bound source context', async () => {
+  const item = fixture();
+  try {
+    const context = begin(item.service);
+    const sourceContext = sourceContextResult(context, {
+      private_source_context: {
+        context_version: 'builder-private-source-context.v1',
+        files: [],
+      },
+      reads: [],
+    });
+    const plan = planProposalRecord(context, { source_context_result: sourceContext });
+    const terminal = item.service.complete_plan({
+      context,
+      source_context_result: sourceContext,
+      plan_proposal_record: plan,
+    });
+
+    assert.equal(terminal.head.sequence, 4);
+    assert.equal(terminal.snapshot.active_turn_id, null);
+    assert.equal(terminal.snapshot.turns[0].outcome, 'plan_proposed');
+    assert.equal(terminal.snapshot.turns[0].runs[0].result_kind, 'plan');
+    assert.equal(terminal.snapshot.turns[0].runs[0].result_digest, plan.record_digest);
+    assert.equal(terminal.snapshot.turns[0].runs[0].candidate_result, null);
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.conversation.head_sequence, 4);
+    assert.equal(stream.conversation.items[2].result_kind, 'plan');
+    assert.equal(stream.conversation.items[2].candidate, null);
+    assert.equal(stream.conversation.items[3].outcome, 'plan_proposed');
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /private_source_context|context_digest|head_digest|record_digest|provider|credential|git_candidate_receipt|commit_oid|tree_oid|revision_receipt|save_admission/iu,
+    );
+  } finally {
+    item.close();
+  }
+});
+
 test('reads only the current approved plan and rejects stale or rejected plan facts', async () => {
   const approvedItem = fixture();
   const rejectedItem = fixture(300, 3_000);

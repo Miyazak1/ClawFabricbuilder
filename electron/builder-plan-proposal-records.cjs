@@ -449,7 +449,7 @@ function sanitizeContext(value) {
 function sanitizePrivateSourceContext(value) {
   const descriptors = exactObject(value, PRIVATE_CONTEXT_KEYS);
   if (descriptors.context_version.value !== PRIVATE_SOURCE_CONTEXT_VERSION) fail();
-  const files = exactArray(descriptors.files.value, 1, MAX_CONTEXT_FILES).map((rawFile) => {
+  const files = exactArray(descriptors.files.value, 0, MAX_CONTEXT_FILES).map((rawFile) => {
     const file = exactObject(rawFile, PRIVATE_FILE_KEYS);
     const content = file.content.value;
     const contentBytes = safeByteCount(file.content_bytes.value);
@@ -600,9 +600,9 @@ function sanitizeContextBinding(value) {
     || descriptors.collector_authority.value !== SOURCE_CONTEXT_AUTHORITY.collector_authority
     || descriptors.context_status.value !== 'succeeded'
     || !Number.isSafeInteger(fileCount)
-    || fileCount < 1
+    || fileCount < 0
     || fileCount > MAX_CONTEXT_FILES
-    || totalContentBytes < 1
+    || totalContentBytes < 0
   ) fail();
   return freezeDeep({
     source_context_result_version: SOURCE_CONTEXT_RESULT_VERSION,

@@ -162,7 +162,17 @@ const MESSAGE_ID_PATTERN = /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 const MAX_PLAN_CONTEXT_RESOURCES = 8;
 const MAX_PROJECT_RESOURCE_ID_LENGTH = 128;
+const MAX_WORKSPACE_PLAN_SCAN_ENTRIES = 2_048;
 const PLAN_RESOURCE_ID_PATTERN = /^project:\/[a-z0-9._/@-]{1,120}$/u;
+const PLAN_WORKSPACE_DIRECTORY_SKIP_NAMES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.clawfabric',
+  'coverage',
+  'dist',
+  'node_modules',
+]);
 const PRODUCT_METADATA_DATABASE_ID = 'builder-product-metadata-database.v3';
 const PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v6';
 const PRODUCT_METADATA_USER_VERSION = 6;
@@ -819,8 +829,75 @@ function sourceTreeResourceIds(readResult) {
   }
   resourceIds.sort();
   const selected = resourceIds.slice(0, MAX_PLAN_CONTEXT_RESOURCES);
-  if (selected.length === 0) fail();
   return Object.freeze(selected);
+}
+
+function selectedPlanResourceIdsFromPaths(paths) {
+  const resourceIds = [];
+  const seen = new Set();
+  for (const relativePath of paths) {
+    let sourcePath;
+    try {
+      sourcePath = safeProjectSourcePath(relativePath);
+    } catch {
+      continue;
+    }
+    const resourceId = `project:/${sourcePath}`;
+    if (
+      resourceId.length > MAX_PROJECT_RESOURCE_ID_LENGTH
+      || !PLAN_RESOURCE_ID_PATTERN.test(resourceId)
+      || seen.has(resourceId)
+    ) continue;
+    seen.add(resourceId);
+    resourceIds.push(resourceId);
+  }
+  resourceIds.sort();
+  return Object.freeze(resourceIds.slice(0, MAX_PLAN_CONTEXT_RESOURCES));
+}
+
+function workspacePlanResourceIds(workspaceRootPath) {
+  let rootRealPath;
+  try {
+    const rootStat = fs.lstatSync(workspaceRootPath);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) fail();
+    rootRealPath = path.resolve(fs.realpathSync.native(workspaceRootPath));
+    if (rootRealPath !== workspaceRootPath) fail();
+  } catch {
+    fail();
+  }
+  const pending = [Object.freeze({ absolutePath: rootRealPath, relativePath: '' })];
+  const filePaths = [];
+  let inspected = 0;
+  while (pending.length > 0 && inspected < MAX_WORKSPACE_PLAN_SCAN_ENTRIES) {
+    const current = pending.shift();
+    let entries;
+    try {
+      entries = fs.readdirSync(current.absolutePath, { withFileTypes: true });
+    } catch {
+      inspected += 1;
+      continue;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
+    for (const entry of entries) {
+      inspected += 1;
+      if (inspected > MAX_WORKSPACE_PLAN_SCAN_ENTRIES) break;
+      if (entry.isSymbolicLink()) continue;
+      const relativePath = current.relativePath.length === 0
+        ? entry.name
+        : `${current.relativePath}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!PLAN_WORKSPACE_DIRECTORY_SKIP_NAMES.has(entry.name.toLowerCase())) {
+          pending.push(Object.freeze({
+            absolutePath: path.join(current.absolutePath, entry.name),
+            relativePath,
+          }));
+        }
+        continue;
+      }
+      if (entry.isFile()) filePaths.push(relativePath);
+    }
+  }
+  return selectedPlanResourceIdsFromPaths(filePaths);
 }
 
 function activeWebContents(mainWindowRef) {
@@ -1308,15 +1385,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const requestId = request.request_digest;
       activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
       try {
-        let currentProject;
-        let resourceIds;
-        try {
-          currentProject = await projectMainAuthority.project_read_authority.load_current({ project_id: projectId });
-          if (readResultProjectId(currentProject) !== projectId) fail();
-          resourceIds = sourceTreeResourceIds(currentProject);
-        } catch {
-          failGenerationBaseUnavailable();
-        }
+        const resourceIds = await selectedPlanSourceReadResources(projectId);
         return await service.propose_plan({
           request,
           resource_ids: resourceIds,
@@ -1335,8 +1404,20 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         currentProject = await projectMainAuthority.project_read_authority.load_current({ project_id: projectId });
         if (readResultProjectId(currentProject) !== projectId) fail();
         return sourceTreeResourceIds(currentProject);
-      } catch {
-        failGenerationBaseUnavailable();
+      } catch (error) {
+        if (safeOwnErrorCode(error) !== 'builder_project_read_not_found') {
+          failGenerationBaseUnavailable();
+        }
+        try {
+          return workspacePlanResourceIds(projectRootPathFromWorkspace(
+            await projectMainAuthority.metadata_authority.load_project_workspace({
+              project_id: projectId,
+            }),
+            projectId,
+          ));
+        } catch {
+          failGenerationBaseUnavailable();
+        }
       }
     }
 

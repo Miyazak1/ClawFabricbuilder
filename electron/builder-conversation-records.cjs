@@ -309,12 +309,12 @@ function safeTimestamp(value) {
 }
 
 function safePlanFileCount(value) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PLAN_CONTEXT_FILES) fail();
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_PLAN_CONTEXT_FILES) fail();
   return value;
 }
 
 function safePlanByteCount(value) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PLAN_CONTEXT_TOTAL_BYTES) fail();
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_PLAN_CONTEXT_TOTAL_BYTES) fail();
   return value;
 }
 
