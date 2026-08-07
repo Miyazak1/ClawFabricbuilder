@@ -818,6 +818,47 @@ function providerContextDisclosureStatusProjection(overrides = {}) {
   };
 }
 
+function draftCheckpointStatusProjection(overrides = {}) {
+  const base = {
+    projection_version: 'builder-draft-checkpoint-status-projection.v1',
+    status: 'ready',
+    label: 'Checkpoint saved',
+    tone: 'success',
+    next_action_hint: 'You can compare, restore, continue, or save a version.',
+    can_compare: true,
+    can_restore: true,
+    can_save_version: true,
+    changed_file_count: 3,
+    verification_status: 'candidate_verified',
+    authority: {
+      projection_authority: 'main_owned_draft_checkpoint_status_projection_v1',
+      checkpoint_store_read: 'verified_latest_read_result',
+      checkpoint_fact: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_read: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      save_authority: false,
+      publication: false,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function assertProjectionError(error) {
   assert.equal(error instanceof BuilderTaskStreamProjectionError, true);
   assert.equal(error.code, 'builder_task_stream_unavailable');
@@ -1627,6 +1668,24 @@ test('carries optional renderer-safe provider context disclosure status without 
   );
 });
 
+test('carries optional renderer-safe Draft Checkpoint status without exposing checkpoint evidence', () => {
+  const stream = projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    draft_checkpoint_status_projection: draftCheckpointStatusProjection(),
+  });
+
+  assert.equal(stream.draft_checkpoint_status_projection.label, 'Checkpoint saved');
+  assert.equal(stream.draft_checkpoint_status_projection.status, 'ready');
+  assert.equal(stream.draft_checkpoint_status_projection.can_compare, true);
+  assert.equal(stream.draft_checkpoint_status_projection.can_restore, true);
+  assert.equal(stream.draft_checkpoint_status_projection.can_save_version, true);
+  assert.equal(stream.draft_checkpoint_status_projection.changed_file_count, 3);
+  assert.doesNotMatch(
+    JSON.stringify(stream.draft_checkpoint_status_projection),
+    /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|builder-conversation:|sha256:|candidate_digest|commit_oid|tree_oid|schema_fingerprint|database_id|provider_(?:secret|config|envelope|context_body)|credential|source_tree/iu,
+  );
+});
+
 test('rejects forged optional context status projection before exposing it', () => {
   assert.throws(() => projectBuilderTaskStream({
     ...input(candidateEvents()),
@@ -1658,6 +1717,24 @@ test('rejects forged optional provider context disclosure status projection befo
     provider_context_disclosure_status_projection: providerContextDisclosureStatusProjection({
       authority: {
         permission_grant: true,
+      },
+    }),
+  }), assertProjectionError);
+});
+
+test('rejects forged optional Draft Checkpoint status projection before exposing it', () => {
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    draft_checkpoint_status_projection: draftCheckpointStatusProjection({
+      label: 'Checkpoint saved sha256:aaaaaaaa',
+    }),
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    draft_checkpoint_status_projection: draftCheckpointStatusProjection({
+      authority: {
+        save_authority: true,
       },
     }),
   }), assertProjectionError);

@@ -14,6 +14,9 @@ const {
 const {
   sanitizeBuilderProviderContextDisclosureStatusProjection,
 } = require('./builder-provider-context-disclosure-status-projection.cjs');
+const {
+  sanitizeBuilderDraftCheckpointStatusProjection,
+} = require('./builder-draft-checkpoint-status-projection.cjs');
 
 const BUILDER_TASK_STREAM_VERSION = 'builder-task-stream-read-result.v1';
 const MAX_PUBLIC_ITEMS = 128;
@@ -480,10 +483,18 @@ function safeOptionalProviderContextDisclosureStatusProjection(rawInput) {
   return sanitizeBuilderProviderContextDisclosureStatusProjection(value);
 }
 
+function safeOptionalDraftCheckpointStatusProjection(rawInput) {
+  if (!Object.hasOwn(rawInput, 'draft_checkpoint_status_projection')) return undefined;
+  const value = valueAt(rawInput, 'draft_checkpoint_status_projection');
+  if (value === null) return null;
+  return sanitizeBuilderDraftCheckpointStatusProjection(value);
+}
+
 function withOptionalStatusProjections(
   result,
   contextStatusProjection,
   providerContextDisclosureStatusProjection,
+  draftCheckpointStatusProjection,
 ) {
   return {
     ...result,
@@ -496,6 +507,9 @@ function withOptionalStatusProjections(
         provider_context_disclosure_status_projection:
           providerContextDisclosureStatusProjection,
       }),
+    ...(draftCheckpointStatusProjection === undefined
+      ? {}
+      : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
   };
 }
 
@@ -504,11 +518,13 @@ function projectBuilderTaskStream(rawInput) {
     exactObjectWithOptional(rawInput, ['project_id', 'conversation'], [
       'context_status_projection',
       'provider_context_disclosure_status_projection',
+      'draft_checkpoint_status_projection',
     ]);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
     const contextStatusProjection = safeOptionalContextStatusProjection(rawInput);
     const providerContextDisclosureStatusProjection =
       safeOptionalProviderContextDisclosureStatusProjection(rawInput);
+    const draftCheckpointStatusProjection = safeOptionalDraftCheckpointStatusProjection(rawInput);
     const rawConversation = valueAt(rawInput, 'conversation');
     if (rawConversation === null) {
       return boundResult(withOptionalStatusProjections({
@@ -516,7 +532,7 @@ function projectBuilderTaskStream(rawInput) {
         project_id: projectId,
         conversation: null,
         authority: authority(),
-      }, contextStatusProjection, providerContextDisclosureStatusProjection));
+      }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection));
     }
 
     exactObject(rawConversation, ['conversation_id', 'created_at_ms', 'events']);
@@ -553,7 +569,7 @@ function projectBuilderTaskStream(rawInput) {
         items: visibleItems,
       },
       authority: authority(),
-    }, contextStatusProjection, providerContextDisclosureStatusProjection));
+    }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection));
   } catch (error) {
     if (error instanceof BuilderTaskStreamProjectionError) throw error;
     fail();

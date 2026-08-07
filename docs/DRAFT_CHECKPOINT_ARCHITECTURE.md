@@ -167,6 +167,16 @@ writes no Git ref, performs no Save, selects no Project Revision, dispatches no
 provider/tool, mutates no source, publishes nothing, and creates no Work
 Capsule.
 
+Current status projection checkpoint:
+`builder-draft-checkpoint-status-projection.v1` turns a verified latest/read
+store result into renderer-safe copy such as `Checkpoint saved`, compare/restore
+availability, changed-file count, and verification status. It exposes no
+checkpoint id, candidate id, digest, commit, tree, source, SQLite schema, Git
+evidence, provider data, permission grant, Save authority, publish authority, or
+Work Capsule authority. Task Stream can carry this projection as optional
+read-only status, but automatic recording from mutating Runs and UI restore or
+compare actions remain separate future gates.
+
 ## Non-Goals
 
 - no automatic formal Project Revision save;
