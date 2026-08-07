@@ -159,6 +159,14 @@ SQLite row, writes no Git ref, performs no Save, selects no Project Revision,
 opens no IPC/preload surface, dispatches no provider/tool, mutates no source,
 publishes nothing, and creates no Work Capsule.
 
+Current store checkpoint: `builder-draft-checkpoint-store.v1` now persists those
+already-validated Draft Checkpoint facts in a main-owned SQLite store with
+idempotent replay, restart-safe reads, latest-checkpoint lookup for a Task
+Address, and bounded ordered listing. It still opens no IPC/preload surface,
+writes no Git ref, performs no Save, selects no Project Revision, dispatches no
+provider/tool, mutates no source, publishes nothing, and creates no Work
+Capsule.
+
 ## Non-Goals
 
 - no automatic formal Project Revision save;
