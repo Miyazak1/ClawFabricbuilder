@@ -302,8 +302,22 @@ publish, or Save from a provider event is forbidden.
 - pure main-side contract;
 - no network, no IPC/preload, no provider dispatch, no credential readback;
 - tests for unsupported capabilities, provider digest drift, and redaction.
-- include DeepSeek Chat Completions and DeepSeek Responses preset manifests,
-  but keep Responses disabled outside canary/test paths.
+
+Current checkpoint:
+
+- `builder-provider-capability-manifest.v1` derives a redacted manifest from an
+  already-verified Builder provider config and the explicit
+  `openai_chat_completions.v1` protocol family.
+- The manifest records the current adapter's bounded capabilities:
+  streaming and JSON output are available; tool calling, reasoning output,
+  prompt-cache reporting, and hosted conversation state are not admitted.
+- `builder-provider-capability-admission.v1` verifies requested capabilities
+  against that manifest and the expected provider config digest. Unsupported
+  capability requests, provider switch/digest drift, duplicate capability
+  claims, and stale assessment fail closed.
+- This checkpoint performs no network request, IPC/preload registration,
+  provider dispatch, credential readback, prompt bridge, source/Git/SQLite
+  mutation, permission grant, Review, Save, or Revision selection.
 
 ### P2 - Name the Current Adapter
 

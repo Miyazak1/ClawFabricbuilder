@@ -168,6 +168,16 @@ Evidence requirements:
 - provider-native tool calls remain proposed calls until Builder's own tool,
   permission, policy, runtime, Review, and Revision gates admit them.
 
+Current checkpoint:
+
+- `builder-provider-capability-manifest.v1` and
+  `builder-provider-capability-admission.v1` provide the first pure main-side
+  capability facts for the current `openai_chat_completions.v1` path. They
+  verify provider config digest freshness and fail closed for unsupported
+  capabilities without reading credentials, dispatching a provider, opening
+  IPC/preload, mutating source/Git/SQLite, granting permission, or selecting a
+  Revision.
+
 ### Gate F2 - Generation, IPC, and Frontend Cutover
 
 Move generation, project IPC, catalog, and frontend flows onto Gate F0 facts.
