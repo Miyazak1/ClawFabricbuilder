@@ -1153,8 +1153,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   z-index: 4;
   top: 0;
   bottom: 0;
-  left: -7px;
-  width: 14px;
+  left: -5px;
+  width: 10px;
   border: 0;
   background: transparent;
   cursor: col-resize;
@@ -1170,13 +1170,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   left: 50%;
   width: 1px;
   transform: translateX(-0.5px);
-  background: rgba(36, 37, 34, 0.22);
-  opacity: 0.9;
+  background: rgba(63, 102, 92, 0.58);
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    width 120ms ease;
 }
 
 .cf-builder-artifact-resize-handle:hover::after,
-.cf-builder-artifact-resize-handle:focus-visible::after {
+.cf-builder-artifact-resize-handle:focus-visible::after,
+.cf-builder-artifact-resize-handle[data-builder-artifact-resizing="true"]::after {
   width: 2px;
+  opacity: 1;
   transform: translateX(-1px);
   background: rgba(63, 102, 92, 0.58);
   box-shadow: 0 0 0 1px rgba(200, 215, 209, 0.55);

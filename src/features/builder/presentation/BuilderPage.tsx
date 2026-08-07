@@ -1892,6 +1892,7 @@ function BuilderArtifactSidebar({
   onResizeKeyDown,
   onRestoreRevisionAsDraft,
   onResizeStart,
+  resizing,
   onSelectFile,
   onSelectTab,
   onSourceOpenChange,
@@ -1930,6 +1931,7 @@ function BuilderArtifactSidebar({
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  resizing: boolean;
   onSelectFile?: (file: BuilderFileName) => void;
   onSelectTab: (tab: BuilderArtifactTab) => void;
   onSourceOpenChange: (open: boolean) => void;
@@ -2001,6 +2003,7 @@ function BuilderArtifactSidebar({
         aria-valuenow={width}
         className="cf-builder-artifact-resize-handle"
         data-builder-artifact-resize-handle="true"
+        data-builder-artifact-resizing={resizing ? 'true' : undefined}
         onKeyDown={onResizeKeyDown}
         onPointerDown={onResizeStart}
         role="separator"
@@ -2299,6 +2302,7 @@ export function BuilderPage({
   const shouldFollowChatRef = useRef(true);
   const [artifactWidth, setArtifactWidth] = useState(ARTIFACT_DEFAULT_WIDTH_PX);
   const [artifactWidthMaximum, setArtifactWidthMaximum] = useState(ARTIFACT_MAX_WIDTH_PX);
+  const [artifactResizing, setArtifactResizing] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const changesPanelIdentity = [
@@ -2661,10 +2665,25 @@ export function BuilderPage({
   }
 
   function startArtifactResize(event: ReactPointerEvent<HTMLButtonElement>): void {
+    if (event.button !== 0) return;
     event.preventDefault();
+    shouldFollowChatRef.current = false;
     const sidebar = artifactSidebarRef.current;
     const startWidth = sidebar?.getBoundingClientRect().width ?? artifactWidth;
     const startX = event.clientX;
+    const handle = event.currentTarget;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    let stopped = false;
+
+    setArtifactResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // jsdom and some fallback event paths do not implement pointer capture.
+    }
 
     function onPointerMove(moveEvent: globalThis.PointerEvent): void {
       const shellWidth = chatShellRef.current?.getBoundingClientRect().width ?? Number.NaN;
@@ -2677,9 +2696,19 @@ export function BuilderPage({
     }
 
     function stopResize(): void {
+      if (stopped) return;
+      stopped = true;
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', stopResize);
       window.removeEventListener('pointercancel', stopResize);
+      try {
+        handle.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may be unavailable in tests or older browser paths.
+      }
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setArtifactResizing(false);
     }
 
     window.addEventListener('pointermove', onPointerMove);
@@ -3223,6 +3252,7 @@ export function BuilderPage({
       onResizeKeyDown={resizeArtifactWithKeyboard}
       onResizeStart={startArtifactResize}
       onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
+      resizing={artifactResizing}
       onSelectFile={onSelectFile}
       onSelectTab={openArtifactTab}
       onSourceOpenChange={setSourceDisclosureOpen}

@@ -2737,6 +2737,7 @@ describe('BuilderPage v2', () => {
     expect(artifactResizeHandle?.getAttribute('aria-orientation')).toBe('vertical');
     expect(artifactResizeHandle?.getAttribute('aria-valuemin')).toBe('360');
     expect(artifactResizeHandle?.getAttribute('aria-valuenow')).toBe('480');
+    expect(artifactResizeHandle?.getAttribute('data-builder-artifact-resizing')).toBeNull();
     expect(workspaceControls).not.toBeNull();
     expect(workspaceControls?.getAttribute('data-builder-workspace-drawer-visible')).toBe('true');
     expect(workspaceControls?.textContent).not.toContain('Terminal');
@@ -2825,12 +2826,20 @@ describe('BuilderPage v2', () => {
       configurable: true,
       value: () => ({ bottom: 720, height: 640, left: 440, right: 920, top: 80, width: 480 }),
     });
+    const previousBodyCursor = document.body.style.cursor;
+    const previousBodyUserSelect = document.body.style.userSelect;
     act(() => {
       artifactResizeHandle?.dispatchEvent(new MouseEvent('pointerdown', {
         bubbles: true,
         cancelable: true,
         clientX: 900,
       }));
+    });
+    expect(container.querySelector('[data-builder-artifact-resize-handle="true"]')
+      ?.getAttribute('data-builder-artifact-resizing')).toBe('true');
+    expect(document.body.style.cursor).toBe('col-resize');
+    expect(document.body.style.userSelect).toBe('none');
+    act(() => {
       window.dispatchEvent(new MouseEvent('pointermove', {
         bubbles: true,
         clientX: 500,
@@ -2844,6 +2853,9 @@ describe('BuilderPage v2', () => {
     const resizedHandle = container.querySelector('[data-builder-artifact-resize-handle="true"]');
     expect(resizedHandle?.getAttribute('aria-valuenow')).toBe('560');
     expect(resizedHandle?.getAttribute('aria-valuemax')).toBe('560');
+    expect(resizedHandle?.getAttribute('data-builder-artifact-resizing')).toBeNull();
+    expect(document.body.style.cursor).toBe(previousBodyCursor);
+    expect(document.body.style.userSelect).toBe(previousBodyUserSelect);
     const shrinkEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'ArrowRight' });
     expect(shrinkEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))

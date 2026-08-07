@@ -94,11 +94,11 @@ describe('Builder desktop layout styles', () => {
     expect(sidebar).toContain('overflow: hidden;');
     expect(sidebar).toContain('border-left: 1px solid var(--cf-border);');
     expect(handle).toContain('cursor: col-resize;');
-    expect(handle).toContain('left: -7px;');
-    expect(handle).toContain('width: 14px;');
+    expect(handle).toContain('left: -5px;');
+    expect(handle).toContain('width: 10px;');
     expect(handle).toContain('touch-action: none;');
-    expect(styleBlock(source, '.cf-builder-artifact-resize-handle::after'))
-      .toContain('background: rgba(36, 37, 34, 0.22);');
+    expect(styleBlock(source, '.cf-builder-artifact-resize-handle::after')).toContain('opacity: 0;');
+    expect(source).toContain('.cf-builder-artifact-resize-handle[data-builder-artifact-resizing="true"]::after');
     expect(source).not.toContain('.cf-builder-artifact-tabs');
     expect(viewMenuWrap).toContain('position: relative;');
     expect(viewMenuWrap).toContain('flex: 1 1 auto;');
