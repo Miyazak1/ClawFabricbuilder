@@ -130,7 +130,7 @@ const CURRENT_ARTIFACT_DIRECT_CHANGE_PATTERNS = Object.freeze([
 
 const EXPLICIT_PLAN_PATTERNS = Object.freeze([
   /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))/u,
-  /^(?:(?:先)?(?:帮我|请|麻烦)\s*)?(?:先)?(?:梳理|整理|拆解)(?:一下|下)?(?:(?:这个|当前|整体|实现|开发|页面|项目)){0,3}(?:方案|计划|步骤|思路|路径|实现路径)/u,
+  /^(?:(?:先)?(?:帮我|请|麻烦)\s*)?(?:先)?(?:梳理|整理|拆解|分析)(?:一下|下)?(?:(?:这个|当前|整体|实现|开发|页面|项目)){0,3}(?:方案|计划|步骤|思路|路径|实现路径)/u,
   /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
 ]);
 
