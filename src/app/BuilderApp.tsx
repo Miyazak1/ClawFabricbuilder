@@ -1458,9 +1458,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       await readActivityAfterTerminal(buildResult, commandEpoch);
       setLiveOutput(null);
     } finally {
-      if (workspaceEpochRef.current === commandEpoch) {
-        submitInFlightRef.current = false;
-      }
+      submitInFlightRef.current = false;
     }
   }, [
     catalog,

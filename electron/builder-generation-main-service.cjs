@@ -1,6 +1,8 @@
 'use strict';
 
+const fs = require('node:fs');
 const nodeCrypto = require('node:crypto');
+const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
 const {
@@ -55,6 +57,10 @@ const {
 } = require('./builder-provider-context-disclosure-decision.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
+const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
+const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
+const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
+const PACKAGED_CANARY_GENERATION_DEBUG_FILE = 'builder-canary-generation-debug.jsonl';
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
 const GENERATE_OPERATION_PREFIX = 'generate:';
 const ANSWER_OPERATION_PREFIX = 'answer:';
@@ -154,6 +160,45 @@ class BuilderGenerationMainServiceError extends Error {
 
 function fail() {
   throw new BuilderGenerationMainServiceError();
+}
+
+function safeCanaryGenerationDebugCode(error) {
+  try {
+    if (
+      error === null
+      || (typeof error !== 'object' && typeof error !== 'function')
+      || utilTypes.isProxy(error)
+    ) return 'unknown';
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    return descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string'
+      ? descriptor.value
+      : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function recordCanaryGenerationDebug(phase, error = null) {
+  try {
+    if (process.env[PACKAGED_CANARY_SENTINEL] !== '1') return;
+    const userDataPath = process.env[PACKAGED_CANARY_USER_DATA_PATH];
+    if (
+      typeof userDataPath !== 'string'
+      || !path.isAbsolute(userDataPath)
+      || !path.basename(userDataPath).startsWith(PACKAGED_CANARY_USER_DATA_PREFIX)
+    ) return;
+    fs.appendFileSync(
+      path.join(userDataPath, PACKAGED_CANARY_GENERATION_DEBUG_FILE),
+      `${JSON.stringify({
+        result_version: 'builder-canary-generation-debug.v1',
+        phase,
+        code: safeCanaryGenerationDebugCode(error),
+      })}\n`,
+      { encoding: 'utf8' },
+    );
+  } catch {
+    // Canary diagnostics must never alter generation behavior.
+  }
 }
 
 const ENGLISH_WORK_INTENT_PATTERN =
@@ -2061,6 +2106,11 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   function contextAssemblyPurposeFromRoute(routeDecision, workingContextState) {
+    const matchedSignals = valueAt(routeDecision, 'matched_signals');
+    if (
+      Array.isArray(matchedSignals)
+      && matchedSignals.includes('approved_plan_continuation')
+    ) return null;
     const route = valueAt(routeDecision, 'route');
     if (route === 'plan') return 'plan';
     if (route !== 'build') return 'answer';
@@ -2370,8 +2420,10 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   async function buildGenerationContext(request) {
+    let setupPhase = 'start';
     try {
       const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
+      setupPhase = 'approved_plan_context_lookup';
       const approvedPlanEditContext = pendingApprovedPlanEditContexts.get(key);
       if (approvedPlanEditContext !== undefined) {
         pendingApprovedPlanEditContexts.delete(key);
@@ -2410,6 +2462,7 @@ function createBuilderGenerationMainService(rawOptions) {
           conversationContext,
         );
       }
+      setupPhase = 'retry_context_lookup';
       const retryableContext = pendingRetryContexts.get(key);
       if (retryableContext !== undefined) {
         pendingRetryContexts.delete(key);
@@ -2443,13 +2496,16 @@ function createBuilderGenerationMainService(rawOptions) {
           base_revision_evidence: null,
           source_tree: createBuilderProjectSourceTree({ files: [] }),
         }
-        : await loadBaseForExistingProject(
-          existingProjectId,
-          loadCurrentProject,
-          loadProjectIdentity,
-          options.projectReadAuthority,
-          options.projectIdentityAuthority,
-        );
+        : await (async () => {
+          setupPhase = 'load_existing_base';
+          return await loadBaseForExistingProject(
+            existingProjectId,
+            loadCurrentProject,
+            loadProjectIdentity,
+            options.projectReadAuthority,
+            options.projectIdentityAuthority,
+          );
+        })();
       const beginRequest = {
         project_id: projectId,
         instruction: request.instruction,
@@ -2459,6 +2515,7 @@ function createBuilderGenerationMainService(rawOptions) {
           ? routeDecisionHint
           : withRouteDecisionMatchedSignal(routeDecisionHint, 'active_run_followup'),
       };
+      setupPhase = queuedFollowup === null ? 'begin_work' : 'begin_queued_followup_work';
       let conversationContext = queuedFollowup === null
         ? Reflect.apply(
           beginConversationWork,
@@ -2474,11 +2531,15 @@ function createBuilderGenerationMainService(rawOptions) {
           }],
         );
       if (queuedFollowup === null) {
+        setupPhase = 'record_session_task_address';
         recordSessionTaskAddressesFromWorkContext(conversationContext);
       } else {
+        setupPhase = 'bind_queued_followup_task_address';
         bindQueuedFollowupWorkContextToCurrentTaskAddress(conversationContext, queuedFollowup);
       }
+      setupPhase = 'record_context_snapshot';
       conversationContext = await recordConversationContextSnapshot(conversationContext);
+      setupPhase = 'activate_context';
       activeContexts.set(
         operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),
         conversationContext,
@@ -2486,7 +2547,8 @@ function createBuilderGenerationMainService(rawOptions) {
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);
       return generationContextFromConversation(request, base, conversationContext);
-    } catch {
+    } catch (error) {
+      recordCanaryGenerationDebug(setupPhase, error);
       fail();
     }
   }
@@ -2644,17 +2706,21 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   async function buildPlanContext(request) {
+    let setupPhase = 'plan_start';
     try {
       if (collectProjectSourceContext === null || request.existing_project_id === null) fail();
       const key = operationKey(PLAN_OPERATION_PREFIX, request.request_digest);
+      setupPhase = 'plan_pending_context_lookup';
       const pendingPlan = pendingPlanRequests.get(key);
       if (pendingPlan === undefined) fail();
       pendingPlanRequests.delete(key);
       const projectId = request.existing_project_id;
+      setupPhase = 'plan_load_existing_base';
       const base = sanitizeReadResult(
         await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: projectId }]),
         projectId,
       );
+      setupPhase = 'plan_begin_work';
       let conversationContext = Reflect.apply(
         beginConversationWork,
         options.conversationService,
@@ -2666,15 +2732,20 @@ function createBuilderGenerationMainService(rawOptions) {
           route_decision_hint: planRouteDecisionHint(),
         }],
       );
+      setupPhase = 'plan_record_session_task_address';
       recordSessionTaskAddressesFromWorkContext(conversationContext);
+      setupPhase = 'plan_record_context_snapshot';
       conversationContext = await recordConversationContextSnapshot(conversationContext);
+      setupPhase = 'plan_activate_context';
       activeContexts.set(key, conversationContext);
       retryableContexts.delete(key);
       notifyGenerationStarted(request, projectId);
+      setupPhase = 'plan_collect_source_context';
       const sourceContextResult = await Reflect.apply(collectProjectSourceContext, options.sourceContextCollector, [{
         context: conversationContext,
         resource_ids: pendingPlan.resource_ids,
       }]);
+      setupPhase = 'plan_sanitize_source_context';
       sanitizeBuilderPlanProposalSourceContextResult(sourceContextResult);
       const sourceContextConversation = valueAt(sourceContextResult, 'context');
       const sourceContextIds = valueAt(sourceContextConversation, 'ids');
@@ -2691,7 +2762,8 @@ function createBuilderGenerationMainService(rawOptions) {
       activeContexts.set(key, sourceContextConversation);
       liveOutputContextsByRunId.set(valueAt(sourceContextIds, 'run_id'), sourceContextConversation);
       return context;
-    } catch {
+    } catch (error) {
+      recordCanaryGenerationDebug(setupPhase, error);
       fail();
     }
   }
@@ -2899,15 +2971,20 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   async function prepareApprovedPlanEditContext(rawRequest) {
+    let setupPhase = 'approved_plan_prepare_start';
     try {
+      setupPhase = 'approved_plan_prepare_sanitize_request';
       const request = sanitizeApprovedPlanEditRequest(rawRequest);
+      setupPhase = 'approved_plan_prepare_read_plan';
       const approvedPlan = sanitizeApprovedPlanReadResult(
         Reflect.apply(readApprovedPlan, options.conversationService, [request]),
         request,
       );
+      setupPhase = 'approved_plan_prepare_admit_continuation';
       const continuationAdmission = sanitizeBuilderApprovedPlanContinuationAdmission(
         Reflect.apply(admitApprovedPlanContinuation, options.conversationService, [request]),
       );
+      setupPhase = 'approved_plan_prepare_match_admission';
       if (
         continuationAdmission.project_id !== request.project_id
         || continuationAdmission.conversation_id !== request.conversation_id
@@ -2919,10 +2996,12 @@ function createBuilderGenerationMainService(rawOptions) {
         || continuationAdmission.conversation_head.event_id !== approvedPlan.conversation_head.event_id
         || continuationAdmission.conversation_head.event_digest !== approvedPlan.conversation_head.event_digest
       ) fail();
+      setupPhase = 'approved_plan_prepare_load_current_project';
       const base = sanitizeReadResult(
         await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: request.project_id }]),
         request.project_id,
       );
+      setupPhase = 'approved_plan_prepare_return_context';
       return freezeDeep({
         context_version: 'builder-approved-plan-edit-context.v1',
         project_id: request.project_id,
@@ -2963,6 +3042,7 @@ function createBuilderGenerationMainService(rawOptions) {
         },
       });
     } catch (error) {
+      recordCanaryGenerationDebug(setupPhase, error);
       if (error instanceof BuilderGenerationMainServiceError) throw error;
       fail();
     }
@@ -3364,14 +3444,21 @@ function createBuilderGenerationMainService(rawOptions) {
 
   async function generateApprovedPlan(rawRequest) {
     let request = null;
+    let setupPhase = 'approved_plan_generate_start';
     try {
+      setupPhase = 'approved_plan_generate_prepare_context';
       const editContext = await prepareApprovedPlanEditContext(rawRequest);
+      setupPhase = 'approved_plan_generate_request_from_plan';
       request = generationRequestFromApprovedPlan(editContext);
       const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
+      setupPhase = 'approved_plan_generate_inflight_check';
       if (inFlight.has(key) || pendingApprovedPlanEditContexts.has(key)) fail();
+      setupPhase = 'approved_plan_generate_set_pending_context';
       pendingApprovedPlanEditContexts.set(key, editContext);
+      setupPhase = 'approved_plan_generate_start_generate';
       return await startGenerate(request, null);
     } catch (error) {
+      recordCanaryGenerationDebug(setupPhase, error);
       if (request !== null) {
         pendingApprovedPlanEditContexts.delete(
           operationKey(GENERATE_OPERATION_PREFIX, request.request_digest),

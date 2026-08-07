@@ -78,6 +78,7 @@ const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const MESSAGE_ID_PATTERN = new RegExp(`^builder-message:${UUID_SOURCE}$`, 'u');
 const AGENT_ID_PATTERN = new RegExp(`^builder-agent:${UUID_SOURCE}$`, 'u');
+const MAX_CONTEXT_EVENT_WINDOW = 512;
 const ERROR_MESSAGE = 'Builder session and task address recording could not be verified.';
 
 class BuilderSessionTaskAddressRecordingServiceError extends Error {
@@ -194,7 +195,12 @@ function displayIdFromUuid(uuid) {
 }
 
 function denseEvents(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 2 || value.length > 8) fail();
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || value.length < 2
+    || value.length > MAX_CONTEXT_EVENT_WINDOW
+  ) fail();
   const keys = Reflect.ownKeys(value);
   if (
     keys.length !== value.length + 1
@@ -239,8 +245,11 @@ function beginContext(value) {
   const runId = safePattern(valueAt(ids, 'run_id'), RUN_ID_PATTERN);
   const messageId = safePattern(valueAt(ids, 'message_id'), MESSAGE_ID_PATTERN);
   const events = denseEvents(valueAt(value, 'events'));
-  const turnEvent = events.find((event) => valueAt(event, 'event_type') === 'turn_submitted') ?? null;
-  const runEvent = events.find((event) => valueAt(event, 'event_type') === 'run_started') ?? null;
+  const reversedEvents = [...events].reverse();
+  const turnEvent = reversedEvents
+    .find((event) => valueAt(event, 'event_type') === 'turn_submitted') ?? null;
+  const runEvent = reversedEvents
+    .find((event) => valueAt(event, 'event_type') === 'run_started') ?? null;
   if (turnEvent === null || runEvent === null) fail();
   if (
     valueAt(turnEvent, 'project_id') !== projectId

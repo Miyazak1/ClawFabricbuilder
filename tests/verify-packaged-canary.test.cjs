@@ -60,8 +60,12 @@ const {
   summarizePng,
   updateProjectViaUi,
 } = require('../scripts/verify-packaged-canary.cjs');
+const {
+  createLocalCanaryProviderServer,
+} = require('../scripts/verify-packaged-canary-default.cjs');
 
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
+const DEFAULT_SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary-default.cjs');
 const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs');
 
 const FAKE_CANARY_BRIEF_CORRECTION_PATTERNS = Object.freeze([
@@ -106,6 +110,45 @@ function routeFakeCanarySendInstruction(instruction) {
   }
   if (/[?\uFF1F]\s*$/u.test(normalized)) return 'question';
   return 'build';
+}
+
+function submitFakeCanaryInstruction(page) {
+  const instruction = page.values.get(SELECTORS.idea) ?? '';
+  const route = routeFakeCanarySendInstruction(instruction);
+  if (page.planModeActive === true) {
+    page.planModeActive = false;
+    if (page.requirePlanSourceReadApproval === true) page.planSourceReadApprovalVisible = true;
+    else page.recordPlanAttempt();
+  } else if (route === 'question' || route === 'brief_correction') {
+    page.recordQuestion();
+  } else if (
+    route === 'contextual_build'
+    && (
+      page.briefCorrectionActive === true
+      || page.rejectedPlanReviews > 0
+    )
+  ) {
+    page.recordQuestion();
+  } else if (route === 'plan') {
+    page.recordPlanAttempt();
+  } else if (
+    !page.workspaceBound
+    && (
+      page.forceWorkspaceGateForNextBuild
+      || (!page.draftSaved && page.savedRevision <= 0)
+    )
+  ) {
+    page.workspacePickerVisible = true;
+    page.pendingWorkspaceGateInstruction = instruction;
+  } else if (
+    page.requireCurrentProjectWriteApproval === true
+    && page.currentProjectWriteApproved !== true
+  ) {
+    page.currentProjectWriteApprovalVisible = true;
+    page.pendingCurrentProjectWriteInstruction = instruction;
+  } else {
+    page.recordCandidateAttempt(Math.max(page.savedRevision + 1, 1));
+  }
 }
 
 function reviewDiffEvidence() {
@@ -184,6 +227,9 @@ class FakeLocator {
   async click() {
     this.page.events.push(['click', this.selector]);
     if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
+    if (this.selector === SELECTORS.submitTurn) {
+      submitFakeCanaryInstruction(this.page);
+    }
     if (this.selector === SELECTORS.workspaceChip) {
       this.page.workspacePickerVisible = true;
       this.page.newProjectPanelVisible = false;
@@ -298,6 +344,13 @@ class FakeLocator {
     this.page.values.set(this.selector, value);
   }
 
+  async press(key) {
+    this.page.events.push(['press', this.selector, key]);
+    if (this.selector === SELECTORS.idea && key === 'Enter') {
+      submitFakeCanaryInstruction(this.page);
+    }
+  }
+
   contentFrame() {
     this.page.events.push(['contentFrame', this.selector]);
     return {
@@ -399,7 +452,7 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.previewLimitation) {
       if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
-      return 'Static preview The files were generated and the visible HTML/CSS is shown here. Interactive JavaScript is disabled in this preview, so controls or animations may need live preview support before saving.';
+      return 'Static preview HTML and CSS are shown here. JavaScript is disabled, so controls or animations may need live preview support before saving.';
     }
     if (this.selector === SELECTORS.previewUnavailable) {
       if (this.page.previewUnavailableTextOverride !== null) return this.page.previewUnavailableTextOverride;
@@ -511,6 +564,10 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.questionAnswerFailedNoticeVisible, state);
       return;
     }
+    if (this.selector === SELECTORS.generationFailedNotice) {
+      this.page.assertSelectorVisibility(this.selector, this.page.alertVisible, state);
+      return;
+    }
     if (this.selector === SELECTORS.planApproved) {
       this.page.assertSelectorVisibility(
         this.selector,
@@ -606,42 +663,7 @@ class FakeRole {
       this.page.resetNewProjectConversation();
     }
     if (this.name === 'Send') {
-      const instruction = this.page.values.get(SELECTORS.idea) ?? '';
-      const route = routeFakeCanarySendInstruction(instruction);
-      if (this.page.planModeActive === true) {
-        this.page.planModeActive = false;
-        if (this.page.requirePlanSourceReadApproval === true) this.page.planSourceReadApprovalVisible = true;
-        else this.page.recordPlanAttempt();
-      }
-      else if (route === 'question' || route === 'brief_correction') this.page.recordQuestion();
-      else if (
-        route === 'contextual_build'
-        && (
-          this.page.briefCorrectionActive === true
-          || this.page.rejectedPlanReviews > 0
-        )
-      ) {
-        this.page.recordQuestion();
-      }
-      else if (route === 'plan') this.page.recordPlanAttempt();
-      else if (
-        !this.page.workspaceBound
-        && (
-          this.page.forceWorkspaceGateForNextBuild
-          || (!this.page.draftSaved && this.page.savedRevision <= 0)
-        )
-      ) {
-        this.page.workspacePickerVisible = true;
-        this.page.pendingWorkspaceGateInstruction = instruction;
-      }
-      else if (
-        this.page.requireCurrentProjectWriteApproval === true
-        && this.page.currentProjectWriteApproved !== true
-      ) {
-        this.page.currentProjectWriteApprovalVisible = true;
-        this.page.pendingCurrentProjectWriteInstruction = instruction;
-      }
-      else this.page.recordCandidateAttempt(Math.max(this.page.savedRevision + 1, 1));
+      submitFakeCanaryInstruction(this.page);
     }
     if (this.name === 'Approve plan') this.page.recordPlanApproval();
     if (this.name === 'Reject') this.page.recordPlanRejection();
@@ -661,7 +683,10 @@ class FakeRole {
 
   async waitFor(options) {
     this.page.events.push(['roleWaitFor', this.role, this.name, options?.state ?? null]);
-    if (this.role === 'alert' && this.page.alertVisible === true) return;
+    if (
+      this.role === 'alert'
+      && (this.page.alertVisible === true || this.page.unrelatedAlertVisible === true)
+    ) return;
     if (this.role === 'alert' && this.page.failAlertWait === true) throw new Error('secret-marker');
     if (this.role !== 'alert') {
       if (this.page.failRoleWaits.has(`${this.role}:${this.name}`)) throw new Error('secret-marker');
@@ -778,6 +803,7 @@ class FakePage {
     this.savedActivityTextOverride = null;
     this.savedRevision = 0;
     this.unsavedDraftVisible = false;
+    this.unrelatedAlertVisible = false;
     this.versionLabel = 'Version 1';
     this.values = new Map();
     this.workspaceBound = false;
@@ -2357,8 +2383,21 @@ test('parses exact stdin input and rejects credential in argv or env', () => {
   assert.equal(parsed.schema_version, CANARY_INPUT_VERSION);
   assert.equal(Object.hasOwn(parsed, 'mode'), false);
   assert.equal(parsed.provider.credential, 'real-key-value-secret');
+  assert.equal(
+    parseCanaryInput(input({ provider: { ...parsed.provider, base_url: 'http://127.0.0.1:4317/v1' } }))
+      .provider.base_url,
+    'http://127.0.0.1:4317/v1',
+  );
   assert.throws(
     () => parseCanaryInput(input({ executable_path: 'relative.exe' })),
+    (error) => error.code === 'canary_input_invalid',
+  );
+  assert.throws(
+    () => parseCanaryInput(input({ provider: { ...parsed.provider, base_url: 'http://provider.example/v1' } })),
+    (error) => error.code === 'canary_input_invalid',
+  );
+  assert.throws(
+    () => parseCanaryInput(input({ provider: { ...parsed.provider, base_url: 'http://127.0.0.1:4317/v1/' } })),
     (error) => error.code === 'canary_input_invalid',
   );
   assert.throws(
@@ -2420,7 +2459,13 @@ test('fills Settings UI and permits artifacts only after password field clears',
   assert.deepEqual(page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]), [
     'Settings',
     'Save provider',
+    'Back to project',
   ]);
+  assert.equal(page.events.some((event) => (
+    event[0] === 'waitFor'
+    && event[1] === SELECTORS.projectPage
+    && event[2] === 'visible'
+  )), true);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), true);
   assert.ok(await page.locator(SELECTORS.apiKey).screenshot());
 });
@@ -2690,7 +2735,7 @@ test('retries transient draft review child bounds while preserving strict geomet
 test('rejects draft review checkpoint bounds that cannot support review actions', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 340, height: 136 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 300, height: 136 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -3398,6 +3443,33 @@ test('proposes and approves a saved-project plan before creating a draft', async
   ]);
 });
 
+test('ignores unrelated visible alerts while waiting for approved-plan draft continuation', async (t) => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const page = new FakePage();
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+  page.draftSaved = true;
+  page.savedRevision = 2;
+  page.candidateTurns = 2;
+  page.questionTurns = 1;
+  page.unrelatedAlertVisible = true;
+  page.versionLabel = 'Version 2';
+
+  const currentRevision = bridgeEvidence(projectId, true, 2, 2, 1).current.product_revision_receipt;
+  await proposePlanViaUi(page, currentRevision, 'Add a completed summary.', 2, 1, 1);
+
+  const draft = await approvePlanViaUi(page, currentRevision, 3, 1, 1);
+
+  assert.equal(page.approvedPlanReviews, 1);
+  assert.equal(page.candidateTurns, 3);
+  assert.equal(page.unsavedDraftVisible, true);
+  assert.equal(draft.approved_plan_continued, true);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'roleWaitFor' && event[1] === 'alert'),
+    [],
+  );
+});
+
 test('rejects a saved-project plan without creating a draft', async (t) => {
   const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const page = new FakePage();
@@ -3701,7 +3773,11 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send'],
+    ['New project', 'Send'],
+  );
+  assert.equal(
+    page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.submitTurn).length,
+    1,
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
@@ -3846,7 +3922,11 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send'],
+    ['New project', 'Send'],
+  );
+  assert.equal(
+    page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.submitTurn).length,
+    1,
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
@@ -3938,6 +4018,15 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         await fillProviderSettingsViaUi(page, provider, createArtifactGate());
       },
       stage: 'settings_save',
+    },
+    {
+      code: 'canary_settings_return_failed',
+      run: async () => {
+        const page = new FakePage();
+        page.failRoleClicks.add('button:Back to project');
+        await fillProviderSettingsViaUi(page, provider, createArtifactGate());
+      },
+      stage: 'settings_return',
     },
     {
       code: 'canary_new_project_failed',
@@ -4124,7 +4213,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       stage: 'question',
     },
     {
-      code: 'canary_question_failed',
+      code: 'canary_question_evidence_failed',
       run: async () => {
         const page = new FakePage();
         installBridge(page);
@@ -4136,7 +4225,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         ).current.product_revision_receipt;
         await askProjectQuestionViaUi(page, first);
       },
-      stage: 'question',
+      stage: 'question_evidence',
     },
     {
       code: 'canary_question_evidence_failed',
@@ -4686,8 +4775,9 @@ test('opens preview through public artifact workspace controls before capture', 
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
     [
-      SELECTORS.artifactTabPreview,
       SELECTORS.previewOpenArtifact,
+      SELECTORS.artifactViewButton,
+      SELECTORS.artifactTabPreview,
       SELECTORS.workspaceMenuButton,
       SELECTORS.workspaceControlPreview,
     ],
@@ -4984,14 +5074,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       plan_review_actions_visible: true,
       saved_revision_unchanged: true,
       task_stream: {
-        answer_count: 4,
+        answer_count: 0,
         accepted_review_count: 2,
         candidate_ready_count: 2,
         candidate_reviewed_count: 2,
         candidate_result_count: 2,
-        explanation_result_count: 4,
-        head_sequence: 32,
-        item_count: 32,
+        explanation_result_count: 0,
+        head_sequence: 16,
+        item_count: 16,
         latest_plan_review: 'pending',
         plan_approved_count: 0,
         plan_ready_count: 1,
@@ -5024,94 +5114,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       ui_answer_observed: true,
       visible_answer_count: 2,
     },
-    after_initial_save: {
-      answer_failure_notice_absent: true,
-      saved_revision_unchanged: true,
-      task_stream: {
-        answer_count: 1,
-        accepted_review_count: 1,
-        candidate_ready_count: 1,
-        candidate_reviewed_count: 1,
-        candidate_result_count: 1,
-        explanation_result_count: 1,
-        head_sequence: 9,
-        item_count: 9,
-        latest_candidate_review: 'accepted',
-        revision_unchanged: true,
-        run_progress_count: 0,
-        source_availability: 'not_loaded',
-        tool_request_count: 0,
-        tool_result_count: 0,
-      },
-      ui_answer_observed: true,
-      visible_answer_count: 1,
-    },
-    after_initial_save_followup: {
-      answer_failure_notice_absent: true,
-      saved_revision_unchanged: true,
-      task_stream: {
-        answer_count: 2,
-        accepted_review_count: 1,
-        candidate_ready_count: 1,
-        candidate_reviewed_count: 1,
-        candidate_result_count: 1,
-        explanation_result_count: 2,
-        head_sequence: 13,
-        item_count: 13,
-        latest_candidate_review: 'accepted',
-        revision_unchanged: true,
-        run_progress_count: 0,
-        source_availability: 'not_loaded',
-        tool_request_count: 0,
-        tool_result_count: 0,
-      },
-      ui_answer_observed: true,
-      visible_answer_count: 2,
-    },
-    after_initial_save_correction: {
-      answer_failure_notice_absent: true,
-      saved_revision_unchanged: true,
-      task_stream: {
-        answer_count: 3,
-        accepted_review_count: 1,
-        candidate_ready_count: 1,
-        candidate_reviewed_count: 1,
-        candidate_result_count: 1,
-        explanation_result_count: 3,
-        head_sequence: 17,
-        item_count: 17,
-        latest_candidate_review: 'accepted',
-        revision_unchanged: true,
-        run_progress_count: 0,
-        source_availability: 'not_loaded',
-        tool_request_count: 0,
-        tool_result_count: 0,
-      },
-      ui_answer_observed: true,
-      visible_answer_count: 3,
-    },
-    after_initial_save_stale_contextual: {
-      answer_failure_notice_absent: true,
-      saved_revision_unchanged: true,
-      task_stream: {
-        answer_count: 4,
-        accepted_review_count: 1,
-        candidate_ready_count: 1,
-        candidate_reviewed_count: 1,
-        candidate_result_count: 1,
-        explanation_result_count: 4,
-        head_sequence: 21,
-        item_count: 21,
-        latest_candidate_review: 'accepted',
-        revision_unchanged: true,
-        run_progress_count: 0,
-        source_availability: 'not_loaded',
-        tool_request_count: 0,
-        tool_result_count: 0,
-      },
-      ui_answer_observed: true,
-      visible_answer_count: 4,
-    },
+    saved_project_context_chat: 'skipped_until_provider_context_prompt_bridge',
   });
   assert.deepEqual(result.task_stream, {
     initial: {
@@ -5131,31 +5134,15 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_request_count: 0,
       tool_result_count: 0,
     },
-    question: {
-      answer_count: 1,
-      accepted_review_count: 1,
-      candidate_ready_count: 1,
-      candidate_reviewed_count: 1,
-      candidate_result_count: 1,
-      explanation_result_count: 1,
-      head_sequence: 9,
-      item_count: 9,
-      latest_candidate_review: 'accepted',
-      revision_unchanged: true,
-      run_progress_count: 0,
-      source_availability: 'not_loaded',
-      tool_request_count: 0,
-      tool_result_count: 0,
-    },
     pending_update: {
-      answer_count: 4,
+      answer_count: 0,
       accepted_review_count: 1,
       candidate_ready_count: 2,
       candidate_reviewed_count: 1,
       candidate_result_count: 2,
-      explanation_result_count: 4,
-      head_sequence: 25,
-      item_count: 25,
+      explanation_result_count: 0,
+      head_sequence: 9,
+      item_count: 9,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       run_progress_count: 0,
@@ -5165,14 +5152,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     pending_update_restart: {
-      answer_count: 4,
+      answer_count: 0,
       accepted_review_count: 1,
       candidate_ready_count: 2,
       candidate_reviewed_count: 1,
       candidate_result_count: 2,
-      explanation_result_count: 4,
-      head_sequence: 25,
-      item_count: 25,
+      explanation_result_count: 0,
+      head_sequence: 9,
+      item_count: 9,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       run_progress_count: 0,
@@ -5182,14 +5169,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     updated: {
-      answer_count: 4,
+      answer_count: 0,
       accepted_review_count: 2,
       candidate_ready_count: 2,
       candidate_reviewed_count: 2,
       candidate_result_count: 2,
-      explanation_result_count: 4,
-      head_sequence: 26,
-      item_count: 26,
+      explanation_result_count: 0,
+      head_sequence: 10,
+      item_count: 10,
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
@@ -5199,14 +5186,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     restart: {
-      answer_count: 4,
+      answer_count: 0,
       accepted_review_count: 2,
       candidate_ready_count: 2,
       candidate_reviewed_count: 2,
       candidate_result_count: 2,
-      explanation_result_count: 4,
-      head_sequence: 26,
-      item_count: 26,
+      explanation_result_count: 0,
+      head_sequence: 10,
+      item_count: 10,
       latest_candidate_bound_to_revision: true,
       latest_candidate_review: 'accepted',
       latest_saved_revision_number: 2,
@@ -5216,14 +5203,14 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 0,
     },
     restart_continuation: {
-      answer_count: 4,
+      answer_count: 0,
       accepted_review_count: 2,
       candidate_ready_count: 3,
       candidate_reviewed_count: 2,
       candidate_result_count: 3,
-      explanation_result_count: 4,
-      head_sequence: 37,
-      item_count: 37,
+      explanation_result_count: 0,
+      head_sequence: 21,
+      item_count: 21,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       latest_plan_review: 'approved',
@@ -5239,42 +5226,8 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 1,
       tool_result_succeeded_count: 1,
     },
-    brief_correction: {
-      answer_count: 3,
-      accepted_review_count: 1,
-      candidate_ready_count: 1,
-      candidate_reviewed_count: 1,
-      candidate_result_count: 1,
-      explanation_result_count: 3,
-      head_sequence: 17,
-      item_count: 17,
-      latest_candidate_review: 'accepted',
-      revision_unchanged: true,
-      run_progress_count: 0,
-      source_availability: 'not_loaded',
-      tool_request_count: 0,
-      tool_result_count: 0,
-    },
-    stale_contextual_after_correction: {
-      answer_count: 4,
-      accepted_review_count: 1,
-      candidate_ready_count: 1,
-      candidate_reviewed_count: 1,
-      candidate_result_count: 1,
-      explanation_result_count: 4,
-      head_sequence: 21,
-      item_count: 21,
-      latest_candidate_review: 'accepted',
-      revision_unchanged: true,
-      run_progress_count: 0,
-      source_availability: 'not_loaded',
-      tool_request_count: 0,
-      tool_result_count: 0,
-    },
+    saved_project_context_chat_deferred_until_prompt_bridge: true,
     pending_update_advanced_candidate_count: true,
-    question_did_not_advance_candidate_count: true,
-    brief_correction_did_not_advance_candidate_count: true,
-    stale_contextual_after_correction_did_not_advance_candidate_count: true,
     pending_update_restart_unchanged: true,
     restart_continuation_advanced_candidate_count: true,
     restart_unchanged: true,
@@ -5447,21 +5400,11 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.question.initial_chat.no_draft_created, true);
   assert.equal(result.question.initial_chat.no_workspace_required, true);
   assert.equal(result.question.initial_chat_followup.visible_answer_count, 2);
-  assert.equal(result.question.after_initial_save.saved_revision_unchanged, true);
-  assert.equal(result.question.after_initial_save.ui_answer_observed, true);
-  assert.equal(result.question.after_initial_save_followup.visible_answer_count, 2);
-  assert.equal(result.question.after_initial_save_correction.visible_answer_count, 3);
-  assert.equal(result.question.after_initial_save_correction.saved_revision_unchanged, true);
-  assert.equal(result.question.after_initial_save_stale_contextual.visible_answer_count, 4);
-  assert.equal(result.question.after_initial_save_stale_contextual.saved_revision_unchanged, true);
-  assert.equal(result.task_stream.question_did_not_advance_candidate_count, true);
-  assert.equal(result.task_stream.brief_correction_did_not_advance_candidate_count, true);
-  assert.equal(result.task_stream.brief_correction.answer_count, 3);
-  assert.equal(result.task_stream.stale_contextual_after_correction_did_not_advance_candidate_count, true);
-  assert.equal(result.task_stream.stale_contextual_after_correction.answer_count, 4);
+  assert.equal(result.question.saved_project_context_chat, 'skipped_until_provider_context_prompt_bridge');
+  assert.equal(result.task_stream.saved_project_context_chat_deferred_until_prompt_bridge, true);
   assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
-  assert.equal(result.task_stream.updated.answer_count, 4);
+  assert.equal(result.task_stream.updated.answer_count, 0);
   assert.equal(result.task_stream.restart_continuation.candidate_ready_count, 3);
   assert.equal(result.task_stream.restart_continuation.accepted_review_count, 2);
   assert.equal(result.task_stream.restart_continuation_advanced_candidate_count, true);
@@ -5484,11 +5427,6 @@ test('copies only saved provider profile files and runs without provider input o
     'Send',
     'Send',
     'New project',
-    'Send',
-    'Send',
-    'Send',
-    'Send',
-    'Send',
     'Send',
     'Back to current',
     'Send',
@@ -6071,8 +6009,96 @@ test('bounds stdin and requires explicit CLI execute before launch', async () =>
   assert.equal(launches, 0);
 });
 
+test('default packaged canary uses a local OpenAI-compatible provider mock', async (t) => {
+  const server = await createLocalCanaryProviderServer();
+  t.after(async () => {
+    await server.close();
+  });
+  async function request(system, stream = false) {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: 'Canary request.' },
+        ],
+        model: 'local-canary-model',
+        stream,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    return response.text();
+  }
+  async function outputContractRequest(kind) {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Return JSON.' },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              instruction: 'Canary request.',
+              output_contract: { kind },
+            }),
+          },
+        ],
+        model: 'local-canary-model',
+        stream: false,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    return JSON.parse(JSON.parse(await response.text()).choices[0].message.content);
+  }
+  async function repairRequest(kind) {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Return JSON.' },
+          { role: 'user', content: 'Canary request.' },
+          { role: 'user', content: `The previous response was invalid. Set kind to ${kind}.` },
+        ],
+        model: 'local-canary-model',
+        stream: false,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    return JSON.parse(JSON.parse(await response.text()).choices[0].message.content);
+  }
+  const explanation = JSON.parse(JSON.parse(await request('builder_conversation_explanation')).choices[0].message.content);
+  assert.equal(explanation.kind, 'builder_conversation_explanation');
+  const plan = JSON.parse(JSON.parse(await request('builder_project_plan_proposal')).choices[0].message.content);
+  assert.equal(plan.kind, 'builder_project_plan_proposal');
+  assert.equal(
+    (await outputContractRequest('builder_conversation_explanation')).kind,
+    'builder_conversation_explanation',
+  );
+  assert.equal(
+    (await outputContractRequest('builder_project_plan_proposal')).kind,
+    'builder_project_plan_proposal',
+  );
+  assert.equal(
+    (await outputContractRequest('builder_code_change_operations')).kind,
+    'builder_code_change_operations',
+  );
+  assert.equal(
+    (await repairRequest('builder_conversation_explanation')).kind,
+    'builder_conversation_explanation',
+  );
+  const firstCode = JSON.parse(JSON.parse(await request('builder_code_change_operations')).choices[0].message.content);
+  const secondCodeStream = await request('builder_code_change_operations', true);
+  assert.equal(firstCode.kind, 'builder_code_change_operations');
+  assert.match(secondCodeStream, /text-event-stream|data:/u);
+  assert.match(secondCodeStream, /Focus Timer Complete/u);
+});
+
 test('script source keeps credential out of argv/env/output and cannot enter ASAR authority', () => {
   const source = fs.readFileSync(SOURCE_PATH, 'utf8');
+  const defaultSource = fs.readFileSync(DEFAULT_SOURCE_PATH, 'utf8');
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
@@ -6081,6 +6107,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Save provider['"]\)/u);
+  assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to project['"]\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Send['"]\)/u);
   assert.match(source, /node\.scrollIntoView\(\{\s*block:\s*['"]center['"],\s*inline:\s*['"]nearest['"]\s*\}\)/u);
   assert.match(source, /page\.locator\(SELECTORS\.saveVersion\)/u);
@@ -6100,6 +6127,9 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
+  assert.match(defaultSource, /createLocalCanaryProviderServer/u);
+  assert.match(defaultSource, /127\.0\.0\.1/u);
+  assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
   assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v22['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);

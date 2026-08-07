@@ -19,6 +19,7 @@ const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
 const PACKAGED_CANARY_PROJECT_ROOT_PATH = 'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH';
 const PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY = 'project-root';
+const PACKAGED_CANARY_GENERATION_DEBUG_FILE = 'builder-canary-generation-debug.jsonl';
 const LOCAL_STATE_FILE_NAME = 'Local State';
 const PROVIDER_CONFIG_DIRECTORY_NAME = 'builder-provider-config-v1';
 const PROVIDER_CONFIG_CURRENT_FILE_NAME = 'current.json';
@@ -30,7 +31,7 @@ const CANARY_QUESTION_ANSWER_TIMEOUT_MS = 120_000;
 const CANARY_CURRENT_PROJECT_WRITE_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PLAN_SOURCE_READ_APPROVAL_TIMEOUT_MS = 5_000;
 const CANARY_PROJECT_READY_TIMEOUT_MS = 15_000;
-const CANARY_CHAT_COLUMN_MIN_WIDTH_PX = 360;
+const CANARY_CHAT_COLUMN_MIN_WIDTH_PX = 320;
 const CANARY_REVIEW_COPY_MIN_WIDTH_PX = 320;
 const STDIN_MAX_BYTES = 128 * 1024;
 const LOCAL_STATE_MAX_BYTES = 2 * 1024 * 1024;
@@ -53,8 +54,11 @@ const SELECTORS = Object.freeze({
   artifactSidebar: '[data-builder-artifact-sidebar="true"]',
   artifactSummary: '[data-builder-artifact-summary="true"]',
   artifactTabChanges: '[data-builder-artifact-tab="changes"]',
+  artifactTabPermissions: '[data-builder-artifact-tab="permissions"]',
   artifactTabPreview: '[data-builder-artifact-tab="preview"]',
   artifactTabVersions: '[data-builder-artifact-tab="versions"]',
+  artifactViewButton: '[data-builder-artifact-view-button="true"]',
+  artifactViewMenu: '[data-builder-artifact-view-menu="true"]',
   composerAddMenuButton: '[data-builder-composer-add-menu-button="true"]',
   composerAddPlanMode: '[data-builder-composer-add-plan-mode="true"]',
   baseUrl: '#builder-provider-base-url',
@@ -70,6 +74,7 @@ const SELECTORS = Object.freeze({
   conversationActivity: '[data-builder-activity="true"]',
   addSourceFolder: '[data-builder-add-source-folder="true"]',
   currentVersion: '[data-builder-current-version="true"]',
+  generationFailedNotice: '[data-builder-conversation-notice="generation_failed"]',
   historyPreview: '[data-builder-history-preview="true"]',
   idea: '#builder-idea',
   liveOutput: '[data-builder-live-output="true"]',
@@ -79,6 +84,8 @@ const SELECTORS = Object.freeze({
   composerStatus: '[data-builder-composer-status="true"]',
   approvePlan: '[data-builder-approve-plan="true"]',
   approveCurrentProjectWrite: '[data-builder-approve-current-project-write="true"]',
+  approveProviderContextDisclosure: '[data-builder-approve-provider-context-disclosure="true"]',
+  artifactPermissions: '[data-builder-artifact-permissions="true"]',
   approvePlanSourceRead: '[data-builder-approve-plan-source-read="true"]',
   currentProjectWriteApproval: '[data-builder-current-project-write-approval="true"]',
   planApproved: '[data-builder-activity-card="Plan approved"]',
@@ -89,6 +96,7 @@ const SELECTORS = Object.freeze({
   planSourceReadApproval: '[data-builder-plan-source-read-approval="true"]',
   questionAnswerFailedNotice: '[data-builder-conversation-notice="answer_failed"]',
   questionAnswer: '[data-builder-activity-card="Assistant"]',
+  providerContextPermissionRow: '[data-builder-permission-row="ai-context"]',
   submitTurn: '[data-builder-submit-turn="true"]',
   toolActivityRequested: '[data-builder-tool-activity="requested"]',
   toolActivitySucceeded: '[data-builder-tool-activity="succeeded"]',
@@ -98,6 +106,7 @@ const SELECTORS = Object.freeze({
   workspaceChip: '[data-builder-workspace-chip="true"]',
   workspaceControlPreview: '[data-builder-workspace-control-tab="preview"]',
   workspaceControlVersions: '[data-builder-workspace-control-tab="versions"]',
+  workspaceMenu: '[data-builder-workspace-menu="true"]',
   workspaceMenuButton: '[data-builder-workspace-menu-button="true"]',
   workspaceNewProject: '[data-builder-workspace-new-project="true"]',
   workspacePicker: '[data-builder-workspace-picker="true"]',
@@ -113,7 +122,7 @@ const SELECTORS = Object.freeze({
   previewRuntimeBlocked: '[data-builder-preview-runtime-blocked="true"]',
   previewUnavailable: '[data-builder-preview-unavailable="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
-  resultFlow: '[data-builder-result-flow="true"]',
+  resultFlow: '[data-builder-preview-flow="true"]',
   reviewActions: '[data-builder-review-actions="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   reviewCopy: '[data-builder-review-copy="true"]',
@@ -154,6 +163,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_settings_navigation_failed: 'Packaged canary settings navigation failed.',
   canary_settings_panel_failed: 'Packaged canary settings panel failed.',
   canary_settings_save_failed: 'Packaged canary settings save failed.',
+  canary_settings_return_failed: 'Packaged canary could not return from settings.',
   canary_saved_profile_failed: 'Packaged canary saved profile setup failed.',
   canary_build_workspace_required_failed: 'Packaged canary build workspace gate failed.',
   canary_new_project_failed: 'Packaged canary new project failed.',
@@ -263,6 +273,7 @@ const ERROR_STAGES = Object.freeze({
   canary_settings_navigation_failed: 'settings_navigation',
   canary_settings_panel_failed: 'settings_panel',
   canary_settings_save_failed: 'settings_save',
+  canary_settings_return_failed: 'settings_return',
   canary_saved_profile_failed: 'saved_profile',
   canary_build_workspace_required_failed: 'build_workspace_required',
   canary_new_project_failed: 'new_project',
@@ -859,6 +870,7 @@ function failWithDiagnostic(code, diagnostic) {
 
 function fixedError(source, fallback = 'canary_evidence_failed') {
   let code = fallback;
+  let diagnostic = null;
   try {
     if (source !== null && typeof source === 'object' && !utilTypes.isProxy(source)) {
       const descriptor = Object.getOwnPropertyDescriptor(source, 'code');
@@ -869,11 +881,21 @@ function fixedError(source, fallback = 'canary_evidence_failed') {
         && !('set' in descriptor)
         && Object.hasOwn(ERROR_MESSAGES, descriptor.value)
       ) code = descriptor.value;
+      const diagnosticDescriptor = Object.getOwnPropertyDescriptor(source, 'diagnostic');
+      if (
+        diagnosticDescriptor
+        && diagnosticDescriptor.enumerable
+        && !('get' in diagnosticDescriptor)
+        && !('set' in diagnosticDescriptor)
+      ) {
+        diagnostic = diagnosticDescriptor.value;
+      }
     }
   } catch {
     code = fallback;
+    diagnostic = null;
   }
-  return new BuilderPackagedCanaryError(code);
+  return new BuilderPackagedCanaryError(code, diagnostic);
 }
 
 function isObjectProxy(value) {
@@ -977,7 +999,22 @@ function sanitizeProvider(value) {
     'timeout_ms',
   ]);
   const baseUrl = text(descriptors.base_url.value);
-  if (!/^https:\/\/[^\s/$.?#].[^\s]*$/iu.test(baseUrl)) fail('canary_input_invalid');
+  try {
+    const parsed = new URL(baseUrl);
+    if (
+      !['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username
+      || parsed.password
+      || parsed.search
+      || parsed.hash
+      || parsed.toString().replace(/\/$/u, '') !== baseUrl
+    ) fail('canary_input_invalid');
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname.toLowerCase());
+    if (parsed.protocol === 'http:' && !loopback) fail('canary_input_invalid');
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_input_invalid');
+  }
   return Object.freeze({
     base_url: baseUrl,
     credential: text(descriptors.credential.value),
@@ -1800,6 +1837,42 @@ async function clickSaveVersionViaUi(page) {
   await save.click();
 }
 
+async function waitForComposerReadyToSend(page) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() <= deadline) {
+    try {
+      const title = await page.locator(SELECTORS.submitTurn).getAttribute('title');
+      if (title === null || title === 'Send') return;
+    } catch {
+      return;
+    }
+    if (typeof page.waitForTimeout === 'function') {
+      await page.waitForTimeout(100);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
+async function waitForComposerRoute(page, expectedRoute, expectedDispatch) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() <= deadline) {
+    try {
+      const route = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
+      const dispatch = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-dispatch');
+      if (route === null && dispatch === null) return;
+      if (route === expectedRoute && dispatch === expectedDispatch) return;
+    } catch {
+      return;
+    }
+    if (typeof page.waitForTimeout === 'function') {
+      await page.waitForTimeout(100);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 async function waitForPreviewSurface(page) {
   const staticPreview = page.locator(SELECTORS.preview).waitFor({ state: 'visible' })
     .then(() => 'static_preview', () => 'static_preview_timeout');
@@ -1838,6 +1911,26 @@ async function captureGenerationLiveOutputViaUi(page, failureCode) {
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail(failureCode);
+  }
+}
+
+async function captureGenerationLiveOutputOrDraftReadyViaUi(page, failureCode) {
+  try {
+    return await captureGenerationLiveOutputViaUi(page, failureCode);
+  } catch (error) {
+    if (!(error instanceof BuilderPackagedCanaryError) || error.code !== failureCode) throw error;
+    if (
+      await optionalLocatorVisible(page, SELECTORS.unsavedDraft) === true
+      && await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status') === 'draft_ready'
+    ) {
+      return Object.freeze({
+        draft_ready_before_live_output_capture: true,
+        internal_evidence_hidden: true,
+        live_output_visible: false,
+        user_facing_work_status_visible: true,
+      });
+    }
+    throw error;
   }
 }
 
@@ -1934,12 +2027,31 @@ async function collectPlanTaskStreamDiagnostic(page, projectId) {
   }
 }
 
-async function failPlanAlert(page, projectId = null) {
-  const diagnostic = await collectPlanTaskStreamDiagnostic(page, projectId);
-  const streamCode = planStreamFailureCode(diagnostic);
+async function failPlanAlert(page, projectId = null, userDataRoot = null) {
+  const streamDiagnostic = await collectPlanTaskStreamDiagnostic(page, projectId);
+  const diagnostic = Object.freeze({
+    ...(streamDiagnostic ?? Object.freeze({ diagnostic: 'stream_unavailable' })),
+    active_notice: await optionalLocatorText(page, '[data-builder-conversation-notice]'),
+    active_notice_kind: await optionalLocatorAttribute(
+      page,
+      '[data-builder-conversation-notice]',
+      'data-builder-conversation-notice',
+    ),
+    composer_route: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route'),
+    composer_dispatch: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-dispatch'),
+    composer_permission: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-permission'),
+    composer_signals: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-signals'),
+    composer_status: await optionalLocatorText(page, SELECTORS.composerStatus),
+    composer_text: safeDiagnosticText(await optionalInputValue(page, SELECTORS.idea)),
+    plan_source_read_approval_visible: await optionalLocatorVisible(page, SELECTORS.planSourceReadApproval),
+    project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    recent_activity: await optionalRecentActivitySummary(page),
+    generation_debug: optionalCanaryGenerationDebug(userDataRoot),
+  });
+  const streamCode = planStreamFailureCode(streamDiagnostic);
   failWithDiagnostic(
     streamCode ?? 'canary_plan_alert_failed',
-    diagnostic ?? Object.freeze({ diagnostic: 'stream_unavailable' }),
+    diagnostic,
   );
 }
 
@@ -1951,7 +2063,7 @@ async function currentProjectStatus(page) {
   }
 }
 
-async function waitForPlanProposalVisible(page, projectId = null) {
+async function waitForPlanProposalVisible(page, projectId = null, userDataRoot = null) {
   const plan = page.locator(SELECTORS.planReviewActions)
     .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
     .then(() => 'plan', () => 'plan_timeout');
@@ -1960,8 +2072,8 @@ async function waitForPlanProposalVisible(page, projectId = null) {
     .then(() => 'failed', () => 'failure_timeout');
   const outcome = await Promise.race([plan, failed]);
   if (outcome === 'plan') return;
-  if (outcome === 'failed') await failPlanAlert(page, projectId);
-  if (await currentProjectStatus(page) === 'submit_failed') await failPlanAlert(page, projectId);
+  if (outcome === 'failed') await failPlanAlert(page, projectId, userDataRoot);
+  if (await currentProjectStatus(page) === 'submit_failed') await failPlanAlert(page, projectId, userDataRoot);
   fail('canary_plan_failed');
 }
 
@@ -2011,6 +2123,43 @@ async function approveCurrentProjectWriteIfRequested(page) {
   }
 }
 
+async function approveProviderContextDisclosureIfRequested(page) {
+  const deadline = Date.now() + CANARY_QUESTION_ANSWER_TIMEOUT_MS;
+  while (Date.now() <= deadline) {
+    try {
+      await page.locator(SELECTORS.artifactTabPermissions).click({ timeout: 2_000 });
+      await page.locator(SELECTORS.approveProviderContextDisclosure).waitFor({
+        state: 'visible',
+        timeout: 2_000,
+      });
+      break;
+    } catch {
+      if (typeof page.waitForTimeout === 'function') {
+        await page.waitForTimeout(250);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+  try {
+    if (!await page.locator(SELECTORS.approveProviderContextDisclosure).isVisible()) return false;
+  } catch {
+    return false;
+  }
+
+  try {
+    await page.locator(SELECTORS.approveProviderContextDisclosure).click();
+    await page.locator(SELECTORS.approveProviderContextDisclosure).waitFor({
+      state: 'hidden',
+      timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_question_failed');
+  }
+}
+
 async function fillProviderSettingsViaUi(page, provider, gate) {
   try {
     await clickByRole(page, 'button', 'Settings');
@@ -2040,6 +2189,13 @@ async function fillProviderSettingsViaUi(page, provider, gate) {
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_settings_save_failed');
+  }
+  try {
+    await clickByRole(page, 'button', 'Back to project');
+    await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_settings_return_failed');
   }
 }
 
@@ -2409,27 +2565,32 @@ function draftArtifactPreviewLayoutFailureCode({
 
 async function assertChangesPanelLayoutViaUi(page, review, artifact) {
   const code = 'canary_review_diff_changes_layout_failed';
-  const scroll = await boundedBox(page.locator(SELECTORS.chatScroll), code);
-  const flow = await boundedBox(page.locator(SELECTORS.changesFlow), code);
-  const panel = await boundedBox(page.locator(SELECTORS.changesPanel), code);
-  const card = await boundedBox(page.locator(SELECTORS.changeCard).first(), code);
-  const diff = await boundedBox(page.locator(SELECTORS.changeDiff).first(), code);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const scroll = await boundedBox(page.locator(SELECTORS.chatScroll), code);
+    const flow = await boundedBox(page.locator(SELECTORS.changesFlow), code);
+    const panel = await boundedBox(page.locator(SELECTORS.changesPanel), code);
+    const card = await boundedBox(page.locator(SELECTORS.changeCard).first(), code);
+    const diff = await boundedBox(page.locator(SELECTORS.changeDiff).first(), code);
 
-  if (
-    flow.width < 320
-    || panel.width < 320
-    || flow.height < 80
-    || panel.height < 80
-    || !boxContains(artifact.sidebar, flow)
-    || !boxContains(artifact.sidebar, panel)
-    || boxContains(scroll, panel)
-    || boxesOverlap(review, flow)
-    || boxesOverlap(review, panel)
-    || !boxContains(flow, panel)
-    || !boxContains(panel, card)
-    || !boxContains(card, diff)
-    || diff.height < 24
-  ) fail(code);
+    if (
+      flow.width >= 320
+      && panel.width >= 320
+      && flow.height >= 80
+      && panel.height >= 80
+      && boxContains(artifact.sidebar, flow)
+      && boxContains(artifact.sidebar, panel)
+      && !boxContains(scroll, panel)
+      && !boxesOverlap(review, flow)
+      && !boxesOverlap(review, panel)
+      && boxContains(flow, panel)
+      && boxContains(panel, card)
+      && boxContains(card, diff)
+      && diff.height >= 24
+    ) return;
+    if (typeof page.waitForTimeout !== 'function') break;
+    await page.waitForTimeout(100);
+  }
+  fail(code);
 }
 
 async function inspectDraftReviewDiffViaUi(page) {
@@ -2595,10 +2756,46 @@ async function optionalLocatorText(page, selector) {
   }
 }
 
+function optionalPageClosed(page) {
+  try {
+    return typeof page.isClosed === 'function' ? page.isClosed() : null;
+  } catch {
+    return null;
+  }
+}
+
+function optionalPageUrl(page) {
+  try {
+    return typeof page.url === 'function' ? safeDiagnosticText(page.url()) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function optionalPageTitle(page) {
+  try {
+    return safeDiagnosticText(await page.title());
+  } catch {
+    return null;
+  }
+}
+
+async function optionalBodyText(page) {
+  try {
+    return safeDiagnosticText(await page.locator('body').textContent());
+  } catch {
+    return null;
+  }
+}
+
 async function collectQuestionFailureDiagnostic(page, outcome, expectedVisibleAnswers) {
   return Object.freeze({
     outcome: typeof outcome === 'string' ? outcome : 'exception',
     expected_visible_answers: expectedVisibleAnswers,
+    page_closed: optionalPageClosed(page),
+    page_url: optionalPageUrl(page),
+    page_title: await optionalPageTitle(page),
+    body_text: await optionalBodyText(page),
     visible_answer_count: await optionalLocatorCount(page, SELECTORS.questionAnswer),
     answer_failed_notice_visible: await optionalLocatorVisible(page, SELECTORS.questionAnswerFailedNotice),
     project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
@@ -2609,6 +2806,15 @@ async function collectQuestionFailureDiagnostic(page, outcome, expectedVisibleAn
     workspace_picker_visible: await optionalLocatorVisible(page, SELECTORS.workspacePicker),
     unsaved_draft_visible: await optionalLocatorVisible(page, SELECTORS.unsavedDraft),
     save_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+    permissions_tab_visible: await optionalLocatorVisible(page, SELECTORS.artifactTabPermissions),
+    permissions_panel_visible: await optionalLocatorVisible(page, SELECTORS.artifactPermissions),
+    provider_context_status: await optionalLocatorAttribute(
+      page,
+      SELECTORS.providerContextPermissionRow,
+      'data-builder-ai-context-status',
+    ),
+    provider_context_approval_visible: await optionalLocatorVisible(page, SELECTORS.approveProviderContextDisclosure),
+    provider_context_row_text: await optionalLocatorText(page, SELECTORS.providerContextPermissionRow),
     live_output_visible: await optionalLocatorVisible(page, SELECTORS.liveOutput),
     live_output_text: await optionalLocatorText(page, SELECTORS.liveOutput),
     latest_answer_text: await optionalLocatorText(page, SELECTORS.questionAnswer),
@@ -2623,6 +2829,123 @@ async function failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers)
   );
 }
 
+async function optionalTaskStreamFailureSummary(page, projectId) {
+  if (typeof projectId !== 'string') return null;
+  try {
+    return await page.evaluate(async (request) => {
+      const stream = await globalThis.clawfabricBuilder.taskStream.read({ project_id: request.projectId });
+      const conversation = stream?.conversation ?? null;
+      const items = Array.isArray(conversation?.items) ? conversation.items : [];
+      const latestRunCompleted = [...items]
+        .reverse()
+        .find((item) => item?.item_kind === 'run_completed') ?? null;
+      const latestTurnCompleted = [...items]
+        .reverse()
+        .find((item) => item?.item_kind === 'turn_completed') ?? null;
+      const counts = conversation?.item_facts?.counts ?? null;
+      return {
+        head_sequence: conversation?.head_sequence ?? null,
+        item_count: conversation?.item_count ?? null,
+        run_completed_count: counts?.run_completed_count ?? null,
+        turn_completed_count: counts?.turn_completed_count ?? null,
+        latest_run_terminal_status: latestRunCompleted?.terminal_status ?? null,
+        latest_run_result_kind: latestRunCompleted?.result_kind ?? null,
+        latest_run_failure_phase: latestRunCompleted?.failure_phase ?? null,
+        latest_turn_outcome: latestTurnCompleted?.outcome ?? null,
+      };
+    }, { projectId });
+  } catch {
+    return null;
+  }
+}
+
+async function optionalRecentActivitySummary(page) {
+  try {
+    return await page.evaluate(() => {
+      const nodes = Array.from(globalThis.document.querySelectorAll('[data-builder-activity-card]'));
+      return nodes.slice(-8).map((node) => ({
+        card: node.getAttribute('data-builder-activity-card'),
+        role: node.getAttribute('data-builder-activity-role'),
+        status: node.getAttribute('data-builder-activity-status'),
+        text: String(node.textContent ?? '').replace(/\s+/gu, ' ').trim().slice(0, 500),
+      }));
+    });
+  } catch {
+    return null;
+  }
+}
+
+function optionalCanaryGenerationDebug(userDataRoot, fsModule = fs) {
+  try {
+    if (userDataRoot === null || typeof userDataRoot?.path !== 'string') return null;
+    const debugPath = path.join(userDataRoot.path, PACKAGED_CANARY_GENERATION_DEBUG_FILE);
+    if (!fsModule.existsSync(debugPath)) return null;
+    const text = fsModule.readFileSync(debugPath, 'utf8');
+    return text
+      .trim()
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .slice(-12)
+      .map((line) => {
+        try {
+          const parsed = JSON.parse(line);
+          return {
+            result_version: parsed.result_version,
+            phase: parsed.phase,
+            code: parsed.code,
+          };
+        } catch {
+          return { result_version: 'builder-canary-generation-debug.v1', phase: 'unreadable', code: 'unknown' };
+        }
+      });
+  } catch {
+    return null;
+  }
+}
+
+async function collectUpdateGenerationFailureDiagnostic(
+  page,
+  step = 'unknown',
+  projectId = null,
+  userDataRoot = null,
+  fsModule = fs,
+) {
+  return Object.freeze({
+    step,
+    page_closed: optionalPageClosed(page),
+    page_url: optionalPageUrl(page),
+    page_title: await optionalPageTitle(page),
+    body_text: await optionalBodyText(page),
+    composer_route: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route'),
+    composer_dispatch: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-dispatch'),
+    composer_permission: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-permission'),
+    composer_signals: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-signals'),
+    composer_active_run_input: await optionalLocatorAttribute(
+      page,
+      SELECTORS.composer,
+      'data-builder-route-active-run-input',
+    ),
+    submit_title: await optionalLocatorAttribute(page, SELECTORS.submitTurn, 'title'),
+    submit_disabled: await optionalLocatorAttribute(page, SELECTORS.submitTurn, 'disabled'),
+    submit_visible: await optionalLocatorVisible(page, SELECTORS.submitTurn),
+    current_project_write_approval_visible: await optionalLocatorVisible(page, SELECTORS.currentProjectWriteApproval),
+    current_project_write_approve_visible: await optionalLocatorVisible(page, SELECTORS.approveCurrentProjectWrite),
+    live_output_visible: await optionalLocatorVisible(page, SELECTORS.liveOutput),
+    live_output_text: await optionalLocatorText(page, SELECTORS.liveOutput),
+    preview_visible: await optionalLocatorVisible(page, SELECTORS.preview),
+    preview_unavailable_visible: await optionalLocatorVisible(page, SELECTORS.previewUnavailable),
+    unsaved_draft_visible: await optionalLocatorVisible(page, SELECTORS.unsavedDraft),
+    save_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+    composer_text: safeDiagnosticText(await optionalInputValue(page, SELECTORS.idea)),
+    project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    active_notice: await optionalLocatorText(page, '[data-builder-conversation-notice]'),
+    active_notice_kind: await optionalLocatorAttribute(page, '[data-builder-conversation-notice]', 'data-builder-conversation-notice'),
+    recent_activity: await optionalRecentActivitySummary(page),
+    task_stream: await optionalTaskStreamFailureSummary(page, projectId),
+    generation_debug: optionalCanaryGenerationDebug(userDataRoot, fsModule),
+  });
+}
+
 async function waitForVisibleQuestionAnswers(page, expectedVisibleAnswers) {
   try {
     await page.locator(SELECTORS.questionAnswer).waitFor({
@@ -2632,16 +2955,29 @@ async function waitForVisibleQuestionAnswers(page, expectedVisibleAnswers) {
   } catch {
     return 'answer_timeout';
   }
-  const deadline = Date.now() + CANARY_QUESTION_ANSWER_TIMEOUT_MS;
-  while (Date.now() <= deadline) {
+  try {
+    await page.locator(SELECTORS.questionAnswer).nth(expectedVisibleAnswers - 1).waitFor({
+      state: 'visible',
+      timeout: CANARY_QUESTION_ANSWER_TIMEOUT_MS,
+    });
+    return 'answer';
+  } catch {
     try {
       if (await page.locator(SELECTORS.questionAnswer).count() >= expectedVisibleAnswers) return 'answer';
     } catch {
-      // Keep polling until the bounded wait expires.
+      // The fixed timeout outcome below remains authoritative.
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return 'answer_timeout';
+}
+
+async function hasEnoughQuestionAnswers(page, expectedVisibleAnswers) {
+  try {
+    return await page.locator(SELECTORS.questionAnswer).count() >= expectedVisibleAnswers
+      && await page.locator(SELECTORS.questionAnswerFailedNotice).isVisible() !== true;
+  } catch {
+    return false;
+  }
 }
 
 async function askInitialChatQuestionViaUi(
@@ -2656,7 +2992,9 @@ async function askInitialChatQuestionViaUi(
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
-    if (outcome !== 'answer') await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
+    if (outcome !== 'answer' && !await hasEnoughQuestionAnswers(page, expectedVisibleAnswers)) {
+      await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
+    }
     await assertNoQuestionAnswerFailureNotice(page);
     const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
     if (visibleAnswerCount < expectedVisibleAnswers) {
@@ -2711,7 +3049,17 @@ async function askProjectQuestionViaUi(
     const alert = page.getByRole('alert').waitFor({ state: 'visible' })
       .then(() => 'alert', () => 'alert_unavailable');
     const outcome = await Promise.race([answer, alert]);
-    if (outcome !== 'answer') await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
+    if (outcome !== 'answer' && !await hasEnoughQuestionAnswers(page, expectedVisibleAnswers)) {
+      if (!await approveProviderContextDisclosureIfRequested(page)) {
+        await failQuestionWithDiagnostic(page, outcome, expectedVisibleAnswers);
+      }
+      await page.locator(SELECTORS.idea).fill(question);
+      await clickByRole(page, 'button', 'Send');
+      const retryOutcome = await waitForVisibleQuestionAnswers(page, expectedVisibleAnswers);
+      if (retryOutcome !== 'answer' && !await hasEnoughQuestionAnswers(page, expectedVisibleAnswers)) {
+        await failQuestionWithDiagnostic(page, retryOutcome, expectedVisibleAnswers);
+      }
+    }
     await assertNoQuestionAnswerFailureNotice(page);
     const visibleAnswerCount = await page.locator(SELECTORS.questionAnswer).count();
     if (visibleAnswerCount < expectedVisibleAnswers) {
@@ -2813,17 +3161,37 @@ async function createUpdateDraftViaUi(
   currentProject,
   instruction = CANARY_UPDATE_INSTRUCTION,
   expectedQuestionTurns = 0,
+  userDataRoot = null,
+  fsModule = fs,
 ) {
   let draftReviewDiff = null;
   let liveOutput = null;
+  let step = 'start';
   try {
+    step = 'wait_ready';
+    await waitForComposerReadyToSend(page);
+    step = 'fill_instruction';
     await page.locator(SELECTORS.idea).fill(instruction);
-    await clickByRole(page, 'button', 'Send');
+    step = 'wait_route';
+    await waitForComposerRoute(page, 'build', 'build');
+    if (typeof page.waitForTimeout === 'function') {
+      await page.waitForTimeout(250);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    step = 'submit_instruction';
+    await page.locator(SELECTORS.submitTurn).click();
+    step = 'approve_write';
     await approveCurrentProjectWriteIfRequested(page);
-    liveOutput = await captureGenerationLiveOutputViaUi(page, 'canary_update_generation_terminal_failed');
+    step = 'capture_live_output';
+    liveOutput = await captureGenerationLiveOutputOrDraftReadyViaUi(page, 'canary_update_generation_terminal_failed');
+    step = 'wait_terminal';
     await waitForGenerationTerminal(page);
   } catch {
-    fail('canary_update_generation_terminal_failed');
+    await failWithDiagnostic(
+      'canary_update_generation_terminal_failed',
+      await collectUpdateGenerationFailureDiagnostic(page, step, currentProject.project_id, userDataRoot, fsModule),
+    );
   }
   try {
     await page.locator(SELECTORS.unsavedDraft)
@@ -2858,6 +3226,7 @@ async function proposePlanViaUi(
   expectedCandidateTurns = currentProject.revision_number,
   expectedQuestionTurns = 0,
   expectedPlanTurns = 1,
+  userDataRoot = null,
 ) {
   try {
     await page.locator(SELECTORS.idea).fill(instruction);
@@ -2871,7 +3240,7 @@ async function proposePlanViaUi(
 
   try {
     await approvePlanSourceReadIfRequested(page);
-    await waitForPlanProposalVisible(page, currentProject.project_id);
+    await waitForPlanProposalVisible(page, currentProject.project_id, userDataRoot);
     await page.locator(SELECTORS.planProposed).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.approvePlan).waitFor({ state: 'visible' });
     await expectComposerStatus(page, 'Needs confirmation');
@@ -2932,6 +3301,7 @@ async function approvePlanViaUi(
   expectedCandidateTurns,
   expectedQuestionTurns = 0,
   expectedPlanTurns = 1,
+  userDataRoot = null,
 ) {
   let draftReviewDiff = null;
   try {
@@ -2942,11 +3312,16 @@ async function approvePlanViaUi(
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
       .then(() => 'draft_ready', () => 'draft_timeout');
-    const alert = page.getByRole('alert')
+    const alert = page.locator(SELECTORS.generationFailedNotice)
       .waitFor({ state: 'visible', timeout: CANARY_PLAN_PROPOSAL_TIMEOUT_MS })
       .then(() => 'alert', () => 'alert_timeout');
     const outcome = await Promise.race([draftReady, alert]);
-    if (outcome !== 'draft_ready') fail('canary_plan_review_failed');
+    if (outcome !== 'draft_ready') {
+      await failWithDiagnostic(
+        'canary_plan_review_failed',
+        await collectPlanReviewContinuationDiagnostic(page, currentProject, userDataRoot),
+      );
+    }
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     await expectComposerStatus(page, 'Ready to execute current direction');
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
@@ -2981,6 +3356,50 @@ async function approvePlanViaUi(
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_plan_review_failed');
   }
+}
+
+async function collectPlanReviewContinuationDiagnostic(page, currentProject, userDataRoot = null) {
+  let evidence = null;
+  try {
+    evidence = await readSanitizedBridgeEvidence(page, currentProject.project_id);
+  } catch {
+    evidence = null;
+  }
+  const facts = evidence?.task_stream?.conversation?.item_facts ?? null;
+  const counts = facts?.counts ?? null;
+  const latestPlanReview = facts?.latestPlanReview ?? null;
+  return Object.freeze({
+    active_notice: await optionalLocatorText(page, '[data-builder-conversation-notice]'),
+    active_notice_kind: await optionalLocatorAttribute(
+      page,
+      '[data-builder-conversation-notice]',
+      'data-builder-conversation-notice',
+    ),
+    composer_dispatch: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-dispatch'),
+    composer_permission: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-permission'),
+    composer_route: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route'),
+    composer_signals: await optionalLocatorAttribute(page, SELECTORS.composer, 'data-builder-route-signals'),
+    composer_status: await optionalLocatorText(page, SELECTORS.composerStatus),
+    generation_debug: optionalCanaryGenerationDebug(userDataRoot),
+    generation_failed_notice_visible: await optionalLocatorVisible(page, SELECTORS.generationFailedNotice),
+    latest_plan_review: latestPlanReview === null ? null : Object.freeze({
+      decision: latestPlanReview.decision,
+      plan_state: latestPlanReview.plan_state,
+    }),
+    plan_approved_visible: await optionalLocatorVisible(page, SELECTORS.planApproved),
+    plan_review_actions_visible: await optionalLocatorVisible(page, SELECTORS.planReviewActions),
+    project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    save_version_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+    task_stream_counts: counts === null ? null : Object.freeze({
+      answer_count: counts.answer_count,
+      candidate_ready_count: counts.candidate_ready_count,
+      plan_approved_count: counts.plan_approved_count,
+      plan_rejected_count: counts.plan_rejected_count,
+      plan_reviewed_count: counts.plan_reviewed_count,
+      plan_turn_count: counts.plan_turn_count,
+    }),
+    unsaved_draft_visible: await optionalLocatorVisible(page, SELECTORS.unsavedDraft),
+  });
 }
 
 async function rejectPlanViaUi(
@@ -5646,6 +6065,8 @@ async function hasVisiblePreviewSurface(page) {
 const PREVIEW_SURFACE_DIAGNOSTIC_SELECTORS = Object.freeze({
   artifact_sidebar: SELECTORS.artifactSidebar,
   artifact_tab_preview: SELECTORS.artifactTabPreview,
+  artifact_view_button: SELECTORS.artifactViewButton,
+  artifact_view_menu: SELECTORS.artifactViewMenu,
   preview_open_artifact: SELECTORS.previewOpenArtifact,
   preview_surface: SELECTORS.preview,
   preview_unavailable: SELECTORS.previewUnavailable,
@@ -5698,13 +6119,16 @@ async function openPreviewSurfaceViaUi(page) {
   if (await hasVisiblePreviewSurface(page)) return;
   const attempts = [
     async () => {
-      await page.locator(SELECTORS.artifactTabPreview).click({ timeout: 1000 });
-    },
-    async () => {
       await page.locator(SELECTORS.previewOpenArtifact).click({ timeout: 1000 });
     },
     async () => {
+      await page.locator(SELECTORS.artifactViewButton).click({ timeout: 1000 });
+      await page.locator(SELECTORS.artifactViewMenu).waitFor({ state: 'visible', timeout: 3000 });
+      await page.locator(SELECTORS.artifactTabPreview).click({ timeout: 3000 });
+    },
+    async () => {
       await page.locator(SELECTORS.workspaceMenuButton).click({ timeout: 1000 });
+      await page.locator(SELECTORS.workspaceMenu).waitFor({ state: 'visible', timeout: 3000 });
       await page.locator(SELECTORS.workspaceControlPreview).click({ timeout: 3000 });
     },
   ];
@@ -5791,9 +6215,8 @@ async function capturePreviewEvidence(page, gate) {
     if (
       typeof limitationText !== 'string'
       || !limitationText.includes('Static preview')
-      || !limitationText.includes('The files were generated')
-      || !limitationText.includes('visible HTML/CSS is shown here')
-      || !limitationText.includes('Interactive JavaScript is disabled')
+      || !limitationText.includes('HTML and CSS are shown here')
+      || !limitationText.includes('JavaScript is disabled')
       || !limitationText.includes('live preview support')
       || limitationText.includes('Preview may look blank')
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
@@ -6042,33 +6465,13 @@ async function runPackagedCanary(rawInput, options = {}) {
     const initialRevision = exactRevisionFromReadEvidence(initialCurrentEvidence, initialProject);
     const initialTaskStream = assertTaskStreamCandidateFacts(initialCurrentEvidence, initialRevision, 1);
     const initialPreviewEvidence = await capturePreviewEvidence(page, gate);
-    const question = await askProjectQuestionViaUi(page, initialRevision, CANARY_QUESTION, 1, 1);
-    const followupQuestion = await askProjectQuestionViaUi(
-      page,
-      initialRevision,
-      'Can we keep discussing the audience before changing files?',
-      1,
-      2,
-    );
-    const correctionQuestion = await askProjectQuestionViaUi(
-      page,
-      initialRevision,
-      '等等，先不要按这个做，我要重新整理方向。',
-      1,
-      3,
-    );
-    const staleContextualQuestion = await askProjectQuestionViaUi(
-      page,
-      initialRevision,
-      '按刚才方案做',
-      1,
-      4,
-    );
     const pendingUpdateDraft = await createUpdateDraftViaUi(
       page,
       initialRevision,
       CANARY_UPDATE_INSTRUCTION,
-      4,
+      0,
+      userDataRoot,
+      fsModule,
     );
     const pendingUpdateEvidence = await readSanitizedBridgeEvidence(
       page,
@@ -6077,7 +6480,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
     if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
-    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 4);
+    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 0);
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
     if (!staticPreviewSrcdocChanged(pendingUpdatePreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
@@ -6097,7 +6500,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
     await assertCustomChromeControls(pendingRestartPage);
     await openProjectFromCatalogById(pendingRestartPage, initialRevision, 'canary_restart_open_failed');
-    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 4);
+    const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 0);
     const pendingRestartProject = projectFromReadEvidence(pendingRestart.evidence, 1);
     if (!sameCatalogProjectRevision(pendingRestartProject, initialProject)) {
       fail('canary_pending_draft_restart_failed');
@@ -6128,7 +6531,7 @@ async function runPackagedCanary(rawInput, options = {}) {
     );
     const updatedRevision = exactRevisionFromReadEvidence(updatedCurrentEvidence, updatedProject);
     assertRevisionAdvance(initialRevision, updatedRevision);
-    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 4);
+    const updatedTaskStream = assertTaskStreamCandidateFacts(updatedCurrentEvidence, updatedRevision, 2, 0);
     const updatedPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (!staticPreviewSrcdocChanged(updatedPreviewEvidence, initialPreviewEvidence)) {
       fail('canary_preview_failed');
@@ -6161,7 +6564,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       await failRestartVersion(restartedPage);
     }
     const restartProject = projectFromReadEvidence(restartEvidence, 2);
-    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 4);
+    const restartTaskStream = assertTaskStreamCandidateFacts(restartEvidence, updatedRevision, 2, 0);
     const restartPreviewEvidence = await capturePreviewEvidence(restartedPage, gate);
     const history = await inspectHistoryVersionViaUi(
       restartedPage,
@@ -6171,7 +6574,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartPreviewEvidence,
       restartTaskStream,
       gate,
-      4,
+      0,
     );
     const network = recorder.snapshot();
     if (network.renderer_unexpected_network_count !== 0) fail('canary_evidence_failed');
@@ -6192,8 +6595,9 @@ async function runPackagedCanary(rawInput, options = {}) {
       updatedRevision,
       CANARY_RESTART_CONTINUATION_INSTRUCTION,
       2,
-      4,
+      0,
       1,
+      userDataRoot,
     );
     const planProposalProject = projectFromReadEvidence(
       await readSanitizedBridgeEvidence(
@@ -6210,8 +6614,9 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartedPage,
       updatedRevision,
       3,
-      4,
+      0,
       1,
+      userDataRoot,
     );
     const restartContinuationEvidence = await readSanitizedBridgeEvidence(
       restartedPage,
@@ -6227,7 +6632,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       restartContinuationEvidence,
       updatedRevision,
       3,
-      4,
+      0,
       {
         approvedPlanReviews: 1,
         planTurns: 1,
@@ -6270,10 +6675,7 @@ async function runPackagedCanary(rawInput, options = {}) {
       question: Object.freeze({
         initial_chat: initialChat,
         initial_chat_followup: initialChatFollowup,
-        after_initial_save: question,
-        after_initial_save_followup: followupQuestion,
-        after_initial_save_correction: correctionQuestion,
-        after_initial_save_stale_contextual: staleContextualQuestion,
+        saved_project_context_chat: 'skipped_until_provider_context_prompt_bridge',
       }),
       preview: Object.freeze({
         initial: initialPreviewEvidence,
@@ -6315,22 +6717,14 @@ async function runPackagedCanary(rawInput, options = {}) {
       }),
       task_stream: Object.freeze({
         initial: initialTaskStream,
-        question: question.task_stream,
         pending_update: pendingUpdateTaskStream,
         pending_update_restart: pendingRestart.task_stream,
         updated: updatedTaskStream,
         restart: restartTaskStream,
         restart_continuation: restartContinuationTaskStream,
-        brief_correction: correctionQuestion.task_stream,
-        stale_contextual_after_correction: staleContextualQuestion.task_stream,
         pending_update_advanced_candidate_count: pendingUpdateTaskStream.candidate_ready_count
           === initialTaskStream.candidate_ready_count + 1,
-        question_did_not_advance_candidate_count: question.task_stream.candidate_ready_count
-          === initialTaskStream.candidate_ready_count,
-        brief_correction_did_not_advance_candidate_count: correctionQuestion.task_stream.candidate_ready_count
-          === initialTaskStream.candidate_ready_count,
-        stale_contextual_after_correction_did_not_advance_candidate_count:
-          staleContextualQuestion.task_stream.candidate_ready_count === initialTaskStream.candidate_ready_count,
+        saved_project_context_chat_deferred_until_prompt_bridge: true,
         pending_update_restart_unchanged: true,
         update_advanced_candidate_count: updatedTaskStream.candidate_ready_count
           === initialTaskStream.candidate_ready_count + 1,

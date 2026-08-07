@@ -25,6 +25,7 @@ const REQUIRED_OPTION_KEYS = Object.freeze(['ipcMain', 'mainWindowRef', 'userDat
 const REQUEST_KEYS = Object.freeze(['project_id', 'action', 'resource_kind', 'resource_id']);
 const ACTION_RESOURCE_KINDS = Object.freeze({
   'context.read': Object.freeze(['project', 'conversation', 'task', 'run', 'revision', 'artifact']),
+  'context.disclose': Object.freeze(['provider']),
   'project.read': Object.freeze(['project', 'revision']),
   'project.edit': Object.freeze(['project']),
   'secret.read': Object.freeze(['secret']),

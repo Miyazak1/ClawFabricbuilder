@@ -284,6 +284,32 @@ test('rejects malformed, extra, accessor, proxy, and oversized request authority
   assert.equal(calls, 0);
 });
 
+test('accepts bounded repair prompts with a third user message', async () => {
+  const requests = [];
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return response(providerPayload());
+    },
+  });
+
+  const result = await transport(request({
+    messages: [
+      { role: 'system', content: 'Return one exact JSON object.' },
+      { role: 'user', content: 'Build a small timer.' },
+      { role: 'user', content: 'The previous answer was invalid. Return the exact JSON object.' },
+    ],
+  }));
+
+  assert.deepEqual(result, {
+    transport_version: 'builder-openai-compatible-transport.v1',
+    generated_text: '{"kind":"builder_code_project"}',
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].messages.length, 3);
+  assert.equal(requests[0].messages[2].role, 'user');
+});
+
 test('maps explicit cancellation and timeout to distinct fixed errors', async () => {
   const fetchImpl = async (_url, options) => new Promise((_resolve, reject) => {
     options.signal.addEventListener('abort', () => reject(new Error(PRIVATE_MARKER)), { once: true });

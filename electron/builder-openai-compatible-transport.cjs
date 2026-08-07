@@ -146,14 +146,15 @@ function providerEndpoint(value) {
 }
 
 function sanitizeMessages(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length !== 2) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || ![2, 3].includes(value.length)) {
     fail('builder_provider_request_invalid');
   }
   const arrayKeys = Reflect.ownKeys(value);
-  if (arrayKeys.length !== 3 || arrayKeys.some((key) => !['0', '1', 'length'].includes(key))) {
+  const expectedRoles = value.length === 2 ? ['system', 'user'] : ['system', 'user', 'user'];
+  const expectedKeys = [...expectedRoles.map((_, index) => String(index)), 'length'];
+  if (arrayKeys.length !== expectedKeys.length || arrayKeys.some((key) => !expectedKeys.includes(key))) {
     fail('builder_provider_request_invalid');
   }
-  const expectedRoles = ['system', 'user'];
   const messages = expectedRoles.map((expectedRole, index) => {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {

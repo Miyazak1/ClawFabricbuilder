@@ -375,6 +375,86 @@ test('binds approved-plan continuation work to the current Session and Task Addr
   store.close();
 });
 
+test('binds approved-plan continuation from the latest work events after prior history', (t) => {
+  const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
+  store.record_session_address({ session_address: sessionAddress() });
+  store.record_task_address({ task_address: taskAddress() });
+  const binder = createBuilderSessionTaskAddressBindingService({ address_store: store });
+  const continuation = approvedPlanContinuation();
+  const context = approvedPlanWorkContext({
+    start_head: {
+      sequence: 4,
+      event_id: `builder-conversation-event:${'4'.repeat(64)}`,
+      event_digest: digest('4'),
+    },
+    events: [
+      eventAt(1, 'turn_submitted', {
+        message: {
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174241',
+          text: 'Earlier work turn.',
+        },
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174242',
+        mode: 'work',
+        task: {
+          task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174243',
+          title: 'Earlier task',
+        },
+        base_revision: null,
+        route_decision: {
+          route: 'build',
+          confidence: 'high',
+          matched_signals: ['existing_project_build'],
+        },
+      }),
+      eventAt(2, 'run_started', {
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174242',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174244',
+        task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174243',
+        attempt_number: 1,
+        retry_of_run_id: null,
+        input_digest: digest('9'),
+      }),
+      eventAt(3, 'turn_submitted', {
+        message: {
+          message_id: CONSUMING_MESSAGE_ID,
+          text: 'Review the approved plan.\n\nPlan:\n1. Build the approved change.',
+        },
+        turn_id: CONSUMING_TURN_ID,
+        mode: 'work',
+        task: {
+          task_id: CONSUMING_TASK_ID,
+          title: 'Continue approved plan',
+        },
+        base_revision: null,
+        route_decision: {
+          route: 'build',
+          confidence: 'high',
+          matched_signals: ['approved_plan_continuation'],
+        },
+      }),
+      eventAt(4, 'run_started', {
+        turn_id: CONSUMING_TURN_ID,
+        run_id: CONSUMING_RUN_ID,
+        task_id: CONSUMING_TASK_ID,
+        attempt_number: 1,
+        retry_of_run_id: null,
+        input_digest: digest('1'),
+      }),
+    ],
+  });
+
+  const bound = binder.bind_approved_plan_continuation_to_current_task_address({
+    context,
+    approved_plan_continuation: continuation,
+  });
+
+  assert.equal(bound.turn_id, CONSUMING_TURN_ID);
+  assert.equal(bound.run_id, CONSUMING_RUN_ID);
+  assert.equal(bound.low_level_task_id, CONSUMING_TASK_ID);
+  assert.deepEqual(bound.approved_plan_continuation, continuation);
+  store.close();
+});
+
 test('binds draft continuation work to the current Session and Task Address by conversation', (t) => {
   const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
   store.record_session_address({ session_address: sessionAddress() });

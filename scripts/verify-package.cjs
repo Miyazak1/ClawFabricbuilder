@@ -184,7 +184,10 @@ assert.equal(
   workspacePackageJson.scripts['verify:packaged-launch'],
   'node scripts/verify-packaged-launch-smoke.cjs',
 );
-assert.equal(workspacePackageJson.scripts['verify:packaged-canary'], 'node scripts/verify-packaged-canary.cjs');
+assert.equal(
+  workspacePackageJson.scripts['verify:packaged-canary'],
+  'node scripts/verify-packaged-canary-default.cjs',
+);
 assert.equal(workspacePackageJson.build.nsis.deleteAppDataOnUninstall, false);
 const unpackedDugiteRoot = path.join(unpackedArchive, 'node_modules', 'dugite');
 const unpackedGitRoot = path.join(unpackedDugiteRoot, 'git');
@@ -407,6 +410,7 @@ exactObjectKeys(preloadRoot, [
   'taskStream',
   'planReview',
   'permissions',
+  'providerContextDisclosureApproval',
   'windowControls',
 ]);
 const bridgeVersionProperty = preloadRoot.properties.find((property) => property.name.text === 'bridgeVersion');
@@ -482,51 +486,15 @@ exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(providerContextDisclosureApprovalBridge, ['approveCurrent']);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
+  ...Array.from({ length: 28 }, () => 'invoke'),
   'on',
   'removeListener',
   'on',
   'removeListener',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
+  ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
-  'invoke',
+  ...Array.from({ length: 7 }, () => 'invoke'),
 ]);
 assert.deepEqual(forbiddenRendererReferences, []);
 assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
@@ -1131,10 +1099,12 @@ assert.match(packagedPreload, /providerSettings/u);
 assert.match(packagedPreload, /taskStream/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
+assert.match(packagedPreload, /providerContextDisclosureApproval/u);
+assert.match(packagedPreload, /clawfabric-builder:provider-context-disclosure:approve-current/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 38);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 39);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -1313,9 +1283,10 @@ assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/
 assert.match(packagedTaskStreamProjection, /plan_reviewed/u);
 assert.match(packagedTaskStreamProjection, /plan_state:\s*payload\.decision/u);
 assert.doesNotMatch(packagedTaskStreamProjection, /plan_result_digest|review_id|reviewer_id|reviewed_at_ms/u);
+assert.match(packagedTaskStreamProjection, /sanitizeBuilderProviderContextDisclosureStatusProjection/u);
 assert.doesNotMatch(
   packagedTaskStreamProjection,
-  /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider|credential|source_tree/iu,
+  /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider_(?:secret|config|envelope|dispatch|context_body)|credential|source_tree/iu,
 );
 assert.match(packagedTaskStreamIpcAdapter, /builder_task_stream\.controlled_ipc_adapter\.v1/u);
 assert.match(packagedTaskStreamIpcAdapter, /READ_TASK_STREAM_CHANNEL/u);

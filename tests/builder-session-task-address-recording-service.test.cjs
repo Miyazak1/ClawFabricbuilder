@@ -174,6 +174,32 @@ test('records Session and Task Address facts from a real work conversation conte
   restarted.close();
 });
 
+test('records addresses when the conversation context already contains prior history', (t) => {
+  const item = fixture(t);
+  const context = workContext(item.conversation);
+  const recorder = service(item.addressStore);
+  const historicalContext = {
+    ...context,
+    events: [
+      ...context.events,
+      ...context.events,
+      ...context.events,
+      ...context.events,
+      ...context.events,
+    ],
+  };
+
+  const recorded = recorder.record_addresses_from_conversation_context({
+    context: historicalContext,
+  });
+
+  assert.equal(recorded.operation, 'session_task_addresses_recorded');
+  assert.equal(recorded.project_id, PROJECT_ID);
+  assert.equal(recorded.conversation_id, context.conversation.conversation_id);
+  assert.equal(recorded.turn_id, context.ids.turn_id);
+  assert.equal(recorded.run_id, context.ids.run_id);
+});
+
 test('rejects question, failed, cancelled, stale-time, and forged contexts before recording addresses', (t) => {
   const item = fixture(t);
   const recorder = service(item.addressStore);

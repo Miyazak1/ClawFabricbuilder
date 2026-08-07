@@ -344,8 +344,9 @@ function startedWorkContext(value, continuationReference) {
     context.project_id !== continuationReference.project_id
     || context.conversation_id !== continuationReference.conversation_id
   ) fail();
-  const turnEvent = context.events.find((event) => valueAt(event, 'event_type') === 'turn_submitted') ?? null;
-  const runEvent = context.events.find((event) => valueAt(event, 'event_type') === 'run_started') ?? null;
+  const reversedEvents = [...context.events].reverse();
+  const turnEvent = reversedEvents.find((event) => valueAt(event, 'event_type') === 'turn_submitted') ?? null;
+  const runEvent = reversedEvents.find((event) => valueAt(event, 'event_type') === 'run_started') ?? null;
   if (turnEvent === null || runEvent === null) fail();
   if (
     valueAt(turnEvent, 'project_id') !== context.project_id
