@@ -80,11 +80,7 @@ describe('Builder desktop layout styles', () => {
     const source = styles();
     const sidebar = styleBlock(source, '.cf-builder-artifact-sidebar');
     const handle = styleBlock(source, '.cf-builder-artifact-resize-handle');
-    const viewMenuWrap = styleBlock(source, '.cf-builder-artifact-view-menu-wrap');
-    const viewButton = styleBlock(source, '.cf-builder-artifact-view-button');
-    const viewMenu = styleBlock(source, '.cf-builder-artifact-view-menu');
-    const tab = styleBlock(source, '.cf-builder-artifact-tab');
-    const tabLabel = styleBlock(source, '.cf-builder-artifact-tab > span');
+    const utilityBar = styleBlock(source, '.cf-builder-artifact-utility-bar');
     const body = styleBlock(source, '.cf-builder-artifact-body');
 
     expect(source).toContain('.cf-builder-chat-shell {');
@@ -100,18 +96,12 @@ describe('Builder desktop layout styles', () => {
     expect(styleBlock(source, '.cf-builder-artifact-resize-handle::after')).toContain('opacity: 0;');
     expect(source).toContain('.cf-builder-artifact-resize-handle[data-builder-artifact-resizing="true"]::after');
     expect(source).not.toContain('.cf-builder-artifact-tabs');
-    expect(viewMenuWrap).toContain('position: relative;');
-    expect(viewMenuWrap).toContain('flex: 1 1 auto;');
-    expect(viewButton).toContain('max-width: 100%;');
-    expect(viewButton).toContain('overflow: hidden;');
-    expect(viewButton).toContain('text-overflow: ellipsis;');
-    expect(viewMenu).toContain('position: absolute;');
-    expect(viewMenu).toContain('display: grid;');
-    expect(viewMenu).not.toContain('overflow-x: auto;');
-    expect(tab).toContain('min-width: 0;');
-    expect(tab).not.toContain('flex: 0 0 auto;');
-    expect(tabLabel).toContain('text-overflow: ellipsis;');
-    expect(tabLabel).toContain('white-space: nowrap;');
+    expect(source).not.toContain('.cf-builder-artifact-view-menu-wrap');
+    expect(source).not.toContain('.cf-builder-artifact-view-button');
+    expect(source).not.toContain('.cf-builder-artifact-view-menu');
+    expect(source).not.toContain('.cf-builder-artifact-tab');
+    expect(utilityBar).toContain('display: flex;');
+    expect(utilityBar).toContain('justify-content: flex-end;');
     expect(body).toContain('grid-template-rows: minmax(0, 1fr);');
     expect(source).not.toContain(
       '.cf-builder-chat-shell[data-builder-review-sidebar-mode="expanded"]',
