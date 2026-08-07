@@ -118,9 +118,26 @@ function readyProjection(overrides = {}) {
   });
 }
 
-function blockedProjection() {
+function inspectedProjection(overrides = {}) {
+  const assembly = overrides.context_assembly ?? contextAssembly();
   return createBuilderProviderContextProjection({
-    context_assembly: contextAssembly(),
+    context_assembly: assembly,
+    disclosure_decision: {
+      decision: 'not_requested',
+      approved_by: null,
+      approved_at_ms: null,
+      provider_scope: null,
+      purpose: null,
+    },
+    projected_at_ms: 12,
+    ...overrides,
+  });
+}
+
+function blockedProjection(overrides = {}) {
+  const assembly = overrides.context_assembly ?? contextAssembly();
+  return createBuilderProviderContextProjection({
+    context_assembly: assembly,
     disclosure_decision: {
       decision: 'denied',
       approved_by: null,
@@ -129,6 +146,7 @@ function blockedProjection() {
       purpose: null,
     },
     projected_at_ms: 13,
+    ...overrides,
   });
 }
 
@@ -177,7 +195,7 @@ function runContextSnapshot(contextAssemblyValue, providerContextProjection, gat
   });
 }
 
-function bridgeConsent(providerContextProjection, overrides = {}) {
+function bridgeConsent(inspectedProviderContextProjection, overrides = {}) {
   return {
     consent_version: PROVIDER_CONTEXT_PROMPT_BRIDGE_CONSENT_VERSION,
     project_id: PROJECT_ID,
@@ -185,8 +203,8 @@ function bridgeConsent(providerContextProjection, overrides = {}) {
     purpose: 'contextual_build',
     provider_scope: 'configured_provider',
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
-    context_digest: providerContextProjection.source_refs.context_digest,
-    projection_id: providerContextProjection.projection_id,
+    context_digest: inspectedProviderContextProjection.source_refs.context_digest,
+    inspected_projection_id: inspectedProviderContextProjection.projection_id,
     approved_at_ms: 14,
     expires_at_ms: 30,
     revoked_at_ms: null,
@@ -196,10 +214,12 @@ function bridgeConsent(providerContextProjection, overrides = {}) {
 
 function fixture() {
   const assembly = contextAssembly();
+  const inspected = inspectedProjection({ context_assembly: assembly });
   const projection = readyProjection({ context_assembly: assembly });
   const gate = promptEgressGate(projection);
   return {
     assembly,
+    inspected,
     projection,
     gate,
     snapshot: runContextSnapshot(assembly, projection, gate),
@@ -214,9 +234,10 @@ test('admits provider context for prompt use only after explicit bridge consent'
   const facts = fixture();
   const admission = createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: facts.gate,
-    bridge_consent: bridgeConsent(facts.projection),
+    bridge_consent: bridgeConsent(facts.inspected),
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
     admitted_at_ms: 15,
   });
@@ -242,6 +263,7 @@ test('admits provider context for prompt use only after explicit bridge consent'
   assert.deepEqual(admission.source_ref, {
     snapshot_id: facts.snapshot.snapshot_id,
     snapshot_context_digest: facts.snapshot.context_digest,
+    inspected_projection_id: facts.inspected.projection_id,
     projection_id: facts.projection.projection_id,
     gate_id: facts.gate.gate_id,
     context_digest: facts.projection.source_refs.context_digest,
@@ -266,6 +288,7 @@ test('fails closed without ready projection, prompt-bridge gate, or current cons
 
   assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: deniedProjection,
     provider_context_prompt_egress_gate: deniedGate,
     bridge_consent: bridgeConsent(deniedProjection),
@@ -274,20 +297,22 @@ test('fails closed without ready projection, prompt-bridge gate, or current cons
   }));
   assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: {
       ...facts.gate,
       prompt_egress_status: 'blocked_by_context_disclosure',
     },
-    bridge_consent: bridgeConsent(facts.projection),
+    bridge_consent: bridgeConsent(facts.inspected),
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
     admitted_at_ms: 15,
   }));
   assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: facts.gate,
-    bridge_consent: bridgeConsent(facts.projection, {
+    bridge_consent: bridgeConsent(facts.inspected, {
       expires_at_ms: 15,
     }),
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
@@ -295,9 +320,10 @@ test('fails closed without ready projection, prompt-bridge gate, or current cons
   }));
   assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: facts.gate,
-    bridge_consent: bridgeConsent(facts.projection, {
+    bridge_consent: bridgeConsent(facts.inspected, {
       revoked_at_ms: 14,
     }),
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
@@ -318,20 +344,25 @@ test('fails closed for project, conversation, provider, projection, context, and
     context_assembly: otherAssembly,
     projected_at_ms: 13,
   });
+  const otherInspectedProjection = inspectedProjection({
+    context_assembly: otherAssembly,
+    projected_at_ms: 12,
+  });
 
   for (const overrides of [
     { project_id: 'builder-project:22222222-2222-4222-8222-222222222222' },
     { conversation_id: 'builder-conversation:22222222-2222-4222-8222-222222222222' },
     { provider_config_digest: `sha256:${'9'.repeat(64)}` },
-    { projection_id: otherProjection.projection_id },
+    { inspected_projection_id: otherInspectedProjection.projection_id },
     { context_digest: otherProjection.source_refs.context_digest },
     { purpose: 'plan' },
   ]) {
     assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
       run_context_snapshot: facts.snapshot,
+      inspected_provider_context_projection: facts.inspected,
       provider_context_projection: facts.projection,
       provider_context_prompt_egress_gate: facts.gate,
-      bridge_consent: bridgeConsent(facts.projection, overrides),
+      bridge_consent: bridgeConsent(facts.inspected, overrides),
       provider_config_digest: PROVIDER_CONFIG_DIGEST,
       admitted_at_ms: 15,
     }));
@@ -339,9 +370,10 @@ test('fails closed for project, conversation, provider, projection, context, and
 
   assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: facts.gate,
-    bridge_consent: bridgeConsent(facts.projection),
+    bridge_consent: bridgeConsent(facts.inspected),
     provider_config_digest: `sha256:${'9'.repeat(64)}`,
     admitted_at_ms: 15,
   }));
@@ -354,9 +386,30 @@ test('fails closed for project, conversation, provider, projection, context, and
         projection_id: otherProjection.projection_id,
       },
     },
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: facts.gate,
-    bridge_consent: bridgeConsent(facts.projection),
+    bridge_consent: bridgeConsent(facts.inspected),
+    provider_config_digest: PROVIDER_CONFIG_DIGEST,
+    admitted_at_ms: 15,
+  }));
+
+  assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
+    run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: otherInspectedProjection,
+    provider_context_projection: facts.projection,
+    provider_context_prompt_egress_gate: facts.gate,
+    bridge_consent: bridgeConsent(facts.inspected),
+    provider_config_digest: PROVIDER_CONFIG_DIGEST,
+    admitted_at_ms: 15,
+  }));
+
+  assertAdmissionError(() => createBuilderProviderContextPromptBridgeAdmission({
+    run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: blockedProjection({ context_assembly: facts.assembly }),
+    provider_context_projection: facts.projection,
+    provider_context_prompt_egress_gate: facts.gate,
+    bridge_consent: bridgeConsent(facts.inspected),
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
     admitted_at_ms: 15,
   }));
@@ -366,9 +419,10 @@ test('rejects forged admission bodies and hostile prompt context text', () => {
   const facts = fixture();
   const admission = createBuilderProviderContextPromptBridgeAdmission({
     run_context_snapshot: facts.snapshot,
+    inspected_provider_context_projection: facts.inspected,
     provider_context_projection: facts.projection,
     provider_context_prompt_egress_gate: facts.gate,
-    bridge_consent: bridgeConsent(facts.projection),
+    bridge_consent: bridgeConsent(facts.inspected),
     provider_config_digest: PROVIDER_CONFIG_DIGEST,
     admitted_at_ms: 15,
   });

@@ -904,10 +904,13 @@ Evidence requirements:
   assembly ids, digests, provider-context body, permission facts, or an approval
   control. The current prompt-bridge admission checkpoint adds
   `builder-provider-context-prompt-bridge-admission.v1` as a main-only contract
-  that binds the Run Context Snapshot, ready Provider Context Projection,
-  prompt-egress gate, exact context digest, Project/Conversation, configured
-  provider digest, purpose, consent freshness, and revocation state before a
-  future bridge may consume provider context. It can produce a main-only
+  that binds the Run Context Snapshot, the inspected blocked Provider Context
+  Projection that the user approved, the recomputed ready Provider Context
+  Projection, prompt-egress gate, exact context digest, Project/Conversation,
+  configured provider digest, purpose, consent freshness, and revocation state
+  before a future bridge may consume provider context. This keeps approval tied
+  to a safe local inspection surface while still requiring the ready projection
+  to match the same assembly/context digest. It can produce a main-only
   provider prompt context for later bridge consumption, but generation's current
   provider prompt path still does not consume it, dispatch a provider from it,
   expose it to renderer, or treat it as permission/revision/source authority;

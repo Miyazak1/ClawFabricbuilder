@@ -20,6 +20,7 @@ const PROVIDER_CONTEXT_PROMPT_BRIDGE_CONSENT_VERSION =
 
 const INPUT_KEYS = Object.freeze([
   'run_context_snapshot',
+  'inspected_provider_context_projection',
   'provider_context_projection',
   'provider_context_prompt_egress_gate',
   'bridge_consent',
@@ -34,7 +35,7 @@ const CONSENT_KEYS = Object.freeze([
   'provider_scope',
   'provider_config_digest',
   'context_digest',
-  'projection_id',
+  'inspected_projection_id',
   'approved_at_ms',
   'expires_at_ms',
   'revoked_at_ms',
@@ -58,6 +59,7 @@ const RESULT_KEYS = Object.freeze([
 const SOURCE_REF_KEYS = Object.freeze([
   'snapshot_id',
   'snapshot_context_digest',
+  'inspected_projection_id',
   'projection_id',
   'gate_id',
   'context_digest',
@@ -82,6 +84,7 @@ const PROVIDER_PERMISSION_GATE_KEYS = Object.freeze(['workspace_state', 'write_p
 const AUTHORITY_KEYS = Object.freeze([
   'prompt_bridge_admission',
   'run_context_snapshot',
+  'inspected_provider_context_projection',
   'provider_context_projection',
   'prompt_egress_gate',
   'bridge_consent',
@@ -100,6 +103,7 @@ const AUTHORITY_KEYS = Object.freeze([
 const AUTHORITY = Object.freeze({
   prompt_bridge_admission: 'main_only_explicit_provider_context_prompt_bridge_admission_v1',
   run_context_snapshot: 'caller_provided_verified',
+  inspected_provider_context_projection: 'caller_provided_verified',
   provider_context_projection: 'caller_provided_verified',
   prompt_egress_gate: 'caller_provided_verified',
   bridge_consent: 'caller_provided_explicit_user_consent',
@@ -321,7 +325,7 @@ function sanitizeBridgeConsent(value) {
     provider_scope: safeEnum(valueAt(source, 'provider_scope'), PROVIDER_SCOPES),
     provider_config_digest: safePattern(valueAt(source, 'provider_config_digest'), DIGEST_PATTERN),
     context_digest: safePattern(valueAt(source, 'context_digest'), DIGEST_PATTERN),
-    projection_id: safePattern(valueAt(source, 'projection_id'), PROJECTION_ID_PATTERN),
+    inspected_projection_id: safePattern(valueAt(source, 'inspected_projection_id'), PROJECTION_ID_PATTERN),
     approved_at_ms: approvedAtMs,
     expires_at_ms: expiresAtMs,
     revoked_at_ms: valueAt(source, 'revoked_at_ms') === null
@@ -338,6 +342,7 @@ function sanitizeSourceRef(value) {
   return freezeDeep({
     snapshot_id: safePattern(valueAt(source, 'snapshot_id'), SNAPSHOT_ID_PATTERN),
     snapshot_context_digest: safePattern(valueAt(source, 'snapshot_context_digest'), DIGEST_PATTERN),
+    inspected_projection_id: safePattern(valueAt(source, 'inspected_projection_id'), PROJECTION_ID_PATTERN),
     projection_id: safePattern(valueAt(source, 'projection_id'), PROJECTION_ID_PATTERN),
     gate_id: safePattern(valueAt(source, 'gate_id'), GATE_ID_PATTERN),
     context_digest: safePattern(valueAt(source, 'context_digest'), DIGEST_PATTERN),
@@ -354,9 +359,26 @@ function sanitizeAuthority(value) {
   return freezeDeep({ ...AUTHORITY });
 }
 
-function assertBridgeInputs({ snapshot, projection, gate, consent, providerConfigDigest, admittedAtMs }) {
+function assertBridgeInputs({
+  snapshot,
+  inspectedProjection,
+  projection,
+  gate,
+  consent,
+  providerConfigDigest,
+  admittedAtMs,
+}) {
   if (
-    projection.projection_status !== 'ready'
+    inspectedProjection.projection_status !== 'blocked'
+    || inspectedProjection.provider_context !== null
+    || inspectedProjection.blocked_reason !== 'context_disclosure_not_approved'
+    || inspectedProjection.source_refs.context_digest !== projection.source_refs.context_digest
+    || inspectedProjection.projected_at_ms > consent.approved_at_ms
+    || consent.inspected_projection_id !== inspectedProjection.projection_id
+    || inspectedProjection.projection_id === projection.projection_id
+    || inspectedProjection.source_refs.assembly_id !== projection.source_refs.assembly_id
+    || inspectedProjection.projected_at_ms > projection.projected_at_ms
+    || projection.projection_status !== 'ready'
     || projection.provider_context === null
     || projection.blocked_reason !== null
     || gate.projection_status !== 'ready'
@@ -380,7 +402,6 @@ function assertBridgeInputs({ snapshot, projection, gate, consent, providerConfi
     || snapshot.context_assembly_ref.context_digest !== projection.source_refs.context_digest
     || gate.source_ref.projection_id !== projection.projection_id
     || gate.source_ref.projected_at_ms !== projection.projected_at_ms
-    || consent.projection_id !== projection.projection_id
     || consent.context_digest !== projection.source_refs.context_digest
     || consent.purpose !== projection.provider_context.purpose
     || consent.provider_scope !== 'configured_provider'
@@ -396,8 +417,24 @@ function assertBridgeInputs({ snapshot, projection, gate, consent, providerConfi
   ) fail();
 }
 
-function bodyFromVerified({ snapshot, projection, gate, consent, providerConfigDigest, admittedAtMs }) {
-  assertBridgeInputs({ snapshot, projection, gate, consent, providerConfigDigest, admittedAtMs });
+function bodyFromVerified({
+  snapshot,
+  inspectedProjection,
+  projection,
+  gate,
+  consent,
+  providerConfigDigest,
+  admittedAtMs,
+}) {
+  assertBridgeInputs({
+    snapshot,
+    inspectedProjection,
+    projection,
+    gate,
+    consent,
+    providerConfigDigest,
+    admittedAtMs,
+  });
   return freezeDeep({
     project_id: snapshot.project_id,
     conversation_id: snapshot.conversation_id,
@@ -411,6 +448,7 @@ function bodyFromVerified({ snapshot, projection, gate, consent, providerConfigD
     source_ref: {
       snapshot_id: snapshot.snapshot_id,
       snapshot_context_digest: snapshot.context_digest,
+      inspected_projection_id: inspectedProjection.projection_id,
       projection_id: projection.projection_id,
       gate_id: gate.gate_id,
       context_digest: projection.source_refs.context_digest,
@@ -435,10 +473,12 @@ function withAdmissionId(body) {
 function createBuilderProviderContextPromptBridgeAdmission(rawInput) {
   const input = exactObject(rawInput, INPUT_KEYS);
   let snapshot;
+  let inspectedProjection;
   let projection;
   let gate;
   try {
     snapshot = sanitizeBuilderRunContextSnapshot(valueAt(input, 'run_context_snapshot'));
+    inspectedProjection = sanitizeBuilderProviderContextProjection(valueAt(input, 'inspected_provider_context_projection'));
     projection = sanitizeBuilderProviderContextProjection(valueAt(input, 'provider_context_projection'));
     gate = sanitizeBuilderProviderContextPromptEgressGate(valueAt(input, 'provider_context_prompt_egress_gate'));
   } catch {
@@ -446,6 +486,7 @@ function createBuilderProviderContextPromptBridgeAdmission(rawInput) {
   }
   return withAdmissionId(bodyFromVerified({
     snapshot,
+    inspectedProjection,
     projection,
     gate,
     consent: sanitizeBridgeConsent(valueAt(input, 'bridge_consent')),

@@ -589,10 +589,14 @@ Current checkpoint:
 - `builder-provider-context-prompt-bridge-admission.v1` now defines the
   main-only admission fact that a later provider prompt bridge must require
   before consuming approved provider context. It binds the Run Context Snapshot,
-  ready Provider Context Projection, existing prompt-egress gate,
+  the inspected blocked Provider Context Projection that the user approved,
+  the recomputed ready Provider Context Projection, existing prompt-egress gate,
   Project/Conversation, exact context digest, configured-provider digest,
-  purpose, consent freshness, and revocation state. It may carry the main-only
-  provider prompt context for a future bridge, but it still opens no
+  purpose, consent freshness, and revocation state. This lets the future UI ask
+  for consent from a safe no-provider-body inspection surface while requiring
+  the ready projection to match the same assembly/context digest before prompt
+  use. It may carry the main-only provider prompt context for a future bridge,
+  but it still opens no
   IPC/preload surface, dispatches no provider/tool, mutates no source/Git/SQLite
   state, grants no permission, and is not consumed by the current provider
   prompt path.
