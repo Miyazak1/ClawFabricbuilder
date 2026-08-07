@@ -1081,7 +1081,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   align-items: center;
   gap: 12px;
   overflow: auto;
-  padding: 14px;
+  padding: 14px 14px 28px;
+  scroll-padding-block-end: 44px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1105,7 +1106,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-chat-tail {
   flex: 0 0 auto;
-  min-height: 1px;
+  min-height: 32px;
   width: 1px;
   align-self: center;
 }

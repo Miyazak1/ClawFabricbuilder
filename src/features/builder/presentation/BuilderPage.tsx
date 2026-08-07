@@ -1195,11 +1195,13 @@ function ActivityItem({
   progressStages?: readonly BuilderConversationRunProgressStage[];
 }>) {
   const displayRole = activityDisplayRole(item);
+  const title = activityTitle(item);
   const messageSurface = displayRole === 'user'
     ? 'bubble'
     : displayRole === 'assistant'
       ? 'plain'
       : 'status';
+  const showTitle = !(displayRole === 'user' && title === 'You');
   const itemPlanReviewKey = item.item_kind === 'run_completed' && item.result_kind === 'plan'
     ? planReviewKey(item.turn_id, item.run_id)
     : null;
@@ -1220,7 +1222,7 @@ function ActivityItem({
   return (
     <li
       className="cf-builder-activity-item"
-      data-builder-activity-card={activityTitle(item)}
+      data-builder-activity-card={title}
       data-builder-activity-role={displayRole}
       data-builder-tool-activity={item.item_kind === 'tool_call_requested'
         ? 'requested'
@@ -1238,7 +1240,9 @@ function ActivityItem({
         className="cf-builder-activity-content min-w-0"
         data-builder-message-surface={messageSurface}
       >
-        <div className="cf-builder-activity-title">{activityTitle(item)}</div>
+        {showTitle ? (
+          <div className="cf-builder-activity-title">{title}</div>
+        ) : null}
         <p className="cf-builder-activity-body">{activityBody(item)}</p>
         {item.item_kind === 'run_completed' && (
           item.terminal_status !== 'succeeded' || item.result_kind !== 'explanation'
@@ -1440,6 +1444,7 @@ function ActivityPanel({
     && snapshot.project_id !== null
     && !snapshot.busy
     && typeof onRefresh === 'function';
+  const showRefresh = canRefresh && snapshot.status === 'stale';
   return (
     <section
       aria-label="Project conversation"
@@ -1448,20 +1453,22 @@ function ActivityPanel({
       data-builder-activity-status={snapshot?.status ?? 'idle'}
       data-builder-conversation-workspace="true"
     >
-      <header className="cf-builder-activity-toolbar" data-builder-activity-toolbar="true">
-        <button
-          aria-label="Refresh conversation"
-          className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-refresh-activity="true"
-          disabled={!canRefresh}
-          onClick={() => {
-            void onRefresh?.();
-          }}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" className="size-3.5" />
-        </button>
-      </header>
+      {showRefresh ? (
+        <header className="cf-builder-activity-toolbar" data-builder-activity-toolbar="true">
+          <button
+            aria-label="Refresh conversation"
+            className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
+            data-builder-refresh-activity="true"
+            disabled={!canRefresh}
+            onClick={() => {
+              void onRefresh?.();
+            }}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" className="size-3.5" />
+          </button>
+        </header>
+      ) : null}
       <div className="cf-builder-activity-body-wrap">
         {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && !showLiveOutput ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>

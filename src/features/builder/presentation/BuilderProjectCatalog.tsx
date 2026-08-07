@@ -38,18 +38,6 @@ export function BuilderProjectCatalog({
           <p className="text-xs font-medium text-muted-foreground">Projects</p>
           <h2 className="truncate text-sm font-semibold" id="builder-project-catalog-title">Your projects</h2>
         </div>
-        <div className="cf-builder-catalog-actions">
-          <button
-            aria-label="Refresh projects"
-            className="cf-builder-secondary-button inline-flex size-9 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={busy || typeof onRefresh !== 'function'}
-            onClick={onRefresh}
-            title="Refresh projects"
-            type="button"
-          >
-            <RefreshCw aria-hidden="true" className="size-4" />
-          </button>
-        </div>
       </div>
 
       <div className="cf-builder-catalog-command">
@@ -86,9 +74,18 @@ export function BuilderProjectCatalog({
         </div>
       ) : null}
       {status === 'stale' ? (
-        <p className="cf-builder-alert cf-builder-alert-danger mx-3 mt-3 text-sm" role="alert">
-          Saved projects could not be refreshed. Showing the previous list.
-        </p>
+        <div className="cf-builder-alert cf-builder-alert-danger m-3 flex flex-col items-start gap-3 text-sm" role="alert">
+          <p>Saved projects could not be refreshed. Showing the previous list.</p>
+          <button
+            className="cf-builder-secondary-button inline-flex min-h-9 items-center gap-2 px-3 text-sm font-medium disabled:opacity-50"
+            disabled={typeof onRefresh !== 'function'}
+            onClick={onRefresh}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" className="size-4" />
+            Retry
+          </button>
+        </div>
       ) : null}
       {(status === 'ready' || status === 'stale' || status === 'refreshing')
       && projects.length === 0

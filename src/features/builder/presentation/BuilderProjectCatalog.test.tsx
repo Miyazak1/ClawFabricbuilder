@@ -71,7 +71,7 @@ describe('BuilderProjectCatalog v2', () => {
       <BuilderProjectCatalog snapshot={await controller.load()} />,
     );
     expect(container.textContent).toContain('No saved projects yet.');
-    expect(container.querySelectorAll('button')).toHaveLength(2);
+    expect(container.querySelectorAll('button')).toHaveLength(1);
   });
 
   it('renders restart-restored unsaved workspace projects in the sidebar', async () => {
@@ -115,9 +115,12 @@ describe('BuilderProjectCatalog v2', () => {
     });
     await controller.load();
     const stale = await controller.refresh();
-    const container = render(<BuilderProjectCatalog snapshot={stale} />);
+    const onRefresh = vi.fn();
+    const container = render(<BuilderProjectCatalog onRefresh={onRefresh} snapshot={stale} />);
     expect(container.textContent).toContain('Showing the previous list.');
     expect(container.textContent).toContain('Hello project');
+    click(container, 'Retry');
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 
   it('fails closed for typed forged snapshots', () => {

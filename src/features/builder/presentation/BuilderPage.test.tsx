@@ -1946,17 +1946,22 @@ describe('BuilderPage v2', () => {
     expect(unavailable.textContent).not.toContain('Activity is unavailable.');
     expect(unavailable.textContent).not.toContain('No activity yet.');
 
+    const onRefresh = vi.fn();
     const stale = render(
       <BuilderPage
         activeFile={null}
         conversationSnapshot={await staleActivity()}
         instruction="Make a timer."
+        onRefreshConversation={onRefresh}
         snapshot={fresh}
       />,
     );
     expect(stale.querySelector('[data-builder-activity="true"]')).not.toBeNull();
     expect(stale.textContent).toContain('Activity could not be refreshed.');
     expect(stale.textContent).not.toContain('No activity yet.');
+    expect(stale.querySelector('[data-builder-refresh-activity="true"]')).not.toBeNull();
+    click(stale, '[data-builder-refresh-activity="true"]');
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 
   it('submits the primary composer command with Enter through the single submit action', async () => {
@@ -2799,12 +2804,8 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-version-history="true"]')).toBeNull();
     expect(conversation?.querySelector('.cf-builder-side-header')).toBeNull();
     expect(conversation?.textContent).not.toContain('Work stream');
-    expect(conversation?.querySelector('[data-builder-activity-toolbar="true"]')).not.toBeNull();
-    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')).not.toBeNull();
-    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
-      .toBe(chatMain);
-    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')?.closest('[data-builder-artifact-sidebar="true"]'))
-      .toBeNull();
+    expect(conversation?.querySelector('[data-builder-activity-toolbar="true"]')).toBeNull();
+    expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')).toBeNull();
     expect(Boolean(conversation!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
     expect(Boolean(review!.compareDocumentPosition(artifactSummary!) & Node.DOCUMENT_POSITION_FOLLOWING))
@@ -2926,8 +2927,6 @@ describe('BuilderPage v2', () => {
       .toBe('assistant');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
       .toContain('Review the draft preview, files, and changes before saving this version.');
-    click(container, '[data-builder-refresh-activity="true"]');
-    expect(onRefreshConversation).toHaveBeenCalledOnce();
     expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();

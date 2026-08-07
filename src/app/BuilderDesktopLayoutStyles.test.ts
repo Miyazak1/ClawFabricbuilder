@@ -44,6 +44,7 @@ describe('Builder desktop layout styles', () => {
     const surfaceBody = styleBlock(source, '.cf-builder-surface-body');
     const chatMain = styleBlock(source, '.cf-builder-chat-main');
     const chatScroll = styleBlock(source, '.cf-builder-chat-scroll');
+    const chatTail = styleBlock(source, '.cf-builder-chat-tail');
 
     expect(root).toContain('height: 100%;');
     expect(root).toContain('overflow: hidden;');
@@ -65,8 +66,11 @@ describe('Builder desktop layout styles', () => {
     expect(chatScroll).toContain('flex-direction: column;');
     expect(chatScroll).toContain('align-items: center;');
     expect(chatScroll).toContain('overflow: auto;');
+    expect(chatScroll).toContain('padding: 14px 14px 28px;');
+    expect(chatScroll).toContain('scroll-padding-block-end: 44px;');
     expect(chatScroll).toContain('scrollbar-width: none;');
     expect(chatScroll).toContain('-ms-overflow-style: none;');
+    expect(chatTail).toContain('min-height: 32px;');
     expect(source).toContain('.cf-builder-chat-scroll::-webkit-scrollbar');
     expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar')).toContain('display: none;');
     expect(chatScroll).not.toContain('display: grid;');

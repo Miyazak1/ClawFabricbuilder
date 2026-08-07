@@ -4938,25 +4938,14 @@ describe('BuilderApp v2', () => {
         .toContain('Viewing Version 1');
     });
     readTaskStream.mockClear();
-    const refreshActivity = container.querySelector<HTMLButtonElement>(
+    expect(container.querySelector<HTMLButtonElement>(
       '[data-builder-activity="true"] button[aria-label="Refresh conversation"]',
-    );
-    expect(refreshActivity).not.toBeNull();
-    expect(refreshActivity?.disabled).toBe(false);
-    act(() => {
-      refreshActivity?.click();
-    });
-    await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-    });
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')).not.toBeNull();
-    });
+    )).toBeNull();
     expect(restoreDraft).not.toHaveBeenCalled();
 
     click(container, 'Back to current');
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledTimes(2);
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
     });
     await waitFor(() => {
       expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
