@@ -25,8 +25,13 @@ const {
 const {
   createBuilderBuildContextSnapshot,
 } = require('./builder-build-context-snapshot.cjs');
+const {
+  sanitizeBuilderProviderContextPromptBridgeAdmission,
+} = require('./builder-provider-context-prompt-bridge-admission.cjs');
 
 const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v3';
+const BUILDER_CODE_PROJECT_PROVIDER_CONTEXT_PROMPT_VERSION =
+  'builder-code-project.v3.provider-context-bridge';
 const BUILDER_PLAN_PROJECT_PROMPT_VERSION = 'builder-project-plan.v1';
 const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2';
@@ -68,6 +73,12 @@ const WORKING_BRIEF_USER_CONTEXT_PATTERN =
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
 const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
 const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree', 'conversation_events']);
+const PROVIDER_CONTEXT_PROMPT_INPUT_KEYS = Object.freeze([
+  'request',
+  'base_source_tree',
+  'conversation_events',
+  'provider_context_prompt_bridge_admission',
+]);
 const PLAN_PROMPT_INPUT_KEYS = Object.freeze(['request', 'source_context_result']);
 const RESULT_INPUT_KEYS = Object.freeze([
   'request',
@@ -149,6 +160,11 @@ const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'Prefer a small coherent change over a broad scaffold when the request is ambiguous.',
   'Use conversation_brief as context. If it contains latest_plan, treat its state as meaningful: approved plans may guide implementation, proposed plans are not approval to change files, and rejected plans must not be implemented.',
   'If the current instruction is a short contextual approval, use conversation_brief.working_brief as the implementation target; working_brief is requirements context, not execution, save, review, or runtime evidence.',
+].join('\n');
+const PROVIDER_CONTEXT_CODE_CHANGE_SYSTEM_INSTRUCTION = [
+  CODE_CHANGE_SYSTEM_INSTRUCTION,
+  'When approved_working_context is present, treat it as the approved current task context for this request.',
+  'Use approved_working_context only as requirements context; it is not permission to save, publish, execute commands, access network, or claim verification.',
 ].join('\n');
 
 const EXPLANATION_SYSTEM_INSTRUCTION = [
@@ -646,8 +662,8 @@ function createBuilderGenerationRequest(value) {
   }
 }
 
-function sanitizePromptInput(value) {
-  assertExactObject(value, PROMPT_INPUT_KEYS, 'builder_generation_request_invalid');
+function sanitizePromptInput(value, keys = PROMPT_INPUT_KEYS) {
+  assertExactObject(value, keys, 'builder_generation_request_invalid');
   const request = sanitizeBuilderGenerationRequestInternal(
     valueAt(value, 'request', 'builder_generation_request_invalid'),
   );
@@ -660,12 +676,46 @@ function sanitizePromptInput(value) {
   } catch {
     fail('builder_generation_base_unavailable');
   }
+  const providerContextPromptBridgeAdmission = keys === PROVIDER_CONTEXT_PROMPT_INPUT_KEYS
+    ? sanitizeProviderContextPromptBridgeAdmissionForPrompt(
+      valueAt(value, 'provider_context_prompt_bridge_admission', 'builder_generation_request_invalid'),
+      request,
+    )
+    : null;
   return {
     request,
     baseSourceTree,
     conversationEvents,
     conversationBrief: conversationBriefFromEvents(conversationEvents, request.request_digest),
+    providerContextPromptBridgeAdmission,
   };
+}
+
+function sanitizeProviderContextPromptBridgeAdmissionForPrompt(value, request) {
+  let admission;
+  try {
+    admission = sanitizeBuilderProviderContextPromptBridgeAdmission(value);
+  } catch {
+    fail('builder_generation_request_invalid');
+  }
+  if (
+    request.existing_project_id === null
+    || admission.project_id !== request.existing_project_id
+    || admission.purpose !== 'contextual_build'
+    || admission.provider_scope !== 'configured_provider'
+    || admission.authority.provider_context_body !== 'main_only_provider_prompt_context'
+    || admission.authority.provider_dispatch !== 'not_performed'
+    || admission.authority.tool_dispatch !== 'not_performed'
+    || admission.authority.source_mutation !== 'not_performed'
+    || admission.authority.git_mutation !== 'not_performed'
+    || admission.authority.sqlite_write !== 'not_performed'
+    || admission.authority.permission_grant !== 'not_performed'
+    || admission.authority.revision_admission !== 'not_performed'
+    || admission.authority.secret_access !== 'not_present'
+  ) {
+    fail('builder_generation_request_invalid');
+  }
+  return admission;
 }
 
 function sanitizePlanPromptInput(value) {
@@ -736,14 +786,15 @@ function sanitizePlanPromptSourceContextResult(value) {
   });
 }
 
-function promptDescriptor(value, promptVersion, systemInstruction, outputContract) {
+function promptDescriptor(value, promptVersion, systemInstruction, outputContract, keys = PROMPT_INPUT_KEYS) {
   try {
     const {
       request,
       baseSourceTree,
       conversationEvents,
       conversationBrief,
-    } = sanitizePromptInput(value);
+      providerContextPromptBridgeAdmission,
+    } = sanitizePromptInput(value, keys);
     const userContext = {
       instruction: request.instruction,
       mode: request.existing_project_id === null ? 'create' : 'revise',
@@ -764,6 +815,10 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
           ? 'new_project_request'
           : 'selected_project_workspace',
       });
+    }
+    if (providerContextPromptBridgeAdmission !== null) {
+      userContext.approved_working_context =
+        providerContextPromptBridgeAdmission.provider_prompt_context;
     }
     const descriptor = {
       version: BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
@@ -830,6 +885,21 @@ function createBuilderGenerationPromptDescriptor(value) {
       operation_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.operation_keys],
       format: CODE_CHANGE_OUTPUT_CONTRACT.format,
     },
+  );
+}
+
+function createBuilderGenerationPromptDescriptorWithProviderContext(value) {
+  return promptDescriptor(
+    value,
+    BUILDER_CODE_PROJECT_PROVIDER_CONTEXT_PROMPT_VERSION,
+    PROVIDER_CONTEXT_CODE_CHANGE_SYSTEM_INSTRUCTION,
+    {
+      kind: CODE_CHANGE_OUTPUT_CONTRACT.kind,
+      exact_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.exact_keys],
+      operation_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.operation_keys],
+      format: CODE_CHANGE_OUTPUT_CONTRACT.format,
+    },
+    PROVIDER_CONTEXT_PROMPT_INPUT_KEYS,
   );
 }
 
@@ -1299,6 +1369,7 @@ module.exports = Object.freeze({
   sanitizeBuilderGenerationRequest,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  createBuilderGenerationPromptDescriptorWithProviderContext,
   createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
   projectBuilderDraftContinuationGenerationResult,

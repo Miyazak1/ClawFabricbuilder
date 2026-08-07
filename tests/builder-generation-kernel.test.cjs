@@ -16,6 +16,7 @@ const {
   createBuilderGenerationRequest,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
+  createBuilderGenerationPromptDescriptorWithProviderContext,
   createBuilderPlanPromptDescriptor,
   projectBuilderExplanationResult,
   projectBuilderDraftContinuationGenerationResult,
@@ -29,13 +30,41 @@ const {
 const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
+const {
+  createBuilderContextAssembly,
+} = require('../electron/builder-context-assembler.cjs');
+const {
+  createBuilderProviderContextProjection,
+} = require('../electron/builder-provider-context-projection.cjs');
+const {
+  createBuilderProviderContextPromptBridgeAdmission,
+  PROVIDER_CONTEXT_PROMPT_BRIDGE_CONSENT_VERSION,
+} = require('../electron/builder-provider-context-prompt-bridge-admission.cjs');
+const {
+  assessBuilderProviderContextPromptEgress,
+} = require('../electron/builder-provider-context-prompt-egress-gate.cjs');
+const {
+  createBuilderRunContextSnapshot,
+} = require('../electron/builder-run-context-snapshot.cjs');
+const {
+  createBuilderWorkingContextState,
+} = require('../electron/builder-working-context-state.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
+const SESSION_ID = `builder-session:${UUID}`;
+const TASK_ADDRESS_ID = `builder-task-address:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const TURN_ID = `builder-turn:${UUID}`;
+const TASK_ID = `builder-task:${UUID}`;
+const RUN_ID = `builder-run:${UUID}`;
+const MESSAGE_ID = `builder-message:${UUID}`;
+const ROUTE_DECISION_ID = `builder-route-decision:${UUID}`;
 const REVISION_RECEIPT_DIGEST = `sha256:${'1'.repeat(64)}`;
 const COMMIT_OID = '2'.repeat(40);
 const SOURCE_TREE_DIGEST = `sha256:${'3'.repeat(64)}`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
+const PROVIDER_CONFIG_DIGEST = `sha256:${'8'.repeat(64)}`;
 
 function canonicalJson(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
@@ -65,6 +94,158 @@ function request({
 
 function sourceTree(files = []) {
   return createBuilderProjectSourceTree({ files });
+}
+
+function workingContextState(overrides = {}) {
+  return createBuilderWorkingContextState({
+    project_id: PROJECT_ID,
+    session_id: SESSION_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    conversation_id: CONVERSATION_ID,
+    objective_summary: 'Build the approved dashboard with clear navigation.',
+    confirmed_constraints: ['Keep it local-first', 'Do not publish anything'],
+    rejected_constraints: ['No social feed yet'],
+    open_questions: [],
+    latest_user_intent: 'Build from the approved plan.',
+    source_refs: [],
+    compaction_refs: [],
+    handoff_refs: [],
+    latest_task_capsule: null,
+    approved_plan_ref: {
+      plan_result_digest: `sha256:${'6'.repeat(64)}`,
+      conversation_head_digest: `sha256:${'7'.repeat(64)}`,
+      approved_at_ms: 9,
+    },
+    base_revision_ref: {
+      revision_receipt_digest: REVISION_RECEIPT_DIGEST,
+    },
+    invalidated_by: null,
+    updated_at_ms: 10,
+    ...overrides,
+  });
+}
+
+function contextAssembly(overrides = {}) {
+  const state = overrides.working_context_state ?? workingContextState();
+  return createBuilderContextAssembly({
+    assembly_purpose: 'contextual_build',
+    project_id: PROJECT_ID,
+    latest_user_message: 'Build from the approved plan.',
+    working_context_state: state,
+    approved_plan_ref: state.approved_plan_ref,
+    current_result_ref: null,
+    selected_source_summaries: [{
+      source_kind: 'project_summary',
+      source_digest: SOURCE_TREE_DIGEST,
+      summary: 'The current project has a simple dashboard shell.',
+      priority: 10,
+    }],
+    compaction_summaries: [],
+    adopted_handoff_packets: [],
+    permission_state: {
+      workspace_state: 'bound',
+      write_permission: 'allowed',
+    },
+    context_budget: {
+      max_segments: 8,
+      max_prompt_bytes: 4096,
+      reserved_response_bytes: 1024,
+    },
+    assembled_at_ms: 11,
+    ...overrides,
+  });
+}
+
+function providerContextProjection(contextAssemblyValue, approved, projectedAtMs) {
+  return createBuilderProviderContextProjection({
+    context_assembly: contextAssemblyValue,
+    disclosure_decision: approved
+      ? {
+        decision: 'approved',
+        approved_by: 'local_user',
+        approved_at_ms: 12,
+        provider_scope: 'configured_provider',
+        purpose: 'contextual_build',
+      }
+      : {
+        decision: 'not_requested',
+        approved_by: null,
+        approved_at_ms: null,
+        provider_scope: null,
+        purpose: null,
+      },
+    projected_at_ms: projectedAtMs,
+  });
+}
+
+function runContextSnapshot(contextAssemblyValue, projection, gate) {
+  return createBuilderRunContextSnapshot({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: TURN_ID,
+    run_id: RUN_ID,
+    task_id: TASK_ID,
+    message_id: MESSAGE_ID,
+    route_decision: {
+      decision_id: ROUTE_DECISION_ID,
+      decision_version: 'builder-composer-route-decision.v1',
+      project_id: PROJECT_ID,
+      message_id: MESSAGE_ID,
+      task_id: TASK_ID,
+      route: 'build',
+      confidence: 'high',
+      matched_signals: ['clear_build'],
+      downgraded_from: null,
+      downgrade_reason: null,
+      required_permissions: ['write_project'],
+      permission_result: 'allowed',
+      dispatch: 'build',
+      decided_at_ms: 10,
+    },
+    latest_task_capsule: null,
+    working_context_state: workingContextState(),
+    context_assembly: contextAssemblyValue,
+    provider_context_projection: projection,
+    provider_context_prompt_egress_gate: gate,
+    base_revision: {
+      revision_receipt_digest: REVISION_RECEIPT_DIGEST,
+      commit_oid: COMMIT_OID,
+    },
+    created_at_ms: 13,
+  });
+}
+
+function providerContextPromptBridgeAdmission(overrides = {}) {
+  const assembly = contextAssembly();
+  const inspected = providerContextProjection(assembly, false, 12);
+  const projection = providerContextProjection(assembly, true, 13);
+  const gate = assessBuilderProviderContextPromptEgress({
+    provider_context_projection: projection,
+    assessed_at_ms: 13,
+  });
+  const snapshot = runContextSnapshot(assembly, projection, gate);
+  return createBuilderProviderContextPromptBridgeAdmission({
+    run_context_snapshot: snapshot,
+    inspected_provider_context_projection: inspected,
+    provider_context_projection: projection,
+    provider_context_prompt_egress_gate: gate,
+    bridge_consent: {
+      consent_version: PROVIDER_CONTEXT_PROMPT_BRIDGE_CONSENT_VERSION,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      purpose: 'contextual_build',
+      provider_scope: 'configured_provider',
+      provider_config_digest: PROVIDER_CONFIG_DIGEST,
+      context_digest: inspected.source_refs.context_digest,
+      inspected_projection_id: inspected.projection_id,
+      approved_at_ms: 14,
+      expires_at_ms: 30,
+      revoked_at_ms: null,
+    },
+    provider_config_digest: PROVIDER_CONFIG_DIGEST,
+    admitted_at_ms: 15,
+    ...overrides,
+  });
 }
 
 function builderId(kind, index) {
@@ -827,6 +1008,89 @@ test('prefers durable task capsule brief facts for contextual build prompts', ()
   assert.doesNotMatch(
     descriptor.user_instruction,
     /route_decision|builder-route-decision|provider|credential|revision_receipt|api[_-]?key|Bearer/iu,
+  );
+});
+
+test('builds an explicit provider-context prompt only from prompt-bridge admission', () => {
+  const rawRequest = request({ instruction: '按刚才方案做。', existingProjectId: PROJECT_ID });
+  const admission = providerContextPromptBridgeAdmission();
+  const descriptor = createBuilderGenerationPromptDescriptorWithProviderContext({
+    request: rawRequest,
+    base_source_tree: sourceTree([{ path: 'src/app.js', content: 'export const existing = true;\n' }]),
+    conversation_events: taskBriefConversationEvents(rawRequest),
+    provider_context_prompt_bridge_admission: admission,
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.equal(descriptor.prompt_version, 'builder-code-project.v3.provider-context-bridge');
+  assert.match(descriptor.system_instruction, /approved_working_context is present/u);
+  assert.equal(context.approved_working_context.context_version, 'builder-provider-context.v1');
+  assert.equal(context.approved_working_context.source, 'context_assembler');
+  assert.equal(context.approved_working_context.purpose, 'contextual_build');
+  assert.deepEqual(
+    context.approved_working_context.segments.map((segment) => segment.kind),
+    [
+      'latest_user_message',
+      'working_context_objective',
+      'working_context_constraints',
+      'approved_plan',
+      'selected_source_summary',
+    ],
+  );
+  assert.equal(context.approved_working_context.permission_gate.write_permission, 'allowed');
+  assert.equal(context.approved_working_context.permission_gate.side_effect_ready, true);
+  assert.equal(context.build_context_snapshot.execution_basis, 'task_brief');
+  assert.doesNotMatch(
+    descriptor.user_instruction,
+    /admission_id|source_ref|projection_id|gate_id|snapshot_id|sha256:|builder-(?:project|conversation|turn|run|task|message|route-decision):|credential|api[_-]?key|Bearer/u,
+  );
+});
+
+test('rejects provider-context prompt descriptors without exact bridge admission authority', () => {
+  const rawRequest = request({ instruction: '按刚才方案做。', existingProjectId: PROJECT_ID });
+  const admission = providerContextPromptBridgeAdmission();
+
+  expectKernelError(
+    () => createBuilderGenerationPromptDescriptor({
+      request: rawRequest,
+      base_source_tree: sourceTree(),
+      conversation_events: taskBriefConversationEvents(rawRequest),
+      provider_context_prompt_bridge_admission: admission,
+    }),
+    'builder_generation_request_invalid',
+  );
+  expectKernelError(
+    () => createBuilderGenerationPromptDescriptorWithProviderContext({
+      request: request({ instruction: '按刚才方案做。', existingProjectId: null }),
+      base_source_tree: sourceTree(),
+      conversation_events: taskBriefConversationEvents(rawRequest),
+      provider_context_prompt_bridge_admission: admission,
+    }),
+    'builder_generation_request_invalid',
+  );
+  expectKernelError(
+    () => createBuilderGenerationPromptDescriptorWithProviderContext({
+      request: rawRequest,
+      base_source_tree: sourceTree(),
+      conversation_events: taskBriefConversationEvents(rawRequest),
+      provider_context_prompt_bridge_admission: {
+        ...admission,
+        provider_dispatch: 'performed',
+      },
+    }),
+    'builder_generation_request_invalid',
+  );
+  expectKernelError(
+    () => createBuilderGenerationPromptDescriptorWithProviderContext({
+      request: rawRequest,
+      base_source_tree: sourceTree(),
+      conversation_events: taskBriefConversationEvents(rawRequest),
+      provider_context_prompt_bridge_admission: {
+        ...admission,
+        project_id: 'builder-project:22222222-2222-4222-8222-222222222222',
+      },
+    }),
+    'builder_generation_request_invalid',
   );
 });
 
@@ -1736,6 +2000,7 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     './builder-plan-proposal-records.cjs',
     './builder-route-decision-signals.cjs',
     './builder-build-context-snapshot.cjs',
+    './builder-provider-context-prompt-bridge-admission.cjs',
   ]);
   for (const literal of [
     'builder-generation-request.v2',

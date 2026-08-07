@@ -600,6 +600,12 @@ Current checkpoint:
   IPC/preload surface, dispatches no provider/tool, mutates no source/Git/SQLite
   state, grants no permission, and is not consumed by the current provider
   prompt path.
+- `builder-generation-kernel` now has an explicit provider-context prompt
+  descriptor variant that accepts only a verified prompt-bridge admission and
+  projects its provider prompt context as `approved_working_context`. This is a
+  kernel-level prompt-shape contract for the future bridge; the default prompt
+  descriptor stays unchanged, and no IPC/preload/provider dispatch path consumes
+  it yet.
 
 ### Provider Context Egress Consent
 

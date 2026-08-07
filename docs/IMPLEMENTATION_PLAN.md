@@ -914,6 +914,13 @@ Evidence requirements:
   provider prompt context for later bridge consumption, but generation's current
   provider prompt path still does not consume it, dispatch a provider from it,
   expose it to renderer, or treat it as permission/revision/source authority;
+- the current generation-kernel provider-context prompt checkpoint adds an
+  explicit prompt descriptor variant that accepts only a verified prompt-bridge
+  admission and projects the admitted provider prompt context as
+  `approved_working_context`. The default generation prompt descriptor remains
+  unchanged, and no IPC/preload/provider dispatch path consumes this variant
+  yet. This gives the future bridge a tested prompt shape without making
+  Working Context State silently enter provider prompts;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works
