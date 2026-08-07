@@ -151,6 +151,14 @@ a milestone.
 6. Restore/Compare actions through existing review and revision gates.
 7. Retention cleanup integrated with storage lifecycle governance.
 
+Current checkpoint: `builder-draft-checkpoint.v1` now exists as a pure
+main-side contract. It creates deterministic in-memory Draft Checkpoint facts
+only from a verified Git candidate receipt pair, session id, task address id,
+base revision ref, source scope, and bounded public summaries. It records no
+SQLite row, writes no Git ref, performs no Save, selects no Project Revision,
+opens no IPC/preload surface, dispatches no provider/tool, mutates no source,
+publishes nothing, and creates no Work Capsule.
+
 ## Non-Goals
 
 - no automatic formal Project Revision save;
