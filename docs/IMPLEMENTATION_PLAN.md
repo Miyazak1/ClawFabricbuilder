@@ -902,7 +902,15 @@ Evidence requirements:
   precedence in the composer context chip while it is present, using only the
   safe label and next-action hint and never exposing request ids, context
   assembly ids, digests, provider-context body, permission facts, or an approval
-  control;
+  control. The current prompt-bridge admission checkpoint adds
+  `builder-provider-context-prompt-bridge-admission.v1` as a main-only contract
+  that binds the Run Context Snapshot, ready Provider Context Projection,
+  prompt-egress gate, exact context digest, Project/Conversation, configured
+  provider digest, purpose, consent freshness, and revocation state before a
+  future bridge may consume provider context. It can produce a main-only
+  provider prompt context for later bridge consumption, but generation's current
+  provider prompt path still does not consume it, dispatch a provider from it,
+  expose it to renderer, or treat it as permission/revision/source authority;
 - the current natural plan request checkpoint routes explicit plan-first wording
   such as "帮我先做下方案", "先给我一个方案", or "Plan this first" through the
   renderer plan proposal path instead of the automatic build path. This works

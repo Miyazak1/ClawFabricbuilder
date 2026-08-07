@@ -586,6 +586,16 @@ Current checkpoint:
   `AI context allowed`. Task stream can now carry this as an optional top-level
   projection without request ids, raw context text, assembly ids, digests,
   provider-context body, permission grants, or provider dispatch.
+- `builder-provider-context-prompt-bridge-admission.v1` now defines the
+  main-only admission fact that a later provider prompt bridge must require
+  before consuming approved provider context. It binds the Run Context Snapshot,
+  ready Provider Context Projection, existing prompt-egress gate,
+  Project/Conversation, exact context digest, configured-provider digest,
+  purpose, consent freshness, and revocation state. It may carry the main-only
+  provider prompt context for a future bridge, but it still opens no
+  IPC/preload surface, dispatches no provider/tool, mutates no source/Git/SQLite
+  state, grants no permission, and is not consumed by the current provider
+  prompt path.
 
 ### Provider Context Egress Consent
 
