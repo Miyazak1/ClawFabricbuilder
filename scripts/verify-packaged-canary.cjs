@@ -2436,7 +2436,8 @@ function draftReviewLayoutFailureCode({
 }
 
 function shouldRetryDraftReviewLayoutFailure(code) {
-  return code === 'canary_review_diff_checkpoint_child_bounds_failed';
+  return code === 'canary_review_diff_checkpoint_child_bounds_failed'
+    || code === 'canary_review_diff_checkpoint_text_stack_failed';
 }
 
 async function assertDraftReviewLayoutViaUi(page) {
@@ -6173,7 +6174,7 @@ async function openPreviewSurfaceViaUi(page) {
   }
 }
 
-async function capturePreviewEvidence(page, gate) {
+async function capturePreviewEvidence(page, gate, attempt = 0) {
   try {
     gate.assertAllowed();
     await openPreviewSurfaceViaUi(page);
@@ -6284,8 +6285,21 @@ async function capturePreviewEvidence(page, gate) {
     if (error instanceof BuilderPackagedCanaryError
       && error.code === 'canary_secret_source_invalid') throw error;
     if (error instanceof BuilderPackagedCanaryError && PREVIEW_FAILURE_CODES.has(error.code)) throw error;
-    failWithDiagnostic('canary_preview_failed', await collectPreviewSurfaceDiagnostic(page));
+    if (attempt < 7 && typeof page.waitForTimeout === 'function') {
+      await page.waitForTimeout(100);
+      return capturePreviewEvidence(page, gate, attempt + 1);
+    }
+    failWithDiagnostic('canary_preview_failed', {
+      ...(await collectPreviewSurfaceDiagnostic(page)),
+      recoverable_preview_error: previewRecoverableErrorDiagnostic(error),
+    });
   }
+}
+
+function previewRecoverableErrorDiagnostic(error) {
+  if (error === null || typeof error !== 'object') return null;
+  const name = typeof error.constructor?.name === 'string' ? error.constructor.name : null;
+  return Object.freeze({ name });
 }
 
 function samePreviewEvidence(left, right) {

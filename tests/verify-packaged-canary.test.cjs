@@ -357,6 +357,10 @@ class FakeLocator {
       locator: (selector) => ({
         innerText: async () => {
           this.page.events.push(['frameInnerText', selector]);
+          if (this.page.previewFrameBodyFailuresRemaining > 0) {
+            this.page.previewFrameBodyFailuresRemaining -= 1;
+            throw new Error('preview frame body not ready');
+          }
           return this.page.previewFrameBodyTextOverride ?? 'Focus timer preview';
         },
       }),
@@ -765,6 +769,7 @@ class FakePage {
     this.previewUnavailable = false;
     this.previewUnavailableTextOverride = null;
     this.versionHistoryVisible = true;
+    this.previewFrameBodyFailuresRemaining = 0;
     this.previewFrameBodyTextOverride = null;
     this.projectStatus = 'ready';
     this.questionAnswerFailedNoticeVisible = false;
@@ -2723,6 +2728,22 @@ test('retries transient draft review child bounds while preserving strict geomet
   page.waitForTimeout = async (ms) => {
     page.events.push(['waitForTimeout', ms]);
     page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 });
+  };
+
+  assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
+    true,
+  );
+});
+
+test('retries transient draft review text stack before rejecting layout overlap', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 326, y: 288, width: 500, height: 32 });
+  page.waitForTimeout = async (ms) => {
+    page.events.push(['waitForTimeout', ms]);
+    page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 326, y: 308, width: 500, height: 32 });
   };
 
   assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
@@ -4757,6 +4778,27 @@ test('captures chat-flow preview evidence without relying on the retired preview
     capturePreviewEvidence(page, gate),
     (error) => error.code === 'canary_preview_limitation_text_failed'
       && error.stage === 'preview_limitation_text',
+  );
+});
+
+test('retries preview iframe body capture when the srcdoc frame is not ready yet', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+  page.previewFrameBodyFailuresRemaining = 1;
+
+  const evidence = await capturePreviewEvidence(page, gate);
+
+  assert.equal(evidence.preview_mode, 'static_frame');
+  assert.equal(evidence.frame_body_nonempty, true);
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
+    true,
+  );
+  assert.equal(
+    page.events.filter((event) => event[0] === 'frameInnerText' && event[1] === 'body').length,
+    2,
   );
 });
 
