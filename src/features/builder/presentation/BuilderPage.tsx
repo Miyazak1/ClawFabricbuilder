@@ -177,6 +177,13 @@ const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
   'generation_failed',
   'preview_unavailable',
 ]);
+const PLAN_PROPOSAL_READY_STATUSES = new Set<BuilderProjectControllerStatus>([
+  'ready',
+  'preview_unavailable',
+  'answer_failed',
+  'submit_failed',
+  'generation_failed',
+]);
 const CHAT_FOLLOW_BOTTOM_THRESHOLD_PX = 96;
 const ARTIFACT_DEFAULT_WIDTH_PX = 480;
 const ARTIFACT_MIN_WIDTH_PX = 360;
@@ -2189,11 +2196,11 @@ export function BuilderPage({
     && !hasUnsavedDraft
     && !viewingHistory;
   const canProposePlan = typeof onSelectPlanMode === 'function'
-    && saved !== null
+    && (saved !== null || workingProject !== null)
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory
-    && (status === 'ready' || status === 'preview_unavailable');
+    && PLAN_PROPOSAL_READY_STATUSES.has(status);
   const changes = useMemo(() => createBuilderSourceTreeChanges(
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,

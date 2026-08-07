@@ -2028,6 +2028,7 @@ describe('BuilderPage v2', () => {
 
   it('offers Plan mode from the composer add menu without adding a second send button', async () => {
     const { draftReady, saved } = await snapshots();
+    const working = await workingProjectSnapshot();
     const onSelectPlanMode = vi.fn();
     const onSubmitInstruction = vi.fn();
     const savedContainer = render(
@@ -2051,6 +2052,27 @@ describe('BuilderPage v2', () => {
     expect(planMode?.closest('[data-builder-composer="true"]')).not.toBeNull();
     click(savedContainer, '[data-builder-composer-add-plan-mode="true"]');
     expect(onSelectPlanMode).toHaveBeenCalledOnce();
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
+
+    const workingContainer = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        onSelectPlanMode={onSelectPlanMode}
+        onSubmitInstruction={onSubmitInstruction}
+        snapshot={working}
+      />,
+    );
+    click(workingContainer, '[data-builder-composer-add-menu-button="true"]');
+    const workingPlanMode = workingContainer.querySelector<HTMLButtonElement>(
+      '[data-builder-composer-add-plan-mode="true"]',
+    );
+    expect(workingContainer.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
+      .toContain('Source folder:');
+    expect(workingPlanMode).not.toBeNull();
+    expect(workingPlanMode?.disabled).toBe(false);
+    click(workingContainer, '[data-builder-composer-add-plan-mode="true"]');
+    expect(onSelectPlanMode).toHaveBeenCalledTimes(2);
     expect(onSubmitInstruction).not.toHaveBeenCalled();
 
     const draftContainer = render(
