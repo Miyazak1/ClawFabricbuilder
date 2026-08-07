@@ -643,6 +643,15 @@ Only after these gates pass may Working Context State become provider prompt
 input. Until then, provider-context projection and disclosure status are audit
 and permission-preparation evidence only.
 
+Provider protocol adapters must consume approved Working Context only through
+that explicit prompt-bridge path. Chat Completions, Responses-style APIs,
+Anthropic Messages, or any later provider protocol may differ in request,
+stream, tool, or hosted-state shape, but none may receive Working Context by
+reading assembly facts directly or by treating a provider conversation id,
+response id, cache key, or prompt template as Builder authority. The provider
+adapter boundary is defined in
+[Provider Protocol Adapter Architecture](PROVIDER_PROTOCOL_ADAPTER_ARCHITECTURE.md).
+
 ### 5. Frontend Projection
 
 Renderer should consume only a compact projection:

@@ -216,7 +216,10 @@ User experience:
 - explicit review before replacing a saved version;
 - stronger edit and repair loops across continued conversation;
 - provider presets for mainstream OpenAI-compatible models without binding the
-  product to one vendor.
+  product to one vendor;
+- a provider protocol path that keeps the current Chat Completions release
+  stable while letting future Responses-style, Anthropic Messages, or other
+  adapters enter through explicit capability and canary gates.
 
 Required facts:
 

@@ -76,6 +76,16 @@ The recommended implementation order is: compaction contract, handoff packet
 contract, Working Context State service, Context Assembler, Run Snapshot refs,
 then the default UI projection and inspection surface.
 
+Provider protocol growth is also gated. The current release path stays on the
+existing OpenAI-compatible Chat Completions transport until the packaged
+provider canary and save/restart loop remain stable. Responses-style APIs,
+Anthropic Messages, and other provider families enter only as independent
+protocol adapters behind capability manifests and event normalizers; they must
+not be blended into the current chat transport or allowed to bypass context,
+permission, tool, Review, Git, SQLite, or prompt-egress gates. The decision is
+recorded in
+[Provider Protocol Adapter Architecture](PROVIDER_PROTOCOL_ADAPTER_ARCHITECTURE.md).
+
 ## Verified Starting Point
 
 The standalone Builder has a dedicated desktop shell, encrypted provider
@@ -140,6 +150,11 @@ Evidence requirements:
 Keep one vendor-neutral OpenAI-compatible contract while adding tested presets
 or setup guidance for mainstream providers. Provider name, model, endpoint, and
 credential remain configuration, not Project or Agent identity.
+The current default protocol is the existing OpenAI-compatible Chat Completions
+path. Future Responses, Anthropic Messages, or provider-native agent protocols
+require separate capability manifests, protocol adapters, runtime event
+normalizers, shadow canaries, and promotion gates before they can become a
+default release path.
 
 Evidence requirements:
 
@@ -147,6 +162,11 @@ Evidence requirements:
 - no credential is bundled, logged, echoed, or inferred;
 - availability and generation are tested per supported provider shape;
 - unsupported provider behavior fails safely without silent fallback.
+- protocol-specific capabilities such as hosted conversation state, prompt
+  cache reporting, reasoning output, streaming, or tool calls are explicit
+  manifest facts, not assumed from provider name alone;
+- provider-native tool calls remain proposed calls until Builder's own tool,
+  permission, policy, runtime, Review, and Revision gates admit them.
 
 ### Gate F2 - Generation, IPC, and Frontend Cutover
 
