@@ -1669,10 +1669,10 @@ function createBuilderConversationMainService(rawOptions) {
       return 'AI is not configured yet.';
     }
     if (failureCode === 'builder_generation_provider_transport_error') {
-      return 'The AI service could not be reached.';
+      return 'The AI service could not be reached. Check your network or proxy.';
     }
     if (failureCode === 'builder_generation_provider_http_error') {
-      return 'The AI service could not complete this request.';
+      return 'The AI service rejected the request. Check the API key, model, or account.';
     }
     if (failureCode === 'builder_generation_timeout') {
       return mode === 'question'

@@ -95,7 +95,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
     const container = render(<BuilderProviderSettingsRouteAdapter providerSettingsBridge={bridge} />);
     await flush();
 
-    expect(container.textContent).toContain('Provider settings saved.');
+    expect(container.textContent).toContain('Provider settings saved. Connection not tested.');
     expect(input(container, 'builder-provider-base-url').value).toBe('https://provider.example/v1');
     expect(input(container, 'builder-provider-model').value).toBe('builder-model');
     expect(input(container, 'builder-provider-api-key').value).toBe('');
@@ -158,7 +158,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
       },
       credential: 'real-key-value',
     });
-    expect(container.textContent).toContain('Provider settings saved.');
+    expect(container.textContent).toContain('Provider settings saved. Connection not tested.');
     expect(input(container, 'builder-provider-api-key').value).toBe('');
     expect(container.textContent).not.toContain('real-key-value');
   });

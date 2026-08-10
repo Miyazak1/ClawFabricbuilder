@@ -4038,7 +4038,7 @@ test('records fixed public failure summaries for provider connection failures', 
       failure_phase: 'not_recorded',
       assistant_message: {
         message_id: first.ids.assistant_message_id,
-        text: 'The AI service could not be reached.',
+        text: 'The AI service could not be reached. Check your network or proxy.',
       },
       candidate: null,
     });

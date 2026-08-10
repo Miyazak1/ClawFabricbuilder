@@ -39,7 +39,7 @@ const STATUS_MESSAGES: Record<BuilderProviderSettingsPanelStatus, string> = {
   unconfigured: 'Connect an AI provider before making projects.',
   unavailable: 'Provider settings are unavailable right now.',
   saving: 'Saving provider settings...',
-  saved: 'Provider settings saved.',
+  saved: 'Provider settings saved. Connection not tested.',
   error: 'Provider settings could not be saved.',
 };
 const EMPTY_FIELD_ERRORS: BuilderProviderSettingsPanelFieldErrors = Object.freeze({

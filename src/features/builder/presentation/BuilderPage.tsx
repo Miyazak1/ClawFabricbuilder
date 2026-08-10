@@ -906,7 +906,7 @@ function failedCompletionSummary(
     return {
       happened: 'The AI request started but did not return a usable result.',
       changed: 'No version was saved by this result.',
-      next: 'Try again, or check the AI settings if this keeps happening.',
+      next: 'Check your network or proxy, then retry. If the service rejects the request, check the AI settings.',
     };
   }
   if (
@@ -996,8 +996,8 @@ function failedStatusMessage(
   if (status === 'answer_failed') {
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Answering took too long. Try again.';
-    if (error === 'builder_generation_provider_http_error') return 'The AI service could not answer. Try again.';
-    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Try again.';
+    if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
+    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Check your network or proxy, then retry.';
     return 'The answer could not be prepared. Try again.';
   }
   if (status === 'submit_failed') {
@@ -1005,16 +1005,16 @@ function failedStatusMessage(
     if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I build.';
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
-    if (error === 'builder_generation_provider_http_error') return 'The AI service could not complete this request. Try again.';
-    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Try again.';
+    if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
+    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Check your network or proxy, then retry.';
     return 'This request could not be completed. Try again.';
   }
   if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I make a draft.';
   if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I make a draft.';
   if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
   if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
-  if (error === 'builder_generation_provider_http_error') return 'The AI service could not make this draft. Try again.';
-  if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Try again.';
+  if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
+  if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Check your network or proxy, then retry.';
   if (error === 'builder_generation_structured_response_invalid') return 'The draft could not be prepared. Try again.';
   return 'The draft could not be made. Try again.';
 }

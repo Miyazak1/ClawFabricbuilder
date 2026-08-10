@@ -185,7 +185,7 @@ describe('BuilderProviderSettingsPanel', () => {
       status: 'saved',
       values: values({ apiKey: '' }),
     })} />);
-    expect(saved.textContent).toContain('Provider settings saved.');
+    expect(saved.textContent).toContain('Provider settings saved. Connection not tested.');
     expect(input(saved, 'builder-provider-api-key').value).toBe('');
     expect(input(saved, 'builder-provider-api-key').placeholder).toBe('Enter a new key');
     expect(saved.textContent).not.toContain('real-key-value');
