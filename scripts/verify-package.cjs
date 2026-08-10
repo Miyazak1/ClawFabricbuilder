@@ -59,6 +59,7 @@ for (const expected of [
   '/electron/builder-git-receipt-contract.cjs',
   '/electron/builder-git-project-repository.cjs',
   '/electron/builder-git-current-projection.cjs',
+  '/electron/builder-local-workspace-source-tree.cjs',
   '/electron/builder-conversation-authority-contract.cjs',
   '/electron/builder-conversation-records.cjs',
   '/electron/builder-conversation-replay.cjs',
@@ -101,6 +102,8 @@ for (const expected of [
   '/electron/builder-generation-ipc-adapter.cjs',
   '/electron/builder-generation-ipc-runtime.cjs',
   '/electron/builder-generation-main-service.cjs',
+  '/electron/builder-live-preview-ipc-adapter.cjs',
+  '/electron/builder-live-preview-ipc-runtime.cjs',
   '/electron/builder-window-controls-ipc-runtime.cjs',
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
@@ -263,6 +266,8 @@ const packagedGenerationHost = packagedSource('electron/builder-generation-host-
 const packagedGenerationIpcAdapter = packagedSource('electron/builder-generation-ipc-adapter.cjs');
 const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation-ipc-runtime.cjs');
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
+const packagedLivePreviewIpcAdapter = packagedSource('electron/builder-live-preview-ipc-adapter.cjs');
+const packagedLivePreviewIpcRuntime = packagedSource('electron/builder-live-preview-ipc-runtime.cjs');
 const packagedConversationRecords = packagedSource('electron/builder-conversation-records.cjs');
 const packagedConversationReplay = packagedSource('electron/builder-conversation-replay.cjs');
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
@@ -321,6 +326,12 @@ const permissionChannels = [
 const providerContextDisclosureApprovalChannels = [
   'clawfabric-builder:provider-context-disclosure:approve-current',
 ];
+const livePreviewChannels = [
+  'clawfabric-builder:live-preview:request-current-draft',
+  'clawfabric-builder:live-preview:reload-current',
+  'clawfabric-builder:live-preview:stop-current',
+  'clawfabric-builder:live-preview:read-current-status',
+];
 const windowControlsChannels = [
   'clawfabric-builder:window-controls:minimize',
   'clawfabric-builder:window-controls:toggle-maximize',
@@ -335,6 +346,7 @@ const preloadChannels = [
   ...planReviewChannels,
   ...permissionChannels,
   ...providerContextDisclosureApprovalChannels,
+  ...livePreviewChannels,
   ...windowControlsChannels,
 ];
 
@@ -411,6 +423,7 @@ exactObjectKeys(preloadRoot, [
   'planReview',
   'permissions',
   'providerContextDisclosureApproval',
+  'livePreview',
   'windowControls',
 ]);
 const bridgeVersionProperty = preloadRoot.properties.find((property) => property.name.text === 'bridgeVersion');
@@ -423,6 +436,7 @@ const permissionsProperty = preloadRoot.properties.find((property) => property.n
 const providerContextDisclosureApprovalProperty = preloadRoot.properties.find(
   (property) => property.name.text === 'providerContextDisclosureApproval',
 );
+const livePreviewProperty = preloadRoot.properties.find((property) => property.name.text === 'livePreview');
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
 assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
@@ -432,9 +446,10 @@ assert.equal(ts.isPropertyAssignment(taskStreamProperty), true);
 assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(providerContextDisclosureApprovalProperty), true);
+assert.equal(ts.isPropertyAssignment(livePreviewProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v22');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v23');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -444,6 +459,7 @@ const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const providerContextDisclosureApprovalBridge = frozenObjectLiteral(
   providerContextDisclosureApprovalProperty.initializer,
 );
+const livePreviewBridge = frozenObjectLiteral(livePreviewProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, [
   'open',
@@ -484,6 +500,12 @@ exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(providerContextDisclosureApprovalBridge, ['approveCurrent']);
+exactObjectKeys(livePreviewBridge, [
+  'requestCurrentDraftPreview',
+  'reloadCurrentPreview',
+  'stopCurrentPreview',
+  'readCurrentPreviewStatus',
+]);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
   ...Array.from({ length: 28 }, () => 'invoke'),
@@ -494,7 +516,7 @@ assert.deepEqual(rendererPropertyAccesses, [
   ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 7 }, () => 'invoke'),
+  ...Array.from({ length: 11 }, () => 'invoke'),
 ]);
 assert.deepEqual(forbiddenRendererReferences, []);
 assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
@@ -570,6 +592,16 @@ assert.equal(
   preloadConstants.get('APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL'),
   providerContextDisclosureApprovalChannels[0],
 );
+assert.equal(
+  preloadConstants.get('REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL'),
+  livePreviewChannels[0],
+);
+assert.equal(preloadConstants.get('RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL'), livePreviewChannels[1]);
+assert.equal(preloadConstants.get('STOP_CURRENT_LIVE_PREVIEW_CHANNEL'), livePreviewChannels[2]);
+assert.equal(
+  preloadConstants.get('READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL'),
+  livePreviewChannels[3],
+);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
@@ -631,6 +663,30 @@ exactInvokeMethod(
   'APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL',
   ['request'],
 );
+exactInvokeMethod(
+  livePreviewBridge,
+  'requestCurrentDraftPreview',
+  'REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  livePreviewBridge,
+  'reloadCurrentPreview',
+  'RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  livePreviewBridge,
+  'stopCurrentPreview',
+  'STOP_CURRENT_LIVE_PREVIEW_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  livePreviewBridge,
+  'readCurrentPreviewStatus',
+  'READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL',
+  ['request'],
+);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);
@@ -639,10 +695,12 @@ exactInvokeMethod(windowControlsBridge, 'readState', 'READ_WINDOW_STATE_CHANNEL'
 assert.match(packagedMain, /require\(['"]\.\/builder-provider-settings-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-permission-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /require\(['"]\.\/builder-live-preview-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-window-controls-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
 assert.match(packagedMain, /createBuilderPermissionIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
+assert.match(packagedMain, /createBuilderLivePreviewIpcRuntime/u);
 assert.match(packagedMain, /createBuilderWindowControlsIpcRuntime/u);
 assert.match(packagedMain, /frame:\s*false/u);
 assert.doesNotMatch(packagedMain, /titleBarStyle|titleBarOverlay/u);
@@ -1101,10 +1159,12 @@ assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /providerContextDisclosureApproval/u);
 assert.match(packagedPreload, /clawfabric-builder:provider-context-disclosure:approve-current/u);
+assert.match(packagedPreload, /livePreview/u);
+assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-draft/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 39);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 43);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -1314,6 +1374,19 @@ assert.doesNotMatch(
   packagedPlanReviewIpcAdapter,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-|node:sqlite|fetch\s*\(|https?:|saveDraft|generate|persist_candidate_commit|write_current|source_tree|commit_oid|tree_oid|plan_result_digest|review_id|reviewer_id|reviewed_at_ms|local-provider-executor/iu,
 );
+assert.match(packagedLivePreviewIpcAdapter, /createBuilderLivePreviewIpcAdapter/u);
+assert.match(packagedLivePreviewIpcAdapter, /active_renderer_required:\s*true/u);
+assert.match(packagedLivePreviewIpcAdapter, /authority\.source_tree_from_renderer !== 'not_accepted'/u);
+assert.doesNotMatch(
+  packagedLivePreviewIpcAdapter,
+  /safeStorage|Authorization|Bearer|persist_candidate_commit|saveDraft|provider_dispatch:\s*true|tool_dispatch:\s*true|source_write:\s*'performed'/iu,
+);
+assert.match(packagedLivePreviewIpcRuntime, /builder-live-preview-ipc-runtime\.v1/u);
+assert.match(packagedLivePreviewIpcRuntime, /createUnavailableBuilderLivePreviewService/u);
+assert.doesNotMatch(
+  packagedLivePreviewIpcRuntime,
+  /ipcRenderer|contextBridge|safeStorage|Authorization|Bearer|persist_candidate_commit|saveDraft/iu,
+);
 assert.match(packagedWindowControlsIpcRuntime, /builder-window-controls-ipc-runtime\.v1/u);
 assert.match(packagedWindowControlsIpcRuntime, /activeWindow/u);
 assert.match(packagedWindowControlsIpcRuntime, /event\.sender !== webContents/u);
@@ -1346,6 +1419,13 @@ for (const channel of permissionChannels) {
     packagedPermissionIpcAdapter.includes(channel)
       || packagedPermissionIpcRuntime.includes(channel)
       || packagedPreload.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of livePreviewChannels) {
+  assert.equal(
+    packagedLivePreviewIpcAdapter.includes(channel) || packagedLivePreviewIpcRuntime.includes(channel),
     true,
     channel,
   );
