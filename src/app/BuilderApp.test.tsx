@@ -241,6 +241,7 @@ function reviewReadyTaskStreamWire() {
         projection_authority: 'main_owned_review_state_projection_v1',
         candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
         checkpoint_evidence: 'verified_latest_candidate_checkpoint',
+        check_evidence: 'not_present',
         renderer_authority: 'not_present',
         ipc_authority: 'projection_only',
         provider_dispatch: false,

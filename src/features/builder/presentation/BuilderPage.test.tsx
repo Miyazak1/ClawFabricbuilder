@@ -446,6 +446,7 @@ function readyReviewStateProjection(changedFileCount = 2) {
       projection_authority: 'main_owned_review_state_projection_v1',
       candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
       checkpoint_evidence: 'verified_latest_candidate_checkpoint',
+      check_evidence: 'not_present',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -475,6 +476,23 @@ function blockedReviewStateProjection() {
     authority: {
       ...readyReviewStateProjection().authority,
       checkpoint_evidence: 'missing_or_unverified',
+      check_evidence: 'not_present',
+    },
+  } as const;
+}
+
+function failedCheckReviewStateProjection() {
+  return {
+    ...readyReviewStateProjection(),
+    status: 'blocked',
+    label: 'Review not ready',
+    summary: 'The latest project check failed. Review it before saving.',
+    check_status: 'failed',
+    can_save: false,
+    blocking_reasons: ['check_failed'],
+    authority: {
+      ...readyReviewStateProjection().authority,
+      check_evidence: 'verified_current_candidate_check_projection',
     },
   } as const;
 }
@@ -532,6 +550,14 @@ async function candidateBlockedReviewActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
     ...createTaskStreamWire(),
     review_state_projection: blockedReviewStateProjection(),
+  })));
+  return controller.load(PROJECT_ID);
+}
+
+async function candidateFailedCheckActivity() {
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...createTaskStreamWire(),
+    review_state_projection: failedCheckReviewStateProjection(),
   })));
   return controller.load(PROJECT_ID);
 }
@@ -2790,6 +2816,28 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-discard-draft="true"]');
     expect(onSave).not.toHaveBeenCalled();
     expect(onRejectDraft).toHaveBeenCalledOnce();
+  });
+
+  it('blocks Save and explains the current candidate check failure', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateFailedCheckActivity();
+    const onSave = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        onSave={onSave}
+        snapshot={draftReady}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
+      .toContain('project check failed');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+      .toBe(true);
+    click(container, '[data-builder-save-version="true"]');
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('uses the draft composer review shortcut without sending or saving', async () => {

@@ -5,18 +5,22 @@ export type BuilderReviewStateProjectionWire = Readonly<{
   label: 'Ready to review' | 'Review not ready';
   summary:
     | 'A recoverable draft is ready to inspect and save.'
-    | 'Waiting for a verified draft checkpoint before saving.';
+    | 'A recoverable draft is checked and ready to inspect and save.'
+    | 'Waiting for a verified draft checkpoint before saving.'
+    | 'The latest project check failed. Review it before saving.'
+    | 'The latest project check did not finish. Run it again before saving.';
   checkpoint_status: 'ready' | 'missing';
   preview_status: 'not_recorded';
-  check_status: 'not_run';
+  check_status: 'not_run' | 'passed' | 'failed' | 'incomplete';
   changed_file_count: number | null;
   can_save: boolean;
   can_discard: true;
-  blocking_reasons: readonly ('checkpoint_missing')[];
+  blocking_reasons: readonly ('checkpoint_missing' | 'check_failed' | 'check_incomplete')[];
   authority: Readonly<{
     projection_authority: 'main_owned_review_state_projection_v1';
     candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate';
     checkpoint_evidence: 'verified_latest_candidate_checkpoint' | 'missing_or_unverified';
+    check_evidence: 'verified_current_candidate_check_projection' | 'not_present';
     renderer_authority: 'not_present';
     ipc_authority: 'projection_only';
     provider_dispatch: false;
@@ -39,6 +43,7 @@ const PROJECTION_KEYS = Object.freeze([
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'projection_authority', 'candidate_evidence', 'checkpoint_evidence',
+  'check_evidence',
   'renderer_authority', 'ipc_authority', 'provider_dispatch', 'tool_dispatch',
   'source_read', 'source_write', 'git_write', 'sqlite_write', 'permission_grant',
   'revision_admission', 'save_authority', 'publication',
@@ -62,13 +67,13 @@ function exactRecord(value: unknown, keys: readonly string[]): value is PlainRec
   });
 }
 
-function safeBlockingReasons(value: unknown, ready: boolean): boolean {
+function safeBlockingReasons(value: unknown, expected: readonly string[]): boolean {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return false;
   const ownKeys = Reflect.ownKeys(value);
   if (ownKeys.length !== value.length + 1 || ownKeys.some((key) => typeof key === 'symbol')) {
     return false;
   }
-  return ready ? value.length === 0 : value.length === 1 && value[0] === 'checkpoint_missing';
+  return value.length === expected.length && value.every((reason, index) => reason === expected[index]);
 }
 
 export function sanitizeBuilderReviewStateProjectionWire(
@@ -79,6 +84,25 @@ export function sanitizeBuilderReviewStateProjectionWire(
       return null;
     }
     const ready = value.status === 'ready';
+    const checkpointReady = value.checkpoint_status === 'ready';
+    if (!checkpointReady && value.checkpoint_status !== 'missing') return null;
+    const checkStatus = value.check_status;
+    if (!['not_run', 'passed', 'failed', 'incomplete'].includes(String(checkStatus))) return null;
+    const checkBlocksSave = checkStatus === 'failed' || checkStatus === 'incomplete';
+    if (ready !== (checkpointReady && !checkBlocksSave)) return null;
+    const expectedSummary = !checkpointReady
+      ? 'Waiting for a verified draft checkpoint before saving.'
+      : checkStatus === 'failed'
+        ? 'The latest project check failed. Review it before saving.'
+        : checkStatus === 'incomplete'
+          ? 'The latest project check did not finish. Run it again before saving.'
+          : checkStatus === 'passed'
+            ? 'A recoverable draft is checked and ready to inspect and save.'
+            : 'A recoverable draft is ready to inspect and save.';
+    const expectedReasons: string[] = [];
+    if (!checkpointReady) expectedReasons.push('checkpoint_missing');
+    if (checkStatus === 'failed') expectedReasons.push('check_failed');
+    if (checkStatus === 'incomplete') expectedReasons.push('check_incomplete');
     const authority = value.authority;
     if (
       (!ready && value.status !== 'blocked')
@@ -86,19 +110,13 @@ export function sanitizeBuilderReviewStateProjectionWire(
       || typeof value.draft_id !== 'string'
       || !DRAFT_ID_PATTERN.test(value.draft_id)
       || value.label !== (ready ? 'Ready to review' : 'Review not ready')
-      || value.summary !== (
-        ready
-          ? 'A recoverable draft is ready to inspect and save.'
-          : 'Waiting for a verified draft checkpoint before saving.'
-      )
-      || value.checkpoint_status !== (ready ? 'ready' : 'missing')
+      || value.summary !== expectedSummary
       || value.preview_status !== 'not_recorded'
-      || value.check_status !== 'not_run'
       || value.can_save !== ready
       || value.can_discard !== true
-      || !safeBlockingReasons(value.blocking_reasons, ready)
+      || !safeBlockingReasons(value.blocking_reasons, expectedReasons)
       || (
-        ready
+        checkpointReady
           ? !Number.isSafeInteger(value.changed_file_count)
             || Number(value.changed_file_count) < 1
             || Number(value.changed_file_count) > 50_000
@@ -107,7 +125,10 @@ export function sanitizeBuilderReviewStateProjectionWire(
       || authority.projection_authority !== 'main_owned_review_state_projection_v1'
       || authority.candidate_evidence !== 'sqlite_conversation_replay_current_unreviewed_candidate'
       || authority.checkpoint_evidence !== (
-        ready ? 'verified_latest_candidate_checkpoint' : 'missing_or_unverified'
+        checkpointReady ? 'verified_latest_candidate_checkpoint' : 'missing_or_unverified'
+      )
+      || authority.check_evidence !== (
+        checkStatus === 'not_run' ? 'not_present' : 'verified_current_candidate_check_projection'
       )
       || authority.renderer_authority !== 'not_present'
       || authority.ipc_authority !== 'projection_only'

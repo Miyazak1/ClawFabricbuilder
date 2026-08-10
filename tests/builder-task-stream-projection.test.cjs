@@ -883,6 +883,7 @@ function reviewStateProjection(overrides = {}) {
       checkpoint_evidence: ready
         ? 'verified_latest_candidate_checkpoint'
         : 'missing_or_unverified',
+      check_evidence: 'not_present',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,

@@ -284,6 +284,44 @@ function draftCheckpointStatusProjection() {
   };
 }
 
+function checkRunStatusProjection(status = 'passed') {
+  const details = status === 'passed'
+    ? {
+      label: 'Checked',
+      summary: 'The project check completed successfully.',
+    }
+    : {
+      label: 'Check failed',
+      summary: 'The project check found a problem that needs review.',
+    };
+  return {
+    projection_version: 'builder-check-run-status-projection.v1',
+    project_id: PROJECT_ID,
+    candidate_id: `builder-code-change-candidate:${'6'.repeat(64)}`,
+    check_run_id: `builder-check-run:${'a'.repeat(64)}`,
+    command_kind: 'test',
+    command_label: 'Tests',
+    status,
+    ...details,
+    completed_at_ms: 1_020,
+    result_digest: `sha256:${'b'.repeat(64)}`,
+    authority: {
+      projection_authority: 'main_owned_check_run_status_projection_v1',
+      check_run_authority: 'verified_check_run_contract',
+      renderer_authority: 'read_only_projection',
+      ipc_authority: 'projection_only',
+      raw_output: 'not_present',
+      runtime_paths: 'not_present',
+      provider_dispatch: false,
+      command_execution: false,
+      source_write: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      save_authority: false,
+    },
+  };
+}
+
 function beginQuestion(service, baseRevision = null, question = 'What changed in this project?') {
   return service.begin_question({
     project_id: PROJECT_ID,
@@ -3614,6 +3652,7 @@ test('read_stream carries main-owned provider context disclosure status when ava
 
 test('read_stream projects checkpoint only while the latest candidate is unreviewed', () => {
   const requests = [];
+  const checkRequests = [];
   const item = fixture(1, 1_000, {
     automaticDraftCheckpointService: {
       read_current_checkpoint_status(request) {
@@ -3621,6 +3660,12 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
         return {
           draft_checkpoint_status_projection: draftCheckpointStatusProjection(),
         };
+      },
+    },
+    checkRunStatusService: {
+      read_current_check_run_status(request) {
+        checkRequests.push(request);
+        return { check_run_status_projection: checkRunStatusProjection() };
       },
     },
   });
@@ -3637,6 +3682,11 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     assert.equal(ready.draft_checkpoint_status_projection.label, 'Checkpoint saved');
     assert.equal(ready.draft_checkpoint_status_projection.changed_file_count, 2);
     assert.equal(ready.review_state_projection.status, 'ready');
+    assert.equal(ready.review_state_projection.check_status, 'passed');
+    assert.equal(
+      ready.review_state_projection.summary,
+      'A recoverable draft is checked and ready to inspect and save.',
+    );
     assert.equal(ready.review_state_projection.can_save, true);
     assert.equal(ready.review_state_projection.can_discard, true);
     assert.equal(ready.review_state_projection.authority.save_authority, false);
@@ -3645,12 +3695,17 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
       conversation_id: context.conversation.conversation_id,
       candidate_id: candidate.git_candidate_receipt.candidate_id,
     }]);
+    assert.deepEqual(checkRequests, [{
+      project_id: PROJECT_ID,
+      candidate_id: candidate.git_candidate_receipt.candidate_id,
+    }]);
 
     item.service.reject_candidate({ draft_id: candidate.draft_id });
     const rejected = item.service.read_stream({ project_id: PROJECT_ID });
     assert.equal(Object.hasOwn(rejected, 'draft_checkpoint_status_projection'), false);
     assert.equal(Object.hasOwn(rejected, 'review_state_projection'), false);
     assert.equal(requests.length, 1);
+    assert.equal(checkRequests.length, 1);
   } finally {
     item.close();
   }
