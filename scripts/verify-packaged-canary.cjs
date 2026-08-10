@@ -388,6 +388,7 @@ const PREVIEW_FAILURE_CODES = Object.freeze(new Set([
 const BRIDGE_CONTRACT_KEYS = Object.freeze([
   'bridge_version',
   'legacy_namespaces_absent',
+  'live_preview_namespace',
   'plan_review_namespace',
   'provider_context_disclosure_approval_namespace',
 ]);
@@ -3717,10 +3718,36 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
       const approveCurrentDescriptor = providerContextDisclosureApprovalDescriptors === null
         ? null
         : providerContextDisclosureApprovalDescriptors.approveCurrent;
+      const livePreview = bridge.livePreview;
+      const livePreviewDescriptors = livePreview !== null
+        && (typeof livePreview === 'object' || typeof livePreview === 'function')
+        ? Object.getOwnPropertyDescriptors(livePreview)
+        : null;
+      const livePreviewKeys = livePreviewDescriptors === null
+        ? []
+        : Reflect.ownKeys(livePreviewDescriptors);
+      const livePreviewMethodNames = [
+        'requestCurrentDraftPreview',
+        'reloadCurrentPreview',
+        'stopCurrentPreview',
+        'readCurrentPreviewStatus',
+      ];
+      const livePreviewMethodsAreExact = livePreviewKeys.length === livePreviewMethodNames.length
+        && livePreviewMethodNames.every((name, index) => {
+          const descriptor = livePreviewDescriptors[name];
+          return livePreviewKeys[index] === name
+            && descriptor !== undefined
+            && descriptor.enumerable === true
+            && Object.hasOwn(descriptor, 'value')
+            && typeof descriptor.value === 'function';
+        });
       const bridge_contract = {
         bridge_version: bridge.bridgeVersion,
         legacy_namespaces_absent: !Object.hasOwn(bridge, 'projectCatalog')
           && !Object.hasOwn(bridge, 'projectRevisions'),
+        live_preview_namespace: livePreviewMethodsAreExact
+          ? 'current_preview_control_methods_only'
+          : 'unavailable',
         plan_review_namespace: planReviewKeys.length === 1
           && planReviewKeys[0] === 'review'
           && reviewDescriptor !== null
@@ -3810,15 +3837,18 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v22'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v23'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
+    || bridgeContractDescriptors.live_preview_namespace.value
+      !== 'current_preview_control_methods_only'
     || bridgeContractDescriptors.plan_review_namespace.value !== 'review_method_only'
     || bridgeContractDescriptors.provider_context_disclosure_approval_namespace.value
       !== 'approve_current_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v22',
+    bridge_version: 'builder-preload.v23',
     legacy_namespaces_absent: true,
+    live_preview_namespace: 'current_preview_control_methods_only',
     plan_review_namespace: 'review_method_only',
     provider_context_disclosure_approval_namespace: 'approve_current_method_only',
   });
