@@ -105,6 +105,7 @@ test('creates a Node/frontend project understanding snapshot with command profil
     && profile.requires_user_approval === true
     && profile.risk_class === 'read_only_project_check'
     && profile.discovered_from === 'package.json:scripts'
+    && /^sha256:[0-9a-f]{64}$/u.test(profile.script_digest)
   )));
   assert.equal(snapshot.command_profiles.at(-1).confidence, 'verified_previous_success');
   assert.deepEqual(snapshot.command_profile_ids, snapshot.command_profiles.map((profile) => (
@@ -117,6 +118,30 @@ test('creates a Node/frontend project understanding snapshot with command profil
   assert.equal(snapshot.authority.source_write, 'not_present');
   assert.equal(Object.isFrozen(snapshot), true);
   assert.equal(Object.isFrozen(snapshot.command_profiles[0]), true);
+  assert.doesNotMatch(JSON.stringify(snapshot.command_profiles), /vite build|eslint \.|vitest run|tsc -b/iu);
+});
+
+test('binds each command profile identity to the exact package script body', () => {
+  const treeFor = (testScript) => sourceTree([{
+    path: 'package.json',
+    content: `${JSON.stringify({ scripts: { test: testScript } })}\n`,
+  }, {
+    path: 'package-lock.json',
+    content: '{}\n',
+  }]);
+  const first = createBuilderProjectUnderstandingSnapshot(request({
+    source_tree: treeFor('vitest run'),
+  }));
+  const changed = createBuilderProjectUnderstandingSnapshot(request({
+    source_tree: treeFor('node --test'),
+  }));
+
+  assert.equal(first.command_profiles.length, 1);
+  assert.equal(changed.command_profiles.length, 1);
+  assert.notEqual(first.command_profiles[0].script_digest, changed.command_profiles[0].script_digest);
+  assert.notEqual(first.command_profiles[0].command_profile_id, changed.command_profiles[0].command_profile_id);
+  assert.equal(first.command_profiles[0].command_display, 'npm test');
+  assert.equal(changed.command_profiles[0].command_display, 'npm test');
 });
 
 test('detects static HTML projects without inventing command profiles', () => {

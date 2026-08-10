@@ -51,6 +51,7 @@ const COMMAND_PROFILE_KEYS = Object.freeze([
   'source_tree_digest',
   'command_kind',
   'command_display',
+  'script_digest',
   'cwd',
   'confidence',
   'discovered_from',
@@ -309,6 +310,7 @@ function sanitizeCommandProfile(value, projectId, sourceTreeDigest) {
     source_tree_digest: safeDigest(valueAt(value, 'source_tree_digest')),
     command_kind: safeEnum(valueAt(value, 'command_kind'), COMMAND_KINDS),
     command_display: safeBoundedText(valueAt(value, 'command_display'), 120),
+    script_digest: safeDigest(valueAt(value, 'script_digest')),
     cwd: valueAt(value, 'cwd'),
     confidence: safeEnum(valueAt(value, 'confidence'), COMMAND_CONFIDENCES),
     discovered_from: valueAt(value, 'discovered_from'),
@@ -441,7 +443,15 @@ function safePackageScripts(parsedPackage) {
       && Object.hasOwn(descriptor, 'value')
       && typeof descriptor.value === 'string'
       && descriptor.value.trim().length > 0
-    ) safe[kind] = scriptName;
+      && descriptor.value.length <= 512
+      && !descriptor.value.includes('\0')
+    ) safe[kind] = freezeDeep({
+      script_name: scriptName,
+      script_digest: sha256Canonical({
+        script_name: scriptName,
+        script_body: descriptor.value,
+      }),
+    });
   }
   return safe;
 }
@@ -481,6 +491,7 @@ function commandProfiles(projectId, sourceTree, packageManager, packageScripts, 
       source_tree_digest: sourceTree.source_tree_digest,
       command_kind: kind,
       command_display: display,
+      script_digest: packageScripts[kind].script_digest,
       cwd: '.',
       confidence,
       discovered_from: 'package.json:scripts',
