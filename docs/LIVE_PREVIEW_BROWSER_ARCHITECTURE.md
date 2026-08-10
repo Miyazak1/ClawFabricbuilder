@@ -92,6 +92,39 @@ Deferred:
 - authenticated browser sessions;
 - editing DOM elements from the preview surface.
 
+## Dynamic Site Roadmap
+
+Dynamic preview should be added in layers after the static-web browser path is
+real.
+
+V2 supports framework dev servers such as Vite, React, Vue, and Next dev mode.
+It must be a dedicated dev-server adapter, not an escape hatch from the static
+preview runtime.
+
+V2 admission requires:
+
+- a `CommandProfile`-discovered dev command, such as `npm run dev`, selected by
+  main from project metadata and package scripts;
+- explicit user permission before starting any process;
+- loopback-only port ownership, with main selecting or validating the port and
+  denying external bind addresses;
+- bounded process lifecycle: start, health check, log collection, restart, stop,
+  and cleanup on window close or app restart;
+- redacted logs that do not expose secrets, environment values, provider
+  context, source contents, or internal ids to renderer projections;
+- navigation limited to the owned loopback origin;
+- external network policy recorded as evidence and denied by default unless a
+  later permission explicitly allows it;
+- no source, Git, SQLite, provider, tool, permission, or save authority inside
+  the preview contents.
+
+V3 supports backend or full-stack preview only after separate security design
+for environment variables, secrets, databases, migrations, authentication,
+external network, long-running services, and process isolation.
+
+V2 and V3 are post-MVP tracks. They must not block the current CheckRun,
+Review/Save, restart recovery, or packaged MVP canary gates.
+
 ## Architecture Overview
 
 ```text
@@ -248,8 +281,11 @@ UI behavior:
 - static preview remains the fallback and first render path;
 - when Live Preview is available, show a compact segmented preview mode:
   `Static` / `Live`;
-- if Live Preview is blocked, show the existing runtime-unavailable message
-  with a clearer reason;
+- before the source resolver and browser runtime are connected, keep Live
+  disabled or visually secondary with `Browser preview unavailable`; do not make
+  it look like a usable peer mode;
+- if Live Preview is blocked after the runtime exists, show the
+  runtime-unavailable message with a clearer reason;
 - provide reload and stop controls only inside the preview toolbar;
 - do not duplicate the global workspace selector inside the drawer content;
 - do not hide latest chat behind the preview surface or composer;

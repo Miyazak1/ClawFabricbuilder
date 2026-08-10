@@ -29,6 +29,17 @@ export function BuilderResultPanel({
   projection,
 }: BuilderResultPanelProps) {
   const [previewMode, setPreviewMode] = useState<'static' | 'live'>('static');
+  const canEnterLivePreview = livePreviewStatus !== null
+    && (
+      livePreviewStatus.can_start
+      || livePreviewStatus.can_reload
+      || livePreviewStatus.can_stop
+      || livePreviewStatus.status === 'starting'
+      || livePreviewStatus.status === 'ready'
+      || livePreviewStatus.status === 'reloading'
+      || livePreviewStatus.status === 'stopping'
+    );
+  const visiblePreviewMode = canEnterLivePreview ? previewMode : 'static';
   const className = placement === 'artifact'
     ? 'cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-artifact-preview-card'
     : placement === 'expanded'
@@ -52,9 +63,9 @@ export function BuilderResultPanel({
         </span>
         <span className="cf-builder-preview-mode-switch" role="group" aria-label="Preview mode">
           <button
-            aria-pressed={previewMode === 'static'}
+            aria-pressed={visiblePreviewMode === 'static'}
             className="cf-builder-preview-mode-button"
-            data-active={previewMode === 'static' ? 'true' : undefined}
+            data-active={visiblePreviewMode === 'static' ? 'true' : undefined}
             data-builder-preview-mode="static"
             onClick={() => setPreviewMode('static')}
             type="button"
@@ -62,18 +73,23 @@ export function BuilderResultPanel({
             Static
           </button>
           <button
-            aria-pressed={previewMode === 'live'}
+            aria-label={canEnterLivePreview ? 'Live preview' : 'Browser preview unavailable'}
+            aria-pressed={visiblePreviewMode === 'live'}
             className="cf-builder-preview-mode-button"
-            data-active={previewMode === 'live' ? 'true' : undefined}
+            data-active={visiblePreviewMode === 'live' ? 'true' : undefined}
             data-builder-preview-mode="live"
-            onClick={() => setPreviewMode('live')}
+            disabled={!canEnterLivePreview}
+            onClick={() => {
+              if (canEnterLivePreview) setPreviewMode('live');
+            }}
+            title={canEnterLivePreview ? 'Open live preview' : 'Browser preview unavailable'}
             type="button"
           >
             Live
           </button>
         </span>
         <span className="cf-builder-result-toolbar-actions">
-          {previewMode === 'live' ? (
+          {visiblePreviewMode === 'live' ? (
             <>
               <button
                 aria-label="Start live preview"
@@ -138,7 +154,7 @@ export function BuilderResultPanel({
         </span>
       </div>
       <div className="cf-builder-flow-card-body">
-        {previewMode === 'live' ? (
+        {visiblePreviewMode === 'live' ? (
           <section
             aria-label="Live preview"
             className="cf-builder-live-preview-panel"
