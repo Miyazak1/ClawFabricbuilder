@@ -13,6 +13,34 @@ read project -> explain current state -> propose plan -> user approves ->
 change code -> run approved checks -> repair -> show diff -> save version
 ```
 
+The MVP release target is narrower than the full architecture: select project,
+understand project, propose a read-only plan, execute approved bounded edits,
+record an automatic draft checkpoint, show diff/preview/basic check evidence,
+explicitly save a version, then prove packaged restart recovery. Multi-agent
+work, public sharing, arbitrary extensions, vector memory, autonomous
+experiments, multi-step automatic repair, and live 3D/WebGL preview are not MVP
+blockers.
+Those future tracks are preserved in
+[Post-MVP Product Expansion Plan](POST_MVP_PRODUCT_EXPANSION_PLAN.md) so they
+can be designed without stealing priority from the first reliable coding loop.
+The concrete implementation target for that release is
+[MVP Programming Loop Implementation Spec](MVP_PROGRAMMING_LOOP_IMPLEMENTATION_SPEC.md).
+Its slice-by-slice development order is defined in
+[MVP Programming Loop Slice Specs](MVP_PROGRAMMING_LOOP_SLICE_SPECS.md).
+
+The integrated architecture for that loop is defined in
+[Codex-Like Programming Runtime Architecture](CODEX_LIKE_PROGRAMMING_RUNTIME_ARCHITECTURE.md).
+That architecture absorbs the mature runtime shape seen in Codex-like agents
+and Pi-style extension events, but keeps v1 execution main-owned: provider
+output becomes proposed actions, local actions pass Tool Action Admission,
+source edits create patch/edit evidence, checks become CheckRun facts, mutating
+runs create Draft Checkpoints, and `Save version` remains explicit Review and
+Revision authority.
+The first missing-capability layer is project understanding and verification
+readiness: Project Understanding Snapshot, Command Profile Discovery, Edit
+Intent Plan, Workspace Guard, CheckRun/Failure Triage, automatic Draft
+Checkpoint policy, and deterministic run interruption/context refresh behavior.
+
 Community, social, Agent personality, and playful surfaces are later
 projections over trusted work facts. They must not consume implementation
 priority ahead of the Codex-like personal workbench, and they must not be

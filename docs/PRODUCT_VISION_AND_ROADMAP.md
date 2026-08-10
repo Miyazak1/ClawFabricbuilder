@@ -69,6 +69,13 @@ until the goal is actually done or explicitly blocked.
 The staged engineering gates are defined in
 [Implementation Plan](IMPLEMENTATION_PLAN.md).
 
+The post-MVP feature pool is intentionally separated from the current release
+target. Work Capsule, live preview, hooks/extensions, persistent Agents,
+delegation, memory retrieval, collaboration, community, playful surfaces, and
+provider protocol expansion are preserved in
+[Post-MVP Product Expansion Plan](POST_MVP_PRODUCT_EXPANSION_PLAN.md), but they
+must not become blockers for the first reliable Codex-like programming loop.
+
 The implementation language strategy is intentionally conservative. Builder
 does not have a near-term native rewrite track; Electron, React, TypeScript, and
 Node/Electron main-side contracts remain the active product path. Rust, Go, or
