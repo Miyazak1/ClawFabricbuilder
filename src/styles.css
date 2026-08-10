@@ -1499,6 +1499,52 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.45;
 }
 
+.cf-builder-review-checks {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);
+  padding-top: 10px;
+}
+
+.cf-builder-review-check-status,
+.cf-builder-review-check-summary,
+.cf-builder-review-check-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.cf-builder-review-check-status {
+  flex: 1 1 220px;
+  gap: 8px;
+}
+
+.cf-builder-review-check-label {
+  flex: 0 0 auto;
+  color: var(--cf-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.cf-builder-review-check-summary {
+  gap: 5px;
+  color: var(--cf-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.cf-builder-review-check-actions {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .cf-builder-review-actions {
   display: flex;
   flex-wrap: wrap;

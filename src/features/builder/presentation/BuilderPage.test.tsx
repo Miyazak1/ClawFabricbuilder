@@ -4232,11 +4232,14 @@ describe('BuilderPage v2', () => {
 
     const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const copy = review?.querySelector('.cf-builder-review-copy');
+    const checks = review?.querySelector('[data-builder-review-checks="true"]');
     const actions = review?.querySelector('[data-builder-draft-review-actions="true"]');
     expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
     expect(copy).not.toBeNull();
+    expect(checks).not.toBeNull();
     expect(actions).not.toBeNull();
-    expect(actions?.previousElementSibling).toBe(copy);
+    expect(checks?.previousElementSibling).toBe(copy);
+    expect(actions?.previousElementSibling).toBe(checks);
     expect(copy?.textContent).toContain('Review before saving');
     expect(copy?.textContent).toContain('file changes');
     expect(actions?.textContent).toContain('Changes');

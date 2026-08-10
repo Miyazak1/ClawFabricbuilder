@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
+import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 
@@ -85,6 +86,27 @@ function reviewState(status: 'ready' | 'blocked'): BuilderReviewStateProjectionW
   }) as BuilderReviewStateProjectionWire;
 }
 
+const checkProfile: BuilderCheckRunProfile = Object.freeze({
+  command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+  command_kind: 'test',
+  command_display: 'npm test',
+  requires_user_approval: true,
+});
+
+const passedCheck: BuilderCheckRunStatusProjection = Object.freeze({
+  projection_version: 'builder-check-run-status-projection.v1',
+  project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
+  candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+  check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+  command_kind: 'test',
+  command_label: 'Tests',
+  status: 'passed',
+  label: 'Checked',
+  summary: 'The project check completed successfully.',
+  completed_at_ms: 20,
+  result_digest: `sha256:${'4'.repeat(64)}`,
+});
+
 describe('BuilderReviewCheckpoint', () => {
   it('renders the draft review actions without changing public selectors', () => {
     const onOpenChanges = vi.fn();
@@ -162,5 +184,34 @@ describe('BuilderReviewCheckpoint', () => {
     click(container, '[data-builder-save-version="true"]');
     expect(onRejectDraft).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('offers only discovered checks and makes the selected check an explicit action', () => {
+    const onRunCheck = vi.fn();
+    const container = render(
+      <BuilderReviewCheckpoint
+        canReject
+        canSave
+        changes={changes()}
+        checkRunProfiles={[checkProfile]}
+        checkRunStatus={passedCheck}
+        discardLabel="Discard draft"
+        hasContent
+        onOpenChanges={() => undefined}
+        onOpenPreview={() => undefined}
+        onRunCheck={onRunCheck}
+        preview={null}
+        reviewState={reviewState('ready')}
+        saveLabel="Save version"
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-check-run-status="passed"]')?.textContent)
+      .toContain('completed successfully');
+    expect(container.querySelector('[data-builder-check-run-actions="true"]')?.textContent)
+      .toContain('Run npm test');
+    click(container, `[data-builder-run-check="${checkProfile.command_profile_id}"]`);
+    expect(onRunCheck).toHaveBeenCalledTimes(1);
+    expect(onRunCheck).toHaveBeenCalledWith(checkProfile);
   });
 });

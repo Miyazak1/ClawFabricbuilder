@@ -24,8 +24,11 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderCheckRunAvailableResult,
   BuilderCheckRunApproveRequest,
+  BuilderCheckRunCompletedResult,
   BuilderCheckRunPort,
+  BuilderCheckRunProfile,
   BuilderCheckRunReadRequest,
   BuilderCurrentProjectWriteApprovalStatus,
   BuilderGenerationOutputEvent,
@@ -1057,6 +1060,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderLivePreviewStatusProjection | null>(null);
   const [livePreviewOperation, setLivePreviewOperation] =
     useState<'starting' | 'reloading' | 'stopping' | null>(null);
+  const [checkRunAvailable, setCheckRunAvailable] =
+    useState<BuilderCheckRunAvailableResult | null>(null);
+  const [checkRunCompleted, setCheckRunCompleted] =
+    useState<BuilderCheckRunCompletedResult | null>(null);
+  const [checkRunOperation, setCheckRunOperation] =
+    useState<'loading' | 'running' | 'failed' | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const initialWorkspaceAutoOpenRef = useRef(false);
@@ -1078,6 +1087,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const submitInFlightRef = useRef(false);
   const submitInFlightInstructionRef = useRef<string | null>(null);
   const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
+  const checkRunRequestSequenceRef = useRef(0);
   const publishSubmitInFlight = useCallback((inFlight: boolean) => {
     submitInFlightRef.current = inFlight;
     setSubmitInFlight(inFlight);
@@ -1226,6 +1236,74 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   useLayoutEffect(() => {
     conversationSnapshotRef.current = conversation.snapshot;
   }, [conversation.snapshot]);
+
+  const currentDraftId = project.snapshot.draft?.draft_id ?? null;
+
+  useEffect(() => {
+    const requestSequence = checkRunRequestSequenceRef.current + 1;
+    checkRunRequestSequenceRef.current = requestSequence;
+    let active = true;
+    const loadAvailableChecks = async () => {
+      await Promise.resolve();
+      if (!active || checkRunRequestSequenceRef.current !== requestSequence) return;
+      setCheckRunAvailable(null);
+      setCheckRunCompleted(null);
+      if (currentDraftId === null) {
+        setCheckRunOperation(null);
+        return;
+      }
+      setCheckRunOperation('loading');
+      try {
+        const result = await ports.checkRun.readCurrentDraftAvailableChecks({ draft_id: currentDraftId });
+        if (!active
+          || checkRunRequestSequenceRef.current !== requestSequence
+          || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
+        setCheckRunAvailable(result);
+        setCheckRunOperation(null);
+      } catch {
+        if (!active
+          || checkRunRequestSequenceRef.current !== requestSequence
+          || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
+        setCheckRunOperation('failed');
+      }
+    };
+    void loadAvailableChecks();
+    return () => {
+      active = false;
+    };
+  }, [currentDraftId, ports.checkRun]);
+
+  const runCheck = useCallback(async (profile: BuilderCheckRunProfile) => {
+    const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
+    const admittedProfile = checkRunAvailable?.draft_id === draftId
+      ? checkRunAvailable.available_checks.find(
+        (available) => available.command_profile_id === profile.command_profile_id,
+      ) ?? null
+      : null;
+    if (draftId === null || admittedProfile === null || checkRunOperation === 'running') return;
+    const requestSequence = checkRunRequestSequenceRef.current + 1;
+    checkRunRequestSequenceRef.current = requestSequence;
+    setCheckRunOperation('running');
+    try {
+      const result = await ports.checkRun.approveAndRunCurrentDraftCheck({
+        draft_id: draftId,
+        command_profile_id: admittedProfile.command_profile_id,
+      });
+      if (
+        checkRunRequestSequenceRef.current !== requestSequence
+        || projectSnapshotRef.current.draft?.draft_id !== draftId
+      ) return;
+      setCheckRunCompleted(result);
+      setCheckRunOperation(null);
+      await conversation.refresh();
+    } catch {
+      if (
+        checkRunRequestSequenceRef.current !== requestSequence
+        || projectSnapshotRef.current.draft?.draft_id !== draftId
+      ) return;
+      setCheckRunOperation('failed');
+    }
+  }, [checkRunAvailable, checkRunOperation, conversation, ports.checkRun]);
 
   useEffect(() => {
     if (queuedActiveRunFollowup === null) return undefined;
@@ -2716,6 +2794,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               answerFailureRecordedSuccess={answerFailureRecordedSuccess}
               approvalMode={visibleApprovalMode}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
+              checkRunOperation={currentDraftId === null ? null : checkRunOperation}
+              checkRunProfiles={checkRunAvailable?.draft_id === currentDraftId
+                ? checkRunAvailable.available_checks
+                : []}
+              checkRunStatus={checkRunCompleted?.draft_id === currentDraftId
+                ? checkRunCompleted.check_run_status_projection
+                : null}
               composerContextStatus={composerContextStatus}
               providerContextDisclosureStatus={composerProviderContextStatus}
               providerContextDisclosureApprovalState={visibleProviderContextDisclosureApprovalState}
@@ -2756,6 +2841,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRequestLivePreview={requestLivePreview}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
+              onRunCheck={runCheck}
               onSave={save}
               onStopLivePreview={stopLivePreview}
               onSelectFile={setActiveFile}

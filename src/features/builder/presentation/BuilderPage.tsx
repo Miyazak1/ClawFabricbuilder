@@ -44,6 +44,8 @@ import {
 } from '../application/builderProjectController';
 import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
+  type BuilderCheckRunProfile,
+  type BuilderCheckRunStatusProjection,
   type BuilderLivePreviewStatusProjection,
   type BuilderPlanReviewDecision,
   type BuilderPlanReviewRequest,
@@ -118,6 +120,9 @@ export type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
 export type BuilderPageProps = {
   activeRunFollowupQueued?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
+  checkRunOperation?: 'loading' | 'running' | 'failed' | null;
+  checkRunProfiles?: readonly BuilderCheckRunProfile[];
+  checkRunStatus?: BuilderCheckRunStatusProjection | null;
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
@@ -155,6 +160,7 @@ export type BuilderPageProps = {
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
+  onRunCheck?: (profile: BuilderCheckRunProfile) => Promise<unknown> | void;
   onReloadLivePreview?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onRequestLivePreview?: () => Promise<unknown> | void;
@@ -2074,6 +2080,9 @@ function BuilderArtifactSidebar({
 export function BuilderPage({
   activeRunFollowupQueued = false,
   approvalMode = 'ask_before_write',
+  checkRunOperation = null,
+  checkRunProfiles = [],
+  checkRunStatus = null,
   instruction,
   composerRouteDecision = null,
   composerContextStatus = null,
@@ -2102,6 +2111,7 @@ export function BuilderPage({
   onRefreshConversation,
   onRefreshHistory,
   onRejectDraft,
+  onRunCheck,
   onReloadLivePreview,
   onReviewPlan,
   onRequestLivePreview,
@@ -2189,6 +2199,9 @@ export function BuilderPage({
   const canSave = typeof onSave === 'function'
     && hasUnsavedDraft
     && !busy
+    && checkRunOperation !== 'running'
+    && checkRunStatus?.status !== 'failed'
+    && checkRunStatus?.status !== 'incomplete'
     && reviewState?.draft_id === draft?.draft_id
     && reviewState?.can_save === true;
   const canReject = typeof onRejectDraft === 'function'
@@ -2928,6 +2941,9 @@ export function BuilderPage({
     <BuilderReviewCheckpoint
       canReject={canReject}
       canSave={canSave}
+      checkRunOperation={checkRunOperation}
+      checkRunProfiles={checkRunProfiles}
+      checkRunStatus={checkRunStatus}
       changes={changes}
       checkpointRef={draftReviewRef}
       discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
@@ -2935,6 +2951,7 @@ export function BuilderPage({
       onOpenChanges={openChangesPanel}
       onOpenPreview={openPreviewPanel}
       onRejectDraft={onRejectDraft}
+      onRunCheck={onRunCheck}
       onSave={onSave}
       preview={preview}
       reviewState={reviewState}

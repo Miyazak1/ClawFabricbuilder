@@ -358,6 +358,8 @@ async function setup(options: Readonly<{
   validHistoryPreview?: boolean;
   multipleWorkspaceOnlyCatalog?: boolean;
   workspaceOnlyCatalog?: boolean;
+  checkRunAvailable?: boolean;
+  checkRunStatus?: 'passed' | 'failed' | 'incomplete';
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
     ? await createReadWire(await createSourceTree([
@@ -387,6 +389,68 @@ async function setup(options: Readonly<{
   let approvedPlanGenerateAttempts = 0;
   let currentProjectWriteAllowed = options.currentProjectWriteApprovalRequired !== true;
   let planReviewRecorded = false;
+  const readCurrentDraftAvailableChecks = vi.fn(async (request: unknown) => {
+    const draftId = (request as { draft_id: string }).draft_id;
+    return {
+      result_version: 'builder-check-run-current-draft-read-result.v1',
+      service_version: 'builder-check-run-current-draft-service.v1',
+      operation: 'current_draft_available_checks_read',
+      status: options.checkRunAvailable === true ? 'ready' : 'no_checks',
+      draft_id: draftId,
+      project_id: PROJECT_ID,
+      candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+      available_checks: options.checkRunAvailable === true ? [{
+        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+        command_kind: 'test',
+        command_display: 'npm test',
+        requires_user_approval: true,
+      }] : [],
+    };
+  });
+  const approveAndRunCurrentDraftCheck = vi.fn(async (request: unknown) => {
+    const draftId = (request as { draft_id: string }).draft_id;
+    const status = options.checkRunStatus ?? 'passed';
+    const [label, summary] = status === 'passed'
+      ? ['Checked', 'The project check completed successfully.']
+      : status === 'failed'
+        ? ['Check failed', 'The project check found a problem that needs review.']
+        : ['Check incomplete', 'The project check reached its time limit.'];
+    return {
+      result_version: 'builder-check-run-current-draft-run-result.v1',
+      service_version: 'builder-check-run-current-draft-service.v1',
+      operation: 'current_draft_approved_check_completed',
+      draft_id: draftId,
+      project_id: PROJECT_ID,
+      candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+      check_run_status_projection: {
+        projection_version: 'builder-check-run-status-projection.v1',
+        project_id: PROJECT_ID,
+        candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+        check_run_id: `builder-check-run:${'2'.repeat(64)}`,
+        command_kind: 'test',
+        command_label: 'Tests',
+        status,
+        label,
+        summary,
+        completed_at_ms: 20,
+        result_digest: `sha256:${'3'.repeat(64)}`,
+        authority: {
+          projection_authority: 'main_owned_check_run_status_projection_v1',
+          check_run_authority: 'verified_check_run_contract',
+          renderer_authority: 'read_only_projection',
+          ipc_authority: 'projection_only',
+          raw_output: 'not_present',
+          runtime_paths: 'not_present',
+          provider_dispatch: false,
+          command_execution: false,
+          source_write: 'not_present',
+          git_write: false,
+          sqlite_write: false,
+          save_authority: false,
+        },
+      },
+    };
+  });
   async function createDraftForCurrentProject(
     hostRequest: Awaited<ReturnType<typeof createBuilderGenerationRequest>>,
     sourceTree = readWire.source_tree,
@@ -1075,19 +1139,8 @@ async function setup(options: Readonly<{
       approveCurrent: approveCurrentProviderContextDisclosure,
     },
     checkRun: {
-      readCurrentDraftAvailableChecks: async () => ({
-        result_version: 'builder-check-run-current-draft-read-result.v1',
-        service_version: 'builder-check-run-current-draft-service.v1',
-        operation: 'current_draft_available_checks_read',
-        status: 'no_checks',
-        draft_id: `builder-generation-draft:${'0'.repeat(64)}`,
-        project_id: PROJECT_ID,
-        candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
-        available_checks: [],
-      }),
-      approveAndRunCurrentDraftCheck: async () => {
-        throw new Error('not used by BuilderApp tests yet');
-      },
+      readCurrentDraftAvailableChecks,
+      approveAndRunCurrentDraftCheck,
     },
     livePreview: {
       requestCurrentDraftPreview: async (request: unknown) => ({
@@ -1250,6 +1303,7 @@ async function setup(options: Readonly<{
     root.render(<BuilderApp bridgeRoot={bridge} />);
   });
   return {
+    approveAndRunCurrentDraftCheck,
     container,
     answer,
     answerDraft,
@@ -1257,6 +1311,7 @@ async function setup(options: Readonly<{
     continueDraft,
     createLocalProject,
     openLocation,
+    readCurrentDraftAvailableChecks,
     generate,
     generateApprovedPlan,
     resolveAnswer: async () => {
@@ -5628,6 +5683,46 @@ describe('BuilderApp v2', () => {
         .toContain('Current');
     });
     expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|parent_oid|credential|provider/iu);
+  });
+
+  it('runs only a discovered draft check after the explicit Review action', async () => {
+    const {
+      approveAndRunCurrentDraftCheck,
+      container,
+      readCurrentDraftAvailableChecks,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      checkRunStatus: 'passed',
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-run-check]')?.textContent).toContain('Run npm test');
+    });
+    expect(readCurrentDraftAvailableChecks).toHaveBeenCalledWith({
+      draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+    });
+    expect(approveAndRunCurrentDraftCheck).not.toHaveBeenCalled();
+
+    click(container, 'Run npm test');
+    await waitFor(() => {
+      expect(approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      });
+      expect(container.querySelector('[data-builder-check-run-status="passed"]')?.textContent)
+        .toContain('completed successfully');
+    });
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+      .toBe(false);
   });
 
   it('keeps project instruction state when visiting Settings and returning', async () => {
