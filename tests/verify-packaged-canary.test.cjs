@@ -66,6 +66,7 @@ const {
 
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
 const DEFAULT_SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary-default.cjs');
+const PLAN_MODE_SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-plan-mode-canary.cjs');
 const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs');
 
 const FAKE_CANARY_BRIEF_CORRECTION_PATTERNS = Object.freeze([
@@ -6141,6 +6142,7 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
 test('script source keeps credential out of argv/env/output and cannot enter ASAR authority', () => {
   const source = fs.readFileSync(SOURCE_PATH, 'utf8');
   const defaultSource = fs.readFileSync(DEFAULT_SOURCE_PATH, 'utf8');
+  const planModeSource = fs.readFileSync(PLAN_MODE_SOURCE_PATH, 'utf8');
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
@@ -6172,6 +6174,14 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(defaultSource, /createLocalCanaryProviderServer/u);
   assert.match(defaultSource, /127\.0\.0\.1/u);
   assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
+  assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
+  assert.match(planModeSource, /clickByRole\(page,\s*['"]button['"],\s*['"]Approve plan['"]\)/u);
+  assert.match(planModeSource, /approveCurrentProjectWriteIfRequested/u);
+  assert.match(planModeSource, /SELECTORS\.unsavedDraft/u);
+  assert.match(planModeSource, /SELECTORS\.saveVersion/u);
+  assert.match(planModeSource, /approved_plan_executed:\s*true/u);
+  assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
+  assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
   assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v22['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);

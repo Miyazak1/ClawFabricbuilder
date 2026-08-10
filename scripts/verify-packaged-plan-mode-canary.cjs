@@ -9,6 +9,7 @@ const {
   CANARY_INPUT_VERSION,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
+  approveCurrentProjectWriteIfRequested,
   captureGuardedUserDataRoot,
   createArtifactGate,
   createCanaryProjectRoot,
@@ -121,9 +122,35 @@ async function capturePlanModeDiagnostic(page, providerServer, userDataPath) {
       getAttribute('data-builder-project-status').catch(() => null),
     plan_source_read_approval_visible: await optionalVisible(page, SELECTORS.planSourceReadApproval),
     plan_review_actions_visible: await optionalVisible(page, SELECTORS.planReviewActions),
+    current_project_write_approval_visible: await optionalVisible(page, SELECTORS.currentProjectWriteApproval),
+    unsaved_draft_visible: await optionalVisible(page, SELECTORS.unsavedDraft),
+    save_version_visible: await optionalVisible(page, SELECTORS.saveVersion),
     provider_requests: providerServer.snapshot(),
     canary_generation_debug: await readCanaryDebugFile(userDataPath),
   });
+}
+
+async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
+  await clickByRole(page, 'button', 'Approve plan');
+  await page.locator(SELECTORS.planApproved).waitFor({ state: 'visible', timeout: 30_000 });
+  const approvedCurrentProjectWrite = await approveCurrentProjectWriteIfRequested(page);
+  const draftReady = page.locator(SELECTORS.unsavedDraft)
+    .getByText('Unsaved draft', { exact: true })
+    .waitFor({ state: 'visible', timeout: 120_000 })
+    .then(() => 'draft_ready', () => 'draft_timeout');
+  const alertReady = page.getByRole('alert')
+    .waitFor({ state: 'visible', timeout: 120_000 })
+    .then(() => 'alert_ready', () => 'alert_timeout');
+  const draftOutcome = await Promise.race([draftReady, alertReady]);
+  if (draftOutcome !== 'draft_ready') {
+    fail('plan_mode_approved_plan_not_executed', await capturePlanModeDiagnostic(
+      page,
+      providerServer,
+      userDataPath,
+    ));
+  }
+  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
+  return approvedCurrentProjectWrite;
 }
 
 function makeUserDataRoot() {
@@ -198,6 +225,15 @@ async function run() {
     if (!providerRequests.some((request) => request.response_kind === 'builder_project_plan_proposal')) {
       fail('plan_provider_request_missing', { provider_requests: providerRequests });
     }
+    const approvedCurrentProjectWrite = await approvePlanAndWaitForDraft(
+      page,
+      providerServer,
+      userDataPath,
+    );
+    const providerRequestsAfterApproval = providerServer.snapshot();
+    if (!providerRequestsAfterApproval.some((request) => request.response_kind === 'builder_code_change_operations')) {
+      fail('approved_plan_provider_request_missing', { provider_requests: providerRequestsAfterApproval });
+    }
     const result = Object.freeze({
       result_version: RESULT_VERSION,
       executable_path: executablePath,
@@ -207,9 +243,15 @@ async function run() {
       plan_mode_chip_visible: true,
       plan_source_read_approved: approvedSourceRead,
       plan_review_actions_visible: true,
+      plan_approved: true,
+      current_project_write_approved: approvedCurrentProjectWrite,
+      approved_plan_executed: true,
+      unsaved_draft_visible: true,
+      save_version_visible: true,
       composer_route: composerRoute,
       composer_dispatch: composerDispatch,
       provider_plan_request_observed: true,
+      provider_code_change_request_observed: true,
       project_root_basename: path.basename(projectRootPath),
       schema_version: CANARY_INPUT_VERSION,
     });
