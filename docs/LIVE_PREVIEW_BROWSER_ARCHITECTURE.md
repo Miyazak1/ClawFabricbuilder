@@ -515,6 +515,31 @@ Current checkpoint:
   source tree digest evidence;
 - keep the current renderer UI unchanged.
 
+### Slice LP5c-pre: Preview Source Admission
+
+Bind a ready resolver snapshot to a specific HTML entry before any preview
+runtime can consume it.
+
+Evidence:
+
+- consumes only `builder-live-preview-source-resolver-result.v1` with
+  `status=ready`;
+- verifies the source tree digest, source ref digest, selected HTML entry path,
+  and selected entry content digest;
+- supports both current draft checkpoint candidates and saved project revisions;
+- rejects renderer-supplied `source_tree`, paths, URLs, HTML, or file contents;
+- returns a main-only `builder-live-preview-source-admission.v1` carrying the
+  trusted in-memory source tree for a later server/runtime;
+- keeps preview server, WebContentsView attachment, evidence collection, IPC,
+  provider/tool dispatch, Save, and Revision admission explicitly not started.
+
+Current checkpoint:
+
+- add `builder-live-preview-source-admission.v1`;
+- keep it pure main-side and preview-only;
+- do not connect runtime, IPC, renderer UI, packaged canary, release verifier,
+  CheckRun, Save, or provider paths yet.
+
 ### Slice LP6: Packaged Live Preview Canary
 
 Add `verify:packaged-live-preview` and include it in release only after stable.
