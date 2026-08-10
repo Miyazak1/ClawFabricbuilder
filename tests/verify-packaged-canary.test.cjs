@@ -1197,7 +1197,7 @@ function taskStreamConversation(
     sequence += 1;
     return sequence;
   }
-  function pushCandidateTurn(revision) {
+  function pushCandidateTurn(revision, approvedPlanExecution = false) {
     const evidence = revisionEvidence(selectedProjectId, revision);
     const draftId = `builder-generation-draft:${String(revision).repeat(64)}`;
     items.push(
@@ -1234,6 +1234,39 @@ function taskStreamConversation(
         retry_of_run_id: null,
         recorded_state: 'started',
       },
+    );
+    if (approvedPlanExecution) {
+      items.push(
+        {
+          item_kind: 'run_context_snapshot_recorded',
+          sequence: takeSequence(),
+          turn_id: evidence.receipt.turn_id,
+          run_id: evidence.receipt.run_id,
+          task_id: evidence.receipt.task_id,
+          context: {
+            recorded_state: 'recorded',
+            route: 'build',
+            dispatch: 'build',
+            downgraded_from: null,
+            downgrade_reason: null,
+            brief: 'available',
+            base: 'project_revision',
+            permission_result: 'allowed',
+            command_execution: 'not_included',
+            network_access: 'not_included',
+          },
+        },
+        {
+          item_kind: 'programming_run_admitted',
+          sequence: takeSequence(),
+          turn_id: evidence.receipt.turn_id,
+          run_id: evidence.receipt.run_id,
+          task_id: evidence.receipt.task_id,
+          recorded_state: 'admitted',
+        },
+      );
+    }
+    items.push(
       {
         item_kind: 'run_completed',
         sequence: takeSequence(),
@@ -1456,7 +1489,7 @@ function taskStreamConversation(
     pushPlanTurn(plan);
   }
   for (let revision = 3; revision <= candidateTurns; revision += 1) {
-    pushCandidateTurn(revision);
+    pushCandidateTurn(revision, revision - 2 <= approvedPlanReviews);
   }
   return {
     conversation_id: revisionEvidence(selectedProjectId, 1).receipt.conversation_id,
@@ -5252,8 +5285,8 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       candidate_reviewed_count: 2,
       candidate_result_count: 3,
       explanation_result_count: 0,
-      head_sequence: 21,
-      item_count: 21,
+      head_sequence: 23,
+      item_count: 23,
       latest_candidate_review: 'pending',
       latest_candidate_distinct_from_saved_revision: true,
       latest_plan_review: 'approved',
@@ -5262,6 +5295,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       plan_rejected_count: 0,
       plan_result_count: 1,
       plan_reviewed_count: 1,
+      programming_run_admitted_count: 1,
       run_progress_count: 0,
       saved_revision_number: 2,
       source_availability: 'not_loaded',
