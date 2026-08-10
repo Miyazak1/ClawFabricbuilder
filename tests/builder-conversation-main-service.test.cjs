@@ -1127,6 +1127,14 @@ test('records programming run admission after context snapshot and before progre
     }), { code: 'builder_conversation_main_service_unavailable' });
 
     const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.deepEqual(stream.conversation.items.at(-1), {
+      item_kind: 'programming_run_admitted',
+      sequence: 4,
+      turn_id: snapshotted.ids.turn_id,
+      run_id: snapshotted.ids.run_id,
+      task_id: snapshotted.ids.task_id,
+      recorded_state: 'admitted',
+    });
     assert.doesNotMatch(
       JSON.stringify(stream),
       /execution_approval|programming_run_admission|provider_config_digest|permission_id/iu,

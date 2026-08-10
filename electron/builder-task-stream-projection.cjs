@@ -294,7 +294,14 @@ function itemFromEvent(event, progressStagesByRun) {
       };
     }
     case 'programming_run_admitted':
-      return null;
+      return {
+        item_kind: 'programming_run_admitted',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        task_id: payload.programming_run_admission.task_id,
+        recorded_state: 'admitted',
+      };
     case 'run_progress_recorded':
       return {
         item_kind: 'run_progress_recorded',

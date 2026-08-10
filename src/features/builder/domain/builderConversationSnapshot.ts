@@ -195,6 +195,14 @@ export type BuilderConversationItem =
     }>;
   }>
   | Readonly<{
+    item_kind: 'programming_run_admitted';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    task_id: string;
+    recorded_state: 'admitted';
+  }>
+  | Readonly<{
     item_kind: 'run_progress_recorded';
     sequence: number;
     turn_id: string;
@@ -449,6 +457,14 @@ const RUN_CONTEXT_SNAPSHOT_CONTEXT_KEYS = Object.freeze([
   'permission_result',
   'command_execution',
   'network_access',
+]);
+const PROGRAMMING_RUN_ADMITTED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task_id',
+  'recorded_state',
 ]);
 const RUN_CONTROL_KEYS = Object.freeze([
   'item_kind',
@@ -1108,6 +1124,21 @@ function sanitizeRunContextSnapshotRecorded(
   };
 }
 
+function sanitizeProgrammingRunAdmitted(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'programming_run_admitted' }> {
+  if (source.recorded_state !== 'admitted') throw unavailable();
+  return {
+    item_kind: 'programming_run_admitted',
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    task_id: safePattern(source.task_id, TASK_ID_PATTERN),
+    recorded_state: 'admitted',
+  };
+}
+
 function sanitizeRunControl(
   source: Record<string, unknown>,
   sequence: number,
@@ -1551,6 +1582,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_STARTED_KEYS);
   } else if (itemKind === 'run_context_snapshot_recorded') {
     source = exactRecord(value, RUN_CONTEXT_SNAPSHOT_RECORDED_KEYS);
+  } else if (itemKind === 'programming_run_admitted') {
+    source = exactRecord(value, PROGRAMMING_RUN_ADMITTED_KEYS);
   } else if (itemKind === 'run_control_requested') {
     source = exactRecord(value, RUN_CONTROL_KEYS);
   } else if (itemKind === 'run_progress_recorded') {
@@ -1582,6 +1615,9 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   if (itemKind === 'run_started') return sanitizeRunStarted(source, sequence);
   if (itemKind === 'run_context_snapshot_recorded') {
     return sanitizeRunContextSnapshotRecorded(source, sequence);
+  }
+  if (itemKind === 'programming_run_admitted') {
+    return sanitizeProgrammingRunAdmitted(source, sequence);
   }
   if (itemKind === 'run_control_requested') return sanitizeRunControl(source, sequence);
   if (itemKind === 'run_progress_recorded') return sanitizeRunProgress(source, sequence);
@@ -1615,6 +1651,7 @@ type ReplayTurn = {
     pending_tool_calls: number;
     control: 'cancel' | 'interrupt' | null;
     context_snapshot_recorded: boolean;
+    programming_run_admitted: boolean;
     progress_stages: BuilderConversationRunProgressStage[];
     agent_step_progress: Map<
       string,
@@ -1857,6 +1894,7 @@ function validateCompleteWindow(
         pending_tool_calls: 0,
         control: null,
         context_snapshot_recorded: false,
+        programming_run_admitted: false,
         progress_stages: [],
         agent_step_progress: new Map(),
       });
@@ -1872,6 +1910,20 @@ function validateCompleteWindow(
         || currentRun.pending_tool_calls > 0
       ) throw unavailable();
       currentRun.context_snapshot_recorded = true;
+      continue;
+    }
+    if (item.item_kind === 'programming_run_admitted') {
+      if (
+        activeTurn.mode !== 'work'
+        || activeTurn.task?.task_id !== item.task_id
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || !currentRun.context_snapshot_recorded
+        || currentRun.programming_run_admitted
+        || currentRun.progress_stages.length > 0
+        || currentRun.pending_tool_calls > 0
+      ) throw unavailable();
+      currentRun.programming_run_admitted = true;
       continue;
     }
     if (item.item_kind === 'task_brief_updated') {
@@ -2010,6 +2062,7 @@ type SuffixRun = {
   pending_tool_calls: number;
   control: 'cancel' | 'interrupt' | 'unknown' | null;
   context_snapshot_recorded: boolean;
+  programming_run_admitted: boolean;
   progress_stages: BuilderConversationRunProgressStage[];
   agent_step_progress: Map<
     string,
@@ -2316,6 +2369,7 @@ function validateTruncatedWindow(
         pending_tool_calls: 0,
         control: null,
         context_snapshot_recorded: false,
+        programming_run_admitted: false,
         progress_stages: [],
         agent_step_progress: new Map(),
       };
@@ -2362,6 +2416,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2376,6 +2431,52 @@ function validateTruncatedWindow(
         || currentRun.pending_tool_calls > 0
       ) throw unavailable();
       currentRun.context_snapshot_recorded = true;
+      continue;
+    }
+
+    if (item.item_kind === 'programming_run_admitted') {
+      if (activeTurn.mode === 'unknown') {
+        activeTurn.mode = 'work';
+        activeTurn.task_id = item.task_id;
+        if (taskIds.has(item.task_id)) throw unavailable();
+        taskIds.add(item.task_id);
+      }
+      if (
+        activeTurn.mode !== 'work'
+        || activeTurn.task_id !== item.task_id
+      ) throw unavailable();
+      if (activeTurn.current_run === null) {
+        if (activeTurn.origin !== 'prefix') throw unavailable();
+        if (runIds.has(item.run_id)) throw unavailable();
+        runIds.add(item.run_id);
+        activeTurn.current_run = {
+          run_id: item.run_id,
+          attempt_number: null,
+          status: 'running',
+          terminal_status: null,
+          result_kind: null,
+          candidate_draft_id: null,
+          plan_review: null,
+          candidate_review: null,
+          pending_tool_calls: 0,
+          control: null,
+          context_snapshot_recorded: false,
+          programming_run_admitted: false,
+          progress_stages: [],
+          agent_step_progress: new Map(),
+        };
+      }
+      const currentRun = activeTurn.current_run;
+      if (
+        currentRun.run_id !== item.run_id
+        || currentRun.status !== 'running'
+        || currentRun.control !== null
+        || currentRun.programming_run_admitted
+        || (!mayUsePrefixState && !currentRun.context_snapshot_recorded)
+        || currentRun.progress_stages.length > 0
+        || currentRun.pending_tool_calls > 0
+      ) throw unavailable();
+      currentRun.programming_run_admitted = true;
       continue;
     }
 
@@ -2396,6 +2497,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2436,6 +2538,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2480,6 +2583,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2524,6 +2628,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2585,6 +2690,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2616,6 +2722,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: mayUsePrefixState ? 'unknown' : null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };
@@ -2670,6 +2777,7 @@ function validateTruncatedWindow(
           pending_tool_calls: 0,
           control: null,
           context_snapshot_recorded: false,
+          programming_run_admitted: false,
           progress_stages: [],
           agent_step_progress: new Map(),
         };

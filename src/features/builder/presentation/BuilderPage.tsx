@@ -692,6 +692,7 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'queued_followup_consumed') return 'Follow-up picked up';
   if (item.item_kind === 'run_started') return 'Assistant is working';
   if (item.item_kind === 'run_context_snapshot_recorded') return 'Why this ran';
+  if (item.item_kind === 'programming_run_admitted') return 'Execution approved';
   if (item.item_kind === 'run_progress_recorded') return progressLabel(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
@@ -858,6 +859,7 @@ function activityBody(item: BuilderConversationItem): string {
   }
   if (item.item_kind === 'run_started') return 'Preparing this request.';
   if (item.item_kind === 'run_context_snapshot_recorded') return runContextSnapshotBody(item);
+  if (item.item_kind === 'programming_run_admitted') return 'The approved plan can now run.';
   if (item.item_kind === 'run_progress_recorded') return progressBody(item);
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt'
