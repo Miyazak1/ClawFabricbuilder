@@ -11,6 +11,7 @@ const mainSource = fs.readFileSync(mainPath, 'utf8');
 
 async function executeMain({
   env = {},
+  failCheckRunShutdown = false,
   failRegisterIndex = -1,
   iconExists = false,
   isPackaged = true,
@@ -23,6 +24,7 @@ async function executeMain({
 }) {
   const calls = {
     createApprovalRuntime: 0,
+    createCheckRunApprovalRuntime: 0,
     createGenerationRuntime: 0,
     createLivePreviewRuntime: 0,
     createPermissionRuntime: 0,
@@ -33,6 +35,7 @@ async function executeMain({
     quit: 0,
     register: 0,
     setPath: [],
+    shutdown: 0,
     whenReady: 0,
   };
   const applicationMenuCalls = [];
@@ -41,6 +44,7 @@ async function executeMain({
   let sessionCreated = sessionDataExists;
   let permissionGrantForExplicitApproval = null;
   let providerContextDisclosureStatusService = null;
+  let currentDraftCheckRunService = null;
   const events = new Map();
   const generationRuntimeOptions = [];
   function runtime(index) {
@@ -181,6 +185,11 @@ async function executeMain({
             });
             value.readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime =
               () => providerContextDisclosureStatusService;
+            currentDraftCheckRunService = Object.freeze({
+              service_version: 'builder-check-run-current-draft-service.v1',
+            });
+            value.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime =
+              () => currentDraftCheckRunService;
             return value;
           },
         };
@@ -197,6 +206,23 @@ async function executeMain({
           },
         };
       }
+      if (specifier === './builder-check-run-approval-ipc-runtime.cjs') {
+        return {
+          createBuilderCheckRunApprovalIpcRuntime(options) {
+            calls.createCheckRunApprovalRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(options.currentDraftCheckRunService, currentDraftCheckRunService);
+            const value = runtime(4);
+            value.shutdown = async () => {
+              calls.shutdown += 1;
+              if (failCheckRunShutdown) throw new Error('private drain failure');
+              return true;
+            };
+            return value;
+          },
+        };
+      }
       if (specifier === './builder-live-preview-ipc-runtime.cjs') {
         const unavailableService = Object.freeze({
           service_version: 'builder-live-preview-unavailable-service.v1',
@@ -210,7 +236,7 @@ async function executeMain({
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
             assert.equal(options.livePreviewService, unavailableService);
-            return runtime(4);
+            return runtime(5);
           },
         };
       }
@@ -220,7 +246,7 @@ async function executeMain({
             calls.createWindowControlsRuntime += 1;
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
-            return runtime(5);
+            return runtime(6);
           },
         };
       }
@@ -254,6 +280,7 @@ test('a second application instance exits before registering Builder authorities
   });
   assert.deepEqual(calls, {
     createApprovalRuntime: 0,
+    createCheckRunApprovalRuntime: 0,
     createGenerationRuntime: 0,
     createLivePreviewRuntime: 0,
     createPermissionRuntime: 0,
@@ -264,6 +291,7 @@ test('a second application instance exits before registering Builder authorities
     quit: 1,
     register: 0,
     setPath: [],
+    shutdown: 0,
     whenReady: 0,
   });
   assert.deepEqual([...events.keys()], []);
@@ -276,6 +304,7 @@ test('window startup failure disposes registered handlers and quits', async () =
   });
   assert.deepEqual(calls, {
     createApprovalRuntime: 1,
+    createCheckRunApprovalRuntime: 1,
     createGenerationRuntime: 1,
     createLivePreviewRuntime: 1,
     createPermissionRuntime: 1,
@@ -284,8 +313,9 @@ test('window startup failure disposes registered handlers and quits', async () =
     dispose: 6,
     mkdir: 0,
     quit: 1,
-    register: 6,
+    register: 7,
     setPath: [],
+    shutdown: 1,
     whenReady: 1,
   });
   assert.equal(events.has('second-instance'), true);
@@ -301,6 +331,20 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.equal(browserWindowOptions[0].webPreferences.contextIsolation, true);
   assert.equal(browserWindowOptions[0].webPreferences.nodeIntegration, false);
   assert.equal(browserWindowOptions[0].webPreferences.sandbox, true);
+});
+
+test('does not close generation authority or quit when CheckRun drain is unconfirmed', async () => {
+  const { calls } = await executeMain({
+    failCheckRunShutdown: true,
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.equal(calls.createGenerationRuntime, 1);
+  assert.equal(calls.createCheckRunApprovalRuntime, 1);
+  assert.equal(calls.register, 7);
+  assert.equal(calls.shutdown, 1);
+  assert.equal(calls.dispose, 2);
+  assert.equal(calls.quit, 0);
 });
 
 test('window startup uses the Builder icon when the local icon exists', async () => {
@@ -338,6 +382,7 @@ test('runtime registration failure rolls back previously registered handlers and
   });
   assert.deepEqual(calls, {
     createApprovalRuntime: 1,
+    createCheckRunApprovalRuntime: 1,
     createGenerationRuntime: 1,
     createLivePreviewRuntime: 1,
     createPermissionRuntime: 1,
@@ -348,6 +393,7 @@ test('runtime registration failure rolls back previously registered handlers and
     quit: 1,
     register: 3,
     setPath: [],
+    shutdown: 0,
     whenReady: 1,
   });
 });

@@ -11,6 +11,9 @@ const {
   createBuilderProviderContextDisclosureApprovalIpcRuntime,
 } = require('./builder-provider-context-disclosure-approval-ipc-runtime.cjs');
 const {
+  createBuilderCheckRunApprovalIpcRuntime,
+} = require('./builder-check-run-approval-ipc-runtime.cjs');
+const {
   createBuilderLivePreviewIpcRuntime,
   createUnavailableBuilderLivePreviewService,
 } = require('./builder-live-preview-ipc-runtime.cjs');
@@ -25,6 +28,8 @@ const PACKAGED_CANARY_PROJECT_ROOT_PATH = 'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_
 const PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY = 'project-root';
 let mainWindow = null;
 let ipcRuntimes = Object.freeze([]);
+let ipcShutdownPromise = null;
+let quitAfterIpcShutdown = false;
 
 function invalidPackagedCanaryPath() {
   throw new Error('invalid packaged canary user data path');
@@ -193,15 +198,18 @@ function denyRendererPermissions() {
   session.defaultSession.setPermissionCheckHandler(() => false);
 }
 
-function disposeIpcRuntimes() {
+async function shutdownIpcRuntimes() {
   for (const runtime of [...ipcRuntimes].reverse()) {
     try {
-      runtime.dispose();
+      if (typeof runtime.shutdown === 'function') await runtime.shutdown();
+      else runtime.dispose();
     } catch {
-      // Shutdown must not leave the Electron process open because cleanup reporting failed.
+      if (typeof runtime.shutdown === 'function') return false;
+      // Non-executing IPC cleanup remains best-effort during application shutdown.
     }
   }
   ipcRuntimes = Object.freeze([]);
+  return true;
 }
 
 function createProjectFolderDialog(packagedCanaryProjectRootPath) {
@@ -243,6 +251,12 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
       mainWindowRef: () => mainWindow,
       providerContextDisclosureStatusService:
         generationRuntime.readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime(),
+    }),
+    createBuilderCheckRunApprovalIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      currentDraftCheckRunService:
+        generationRuntime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
     }),
     createBuilderLivePreviewIpcRuntime({
       ipcMain,
@@ -298,13 +312,25 @@ if (!app.requestSingleInstanceLock()) {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });
-  }).catch(() => {
-    disposeIpcRuntimes();
-    app.quit();
+  }).catch(async () => {
+    if (await shutdownIpcRuntimes()) {
+      quitAfterIpcShutdown = true;
+      app.quit();
+    }
   });
 
-  app.on('before-quit', () => {
-    disposeIpcRuntimes();
+  app.on('before-quit', (event) => {
+    if (quitAfterIpcShutdown) return;
+    event.preventDefault();
+    if (ipcShutdownPromise !== null) return;
+    ipcShutdownPromise = shutdownIpcRuntimes().then((shutdownComplete) => {
+      if (shutdownComplete) {
+        quitAfterIpcShutdown = true;
+        app.quit();
+      } else {
+        ipcShutdownPromise = null;
+      }
+    });
   });
 
   app.on('window-all-closed', () => {

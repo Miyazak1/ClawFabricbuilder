@@ -771,6 +771,7 @@ assert.match(packagedMain, /require\(['"]\.\/builder-window-controls-ipc-runtime
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
 assert.match(packagedMain, /createBuilderPermissionIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
+assert.match(packagedMain, /createBuilderCheckRunApprovalIpcRuntime/u);
 assert.match(packagedMain, /createBuilderLivePreviewIpcRuntime/u);
 assert.match(packagedMain, /createBuilderWindowControlsIpcRuntime/u);
 assert.match(packagedMain, /frame:\s*false/u);
@@ -791,7 +792,8 @@ assert.match(packagedMain, /const userDataPath = app\.getPath\(['"]userData['"]\
 assert.match(packagedMain, /const runtimes = createIpcRuntimes\(userDataPath,\s*packagedCanaryProjectRootPath\)/u);
 assert.match(packagedMain, /registerIpcRuntimes\(runtimes\)/u);
 assert.match(packagedMain, /ipcRuntimes = runtimes/u);
-assert.match(packagedMain, /disposeIpcRuntimes/u);
+assert.match(packagedMain, /shutdownIpcRuntimes/u);
+assert.match(packagedMain, /runtime\.shutdown/u);
 assert.match(packagedMain, /requestSingleInstanceLock/u);
 assert.doesNotMatch(packagedMain, /clawfabric-builder:provider-settings:|clawfabric-builder:code-generator:|credential|safeStorage|local-provider-executor/iu);
 assert.match(packagedWorkspaceAdapter, /createBuilderProjectWorkspaceIpcAdapter/u);

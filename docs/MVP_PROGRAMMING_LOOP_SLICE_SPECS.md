@@ -560,19 +560,19 @@ current-draft service handle for a separate approval runtime. The first
 `builder-check-run-approval-ipc-runtime.v1` contract accepts only current draft
 and displayed CommandProfile identity, requires the active main frame,
 coalesces repeated reads, rejects concurrent runs for the same draft, and
-sanitizes fixed command labels plus CheckRun status projection. It is
-intentionally not registered in Electron startup or preload yet: production
-registration must use its asynchronous drain lifecycle, which removes handlers,
-rejects new work, and waits for every accepted bounded CheckRun to settle before
-generation runtime closes SQLite and Git authorities. Direct cancellation can
-remain a later optimization because the runner already bounds timeout and
-process-tree termination; app shutdown must not bypass the drain.
+sanitizes fixed command labels plus CheckRun status projection. Electron main
+now registers that runtime after generation and uses ordered asynchronous
+shutdown: it removes CheckRun handlers, rejects new work, and waits for every
+accepted bounded CheckRun to settle before generation runtime closes SQLite and
+Git authorities. An unconfirmed drain stops shutdown before those authorities
+close. Direct cancellation can remain a later optimization because the runner
+already bounds timeout and process-tree termination. Preload and renderer do
+not expose these channels yet.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
-Electron approval-runtime registration and ordered shutdown, preload and user
-approval controls, environment-readiness projection, durable `Not checked`
-activity, and packaged end-to-end CheckRun orchestration remain required before
-Slice 6 is product-complete.
+Preload and user approval controls, environment-readiness projection, durable
+`Not checked` activity, and packaged end-to-end CheckRun orchestration remain
+required before Slice 6 is product-complete.
 
 ## Slice 7: Save Version And Restart Recovery Canary
 
