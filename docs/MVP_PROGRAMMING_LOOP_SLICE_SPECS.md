@@ -542,9 +542,13 @@ shell-disabled; the inner manifest script uses the platform shell explicitly
 recorded by the CheckRun execution policy. Dependency installation and network
 authority are not added, and a candidate snapshot without an available
 dependency environment fails honestly instead of installing packages.
+`builder-check-run-main-service.v1` provides the first main-only orchestration
+contract across runtime resolution, one-shot approval/admission, candidate
+materialization, execution, SQLite recording, cleanup fallback, and safe status
+re-read without exposing IPC or renderer authority.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
-runtime composition, the user approval/control surface, environment-readiness
+Electron composition, the user approval/control surface, environment-readiness
 projection, durable `Not checked` activity, and packaged end-to-end CheckRun
 orchestration remain required before Slice 6 is product-complete.
 

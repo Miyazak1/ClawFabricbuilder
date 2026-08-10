@@ -92,6 +92,13 @@ function admittedCheck(manager = 'npm', kind = 'test') {
   });
   return {
     runtime,
+    draft_id: `builder-generation-draft:${'d'.repeat(64)}`,
+    checkpoint,
+    candidate,
+    verification,
+    understanding,
+    tree,
+    command_profile_id: understanding.command_profiles[0].command_profile_id,
     admission: createBuilderCheckRunAdmission({
       execution_approval: approval,
       draft_checkpoint_ref: checkpoint,
