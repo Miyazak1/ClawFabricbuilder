@@ -24,6 +24,7 @@ async function executeMain({
   const calls = {
     createApprovalRuntime: 0,
     createGenerationRuntime: 0,
+    createLivePreviewRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
     createWindowControlsRuntime: 0,
@@ -196,13 +197,30 @@ async function executeMain({
           },
         };
       }
+      if (specifier === './builder-live-preview-ipc-runtime.cjs') {
+        const unavailableService = Object.freeze({
+          service_version: 'builder-live-preview-unavailable-service.v1',
+        });
+        return {
+          createUnavailableBuilderLivePreviewService() {
+            return unavailableService;
+          },
+          createBuilderLivePreviewIpcRuntime(options) {
+            calls.createLivePreviewRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(options.livePreviewService, unavailableService);
+            return runtime(4);
+          },
+        };
+      }
       if (specifier === './builder-window-controls-ipc-runtime.cjs') {
         return {
           createBuilderWindowControlsIpcRuntime(options) {
             calls.createWindowControlsRuntime += 1;
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
-            return runtime(4);
+            return runtime(5);
           },
         };
       }
@@ -237,6 +255,7 @@ test('a second application instance exits before registering Builder authorities
   assert.deepEqual(calls, {
     createApprovalRuntime: 0,
     createGenerationRuntime: 0,
+    createLivePreviewRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
     createWindowControlsRuntime: 0,
@@ -258,13 +277,14 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.deepEqual(calls, {
     createApprovalRuntime: 1,
     createGenerationRuntime: 1,
+    createLivePreviewRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,
-    dispose: 5,
+    dispose: 6,
     mkdir: 0,
     quit: 1,
-    register: 5,
+    register: 6,
     setPath: [],
     whenReady: 1,
   });
@@ -319,6 +339,7 @@ test('runtime registration failure rolls back previously registered handlers and
   assert.deepEqual(calls, {
     createApprovalRuntime: 1,
     createGenerationRuntime: 1,
+    createLivePreviewRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,
