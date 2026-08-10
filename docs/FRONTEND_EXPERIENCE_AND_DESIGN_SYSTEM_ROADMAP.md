@@ -855,8 +855,9 @@ Scope:
 - add robust preview device controls;
 - define Live Preview V1 as a local static-web runtime for `index.html`, CSS,
   JavaScript, canvas, Three.js, and WebGL;
-- render V1 through an isolated Electron preview browser surface backed by a
-  read-only local static server;
+- render V1 through an isolated main-owned Electron `WebContentsView` backed by
+  a read-only local static server; the detailed architecture is defined in
+  [Live Preview Browser Architecture](LIVE_PREVIEW_BROWSER_ARCHITECTURE.md);
 - defer Vite/React/Three.js dev-server adapters to Live Preview V2;
 - defer backend/full-stack preview to Live Preview V3, after sandbox and
   environment-permission gates;

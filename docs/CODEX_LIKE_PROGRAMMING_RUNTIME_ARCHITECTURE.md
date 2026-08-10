@@ -453,7 +453,7 @@ V1:
 Live Preview V1:
 
 - local read-only static server;
-- isolated Electron preview webContents or BrowserView;
+- isolated main-owned Electron `WebContentsView`;
 - JavaScript, canvas, WebGL, and Three.js support;
 - console/error capture;
 - screenshot or nonblank pixel evidence;

@@ -1,0 +1,407 @@
+# Live Preview Browser Architecture
+
+This document defines Builder's future built-in browser for interactive project
+preview. It is a post-MVP feature track that can be designed and implemented in
+parallel only when it does not interfere with the MVP Programming Loop.
+
+## Product Decision
+
+Builder should keep the existing static preview as the safe default and add a
+separate Live Preview runtime for projects that need JavaScript, canvas,
+Three.js, WebGL, routing, timers, or other browser behavior.
+
+The built-in browser is not a general web browser. It is an isolated local
+preview surface for reviewed or draft project files.
+
+## Current State
+
+Current preview is a renderer-side static iframe:
+
+- source: `BuilderSourceTreePreviewProjection`;
+- component: `BuilderStaticPreview`;
+- render mode: `<iframe sandbox="" srcDoc=...>`;
+- CSP: `script-src 'none'`;
+- JavaScript, iframe, object, embed, unsafe URL attributes, and app/server code
+  are stripped or classified as runtime limitations;
+- packaged canary already verifies static preview, runtime-unavailable copy,
+  sandbox attributes, CSP, nonblank pixels, and restart preview restoration.
+
+This is good and should remain. Live Preview must be additive.
+
+## Electron Surface Choice
+
+Use main-owned `WebContentsView` as the long-term embedded browser surface.
+
+Do not use `BrowserView` for new work. Electron marks `BrowserView` deprecated
+and points new embedded-content work at `WebContentsView`.
+
+Do not use the renderer `<webview>` tag for MVP Live Preview. Electron's own
+documentation does not recommend it because of stability and architectural
+concerns, and enabling it would move too much preview authority into the
+renderer.
+
+Do not use ordinary renderer iframes for Live Preview. Iframes remain useful
+for static sanitized `srcDoc`, but they cannot become Builder's trusted runtime
+browser because they would mix preview lifecycle, evidence capture, navigation
+control, and app UI concerns in the renderer.
+
+Reference:
+
+- https://www.electronjs.org/docs/latest/api/web-contents-view
+- https://www.electronjs.org/docs/latest/api/browser-view
+- https://www.electronjs.org/docs/latest/api/webview-tag
+- https://www.electronjs.org/docs/latest/tutorial/security
+- https://www.electronjs.org/docs/latest/tutorial/web-embeds
+
+## Non-Goals
+
+Live Preview V1 must not:
+
+- browse arbitrary external sites;
+- load project files through unrestricted `file://` URLs;
+- expose Node.js, Electron, preload, IPC, filesystem, Git, SQLite, provider,
+  shell, secret, or permission authority to preview content;
+- install dependencies;
+- start a framework dev server;
+- run backend code;
+- access external network by default;
+- save versions;
+- publish or share;
+- replace Review/Save authority.
+
+## Supported Scope
+
+Live Preview V1 supports static web projects that can run from local files
+served through Builder's read-only preview server:
+
+- `index.html`;
+- CSS;
+- local JavaScript files;
+- local ES modules;
+- canvas;
+- WebGL and Three.js when assets are local;
+- hash/history navigation inside the preview origin;
+- local image/font/media assets when safe and bounded.
+
+Deferred:
+
+- Vite/React/Next dev-server adapters;
+- backend/full-stack preview;
+- dependency installation;
+- external network assets;
+- authenticated browser sessions;
+- editing DOM elements from the preview surface.
+
+## Architecture Overview
+
+```text
+ReviewState or DraftCheckpoint
+-> LivePreviewAdmission
+-> Preview Source Snapshot
+-> Read-only Local Preview Server
+-> Main-owned WebContentsView
+-> Preview Evidence Collector
+-> PreviewRun fact
+-> Renderer-safe PreviewStatusProjection
+-> Review Workspace
+```
+
+The renderer asks for a preview. Main owns admission, server creation,
+WebContentsView lifecycle, navigation policy, permission policy, evidence
+capture, and disposal.
+
+## Main Facts
+
+```text
+LivePreviewAdmission
+  admission_id
+  project_id
+  conversation_id
+  task_id?
+  run_id?
+  draft_checkpoint_id?
+  source_tree_digest
+  selected_entry_path
+  preview_kind
+  admitted_at_ms
+  expires_at_ms
+  authority
+
+PreviewRun
+  preview_run_id
+  admission_id
+  project_id
+  source_tree_digest
+  entry_url
+  status
+  started_at_ms
+  completed_at_ms?
+  console_error_count
+  console_warning_count
+  navigation_block_count
+  network_block_count
+  screenshot_digest?
+  canvas_pixel_status
+  webgl_status
+  error_summary?
+```
+
+Allowed `PreviewRun.status`:
+
+- `admitted`;
+- `server_starting`;
+- `loading`;
+- `ready`;
+- `ready_with_warnings`;
+- `blocked`;
+- `failed`;
+- `stopped`.
+
+## Preview Server
+
+Live Preview V1 should use a main-owned read-only loopback server.
+
+Rules:
+
+- bind only to `127.0.0.1`;
+- choose an ephemeral port;
+- serve only the admitted source snapshot;
+- resolve every request through normalized project-relative paths;
+- deny path traversal, absolute paths, symlinks escaping the project root, and
+  dot-Git internals;
+- set restrictive response headers;
+- no directory listing;
+- no write endpoints;
+- no proxying external network requests;
+- dispose server when preview is closed or admission expires.
+
+The server is evidence infrastructure, not a general dev server.
+
+## WebContentsView Policy
+
+Create preview contents in a dedicated non-persistent session partition such as
+`preview:<admission_id>`.
+
+Required web preferences:
+
+- `nodeIntegration: false`;
+- `contextIsolation: true`;
+- `sandbox: true`;
+- no preload by default;
+- web security enabled;
+- devTools disabled in packaged builds unless a later diagnostic gate allows
+  it.
+
+Required policies:
+
+- deny permission requests;
+- deny new windows;
+- deny downloads;
+- deny navigation outside the admitted preview origin;
+- block external network by default;
+- clear session storage on disposal;
+- do not expose app IPC to preview contents.
+
+## Network Policy
+
+V1 network policy is local-only:
+
+- allow admitted preview origin;
+- allow same-origin local assets served by the preview server;
+- deny `http`, `https`, `ws`, `wss`, `file`, `ftp`, `data` top-level
+  navigations unless explicitly admitted by later gates;
+- record blocked external requests as evidence.
+
+Future external asset support requires a separate permission and privacy gate.
+
+## Renderer IPC Surface
+
+Renderer-safe APIs should be narrow and status-oriented:
+
+```text
+livePreview.requestCurrentDraftPreview({ project_id, conversation_id })
+livePreview.stopCurrentPreview({ project_id, conversation_id })
+livePreview.readCurrentPreviewStatus({ project_id, conversation_id })
+```
+
+Renderer must not pass:
+
+- paths;
+- arbitrary URLs;
+- HTML strings;
+- source content;
+- command strings;
+- preload paths;
+- session partitions;
+- BrowserWindow/WebContents identifiers.
+
+Main resolves the current draft/review source from existing stores.
+
+## UI Integration
+
+Live Preview belongs in the Review Workspace right drawer.
+
+UI behavior:
+
+- keep `Preview` as the same user-facing tab;
+- static preview remains the fallback and first render path;
+- when Live Preview is available, show a compact segmented preview mode:
+  `Static` / `Live`;
+- if Live Preview is blocked, show the existing runtime-unavailable message
+  with a clearer reason;
+- provide reload and stop controls only inside the preview toolbar;
+- do not duplicate the global workspace selector inside the drawer content;
+- do not hide latest chat behind the preview surface or composer;
+- preview controls never save a version.
+
+## Evidence Capture
+
+Preview evidence must be captured in main or canary-controlled automation:
+
+- console errors and warnings;
+- navigation blocks;
+- network blocks;
+- screenshot digest;
+- nonblank pixel evidence;
+- canvas pixel status;
+- WebGL context status;
+- load timing and terminal status.
+
+Renderer-safe projection should expose only summary fields:
+
+```text
+PreviewStatusProjection
+  preview_kind
+  status_label
+  tone
+  console_error_count
+  console_warning_count
+  blocked_request_count
+  canvas_pixel_status
+  webgl_status
+  can_reload
+  can_stop
+```
+
+Raw console text, source content, URLs beyond the preview origin, screenshots,
+and internal ids remain main-owned evidence.
+
+## Canary
+
+Add a focused packaged canary before claiming Live Preview support.
+
+Minimum canary project:
+
+- `index.html`;
+- local CSS;
+- local JavaScript module;
+- canvas draw;
+- WebGL or Three.js-like canvas path without external assets.
+
+Canary must prove:
+
+- Live Preview launches from the review drawer;
+- JavaScript executes;
+- canvas/WebGL pixels are nonblank;
+- console errors are captured;
+- external network request is blocked and counted;
+- navigation outside preview origin is blocked;
+- preview stop disposes the server/session;
+- restart returns to safe static or stopped state, not a dangling live server;
+- no renderer IPC, Node.js, filesystem, Git, SQLite, provider, or shell
+  authority is exposed to preview content.
+
+## Implementation Slices
+
+### Slice LP0: Architecture And Boundary Tests
+
+Docs, static source checks, and boundary tests only.
+
+Evidence:
+
+- `BrowserView` is not used for new preview runtime;
+- `<webview>` remains disabled;
+- main window security defaults stay intact;
+- static preview behavior remains unchanged.
+
+### Slice LP1: Main-Only Preview Contracts
+
+Add `LivePreviewAdmission`, `PreviewRun`, and sanitizer tests.
+
+No Electron view, server, IPC, renderer UI, source mutation, or provider path.
+
+### Slice LP2: Read-Only Preview Server
+
+Add main-owned loopback static server over an admitted source snapshot.
+
+Evidence:
+
+- path traversal denied;
+- symlink escape denied;
+- dot-Git denied;
+- external proxy denied;
+- server disposes.
+
+### Slice LP3: WebContentsView Runtime
+
+Create and manage a dedicated `WebContentsView` for admitted previews.
+
+Evidence:
+
+- dedicated non-persistent session;
+- permission requests denied;
+- external navigation denied;
+- new windows denied;
+- downloads denied;
+- no preload or Node integration.
+
+### Slice LP4: Evidence Collector
+
+Capture console, navigation, network, screenshot, canvas, and WebGL summaries.
+
+Evidence:
+
+- nonblank canvas/WebGL canary;
+- console error count;
+- blocked request count;
+- no raw source or console text in renderer projection.
+
+### Slice LP5: Renderer Status And Review Drawer Integration
+
+Expose minimal IPC and show Live Preview as a mode inside the existing Preview
+drawer.
+
+Evidence:
+
+- static fallback still works;
+- Live mode can start/stop/reload;
+- duplicated preview controls do not return;
+- newest chat remains visible.
+
+### Slice LP6: Packaged Live Preview Canary
+
+Add `verify:packaged-live-preview` and include it in release only after stable.
+
+Evidence:
+
+- packaged app launches;
+- local static-web preview runs JavaScript;
+- WebGL/canvas nonblank proof passes;
+- blocked network and navigation evidence passes;
+- restart cleanup passes.
+
+## Relationship To MVP Programming Loop
+
+Live Preview is not required for the first MVP loop. The MVP may ship with
+static preview plus clear runtime-unavailable messaging.
+
+However, LP0-LP2 can be developed in parallel if they stay main-only and do not
+touch Plan, ProgrammingRun, source edit, Review/Save, or provider prompt paths.
+
+Live Preview becomes necessary before Builder claims strong support for:
+
+- interactive web apps;
+- canvas animation;
+- Three.js/WebGL;
+- browser routing;
+- UI behavior verification.

@@ -70,6 +70,8 @@ Near-term scope:
 ### Track B: Interactive Preview And Runtime Evidence
 
 Purpose: make web and interactive projects verifiable, not merely generated.
+The detailed architecture is defined in
+[Live Preview Browser Architecture](LIVE_PREVIEW_BROWSER_ARCHITECTURE.md).
 
 Path:
 
