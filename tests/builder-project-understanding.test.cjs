@@ -121,10 +121,10 @@ test('creates a Node/frontend project understanding snapshot with command profil
   assert.doesNotMatch(JSON.stringify(snapshot.command_profiles), /vite build|eslint \.|vitest run|tsc -b/iu);
 });
 
-test('binds each command profile identity to the exact package script body', () => {
-  const treeFor = (testScript) => sourceTree([{
+test('binds each command profile identity to the exact package lifecycle scripts', () => {
+  const treeFor = (testScript, pretest = undefined) => sourceTree([{
     path: 'package.json',
-    content: `${JSON.stringify({ scripts: { test: testScript } })}\n`,
+    content: `${JSON.stringify({ scripts: { test: testScript, ...(pretest ? { pretest } : {}) } })}\n`,
   }, {
     path: 'package-lock.json',
     content: '{}\n',
@@ -135,13 +135,28 @@ test('binds each command profile identity to the exact package script body', () 
   const changed = createBuilderProjectUnderstandingSnapshot(request({
     source_tree: treeFor('node --test'),
   }));
+  const changedLifecycle = createBuilderProjectUnderstandingSnapshot(request({
+    source_tree: treeFor('vitest run', 'node scripts/prepare-tests.js'),
+  }));
+  const unsafeLifecycle = createBuilderProjectUnderstandingSnapshot(request({
+    source_tree: treeFor('vitest run', 'x'.repeat(513)),
+  }));
 
   assert.equal(first.command_profiles.length, 1);
   assert.equal(changed.command_profiles.length, 1);
   assert.notEqual(first.command_profiles[0].script_digest, changed.command_profiles[0].script_digest);
   assert.notEqual(first.command_profiles[0].command_profile_id, changed.command_profiles[0].command_profile_id);
+  assert.notEqual(
+    first.command_profiles[0].script_digest,
+    changedLifecycle.command_profiles[0].script_digest,
+  );
+  assert.notEqual(
+    first.command_profiles[0].command_profile_id,
+    changedLifecycle.command_profiles[0].command_profile_id,
+  );
   assert.equal(first.command_profiles[0].command_display, 'npm test');
   assert.equal(changed.command_profiles[0].command_display, 'npm test');
+  assert.equal(unsafeLifecycle.command_profiles.length, 0);
 });
 
 test('detects static HTML projects without inventing command profiles', () => {

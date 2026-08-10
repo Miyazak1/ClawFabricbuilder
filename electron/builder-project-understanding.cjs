@@ -433,23 +433,33 @@ function safePackageScripts(parsedPackage) {
   if (parsedPackage === null) return null;
   const scripts = parsedPackage.scripts;
   if (!isPlainObject(scripts) || utilTypes.isProxy(scripts)) return null;
+  const scriptValue = (scriptName, required) => {
+    const descriptor = Object.getOwnPropertyDescriptor(scripts, scriptName);
+    if (descriptor === undefined) return required ? undefined : null;
+    if (
+      descriptor.enumerable !== true
+      || !Object.hasOwn(descriptor, 'value')
+      || typeof descriptor.value !== 'string'
+      || descriptor.value.trim().length === 0
+      || descriptor.value.length > 512
+      || descriptor.value.includes('\0')
+    ) return undefined;
+    return descriptor.value;
+  };
   const safe = {};
   for (const kind of COMMAND_KINDS) {
     const scriptName = SCRIPT_BY_KIND[kind];
-    const descriptor = Object.getOwnPropertyDescriptor(scripts, scriptName);
-    if (
-      descriptor
-      && descriptor.enumerable === true
-      && Object.hasOwn(descriptor, 'value')
-      && typeof descriptor.value === 'string'
-      && descriptor.value.trim().length > 0
-      && descriptor.value.length <= 512
-      && !descriptor.value.includes('\0')
-    ) safe[kind] = freezeDeep({
+    const lifecycleScripts = {
+      pre: scriptValue(`pre${scriptName}`, false),
+      main: scriptValue(scriptName, true),
+      post: scriptValue(`post${scriptName}`, false),
+    };
+    if (Object.values(lifecycleScripts).some((value) => value === undefined)) continue;
+    safe[kind] = freezeDeep({
       script_name: scriptName,
       script_digest: sha256Canonical({
         script_name: scriptName,
-        script_body: descriptor.value,
+        lifecycle_scripts: lifecycleScripts,
       }),
     });
   }
