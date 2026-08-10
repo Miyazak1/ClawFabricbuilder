@@ -528,6 +528,26 @@ Denied in MVP:
 - failed check does not save version;
 - skipped check creates explicit skip evidence.
 
+### Current Implementation Checkpoint
+
+The main-side fact chain now includes candidate- and checkpoint-bound execution
+approval/admission, a temporary candidate workspace materializer, bounded
+timeout/output/cancellation runner, immutable CheckRun v2 facts, SQLite store,
+renderer-safe status projection, and a Save Version gate that re-reads current
+raw CheckRun evidence while holding the candidate activity lock. A packaged
+npm-compatible worker verifies the exact `package.json` lifecycle-script digest
+before running only the approved main script through a pinned
+`@npmcli/promise-spawn` runtime. The outer Electron/Node launcher remains
+shell-disabled; the inner manifest script uses the platform shell explicitly
+recorded by the CheckRun execution policy. Dependency installation and network
+authority are not added, and a candidate snapshot without an available
+dependency environment fails honestly instead of installing packages.
+
+This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
+runtime composition, the user approval/control surface, environment-readiness
+projection, durable `Not checked` activity, and packaged end-to-end CheckRun
+orchestration remain required before Slice 6 is product-complete.
+
 ## Slice 7: Save Version And Restart Recovery Canary
 
 ### Purpose

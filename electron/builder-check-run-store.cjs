@@ -14,9 +14,9 @@ const {
 const BUILDER_CHECK_RUN_STORE_VERSION = 'builder-check-run-store.v1';
 const BUILDER_CHECK_RUN_STORE_RESULT_VERSION = 'builder-check-run-store-result.v1';
 const BUILDER_CHECK_RUN_STORE_READ_RESULT_VERSION = 'builder-check-run-store-read-result.v1';
-const BUILDER_CHECK_RUN_STORE_SCHEMA_VERSION = 'builder-check-run-store-schema.v1';
-const BUILDER_CHECK_RUN_STORE_USER_VERSION = 1;
-const DATABASE_ID = 'builder-check-run-store.v1';
+const BUILDER_CHECK_RUN_STORE_SCHEMA_VERSION = 'builder-check-run-store-schema.v2';
+const BUILDER_CHECK_RUN_STORE_USER_VERSION = 2;
+const DATABASE_ID = 'builder-check-run-store.v2';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
@@ -62,8 +62,8 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     completed_at_ms INTEGER NOT NULL,
     record_json TEXT NOT NULL,
     schema_version TEXT NOT NULL,
-    CHECK (schema_version = 'builder-check-run-store-schema.v1'),
-    CHECK (check_run_version = 'builder-check-run.v1'),
+    CHECK (schema_version = 'builder-check-run-store-schema.v2'),
+    CHECK (check_run_version = 'builder-check-run.v2'),
     CHECK (draft_checkpoint_sequence BETWEEN 1 AND 1000000),
     CHECK (status IN ('passed', 'failed', 'timed_out', 'environment_unavailable', 'cancelled', 'spawn_failed', 'output_exceeded', 'termination_failed')),
     CHECK (started_at_ms >= 0),

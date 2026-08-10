@@ -85,6 +85,7 @@
     }
   },
   "dependencies": {
+    "@npmcli/promise-spawn": "9.0.1",
     "dugite": "3.2.2"
   }
 }

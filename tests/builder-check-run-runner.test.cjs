@@ -30,7 +30,7 @@ const { checkRuntimeIdentity } = require('./helpers/builder-check-runtime-identi
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
 
-function admittedCheck(manager = 'npm', kind = 'test') {
+function admittedCheck(manager = 'npm', kind = 'test', runtimeOverrides = {}) {
   const lock = manager === 'pnpm' ? 'pnpm-lock.yaml'
     : manager === 'yarn' ? 'yarn.lock'
       : manager === 'bun' ? 'bun.lock' : null;
@@ -88,6 +88,7 @@ function admittedCheck(manager = 'npm', kind = 'test') {
     package_manager: manager,
     launcher_kind: manager === 'bun' ? 'native_binary' : 'node_cli',
     cli_entry_digest: manager === 'bun' ? null : `sha256:${'b'.repeat(64)}`,
+    ...runtimeOverrides,
   });
   const approval = createBuilderCheckRunExecutionApproval({
     draft_id: `builder-generation-draft:${'d'.repeat(64)}`,
@@ -213,7 +214,7 @@ function currentCandidate(admission) {
   };
 }
 
-test('derives fixed shell-free argv for npm, pnpm, yarn, and bun', async () => {
+test('derives fixed launcher argv for npm, pnpm, yarn, and bun', async () => {
   for (const [manager, expected] of [
     ['npm', ['run-script', 'test']],
     ['pnpm', ['run', 'test']],
@@ -224,7 +225,13 @@ test('derives fixed shell-free argv for npm, pnpm, yarn, and bun', async () => {
     const pending = h.runner.run_check(runInput(h));
     h.child.emit('close', 0, null);
     const result = await pending;
-    assert.deepEqual(h.spawnCall.args.slice(manager === 'bun' ? 0 : 1), expected);
+    assert.deepEqual(
+      h.spawnCall.args.slice(manager === 'bun' ? 0 : 1, manager === 'bun' ? undefined : -1),
+      expected,
+    );
+    if (manager !== 'bun') {
+      assert.equal(h.spawnCall.args.at(-1), h.selected.admission.script_digest);
+    }
     assert.equal(h.spawnCall.options.shell, false);
     assert.doesNotMatch(h.spawnCall.file, /cmd\.exe|npm\.cmd/iu);
     assert.equal(result.status, 'passed');
@@ -242,6 +249,22 @@ test('uses a minimal environment and strips inherited secrets', async () => {
   assert.equal(Object.hasOwn(h.spawnCall.options.env, 'NODE_OPTIONS'), false);
   assert.equal(h.spawnCall.options.env.CI, '1');
   delete process.env.CLAWFABRIC_TEST_API_KEY;
+});
+
+test('enables Electron Node mode only for the verified packaged runtime', async () => {
+  const packaged = harness(admittedCheck('npm', 'test', {
+    resolution_source: 'packaged_runtime',
+  }));
+  const packagedPending = packaged.runner.run_check(runInput(packaged));
+  packaged.child.emit('close', 0, null);
+  await packagedPending;
+  assert.equal(packaged.spawnCall.options.env.ELECTRON_RUN_AS_NODE, '1');
+
+  const external = harness();
+  const externalPending = external.runner.run_check(runInput(external));
+  external.child.emit('close', 0, null);
+  await externalPending;
+  assert.equal(Object.hasOwn(external.spawnCall.options.env, 'ELECTRON_RUN_AS_NODE'), false);
 });
 
 test('holds candidate activity until the admitted check and cleanup finish', async () => {
@@ -352,7 +375,7 @@ test('rejects runtime and workspace identity mismatch with a fixed error', async
   });
 });
 
-test('source remains a shell-free main runner without provider, Git, SQLite, or save authority', () => {
+test('source keeps the outer launcher shell disabled and has no provider, Git, SQLite, or save authority', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'electron', 'builder-check-run-runner.cjs'),
     'utf8',

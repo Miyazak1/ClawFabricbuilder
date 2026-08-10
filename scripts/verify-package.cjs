@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -102,6 +103,19 @@ for (const expected of [
   '/electron/builder-generation-ipc-adapter.cjs',
   '/electron/builder-generation-ipc-runtime.cjs',
   '/electron/builder-generation-main-service.cjs',
+  '/electron/builder-check-runtime-identity.cjs',
+  '/electron/builder-check-run-admission.cjs',
+  '/electron/builder-check-workspace-materializer.cjs',
+  '/electron/builder-check-run-activity-registry.cjs',
+  '/electron/builder-check-run-runner.cjs',
+  '/electron/builder-check-run.cjs',
+  '/electron/builder-check-run-store.cjs',
+  '/electron/builder-check-run-status-service.cjs',
+  '/electron/builder-check-run-status-projection.cjs',
+  '/electron/builder-check-run-save-gate.cjs',
+  '/electron/builder-packaged-check-runtime-contract.cjs',
+  '/electron/builder-packaged-check-script-worker.cjs',
+  '/electron/builder-packaged-check-runtime-resolver.cjs',
   '/electron/builder-live-preview-ipc-adapter.cjs',
   '/electron/builder-live-preview-ipc-runtime.cjs',
   '/electron/builder-window-controls-ipc-runtime.cjs',
@@ -136,6 +150,7 @@ for (const forbiddenTest of [
 assert.equal(packagedFiles.includes('/scripts/verify-packaged-canary.cjs'), false);
 assert.equal(packagedFiles.includes('/scripts/verify-packaged-launch-smoke.cjs'), false);
 const allowedPackagedNodeModuleRoots = Object.freeze([
+  '/node_modules/@npmcli/promise-spawn/',
   '/node_modules/b4a/',
   '/node_modules/bare-events/',
   '/node_modules/bare-fs/',
@@ -145,18 +160,24 @@ const allowedPackagedNodeModuleRoots = Object.freeze([
   '/node_modules/dugite/',
   '/node_modules/events-universal/',
   '/node_modules/fast-fifo/',
+  '/node_modules/isexe/',
   '/node_modules/progress/',
   '/node_modules/streamx/',
   '/node_modules/tar-stream/',
   '/node_modules/teex/',
   '/node_modules/text-decoder/',
+  '/node_modules/which/',
+]);
+const allowedPackagedNodeModuleNamespaceEntries = Object.freeze([
+  '/node_modules/@npmcli',
 ]);
 const packagedNodeModuleFiles = packagedFiles.filter((entry) => entry.startsWith('/node_modules/'));
 assert.equal(packagedNodeModuleFiles.length > 0, true);
 function isAllowedPackagedNodeModule(entry) {
-  return allowedPackagedNodeModuleRoots.some((rootPath) => (
+  return allowedPackagedNodeModuleNamespaceEntries.includes(entry)
+    || allowedPackagedNodeModuleRoots.some((rootPath) => (
     entry === rootPath.slice(0, -1) || entry.startsWith(rootPath)
-  ));
+    ));
 }
 for (const entry of packagedNodeModuleFiles) {
   assert.equal(
@@ -182,6 +203,8 @@ assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'pngjs'), true)
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'playwright-core'), false);
 assert.equal(Object.hasOwn(workspacePackageJson.dependencies ?? {}, 'pngjs'), false);
 assert.equal(workspacePackageJson.dependencies?.dugite, '3.2.2');
+assert.equal(workspacePackageJson.dependencies?.['@npmcli/promise-spawn'], '9.0.1');
+assert.equal(workspacePackageJson.dependencies?.['@npmcli/run-script'], undefined);
 assert.equal(workspacePackageJson.devDependencies?.dugite, undefined);
 assert.equal(
   workspacePackageJson.scripts['verify:packaged-launch'],
@@ -209,6 +232,48 @@ const packagedGitVersion = execFileSync(path.join(unpackedGitRoot, 'cmd', 'git.e
   windowsHide: true,
 }).trim();
 assert.match(packagedGitVersion, /^git version \d+\.\d+\.\d+/u);
+
+const packagedCheckWorker = path.join(
+  archive,
+  'electron',
+  'builder-packaged-check-script-worker.cjs',
+);
+const packagedCheckRoot = fs.mkdtempSync(path.join(root, 'release', 'packaged-check-canary-'));
+try {
+  const canaryScript = 'echo PACKAGED_CHECK_RUNTIME_OK';
+  fs.writeFileSync(
+    path.join(packagedCheckRoot, 'package.json'),
+    `${JSON.stringify({ scripts: { test: canaryScript } })}\n`,
+  );
+  const scriptDigest = `sha256:${nodeCrypto.createHash('sha256').update(JSON.stringify({
+    lifecycle_scripts: { main: canaryScript, post: null, pre: null },
+    script_name: 'test',
+  }), 'utf8').digest('hex')}`;
+  const packagedCheckOutput = execFileSync(executable, [
+    packagedCheckWorker,
+    'run-script',
+    'test',
+    scriptDigest,
+  ], {
+    cwd: packagedCheckRoot,
+    encoding: 'utf8',
+    env: {
+      CI: '1',
+      ComSpec: process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe',
+      ELECTRON_RUN_AS_NODE: '1',
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      PATH: process.env.PATH || '',
+      SystemRoot: process.env.SystemRoot || 'C:\\Windows',
+      TEMP: packagedCheckRoot,
+      TMP: packagedCheckRoot,
+    },
+    windowsHide: true,
+  });
+  assert.match(packagedCheckOutput, /PACKAGED_CHECK_RUNTIME_OK/u);
+} finally {
+  fs.rmSync(packagedCheckRoot, { recursive: true, force: true });
+}
 for (const entry of packagedEntries.filter(
   (value) => /\.(?:cjs|css|html|js|json)$/u.test(value.normalizedPath),
 )) {

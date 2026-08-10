@@ -1,0 +1,9 @@
+'use strict';
+
+const BUILDER_PACKAGED_CHECK_RUNTIME_CONTRACT_VERSION = 'builder-packaged-check-runtime-contract.v1';
+const PACKAGED_NPM_SCRIPT_RUNTIME_VERSION = '9.0.1';
+
+module.exports = Object.freeze({
+  BUILDER_PACKAGED_CHECK_RUNTIME_CONTRACT_VERSION,
+  PACKAGED_NPM_SCRIPT_RUNTIME_VERSION,
+});

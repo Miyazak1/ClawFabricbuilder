@@ -7,7 +7,7 @@ const {
   sanitizeBuilderCheckRunAdmission,
 } = require('./builder-check-run-admission.cjs');
 
-const BUILDER_CHECK_RUN_VERSION = 'builder-check-run.v1';
+const BUILDER_CHECK_RUN_VERSION = 'builder-check-run.v2';
 const INPUT_KEYS = Object.freeze([
   'check_run_admission',
   'status',
@@ -99,7 +99,9 @@ const COMMAND_DISPLAYS = Object.freeze({
 });
 const EXECUTION_POLICY_KEYS = Object.freeze([
   'workspace_kind',
-  'shell',
+  'launcher_shell',
+  'package_script_shell',
+  'lifecycle_scripts',
   'environment_policy',
   'sandbox_status',
   'filesystem_enforcement',
@@ -109,7 +111,9 @@ const EXECUTION_POLICY_KEYS = Object.freeze([
 ]);
 const EXECUTION_POLICY = Object.freeze({
   workspace_kind: 'main_owned_candidate_snapshot',
-  shell: false,
+  launcher_shell: false,
+  package_script_shell: 'platform_default_after_digest_verification',
+  lifecycle_scripts: 'main_only_pre_and_post_not_executed',
   environment_policy: 'minimal_scrubbed',
   sandbox_status: 'unavailable',
   filesystem_enforcement: 'not_enforced_outside_temporary_workspace',

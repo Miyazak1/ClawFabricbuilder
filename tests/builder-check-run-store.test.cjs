@@ -97,7 +97,9 @@ const AUTHORITY = Object.freeze({
 });
 const EXECUTION_POLICY = Object.freeze({
   workspace_kind: 'main_owned_candidate_snapshot',
-  shell: false,
+  launcher_shell: false,
+  package_script_shell: 'platform_default_after_digest_verification',
+  lifecycle_scripts: 'main_only_pre_and_post_not_executed',
   environment_policy: 'minimal_scrubbed',
   sandbox_status: 'unavailable',
   filesystem_enforcement: 'not_enforced_outside_temporary_workspace',
@@ -164,7 +166,7 @@ function assumedSanitizeBuilderCheckRun(value) {
   delete body.check_run_digest;
   const expected = digestBody(body);
   if (
-    normalized.check_run_version !== 'builder-check-run.v1'
+    normalized.check_run_version !== 'builder-check-run.v2'
     || normalized.check_run_digest !== expected
     || normalized.check_run_id !== `builder-check-run:${expected.slice('sha256:'.length)}`
   ) throw new AssumedBuilderCheckRunError();
@@ -216,7 +218,7 @@ function checkRun(index = 1, overrides = {}) {
   const startedAtMs = overrides.started_at_ms ?? 10_000 + index * 100;
   const completedAtMs = overrides.completed_at_ms ?? startedAtMs + 25;
   const unsigned = {
-    check_run_version: 'builder-check-run.v1',
+    check_run_version: 'builder-check-run.v2',
     admission_id: overrides.admission_id ?? `builder-check-run-admission:${hex(index)}`,
     admission_digest: overrides.admission_digest ?? `sha256:${hex(index)}`,
     approval_id: overrides.approval_id ?? `builder-check-run-execution-approval:${hex(index + 1)}`,

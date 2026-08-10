@@ -147,11 +147,11 @@ function commandFor(admission, runtime) {
   const verb = admission.package_manager === 'npm' ? 'run-script' : 'run';
   return Object.freeze({
     file: runtime.launcherPath,
-    args: Object.freeze([runtime.cliEntryPath, verb, name]),
+    args: Object.freeze([runtime.cliEntryPath, verb, name, admission.script_digest]),
   });
 }
 
-function minimalEnvironment(workspacePath, launcherPath) {
+function minimalEnvironment(workspacePath, launcherPath, runtimeIdentity) {
   const env = {
     CI: '1',
     FORCE_COLOR: '0',
@@ -171,6 +171,9 @@ function minimalEnvironment(workspacePath, launcherPath) {
     env.PATH = `${env.PATH}${path.delimiter}${path.join(systemRoot, 'System32')}`;
   } else {
     env.PATH = `${env.PATH}${path.delimiter}/usr/bin${path.delimiter}/bin`;
+  }
+  if (runtimeIdentity.resolution_source === 'packaged_runtime') {
+    env.ELECTRON_RUN_AS_NODE = '1';
   }
   return Object.freeze(env);
 }
@@ -317,7 +320,7 @@ function createBuilderCheckRunRunner(rawOptions) {
         try {
           child = spawnProcess(command.file, [...command.args], {
             cwd: workspacePath,
-            env: minimalEnvironment(workspacePath, command.file),
+            env: minimalEnvironment(workspacePath, command.file, identity),
             shell: false,
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
