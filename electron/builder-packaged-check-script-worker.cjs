@@ -13,6 +13,7 @@ const BUILDER_PACKAGED_CHECK_SCRIPT_WORKER_VERSION = 'builder-packaged-check-scr
 const COMMAND_KINDS = Object.freeze(['lint', 'typecheck', 'test', 'build']);
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
+const CHECK_RUNTIME_DIRECTORY = '.clawfabric-check-runtime-v1';
 
 class BuilderPackagedCheckScriptWorkerError extends Error {
   constructor() {
@@ -114,7 +115,38 @@ function verifyBoundScript(rawInput) {
   });
 }
 
-function scriptEnvironment(workspacePath, verified) {
+function createNodeLauncher(workspacePath) {
+  const runtimeDirectory = path.join(workspacePath, CHECK_RUNTIME_DIRECTORY);
+  try {
+    fs.mkdirSync(runtimeDirectory, { mode: 0o700 });
+    const stats = fs.lstatSync(runtimeDirectory);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) fail();
+    if (process.platform === 'win32') {
+      if (/[%!^&|<>()"\r\n]/u.test(process.execPath)) fail();
+      const launcherPath = path.join(runtimeDirectory, 'node.cmd');
+      fs.writeFileSync(
+        launcherPath,
+        `@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${process.execPath}" %*\r\n`,
+        { encoding: 'utf8', flag: 'wx', mode: 0o700 },
+      );
+      return runtimeDirectory;
+    }
+    if (/["\\$`\r\n]/u.test(process.execPath)) fail();
+    const launcherPath = path.join(runtimeDirectory, 'node');
+    fs.writeFileSync(
+      launcherPath,
+      `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 },
+    );
+    fs.chmodSync(launcherPath, 0o700);
+    return runtimeDirectory;
+  } catch (error) {
+    if (error instanceof BuilderPackagedCheckScriptWorkerError) throw error;
+    fail();
+  }
+}
+
+function scriptEnvironment(workspacePath, verified, nodeLauncherDirectory) {
   const env = {};
   for (const key of [
     'CI',
@@ -125,6 +157,7 @@ function scriptEnvironment(workspacePath, verified) {
     'NO_COLOR',
     'NPM_CONFIG_UPDATE_NOTIFIER',
     'PATH',
+    'PATHEXT',
     'SystemRoot',
     'TEMP',
     'TMP',
@@ -134,7 +167,11 @@ function scriptEnvironment(workspacePath, verified) {
     if (typeof process.env[key] === 'string') env[key] = process.env[key];
   }
   const currentPath = env.PATH ?? '';
-  env.PATH = `${path.join(workspacePath, 'node_modules', '.bin')}${path.delimiter}${currentPath}`;
+  env.PATH = [
+    nodeLauncherDirectory,
+    path.join(workspacePath, 'node_modules', '.bin'),
+    currentPath,
+  ].join(path.delimiter);
   env.npm_lifecycle_event = verified.event;
   env.npm_lifecycle_script = verified.script;
   env.npm_package_json = verified.package_json_path;
@@ -143,13 +180,14 @@ function scriptEnvironment(workspacePath, verified) {
 
 async function executeBoundScript(rawInput) {
   const verified = verifyBoundScript(rawInput);
+  const nodeLauncherDirectory = createNodeLauncher(rawInput.workspace_path);
   const shell = process.platform === 'win32'
     ? process.env.ComSpec
     : '/bin/sh';
   if (typeof shell !== 'string' || shell.length === 0) fail();
   return promiseSpawn(verified.script, [], {
     cwd: rawInput.workspace_path,
-    env: scriptEnvironment(rawInput.workspace_path, verified),
+    env: scriptEnvironment(rawInput.workspace_path, verified, nodeLauncherDirectory),
     shell,
     stdio: ['ignore', 'inherit', 'inherit'],
     stdioString: false,

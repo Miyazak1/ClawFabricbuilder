@@ -198,6 +198,18 @@ const REQUIRED_OPTION_KEYS = Object.freeze([
 const ERROR_MESSAGE = 'AI project generation is unavailable.';
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
+
+function packagedCheckWorkerPath(runtimeDirectory = __dirname) {
+  const archiveRoot = path.dirname(runtimeDirectory);
+  if (path.basename(archiveRoot).toLowerCase() === 'app.asar') {
+    return path.join(
+      `${archiveRoot}.unpacked`,
+      path.basename(runtimeDirectory),
+      PACKAGED_CHECK_WORKER,
+    );
+  }
+  return path.join(runtimeDirectory, PACKAGED_CHECK_WORKER);
+}
 const REQUEST_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -1340,7 +1352,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const checkRunComposition = createBuilderCheckRunRuntimeComposition({
       user_data_path: options.userDataPath,
       launcher_path: process.execPath,
-      worker_path: path.join(__dirname, PACKAGED_CHECK_WORKER),
+      worker_path: packagedCheckWorkerPath(),
       process_adapter: checkRunProcessAdapter,
       clock: checkRunClock,
       conversation_service: conversationService,
@@ -2316,6 +2328,7 @@ module.exports = Object.freeze({
   CONTEXT_COMPACTION_SUMMARY_DATABASE,
   HANDOFF_PACKET_DIRECTORY,
   HANDOFF_PACKET_DATABASE,
+  packagedCheckWorkerPath,
   BuilderGenerationIpcRuntimeError,
   ANSWER_DRAFT_CHANNEL,
   createBuilderGenerationIpcRuntime,

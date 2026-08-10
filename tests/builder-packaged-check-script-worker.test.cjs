@@ -75,6 +75,24 @@ test('runs only the admitted main script and leaves pre/post lifecycle scripts i
   assert.doesNotMatch(result.stdout, /PRE_SHOULD_NOT_RUN|POST_SHOULD_NOT_RUN/u);
 });
 
+test('provides a bounded node launcher for admitted package scripts', (t) => {
+  const scripts = { test: 'node --version' };
+  const root = fixture(t, scripts);
+  const result = spawnSync(process.execPath, [
+    WORKER_PATH,
+    'run-script',
+    'test',
+    digest('test', scripts),
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^v\d+\.\d+\.\d+/mu);
+});
+
 test('fails closed when argv, script content, digest, or package metadata drifts', (t) => {
   const scripts = { test: 'echo original' };
   const root = fixture(t, scripts);

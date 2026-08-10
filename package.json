@@ -67,6 +67,11 @@
       "package.json"
     ],
     "asarUnpack": [
+      "electron/builder-packaged-check-script-worker.cjs",
+      "electron/builder-packaged-check-runtime-contract.cjs",
+      "node_modules/@npmcli/promise-spawn/**/*",
+      "node_modules/which/**/*",
+      "node_modules/isexe/**/*",
       "node_modules/dugite/git/**/*",
       "node_modules/dugite/LICENSE",
       "node_modules/dugite/git/LICENSE.txt"

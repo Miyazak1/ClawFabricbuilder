@@ -200,6 +200,11 @@ for (const expectedDugiteLoaderFile of [
   assert.equal(packagedFiles.includes(expectedDugiteLoaderFile), true, expectedDugiteLoaderFile);
 }
 assert.deepEqual(workspacePackageJson.build.asarUnpack, [
+  'electron/builder-packaged-check-script-worker.cjs',
+  'electron/builder-packaged-check-runtime-contract.cjs',
+  'node_modules/@npmcli/promise-spawn/**/*',
+  'node_modules/which/**/*',
+  'node_modules/isexe/**/*',
   'node_modules/dugite/git/**/*',
   'node_modules/dugite/LICENSE',
   'node_modules/dugite/git/LICENSE.txt',
@@ -240,10 +245,28 @@ const packagedGitVersion = execFileSync(path.join(unpackedGitRoot, 'cmd', 'git.e
 assert.match(packagedGitVersion, /^git version \d+\.\d+\.\d+/u);
 
 const packagedCheckWorker = path.join(
-  archive,
+  unpackedArchive,
   'electron',
   'builder-packaged-check-script-worker.cjs',
 );
+assert.equal(fs.statSync(path.join(
+  unpackedArchive,
+  'electron',
+  'builder-packaged-check-script-worker.cjs',
+)).isFile(), true);
+assert.equal(fs.statSync(path.join(
+  unpackedArchive,
+  'electron',
+  'builder-packaged-check-runtime-contract.cjs',
+)).isFile(), true);
+assert.equal(fs.statSync(path.join(
+  unpackedArchive,
+  'node_modules',
+  '@npmcli',
+  'promise-spawn',
+  'lib',
+  'index.js',
+)).isFile(), true);
 const packagedCheckRoot = fs.mkdtempSync(path.join(root, 'release', 'packaged-check-canary-'));
 try {
   const canaryScript = 'echo PACKAGED_CHECK_RUNTIME_OK';

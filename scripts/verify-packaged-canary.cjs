@@ -131,6 +131,7 @@ const SELECTORS = Object.freeze({
   retryDraft: '[data-builder-retry-draft="true"]',
   resultFlow: '[data-builder-preview-flow="true"]',
   reviewActions: '[data-builder-review-actions="true"]',
+  reviewChecks: '[data-builder-review-checks="true"]',
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   reviewCopy: '[data-builder-review-copy="true"]',
   reviewNote: '[data-builder-review-note="true"]',
@@ -2387,7 +2388,19 @@ async function runFirstAvailableProjectCheckViaUi(page) {
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_check_run_failed');
+    failWithDiagnostic('canary_check_run_failed', Object.freeze({
+      check_operation: await optionalLocatorAttribute(
+        page,
+        SELECTORS.reviewChecks,
+        'data-builder-check-run-operation',
+      ),
+      check_status: await optionalLocatorAttribute(
+        page,
+        SELECTORS.checkRunStatus,
+        'data-builder-check-run-status',
+      ),
+      check_status_text: await optionalLocatorText(page, SELECTORS.checkRunStatus),
+    }));
   }
 }
 

@@ -169,6 +169,7 @@ function minimalEnvironment(workspacePath, launcherPath, runtimeIdentity) {
     env.SystemRoot = systemRoot;
     env.ComSpec = path.join(systemRoot, 'System32', 'cmd.exe');
     env.PATH = `${env.PATH}${path.delimiter}${path.join(systemRoot, 'System32')}`;
+    if (typeof process.env.PATHEXT === 'string') env.PATHEXT = process.env.PATHEXT;
   } else {
     env.PATH = `${env.PATH}${path.delimiter}/usr/bin${path.delimiter}/bin`;
   }

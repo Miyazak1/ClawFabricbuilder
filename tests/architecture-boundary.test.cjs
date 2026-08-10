@@ -212,6 +212,11 @@ test('package identity and dependencies remain Builder-only', () => {
   assert.equal(packageJson.build.productName, 'ClawFabric Builder');
   assert.equal(packageJson.build.electronDist, 'node_modules/electron/dist');
   assert.deepEqual(packageJson.build.asarUnpack, [
+    'electron/builder-packaged-check-script-worker.cjs',
+    'electron/builder-packaged-check-runtime-contract.cjs',
+    'node_modules/@npmcli/promise-spawn/**/*',
+    'node_modules/which/**/*',
+    'node_modules/isexe/**/*',
     'node_modules/dugite/git/**/*',
     'node_modules/dugite/LICENSE',
     'node_modules/dugite/git/LICENSE.txt',

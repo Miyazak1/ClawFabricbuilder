@@ -53,6 +53,7 @@ const {
 const {
   BuilderGenerationIpcRuntimeError,
   createBuilderGenerationIpcRuntime,
+  packagedCheckWorkerPath,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
 const {
   BUILDER_PERMISSION_POLICY_VERSION,
@@ -79,6 +80,23 @@ function digest(value) {
 }
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+
+test('resolves the packaged check worker from the physical ASAR unpack directory', () => {
+  const resources = path.resolve('release', 'win-unpacked', 'resources');
+  assert.equal(
+    packagedCheckWorkerPath(path.join(resources, 'app.asar', 'electron')),
+    path.join(
+      resources,
+      'app.asar.unpacked',
+      'electron',
+      'builder-packaged-check-script-worker.cjs',
+    ),
+  );
+  assert.equal(
+    packagedCheckWorkerPath(path.resolve('electron')),
+    path.resolve('electron', 'builder-packaged-check-script-worker.cjs'),
+  );
+});
 
 function hostRequestDigest(instruction = 'Make a timer.', existingProjectId = null) {
   return digest({
