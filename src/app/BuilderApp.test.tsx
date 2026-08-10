@@ -1074,6 +1074,21 @@ async function setup(options: Readonly<{
     providerContextDisclosureApproval: {
       approveCurrent: approveCurrentProviderContextDisclosure,
     },
+    checkRun: {
+      readCurrentDraftAvailableChecks: async () => ({
+        result_version: 'builder-check-run-current-draft-read-result.v1',
+        service_version: 'builder-check-run-current-draft-service.v1',
+        operation: 'current_draft_available_checks_read',
+        status: 'no_checks',
+        draft_id: `builder-generation-draft:${'0'.repeat(64)}`,
+        project_id: PROJECT_ID,
+        candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+        available_checks: [],
+      }),
+      approveAndRunCurrentDraftCheck: async () => {
+        throw new Error('not used by BuilderApp tests yet');
+      },
+    },
     livePreview: {
       requestCurrentDraftPreview: async (request: unknown) => ({
         status_version: 'builder-live-preview-status-projection.v1',

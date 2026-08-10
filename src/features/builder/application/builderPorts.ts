@@ -222,6 +222,62 @@ export interface BuilderPlanReviewPort {
   review(request: BuilderPlanReviewRequest): Promise<BuilderPlanReviewResult>;
 }
 
+export type BuilderCheckRunCommandKind = 'lint' | 'typecheck' | 'test' | 'build';
+
+export type BuilderCheckRunProfile = Readonly<{
+  command_profile_id: string;
+  command_kind: BuilderCheckRunCommandKind;
+  command_display: string;
+  requires_user_approval: true;
+}>;
+
+export type BuilderCheckRunStatusProjection = Readonly<{
+  projection_version: 'builder-check-run-status-projection.v1';
+  project_id: string;
+  candidate_id: string;
+  check_run_id: string;
+  command_kind: BuilderCheckRunCommandKind;
+  command_label: 'Lint' | 'Type check' | 'Tests' | 'Build';
+  status: 'passed' | 'failed' | 'incomplete';
+  label: 'Checked' | 'Check failed' | 'Check incomplete' | 'Check unavailable' | 'Check needs attention';
+  summary: string;
+  completed_at_ms: number;
+  result_digest: string;
+}>;
+
+export type BuilderCheckRunAvailableResult = Readonly<{
+  result_version: 'builder-check-run-current-draft-read-result.v1';
+  service_version: 'builder-check-run-current-draft-service.v1';
+  operation: 'current_draft_available_checks_read';
+  status: 'ready' | 'no_checks';
+  draft_id: string;
+  project_id: string;
+  candidate_id: string;
+  available_checks: readonly BuilderCheckRunProfile[];
+}>;
+
+export type BuilderCheckRunCompletedResult = Readonly<{
+  result_version: 'builder-check-run-current-draft-run-result.v1';
+  service_version: 'builder-check-run-current-draft-service.v1';
+  operation: 'current_draft_approved_check_completed';
+  draft_id: string;
+  project_id: string;
+  candidate_id: string;
+  check_run_status_projection: BuilderCheckRunStatusProjection;
+}>;
+
+export type BuilderCheckRunReadRequest = Readonly<{ draft_id: string }>;
+
+export type BuilderCheckRunApproveRequest = Readonly<{
+  draft_id: string;
+  command_profile_id: string;
+}>;
+
+export interface BuilderCheckRunPort {
+  readCurrentDraftAvailableChecks(request: BuilderCheckRunReadRequest): Promise<BuilderCheckRunAvailableResult>;
+  approveAndRunCurrentDraftCheck(request: BuilderCheckRunApproveRequest): Promise<BuilderCheckRunCompletedResult>;
+}
+
 export type BuilderLivePreviewStatusProjection = Readonly<{
   status_version: 'builder-live-preview-status-projection.v1';
   project_id: string;

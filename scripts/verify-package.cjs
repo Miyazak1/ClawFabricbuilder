@@ -397,6 +397,10 @@ const permissionChannels = [
 const providerContextDisclosureApprovalChannels = [
   'clawfabric-builder:provider-context-disclosure:approve-current',
 ];
+const checkRunChannels = [
+  'clawfabric-builder:check-run:read-current-draft-available',
+  'clawfabric-builder:check-run:approve-current-draft-check',
+];
 const livePreviewChannels = [
   'clawfabric-builder:live-preview:request-current-draft',
   'clawfabric-builder:live-preview:reload-current',
@@ -417,6 +421,7 @@ const preloadChannels = [
   ...planReviewChannels,
   ...permissionChannels,
   ...providerContextDisclosureApprovalChannels,
+  ...checkRunChannels,
   ...livePreviewChannels,
   ...windowControlsChannels,
 ];
@@ -494,6 +499,7 @@ exactObjectKeys(preloadRoot, [
   'planReview',
   'permissions',
   'providerContextDisclosureApproval',
+  'checkRun',
   'livePreview',
   'windowControls',
 ]);
@@ -507,6 +513,7 @@ const permissionsProperty = preloadRoot.properties.find((property) => property.n
 const providerContextDisclosureApprovalProperty = preloadRoot.properties.find(
   (property) => property.name.text === 'providerContextDisclosureApproval',
 );
+const checkRunProperty = preloadRoot.properties.find((property) => property.name.text === 'checkRun');
 const livePreviewProperty = preloadRoot.properties.find((property) => property.name.text === 'livePreview');
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
@@ -517,10 +524,11 @@ assert.equal(ts.isPropertyAssignment(taskStreamProperty), true);
 assert.equal(ts.isPropertyAssignment(planReviewProperty), true);
 assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(providerContextDisclosureApprovalProperty), true);
+assert.equal(ts.isPropertyAssignment(checkRunProperty), true);
 assert.equal(ts.isPropertyAssignment(livePreviewProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v23');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v24');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -530,6 +538,7 @@ const permissionsBridge = frozenObjectLiteral(permissionsProperty.initializer);
 const providerContextDisclosureApprovalBridge = frozenObjectLiteral(
   providerContextDisclosureApprovalProperty.initializer,
 );
+const checkRunBridge = frozenObjectLiteral(checkRunProperty.initializer);
 const livePreviewBridge = frozenObjectLiteral(livePreviewProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, [
@@ -571,6 +580,10 @@ exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(providerContextDisclosureApprovalBridge, ['approveCurrent']);
+exactObjectKeys(checkRunBridge, [
+  'readCurrentDraftAvailableChecks',
+  'approveAndRunCurrentDraftCheck',
+]);
 exactObjectKeys(livePreviewBridge, [
   'requestCurrentDraftPreview',
   'reloadCurrentPreview',
@@ -587,7 +600,7 @@ assert.deepEqual(rendererPropertyAccesses, [
   ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 11 }, () => 'invoke'),
+  ...Array.from({ length: 13 }, () => 'invoke'),
 ]);
 assert.deepEqual(forbiddenRendererReferences, []);
 assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
@@ -664,6 +677,14 @@ assert.equal(
   providerContextDisclosureApprovalChannels[0],
 );
 assert.equal(
+  preloadConstants.get('READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL'),
+  checkRunChannels[0],
+);
+assert.equal(
+  preloadConstants.get('APPROVE_CURRENT_DRAFT_CHECK_CHANNEL'),
+  checkRunChannels[1],
+);
+assert.equal(
   preloadConstants.get('REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL'),
   livePreviewChannels[0],
 );
@@ -732,6 +753,18 @@ exactInvokeMethod(
   providerContextDisclosureApprovalBridge,
   'approveCurrent',
   'APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
+  'readCurrentDraftAvailableChecks',
+  'READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
+  'approveAndRunCurrentDraftCheck',
+  'APPROVE_CURRENT_DRAFT_CHECK_CHANNEL',
   ['request'],
 );
 exactInvokeMethod(
@@ -1232,12 +1265,15 @@ assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /providerContextDisclosureApproval/u);
 assert.match(packagedPreload, /clawfabric-builder:provider-context-disclosure:approve-current/u);
+assert.match(packagedPreload, /checkRun/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:read-current-draft-available/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:approve-current-draft-check/u);
 assert.match(packagedPreload, /livePreview/u);
 assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-draft/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 43);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 45);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

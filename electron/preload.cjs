@@ -46,6 +46,10 @@ const REVIEW_PLAN_CHANNEL = 'clawfabric-builder:plan-review:review';
 const EVALUATE_PERMISSION_CHANNEL = 'clawfabric-builder:permissions:evaluate';
 const APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL =
   'clawfabric-builder:provider-context-disclosure:approve-current';
+const READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL =
+  'clawfabric-builder:check-run:read-current-draft-available';
+const APPROVE_CURRENT_DRAFT_CHECK_CHANNEL =
+  'clawfabric-builder:check-run:approve-current-draft-check';
 const REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL =
   'clawfabric-builder:live-preview:request-current-draft';
 const RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL =
@@ -60,7 +64,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v23',
+  bridgeVersion: 'builder-preload.v24',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -204,6 +208,14 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
   providerContextDisclosureApproval: Object.freeze({
     approveCurrent(request) {
       return ipcRenderer.invoke(APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL, request);
+    },
+  }),
+  checkRun: Object.freeze({
+    readCurrentDraftAvailableChecks(request) {
+      return ipcRenderer.invoke(READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL, request);
+    },
+    approveAndRunCurrentDraftCheck(request) {
+      return ipcRenderer.invoke(APPROVE_CURRENT_DRAFT_CHECK_CHANNEL, request);
     },
   }),
   livePreview: Object.freeze({

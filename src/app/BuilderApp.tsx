@@ -24,6 +24,9 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderCheckRunApproveRequest,
+  BuilderCheckRunPort,
+  BuilderCheckRunReadRequest,
   BuilderCurrentProjectWriteApprovalStatus,
   BuilderGenerationOutputEvent,
   BuilderGenerationStartedEvent,
@@ -38,6 +41,10 @@ import type {
 } from '../features/builder/application/builderPorts';
 import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
+import {
+  BuilderDesktopCheckRunPortError,
+  createBuilderDesktopCheckRunPort,
+} from '../features/builder/infrastructure/builderDesktopCheckRunPort';
 import {
   BuilderDesktopProjectWorkspacePortError,
   createBuilderDesktopProjectWorkspacePort,
@@ -142,6 +149,7 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   permissions: null,
   planReview: null,
   providerContextDisclosureApproval: null,
+  checkRun: null,
   livePreview: null,
   taskStream: null,
   windowControls: null,
@@ -384,6 +392,17 @@ const UNAVAILABLE_LIVE_PREVIEW: BuilderLivePreviewPort = Object.freeze({
   },
 });
 
+const UNAVAILABLE_CHECK_RUN: BuilderCheckRunPort = Object.freeze({
+  readCurrentDraftAvailableChecks(request: BuilderCheckRunReadRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
+  approveAndRunCurrentDraftCheck(request: BuilderCheckRunApproveRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
+});
+
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
   try {
     return value === undefined
@@ -400,6 +419,7 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   let taskStream = UNAVAILABLE_TASK_STREAM;
   let planReview = UNAVAILABLE_PLAN_REVIEW;
   let livePreview = UNAVAILABLE_LIVE_PREVIEW;
+  let checkRun = UNAVAILABLE_CHECK_RUN;
   try {
     workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
@@ -425,7 +445,12 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   } catch {
     livePreview = UNAVAILABLE_LIVE_PREVIEW;
   }
-  return Object.freeze({ generator, livePreview, planReview, taskStream, workspace });
+  try {
+    checkRun = createBuilderDesktopCheckRunPort(root.checkRun);
+  } catch {
+    checkRun = UNAVAILABLE_CHECK_RUN;
+  }
+  return Object.freeze({ checkRun, generator, livePreview, planReview, taskStream, workspace });
 }
 
 function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): string | null {

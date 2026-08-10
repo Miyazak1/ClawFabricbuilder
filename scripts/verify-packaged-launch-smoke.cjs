@@ -226,6 +226,7 @@ async function assertBridgeShape(page) {
       const root = globalThis.clawfabricBuilder;
       return {
         bridgeVersion: root?.bridgeVersion ?? null,
+        checkRun: typeof root?.checkRun?.readCurrentDraftAvailableChecks,
         codeGenerator: typeof root?.codeGenerator?.answer,
         projectWorkspace: typeof root?.projectWorkspace?.listCurrent,
         providerSettings: typeof root?.providerSettings?.status,
@@ -240,6 +241,7 @@ async function assertBridgeShape(page) {
     !isPlainObject(bridge)
     || typeof bridge.bridgeVersion !== 'string'
     || !/^builder-preload\.v\d+$/u.test(bridge.bridgeVersion)
+    || bridge.checkRun !== 'function'
     || bridge.codeGenerator !== 'function'
     || bridge.projectWorkspace !== 'function'
     || bridge.providerSettings !== 'function'

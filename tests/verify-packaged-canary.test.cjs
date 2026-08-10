@@ -1555,8 +1555,9 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v23',
+      bridge_version: 'builder-preload.v24',
       legacy_namespaces_absent: true,
+      check_run_namespace: 'current_draft_identity_methods_only',
       live_preview_namespace: 'current_preview_control_methods_only',
       plan_review_namespace: 'review_method_only',
       provider_context_disclosure_approval_namespace: 'approve_current_method_only',
@@ -1865,7 +1866,7 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v23',
+    bridgeVersion: 'builder-preload.v24',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -2018,6 +2019,10 @@ function installBridge(page) {
     },
     providerContextDisclosureApproval: {
       async approveCurrent() { throw new Error('must not approve provider context through bridge'); },
+    },
+    checkRun: {
+      async readCurrentDraftAvailableChecks() { throw new Error('must not read checks through bridge'); },
+      async approveAndRunCurrentDraftCheck() { throw new Error('must not run checks through bridge'); },
     },
     livePreview: {
       async requestCurrentDraftPreview() { throw new Error('must not start live preview through bridge'); },
@@ -2607,7 +2612,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v23');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v24');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -4718,6 +4723,13 @@ test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
     (error) => error.code === 'canary_evidence_failed',
   );
 
+  const forgedCheckRun = bridgeEvidence(projectId);
+  forgedCheckRun.bridge_contract.check_run_namespace = 'script_and_output_methods';
+  assert.throws(
+    () => assertReadEvidence(forgedCheckRun),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
   const forgedLivePreview = bridgeEvidence(projectId);
   forgedLivePreview.bridge_contract.live_preview_namespace = 'source_tree_and_control_methods';
   assert.throws(
@@ -6230,7 +6242,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v23['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v24['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);
@@ -6238,6 +6250,11 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /approvePlanSourceRead/u);
   assert.match(preloadSource, /providerContextDisclosureApproval/u);
   assert.match(preloadSource, /provider-context-disclosure:approve-current/u);
+  assert.match(preloadSource, /checkRun:\s*Object\.freeze/u);
+  assert.match(preloadSource, /readCurrentDraftAvailableChecks\(request\)/u);
+  assert.match(preloadSource, /approveAndRunCurrentDraftCheck\(request\)/u);
+  assert.match(preloadSource, /check-run:read-current-draft-available/u);
+  assert.match(preloadSource, /check-run:approve-current-draft-check/u);
   assert.match(preloadSource, /livePreview:\s*Object\.freeze/u);
   assert.match(preloadSource, /requestCurrentDraftPreview\(request\)/u);
   assert.match(preloadSource, /live-preview:request-current-draft/u);
@@ -6259,6 +6276,8 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /planReview:\s*Object\.freeze/u);
   assert.match(source, /plan_review_namespace/u);
   assert.match(source, /review_method_only/u);
+  assert.match(source, /check_run_namespace/u);
+  assert.match(source, /current_draft_identity_methods_only/u);
   assert.match(source, /live_preview_namespace/u);
   assert.match(source, /current_preview_control_methods_only/u);
   assert.doesNotMatch(preloadSource, /projectRevisions|projectCatalog/u);
