@@ -44,10 +44,22 @@ const READ_STATUS_KEYS = Object.freeze([
   'conversation_id',
   'candidate_id',
 ]);
+const VERIFY_CANDIDATE_KEYS = Object.freeze([
+  'project_id',
+  'conversation_id',
+  'task_id',
+  'run_id',
+  'candidate_id',
+  'candidate_digest',
+  'resulting_tree_digest',
+]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
+const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
+const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_CHECKPOINT_SEQUENCE = 1_000_000;
 
 class BuilderAutomaticDraftCheckpointServiceError extends Error {
@@ -304,6 +316,58 @@ function createBuilderAutomaticDraftCheckpointService(rawOptions) {
           draft_checkpoint_status_projection: projectBuilderDraftCheckpointStatus({
             latest_draft_checkpoint_read_result: latest,
           }),
+        });
+      } catch (error) {
+        if (error instanceof BuilderAutomaticDraftCheckpointServiceError) throw error;
+        fail();
+      }
+    },
+
+    verify_current_candidate_checkpoint(rawRequest) {
+      try {
+        exactObject(rawRequest, VERIFY_CANDIDATE_KEYS);
+        const projectId = safePattern(valueAt(rawRequest, 'project_id'), PROJECT_ID_PATTERN);
+        const conversationId = safePattern(
+          valueAt(rawRequest, 'conversation_id'),
+          CONVERSATION_ID_PATTERN,
+        );
+        const taskId = safePattern(valueAt(rawRequest, 'task_id'), TASK_ID_PATTERN);
+        const runId = safePattern(valueAt(rawRequest, 'run_id'), RUN_ID_PATTERN);
+        const candidateId = safePattern(valueAt(rawRequest, 'candidate_id'), CANDIDATE_ID_PATTERN);
+        const candidateDigest = safePattern(valueAt(rawRequest, 'candidate_digest'), DIGEST_PATTERN);
+        const resultingTreeDigest = safePattern(
+          valueAt(rawRequest, 'resulting_tree_digest'),
+          DIGEST_PATTERN,
+        );
+        const address = currentAddress(readCurrentAddress, addressStore, projectId, conversationId);
+        const latest = readLatest(projectId, address.task_address.task_address_id);
+        if (latest.status !== 'ready') fail();
+        const checkpoint = latest.draft_checkpoint.draft_checkpoint;
+        if (
+          checkpoint.project_id !== projectId
+          || checkpoint.conversation_id !== conversationId
+          || checkpoint.task_id !== taskId
+          || checkpoint.run_id !== runId
+          || checkpoint.task_address_id !== address.task_address.task_address_id
+          || checkpoint.checkpoint_state !== 'active'
+          || checkpoint.restore_eligibility !== 'candidate_ref_verified'
+          || checkpoint.candidate_ref.candidate_id !== candidateId
+          || checkpoint.candidate_ref.candidate_digest !== candidateDigest
+          || checkpoint.candidate_ref.resulting_tree_digest !== resultingTreeDigest
+        ) fail();
+        return freezeDeep({
+          result_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_RESULT_VERSION,
+          service_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
+          operation: 'current_candidate_checkpoint_verified',
+          status: 'verified',
+          checkpoint_ref: {
+            checkpoint_id: checkpoint.checkpoint_id,
+            checkpoint_sequence: checkpoint.checkpoint_sequence,
+            candidate_id: checkpoint.candidate_ref.candidate_id,
+            candidate_digest: checkpoint.candidate_ref.candidate_digest,
+            resulting_tree_digest: checkpoint.candidate_ref.resulting_tree_digest,
+          },
+          verification_admission: 'main_owned_latest_checkpoint_verified',
         });
       } catch (error) {
         if (error instanceof BuilderAutomaticDraftCheckpointServiceError) throw error;

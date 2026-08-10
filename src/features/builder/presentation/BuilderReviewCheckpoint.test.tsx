@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
+import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,6 +45,45 @@ function changes(overrides: Partial<BuilderSourceTreeChanges> = {}): BuilderSour
   }) as BuilderSourceTreeChanges;
 }
 
+function reviewState(status: 'ready' | 'blocked'): BuilderReviewStateProjectionWire {
+  const ready = status === 'ready';
+  return Object.freeze({
+    projection_version: 'builder-review-state-projection.v1',
+    draft_id: `builder-generation-draft:${'5'.repeat(64)}`,
+    status,
+    label: ready ? 'Ready to review' : 'Review not ready',
+    summary: ready
+      ? 'A recoverable draft is ready to inspect and save.'
+      : 'Waiting for a verified draft checkpoint before saving.',
+    checkpoint_status: ready ? 'ready' : 'missing',
+    preview_status: 'not_recorded',
+    check_status: 'not_run',
+    changed_file_count: ready ? 3 : null,
+    can_save: ready,
+    can_discard: true,
+    blocking_reasons: ready ? Object.freeze([]) : Object.freeze(['checkpoint_missing']),
+    authority: Object.freeze({
+      projection_authority: 'main_owned_review_state_projection_v1',
+      candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
+      checkpoint_evidence: ready
+        ? 'verified_latest_candidate_checkpoint'
+        : 'missing_or_unverified',
+      renderer_authority: 'not_present',
+      ipc_authority: 'projection_only',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      save_authority: false,
+      publication: false,
+    }),
+  }) as BuilderReviewStateProjectionWire;
+}
+
 describe('BuilderReviewCheckpoint', () => {
   it('renders the draft review actions without changing public selectors', () => {
     const onOpenChanges = vi.fn();
@@ -64,6 +104,7 @@ describe('BuilderReviewCheckpoint', () => {
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}
+        reviewState={reviewState('ready')}
         saveLabel="Save version"
       />,
     );
@@ -77,6 +118,8 @@ describe('BuilderReviewCheckpoint', () => {
       .toBe('3 file changes: 2 added, 1 changed.');
     expect(container.querySelector('[data-builder-review-note="true"]')?.textContent)
       .toContain('Preview unavailable.');
+    expect(container.querySelector('[data-builder-review-state="ready"]')?.textContent)
+      .toContain('recoverable draft');
 
     click(container, '[data-builder-review-open-preview="true"]');
     click(container, '[data-builder-review-open-changes="true"]');
@@ -103,6 +146,7 @@ describe('BuilderReviewCheckpoint', () => {
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}
+        reviewState={reviewState('blocked')}
         saveLabel="Saving..."
       />,
     );
@@ -111,6 +155,8 @@ describe('BuilderReviewCheckpoint', () => {
       .toContain('Discarding...');
     expect(container.querySelector('[data-builder-save-version="true"]')?.textContent)
       .toContain('Saving...');
+    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
+      .toContain('verified draft checkpoint');
     click(container, '[data-builder-discard-draft="true"]');
     click(container, '[data-builder-save-version="true"]');
     expect(onRejectDraft).not.toHaveBeenCalled();

@@ -860,6 +860,53 @@ function draftCheckpointStatusProjection(overrides = {}) {
   };
 }
 
+function reviewStateProjection(overrides = {}) {
+  const ready = overrides.status !== 'blocked';
+  const base = {
+    projection_version: 'builder-review-state-projection.v1',
+    draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    status: ready ? 'ready' : 'blocked',
+    label: ready ? 'Ready to review' : 'Review not ready',
+    summary: ready
+      ? 'A recoverable draft is ready to inspect and save.'
+      : 'Waiting for a verified draft checkpoint before saving.',
+    checkpoint_status: ready ? 'ready' : 'missing',
+    preview_status: 'not_recorded',
+    check_status: 'not_run',
+    changed_file_count: ready ? 3 : null,
+    can_save: ready,
+    can_discard: true,
+    blocking_reasons: ready ? [] : ['checkpoint_missing'],
+    authority: {
+      projection_authority: 'main_owned_review_state_projection_v1',
+      candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
+      checkpoint_evidence: ready
+        ? 'verified_latest_candidate_checkpoint'
+        : 'missing_or_unverified',
+      renderer_authority: 'not_present',
+      ipc_authority: 'projection_only',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      save_authority: false,
+      publication: false,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function assertProjectionError(error) {
   assert.equal(error instanceof BuilderTaskStreamProjectionError, true);
   assert.equal(error.code, 'builder_task_stream_unavailable');
@@ -1687,6 +1734,23 @@ test('carries optional renderer-safe Draft Checkpoint status without exposing ch
   );
 });
 
+test('carries optional main-owned Review State without granting save authority', () => {
+  const stream = projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    review_state_projection: reviewStateProjection(),
+  });
+
+  assert.equal(stream.review_state_projection.status, 'ready');
+  assert.equal(stream.review_state_projection.can_save, true);
+  assert.equal(stream.review_state_projection.can_discard, true);
+  assert.equal(stream.review_state_projection.checkpoint_status, 'ready');
+  assert.equal(stream.review_state_projection.authority.save_authority, false);
+  assert.doesNotMatch(
+    JSON.stringify(stream.review_state_projection),
+    /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|builder-conversation:|sha256:|candidate_digest|commit_oid|tree_oid|provider_(?:secret|config|envelope)|credential|source_tree/iu,
+  );
+});
+
 test('rejects forged optional context status projection before exposing it', () => {
   assert.throws(() => projectBuilderTaskStream({
     ...input(candidateEvents()),
@@ -1737,6 +1801,27 @@ test('rejects forged optional Draft Checkpoint status projection before exposing
       authority: {
         save_authority: true,
       },
+    }),
+  }), assertProjectionError);
+});
+
+test('rejects forged optional Review State before exposing it', () => {
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    review_state_projection: reviewStateProjection({ can_save: false }),
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    review_state_projection: reviewStateProjection({
+      authority: { save_authority: true },
+    }),
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    review_state_projection: reviewStateProjection({
+      draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
     }),
   }), assertProjectionError);
 });

@@ -443,6 +443,25 @@ function workspaceReadResult(projectId, inspected) {
   };
 }
 
+function checkpointVerificationResult(request, overrides = {}) {
+  return {
+    result_version: 'builder-automatic-draft-checkpoint-result.v1',
+    service_version: 'builder-automatic-draft-checkpoint-service.v1',
+    operation: 'current_candidate_checkpoint_verified',
+    status: 'verified',
+    checkpoint_ref: {
+      checkpoint_id: `builder-draft-checkpoint:${'a'.repeat(64)}`,
+      checkpoint_sequence: 1,
+      candidate_id: request.candidate_id,
+      candidate_digest: request.candidate_digest,
+      resulting_tree_digest: request.resulting_tree_digest,
+      ...(overrides.checkpoint_ref ?? {}),
+    },
+    verification_admission: 'main_owned_latest_checkpoint_verified',
+    ...overrides,
+  };
+}
+
 function createSaveAuthority(options) {
   const gitAuthority = {
     ...options.gitAuthority,
@@ -459,10 +478,16 @@ function createSaveAuthority(options) {
       });
     },
   };
+  const automaticDraftCheckpointService = options.automaticDraftCheckpointService ?? {
+    verify_current_candidate_checkpoint(request) {
+      return checkpointVerificationResult(request);
+    },
+  };
   return createBuilderProjectSaveAuthority({
     ...options,
     gitAuthority,
     workspaceReadAuthority,
+    automaticDraftCheckpointService,
   });
 }
 
@@ -655,6 +680,12 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
     projectReadAuthority,
     workspaceReadAuthority,
     conversationService: saveConversationService,
+    automaticDraftCheckpointService: {
+      verify_current_candidate_checkpoint(request) {
+        stages.push('checkpoint_verify');
+        return checkpointVerificationResult(request);
+      },
+    },
     createUuid: uuidFactory(),
     nowMs: () => acceptanceTime,
   });
@@ -671,8 +702,9 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   assert.equal(saved.save_evidence.projection_authority, 'git_main_ref_and_materialized_worktree');
   assert.equal(saved.save_evidence.projection_main_ref, 'updated');
   assert.equal(saved.save_evidence.worktree_projection, 'materialized');
-  assert.deepEqual(stages.slice(0, 7), [
+  assert.deepEqual(stages.slice(0, 8), [
     'git_verify',
+    'checkpoint_verify',
     'git_workspace_base',
     'workspace_read',
     'metadata_identity',
@@ -844,6 +876,52 @@ test('coalesces concurrent saves for one draft and releases it exactly once', as
   assert.equal(recordCalls, 1);
   assert.equal(conversationService.accepted.length, 1);
   assert.equal(generationDrafts.released.length, 1);
+});
+
+test('fails closed before revision admission when the current candidate checkpoint is unavailable', async () => {
+  const value = candidate({
+    index: 1,
+    operations: [{ operation: 'upsert', path: 'src/app.js', content: 'export const safe = true;\n' }],
+  });
+  const draft = pending(value);
+  const generationDrafts = draftsStore(draft);
+  const gitReceipt = candidateGitReceipts.get(value);
+  const conversationService = conversationServiceFor(draft);
+  let metadataWrites = 0;
+  const saveAuthority = createSaveAuthority({
+    generationDrafts,
+    conversationService,
+    gitAuthority: {
+      async verify_candidate_receipt() {
+        return createBuilderGitCandidateVerificationReceipt(gitReceipt);
+      },
+    },
+    automaticDraftCheckpointService: {
+      verify_current_candidate_checkpoint() {
+        throw new Error('private-checkpoint-marker');
+      },
+    },
+    currentProjection: {
+      async project_current() { assert.fail('projection must not run'); },
+    },
+    metadataAuthority: {
+      async load_project_identity() { assert.fail('identity must not load'); },
+      async record_project_revision_receipt() { metadataWrites += 1; },
+    },
+    projectReadAuthority: {
+      async load_current() { assert.fail('current revision must not load'); },
+    },
+    createUuid: uuidFactory(),
+    nowMs: () => 25_000,
+  });
+
+  await assert.rejects(
+    saveAuthority.save({ draft_id: draft.draft_id }),
+    expectSaveError('builder_project_save_unavailable', ['private-checkpoint-marker']),
+  );
+  assert.equal(metadataWrites, 0);
+  assert.equal(conversationService.accepted.length, 0);
+  assert.equal(generationDrafts.released.length, 0);
 });
 
 test('keeps pending draft and stable attempt identity after metadata failure following Git replay', async () => {

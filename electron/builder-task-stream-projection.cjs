@@ -17,6 +17,9 @@ const {
 const {
   sanitizeBuilderDraftCheckpointStatusProjection,
 } = require('./builder-draft-checkpoint-status-projection.cjs');
+const {
+  sanitizeBuilderReviewStateProjection,
+} = require('./builder-review-state-projection.cjs');
 
 const BUILDER_TASK_STREAM_VERSION = 'builder-task-stream-read-result.v1';
 const MAX_PUBLIC_ITEMS = 128;
@@ -183,6 +186,18 @@ function latestProgressStagesByRun(events) {
     stages.set(event.payload.run_id, event.payload.stage);
   }
   return stages;
+}
+
+function latestUnreviewedDraftId(replay) {
+  for (let turnIndex = replay.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = replay.turns[turnIndex];
+    for (let runIndex = turn.runs.length - 1; runIndex >= 0; runIndex -= 1) {
+      const run = turn.runs[runIndex];
+      if (run.candidate_result === null) continue;
+      return run.candidate_review === null ? run.candidate_result.draft_id : null;
+    }
+  }
+  return null;
 }
 
 function failurePhase(payload, progressStagesByRun) {
@@ -499,11 +514,19 @@ function safeOptionalDraftCheckpointStatusProjection(rawInput) {
   return sanitizeBuilderDraftCheckpointStatusProjection(value);
 }
 
+function safeOptionalReviewStateProjection(rawInput) {
+  if (!Object.hasOwn(rawInput, 'review_state_projection')) return undefined;
+  const value = valueAt(rawInput, 'review_state_projection');
+  if (value === null) return null;
+  return sanitizeBuilderReviewStateProjection(value);
+}
+
 function withOptionalStatusProjections(
   result,
   contextStatusProjection,
   providerContextDisclosureStatusProjection,
   draftCheckpointStatusProjection,
+  reviewStateProjection,
 ) {
   return {
     ...result,
@@ -519,6 +542,9 @@ function withOptionalStatusProjections(
     ...(draftCheckpointStatusProjection === undefined
       ? {}
       : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
+    ...(reviewStateProjection === undefined
+      ? {}
+      : { review_state_projection: reviewStateProjection }),
   };
 }
 
@@ -528,20 +554,24 @@ function projectBuilderTaskStream(rawInput) {
       'context_status_projection',
       'provider_context_disclosure_status_projection',
       'draft_checkpoint_status_projection',
+      'review_state_projection',
     ]);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
     const contextStatusProjection = safeOptionalContextStatusProjection(rawInput);
     const providerContextDisclosureStatusProjection =
       safeOptionalProviderContextDisclosureStatusProjection(rawInput);
     const draftCheckpointStatusProjection = safeOptionalDraftCheckpointStatusProjection(rawInput);
+    const reviewStateProjection = safeOptionalReviewStateProjection(rawInput);
     const rawConversation = valueAt(rawInput, 'conversation');
     if (rawConversation === null) {
+      if (reviewStateProjection !== undefined && reviewStateProjection !== null) fail();
       return boundResult(withOptionalStatusProjections({
         stream_version: BUILDER_TASK_STREAM_VERSION,
         project_id: projectId,
         conversation: null,
         authority: authority(),
-      }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection));
+      }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
+      reviewStateProjection));
     }
 
     exactObject(rawConversation, ['conversation_id', 'created_at_ms', 'events']);
@@ -555,6 +585,11 @@ function projectBuilderTaskStream(rawInput) {
     if (
       replay.project_id !== projectId
       || replay.conversation_id !== conversationId
+    ) fail();
+    if (
+      reviewStateProjection !== undefined
+      && reviewStateProjection !== null
+      && reviewStateProjection.draft_id !== latestUnreviewedDraftId(replay)
     ) fail();
     const visibleItems = [];
     const firstVisibleIndex = Math.max(0, events.length - MAX_PUBLIC_ITEMS);
@@ -579,7 +614,8 @@ function projectBuilderTaskStream(rawInput) {
         items: visibleItems,
       },
       authority: authority(),
-    }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection));
+    }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
+    reviewStateProjection));
   } catch (error) {
     if (error instanceof BuilderTaskStreamProjectionError) throw error;
     fail();

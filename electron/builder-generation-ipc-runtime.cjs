@@ -1403,6 +1403,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       projectReadAuthority: projectMainAuthority.project_read_authority,
       workspaceReadAuthority: saveWorkspaceReadAuthority,
       conversationService,
+      automaticDraftCheckpointService,
       createUuid: randomUUID,
       nowMs: () => Date.now(),
     });

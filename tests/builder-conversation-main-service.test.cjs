@@ -3636,6 +3636,10 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     const ready = item.service.read_stream({ project_id: PROJECT_ID });
     assert.equal(ready.draft_checkpoint_status_projection.label, 'Checkpoint saved');
     assert.equal(ready.draft_checkpoint_status_projection.changed_file_count, 2);
+    assert.equal(ready.review_state_projection.status, 'ready');
+    assert.equal(ready.review_state_projection.can_save, true);
+    assert.equal(ready.review_state_projection.can_discard, true);
+    assert.equal(ready.review_state_projection.authority.save_authority, false);
     assert.deepEqual(requests, [{
       project_id: PROJECT_ID,
       conversation_id: context.conversation.conversation_id,
@@ -3645,6 +3649,7 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     item.service.reject_candidate({ draft_id: candidate.draft_id });
     const rejected = item.service.read_stream({ project_id: PROJECT_ID });
     assert.equal(Object.hasOwn(rejected, 'draft_checkpoint_status_projection'), false);
+    assert.equal(Object.hasOwn(rejected, 'review_state_projection'), false);
     assert.equal(requests.length, 1);
   } finally {
     item.close();

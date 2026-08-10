@@ -20,6 +20,7 @@ const OPTION_KEYS = Object.freeze([
   'projectReadAuthority',
   'workspaceReadAuthority',
   'conversationService',
+  'automaticDraftCheckpointService',
   'createUuid',
   'nowMs',
 ]);
@@ -229,6 +230,7 @@ function sanitizeOptions(value) {
   const projectReadAuthority = valueAt(value, 'projectReadAuthority');
   const workspaceReadAuthority = valueAt(value, 'workspaceReadAuthority');
   const conversationService = valueAt(value, 'conversationService');
+  const automaticDraftCheckpointService = valueAt(value, 'automaticDraftCheckpointService');
   const createUuid = valueAt(value, 'createUuid');
   const nowMs = valueAt(value, 'nowMs');
   if (
@@ -256,9 +258,51 @@ function sanitizeOptions(value) {
     conversationService,
     verifyConversationCandidate: ownMethod(conversationService, 'verify_candidate'),
     acceptConversationCandidate: ownMethod(conversationService, 'accept_candidate'),
+    automaticDraftCheckpointService,
+    verifyCurrentCandidateCheckpoint: ownMethod(
+      automaticDraftCheckpointService,
+      'verify_current_candidate_checkpoint',
+    ),
     createUuid,
     nowMs,
   });
+}
+
+function sanitizeCheckpointVerification(value, candidate) {
+  exactObject(value, [
+    'result_version',
+    'service_version',
+    'operation',
+    'status',
+    'checkpoint_ref',
+    'verification_admission',
+  ]);
+  const checkpointRef = valueAt(value, 'checkpoint_ref');
+  exactObject(checkpointRef, [
+    'checkpoint_id',
+    'checkpoint_sequence',
+    'candidate_id',
+    'candidate_digest',
+    'resulting_tree_digest',
+  ]);
+  const checkpointId = valueAt(checkpointRef, 'checkpoint_id');
+  const checkpointSequence = valueAt(checkpointRef, 'checkpoint_sequence');
+  if (
+    valueAt(value, 'result_version') !== 'builder-automatic-draft-checkpoint-result.v1'
+    || valueAt(value, 'service_version') !== 'builder-automatic-draft-checkpoint-service.v1'
+    || valueAt(value, 'operation') !== 'current_candidate_checkpoint_verified'
+    || valueAt(value, 'status') !== 'verified'
+    || valueAt(value, 'verification_admission') !== 'main_owned_latest_checkpoint_verified'
+    || typeof checkpointId !== 'string'
+    || !/^builder-draft-checkpoint:[0-9a-f]{64}$/u.test(checkpointId)
+    || !Number.isSafeInteger(checkpointSequence)
+    || checkpointSequence < 1
+    || checkpointSequence > 1_000_000
+    || valueAt(checkpointRef, 'candidate_id') !== candidate.candidate_id
+    || valueAt(checkpointRef, 'candidate_digest') !== candidate.candidate_digest
+    || valueAt(checkpointRef, 'resulting_tree_digest') !== candidate.resulting_tree_digest
+  ) fail('builder_project_save_invalid');
+  return freezeDeep({ checkpoint_id: checkpointId, checkpoint_sequence: checkpointSequence });
 }
 
 function sanitizeCandidateWorkspaceBase(value, candidate) {
@@ -749,6 +793,22 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         || gitReceipt.resulting_tree_digest !== candidate.resulting_tree_digest
         || gitReceipt.expected_base_oid !== expectedBaseOid
       ) fail('builder_project_save_invalid');
+      sanitizeCheckpointVerification(
+        Reflect.apply(
+          options.verifyCurrentCandidateCheckpoint,
+          options.automaticDraftCheckpointService,
+          [{
+            project_id: candidate.project_id,
+            conversation_id: candidate.conversation_id,
+            task_id: candidate.task_id,
+            run_id: candidate.run_id,
+            candidate_id: candidate.candidate_id,
+            candidate_digest: candidate.candidate_digest,
+            resulting_tree_digest: candidate.resulting_tree_digest,
+          }],
+        ),
+        candidate,
+      );
       const workspaceBase = sanitizeCandidateWorkspaceBase(
         await Reflect.apply(
           options.readCandidateWorkspaceBase,

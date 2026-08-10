@@ -428,9 +428,63 @@ function taskStreamPort(read: Parameters<typeof createBuilderConversationControl
   };
 }
 
+function readyReviewStateProjection(changedFileCount = 2) {
+  return {
+    projection_version: 'builder-review-state-projection.v1',
+    draft_id: DRAFT_ID,
+    status: 'ready',
+    label: 'Ready to review',
+    summary: 'A recoverable draft is ready to inspect and save.',
+    checkpoint_status: 'ready',
+    preview_status: 'not_recorded',
+    check_status: 'not_run',
+    changed_file_count: changedFileCount,
+    can_save: true,
+    can_discard: true,
+    blocking_reasons: [],
+    authority: {
+      projection_authority: 'main_owned_review_state_projection_v1',
+      candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
+      checkpoint_evidence: 'verified_latest_candidate_checkpoint',
+      renderer_authority: 'not_present',
+      ipc_authority: 'projection_only',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      save_authority: false,
+      publication: false,
+    },
+  } as const;
+}
+
+function blockedReviewStateProjection() {
+  return {
+    ...readyReviewStateProjection(),
+    status: 'blocked',
+    label: 'Review not ready',
+    summary: 'Waiting for a verified draft checkpoint before saving.',
+    checkpoint_status: 'missing',
+    changed_file_count: null,
+    can_save: false,
+    blocking_reasons: ['checkpoint_missing'],
+    authority: {
+      ...readyReviewStateProjection().authority,
+      checkpoint_evidence: 'missing_or_unverified',
+    },
+  } as const;
+}
+
 async function candidateActivity(rejected = false) {
   const controller = createBuilderConversationController(taskStreamPort(
-    async () => (rejected ? createRejectedTaskStreamWire() : createTaskStreamWire()),
+    async () => (rejected ? createRejectedTaskStreamWire() : {
+      ...createTaskStreamWire(),
+      review_state_projection: readyReviewStateProjection(),
+    }),
   ));
   return controller.load(PROJECT_ID);
 }
@@ -469,6 +523,15 @@ async function candidateCheckpointActivity() {
         publication: false,
       },
     },
+    review_state_projection: readyReviewStateProjection(),
+  })));
+  return controller.load(PROJECT_ID);
+}
+
+async function candidateBlockedReviewActivity() {
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...createTaskStreamWire(),
+    review_state_projection: blockedReviewStateProjection(),
   })));
   return controller.load(PROJECT_ID);
 }
@@ -765,6 +828,7 @@ async function candidateProgressActivity() {
   ] as const;
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
     ...wire,
+    review_state_projection: readyReviewStateProjection(),
     conversation: {
       ...wire.conversation,
       head_sequence: 8,
@@ -2698,6 +2762,34 @@ describe('BuilderPage v2', () => {
     expect(checkpoint?.textContent).toContain('2 files');
     expect(checkpoint?.getAttribute('title'))
       .toBe('You can compare, restore, continue, or save a version.');
+  });
+
+  it('blocks Save but keeps Discard available when Review State has no verified checkpoint', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateBlockedReviewActivity();
+    const onSave = vi.fn();
+    const onRejectDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
+        snapshot={draftReady}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
+      .toContain('verified draft checkpoint');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-discard-draft="true"]')?.disabled)
+      .toBe(false);
+    click(container, '[data-builder-save-version="true"]');
+    click(container, '[data-builder-discard-draft="true"]');
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onRejectDraft).toHaveBeenCalledOnce();
   });
 
   it('uses the draft composer review shortcut without sending or saving', async () => {

@@ -2,6 +2,7 @@ import type { Ref } from 'react';
 import { Eye, GitCompareArrows, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
+import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourceTreePreview';
 import { builderChangesSummary, builderReviewPreviewStatus } from './builderReviewText';
 
@@ -16,6 +17,7 @@ export type BuilderReviewCheckpointProps = Readonly<{
   onRejectDraft?: () => void;
   onSave?: () => void;
   preview: BuilderSourceTreePreviewProjection | null;
+  reviewState: BuilderReviewStateProjectionWire | null;
   saveLabel: string;
   checkpointRef?: Ref<HTMLElement>;
 }>;
@@ -31,6 +33,7 @@ export function BuilderReviewCheckpoint({
   onRejectDraft,
   onSave,
   preview,
+  reviewState,
   saveLabel,
   checkpointRef,
 }: BuilderReviewCheckpointProps) {
@@ -54,6 +57,12 @@ export function BuilderReviewCheckpoint({
           </p>
           <p className="cf-builder-review-note" data-builder-review-note="true">
             {builderReviewPreviewStatus(preview, hasContent)}
+          </p>
+          <p
+            className="cf-builder-review-note"
+            data-builder-review-state={reviewState?.status ?? 'unavailable'}
+          >
+            {reviewState?.summary ?? 'Review status is unavailable.'}
           </p>
         </div>
       </div>

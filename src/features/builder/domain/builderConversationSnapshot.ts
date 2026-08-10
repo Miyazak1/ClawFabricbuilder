@@ -10,6 +10,10 @@ import {
   sanitizeBuilderDraftCheckpointStatusProjectionWire,
   type BuilderDraftCheckpointStatusProjectionWire,
 } from './builderDraftCheckpointStatusProjection';
+import {
+  sanitizeBuilderReviewStateProjectionWire,
+  type BuilderReviewStateProjectionWire,
+} from './builderReviewStateProjection';
 
 export const BUILDER_TASK_STREAM_READ_RESULT_VERSION =
   'builder-task-stream-read-result.v1' as const;
@@ -327,6 +331,7 @@ export type BuilderConversationReadySnapshot = Readonly<{
     | BuilderProviderContextDisclosureStatusProjectionWire
     | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
+  review_state_projection?: BuilderReviewStateProjectionWire | null;
   conversation: Readonly<{
     conversation_id: string;
     created_at_ms: number;
@@ -351,6 +356,7 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
     | BuilderProviderContextDisclosureStatusProjectionWire
     | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
+  review_state_projection?: BuilderReviewStateProjectionWire | null;
   conversation: null;
   authority: BuilderConversationAuthority;
 }>;
@@ -393,6 +399,7 @@ const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze([
   'context_status_projection',
   'provider_context_disclosure_status_projection',
   'draft_checkpoint_status_projection',
+  'review_state_projection',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'conversation',
@@ -807,6 +814,17 @@ function optionalDraftCheckpointStatusProjection(
   const value = source.draft_checkpoint_status_projection;
   if (value === null) return null;
   const projection = sanitizeBuilderDraftCheckpointStatusProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
+}
+
+function optionalReviewStateProjection(
+  source: Record<string, unknown>,
+): BuilderReviewStateProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'review_state_projection')) return undefined;
+  const value = source.review_state_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderReviewStateProjectionWire(value);
   if (projection === null) throw unavailable();
   return projection;
 }
@@ -2890,7 +2908,9 @@ export function sanitizeBuilderConversationSnapshot(
     const providerContextDisclosureStatusProjection =
       optionalProviderContextDisclosureStatusProjection(source);
     const draftCheckpointStatusProjection = optionalDraftCheckpointStatusProjection(source);
+    const reviewStateProjection = optionalReviewStateProjection(source);
     if (source.conversation === null) {
+      if (reviewStateProjection !== undefined && reviewStateProjection !== null) throw unavailable();
       const absent = {
         state: 'absent' as const,
         stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
@@ -2907,6 +2927,9 @@ export function sanitizeBuilderConversationSnapshot(
         ...(draftCheckpointStatusProjection === undefined
           ? {}
           : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
+        ...(reviewStateProjection === undefined
+          ? {}
+          : { review_state_projection: reviewStateProjection }),
         conversation: null,
         authority,
       };
@@ -2964,6 +2987,9 @@ export function sanitizeBuilderConversationSnapshot(
       ...(draftCheckpointStatusProjection === undefined
         ? {}
         : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
+      ...(reviewStateProjection === undefined
+        ? {}
+        : { review_state_projection: reviewStateProjection }),
       conversation: {
         conversation_id: conversationId,
         created_at_ms: createdAtMs,

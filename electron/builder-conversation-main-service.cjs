@@ -47,6 +47,9 @@ const {
   projectBuilderTaskStream,
 } = require('./builder-task-stream-projection.cjs');
 const {
+  projectBuilderReviewState,
+} = require('./builder-review-state-projection.cjs');
+const {
   sanitizeBuilderContextStatusProjection,
 } = require('./builder-context-status-projection.cjs');
 const {
@@ -979,15 +982,17 @@ function createBuilderConversationMainService(rawOptions) {
     }
   }
 
-  function latestCandidateId(state) {
+  function latestCandidateReviewSubject(state) {
     for (let turnIndex = state.snapshot.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
       const turn = state.snapshot.turns[turnIndex];
       for (let runIndex = turn.runs.length - 1; runIndex >= 0; runIndex -= 1) {
         const run = turn.runs[runIndex];
         if (run.candidate_result === null) continue;
-        return run.candidate_review === null
-          ? run.candidate_result.git_candidate_receipt.candidate_id
-          : null;
+        if (run.candidate_review !== null) return null;
+        return {
+          candidate_id: run.candidate_result.git_candidate_receipt.candidate_id,
+          draft_id: run.candidate_result.draft_id,
+        };
       }
     }
     return null;
@@ -995,13 +1000,13 @@ function createBuilderConversationMainService(rawOptions) {
 
   function currentDraftCheckpointStatusProjection(state, projectId, conversationId) {
     if (options.readCurrentDraftCheckpointStatus === null) return undefined;
-    const candidateId = latestCandidateId(state);
-    if (candidateId === null) return undefined;
+    const subject = latestCandidateReviewSubject(state);
+    if (subject === null) return undefined;
     try {
       const result = Reflect.apply(
         options.readCurrentDraftCheckpointStatus,
         options.automaticDraftCheckpointService,
-        [{ project_id: projectId, conversation_id: conversationId, candidate_id: candidateId }],
+        [{ project_id: projectId, conversation_id: conversationId, candidate_id: subject.candidate_id }],
       );
       if (!isPlainObject(result) || utilTypes.isProxy(result)) return undefined;
       const descriptor = Object.getOwnPropertyDescriptor(
@@ -1020,6 +1025,23 @@ function createBuilderConversationMainService(rawOptions) {
         conversation: null,
       });
       return projected.draft_checkpoint_status_projection;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function currentReviewStateProjection(state, draftCheckpointStatusProjection) {
+    const subject = latestCandidateReviewSubject(state);
+    if (
+      options.readCurrentDraftCheckpointStatus === null
+      || subject === null
+    ) return undefined;
+    try {
+      return projectBuilderReviewState({
+        candidate_state: 'proposed',
+        draft_id: subject.draft_id,
+        draft_checkpoint_status_projection: draftCheckpointStatusProjection ?? null,
+      });
     } catch {
       return undefined;
     }
@@ -3200,6 +3222,9 @@ function createBuilderConversationMainService(rawOptions) {
       const draftCheckpointStatusProjection = state === null
         ? undefined
         : currentDraftCheckpointStatusProjection(state, projectId, conversationId);
+      const reviewStateProjection = state === null
+        ? undefined
+        : currentReviewStateProjection(state, draftCheckpointStatusProjection);
       return projectBuilderTaskStream({
         project_id: projectId,
         ...(contextStatusProjection === undefined
@@ -3214,6 +3239,9 @@ function createBuilderConversationMainService(rawOptions) {
         ...(draftCheckpointStatusProjection === undefined
           ? {}
           : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
+        ...(reviewStateProjection === undefined
+          ? {}
+          : { review_state_projection: reviewStateProjection }),
         conversation: state === null ? null : {
           conversation_id: state.conversation.conversation_id,
           created_at_ms: state.conversation.created_at_ms,

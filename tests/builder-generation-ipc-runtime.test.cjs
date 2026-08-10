@@ -461,6 +461,7 @@ function runtimeWithService(service, probes = {}) {
               service_version: 'builder-automatic-draft-checkpoint-service.v1',
               record_verified_candidate_checkpoint() {},
               read_current_checkpoint_status() {},
+              verify_current_candidate_checkpoint() {},
             };
             return context.__automaticDraftCheckpointService;
           },
@@ -540,6 +541,10 @@ function runtimeWithService(service, probes = {}) {
             probes.saveOptions = options;
             assert.equal(options.currentProjection, context.__projectMainAuthority.git_current_projection);
             assert.equal(typeof options.workspaceReadAuthority.load_fresh_workspace, 'function');
+            assert.equal(
+              options.automaticDraftCheckpointService,
+              context.__automaticDraftCheckpointService,
+            );
             return {
               save: async (body) => {
                 if (typeof probes.saveDraft === 'function') return probes.saveDraft(body);

@@ -189,6 +189,28 @@ test('projects status only for the current candidate and fails closed without an
     conversation_id: CONVERSATION_ID,
     candidate_id: `builder-code-change-candidate:${'9'.repeat(64)}`,
   }).status, 'absent');
+  const verified = service.verify_current_candidate_checkpoint({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    task_id: request.candidate_receipt.task_id,
+    run_id: request.candidate_receipt.run_id,
+    candidate_id: request.candidate_receipt.candidate_id,
+    candidate_digest: request.candidate_receipt.candidate_digest,
+    resulting_tree_digest: request.candidate_receipt.resulting_tree_digest,
+  });
+  assert.equal(verified.operation, 'current_candidate_checkpoint_verified');
+  assert.equal(verified.status, 'verified');
+  assert.equal(verified.checkpoint_ref.checkpoint_sequence, 1);
+  assert.equal(verified.verification_admission, 'main_owned_latest_checkpoint_verified');
+  assert.throws(() => service.verify_current_candidate_checkpoint({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    task_id: request.candidate_receipt.task_id,
+    run_id: request.candidate_receipt.run_id,
+    candidate_id: request.candidate_receipt.candidate_id,
+    candidate_digest: digest('9'),
+    resulting_tree_digest: request.candidate_receipt.resulting_tree_digest,
+  }), BuilderAutomaticDraftCheckpointServiceError);
   assert.throws(
     () => service.record_verified_candidate_checkpoint({ ...request, changed_file_count: 0 }),
     BuilderAutomaticDraftCheckpointServiceError,

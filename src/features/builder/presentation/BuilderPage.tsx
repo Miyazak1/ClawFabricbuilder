@@ -2163,8 +2163,6 @@ export function BuilderPage({
     && !composerSubmitLocked
     && instruction.trim().length > 0;
   const canSubmitComposer = canSubmit || (canAddContext && instruction.trim().length > 0);
-  const canSave = typeof onSave === 'function' && hasUnsavedDraft && !busy;
-  const canReject = typeof onRejectDraft === 'function' && hasUnsavedDraft && !busy;
   const canCancel = typeof onCancel === 'function'
     && (status === 'answering' || status === 'generating' || status === 'submitting');
   const canEditInstruction = typeof onInstructionChange === 'function'
@@ -2184,6 +2182,20 @@ export function BuilderPage({
     && activity.conversation?.state === 'ready'
     ? activity.conversation.draft_checkpoint_status_projection ?? null
     : null;
+  const reviewState = activity?.status === 'ready'
+    && activity.conversation?.state === 'ready'
+    ? activity.conversation.review_state_projection ?? null
+    : null;
+  const canSave = typeof onSave === 'function'
+    && hasUnsavedDraft
+    && !busy
+    && reviewState?.draft_id === draft?.draft_id
+    && reviewState?.can_save === true;
+  const canReject = typeof onRejectDraft === 'function'
+    && hasUnsavedDraft
+    && !busy
+    && reviewState?.draft_id === draft?.draft_id
+    && reviewState?.can_discard === true;
   const history = visibleHistorySnapshot(historySnapshot);
   const visibleLiveOutput = liveOutput;
   const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
@@ -2925,6 +2937,7 @@ export function BuilderPage({
       onRejectDraft={onRejectDraft}
       onSave={onSave}
       preview={preview}
+      reviewState={reviewState}
       saveLabel={status === 'saving'
         ? 'Saving...'
         : status === 'save_unknown'
