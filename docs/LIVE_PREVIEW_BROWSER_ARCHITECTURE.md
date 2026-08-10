@@ -375,6 +375,16 @@ Evidence:
 - blocked request count;
 - no raw source or console text in renderer projection.
 
+Current checkpoint:
+
+- add a preview-specific main-only evidence summary contract;
+- accept only safe WebContentsView runtime status and bounded event summaries;
+- count console errors/warnings and blocked runtime events;
+- store screenshot as a digest only;
+- store entry URL as a digest only;
+- do not collect raw console text, external URLs, screenshot bytes, source
+  content, IPC, renderer UI, provider, tool, or mutation authority.
+
 ### Slice LP5: Renderer Status And Review Drawer Integration
 
 Expose minimal IPC and show Live Preview as a mode inside the existing Preview
