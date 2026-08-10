@@ -10,6 +10,7 @@ import {
 } from './builderDesktopBridgeRoot';
 import {
   CONVERSATION_ID,
+  DRAFT_ID,
   PROJECT_ID,
   RUN_ID,
   TASK_ID,
@@ -188,6 +189,73 @@ function providerContextDisclosureStatusProjection() {
       secret_access: 'not_present',
     },
   };
+}
+
+function reviewReadyTaskStreamWire() {
+  return {
+    ...createTaskStreamWire(),
+    draft_checkpoint_status_projection: {
+      projection_version: 'builder-draft-checkpoint-status-projection.v1',
+      status: 'ready',
+      label: 'Checkpoint saved',
+      tone: 'success',
+      next_action_hint: 'You can compare, restore, continue, or save a version.',
+      can_compare: true,
+      can_restore: true,
+      can_save_version: true,
+      changed_file_count: 2,
+      verification_status: 'candidate_verified',
+      authority: {
+        projection_authority: 'main_owned_draft_checkpoint_status_projection_v1',
+        checkpoint_store_read: 'verified_latest_read_result',
+        checkpoint_fact: 'verified_not_exposed',
+        renderer_authority: 'not_present',
+        ipc_authority: 'not_present',
+        provider_dispatch: false,
+        tool_dispatch: false,
+        source_read: 'not_present',
+        source_write: 'not_present',
+        git_read: 'not_present',
+        git_write: false,
+        sqlite_write: false,
+        permission_grant: false,
+        revision_admission: 'not_created',
+        save_authority: false,
+        publication: false,
+      },
+    },
+    review_state_projection: {
+      projection_version: 'builder-review-state-projection.v1',
+      draft_id: DRAFT_ID,
+      status: 'ready',
+      label: 'Ready to review',
+      summary: 'A recoverable draft is ready to inspect and save.',
+      checkpoint_status: 'ready',
+      preview_status: 'not_recorded',
+      check_status: 'not_run',
+      changed_file_count: 2,
+      can_save: true,
+      can_discard: true,
+      blocking_reasons: [],
+      authority: {
+        projection_authority: 'main_owned_review_state_projection_v1',
+        candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
+        checkpoint_evidence: 'verified_latest_candidate_checkpoint',
+        renderer_authority: 'not_present',
+        ipc_authority: 'projection_only',
+        provider_dispatch: false,
+        tool_dispatch: false,
+        source_read: 'not_present',
+        source_write: 'not_present',
+        git_write: false,
+        sqlite_write: false,
+        permission_grant: false,
+        revision_admission: 'not_created',
+        save_authority: false,
+        publication: false,
+      },
+    },
+  } as const;
 }
 
 function createReadOnlyPageQuestionTaskStreamWire() {
@@ -848,7 +916,7 @@ async function setup(options: Readonly<{
                       )
                       : options.pendingActivity === true
                         ? pendingCandidateTaskStreamWire('proposed')
-                        : createTaskStreamWire();
+                        : reviewReadyTaskStreamWire();
   });
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
@@ -1416,7 +1484,7 @@ function pendingCandidateTaskStreamWire(state: 'accepted' | 'proposed' | 'reject
     ? createAcceptedTaskStreamWire(1)
     : state === 'rejected'
       ? createRejectedTaskStreamWire()
-      : createTaskStreamWire();
+      : reviewReadyTaskStreamWire();
   return {
     ...wire,
     conversation: {
