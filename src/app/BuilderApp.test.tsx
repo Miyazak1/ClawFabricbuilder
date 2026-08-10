@@ -3558,7 +3558,7 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
-        .toContain('The AI service could not complete this request.');
+        .toContain('The AI service rejected the request. Check the API key, model, or account.');
     });
     expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
