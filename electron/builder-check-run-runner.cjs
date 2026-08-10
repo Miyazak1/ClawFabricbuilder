@@ -5,6 +5,9 @@ const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
 const { sanitizeBuilderCheckRunAdmission } = require('./builder-check-run-admission.cjs');
+const {
+  BUILDER_CHECK_RUN_ACTIVITY_REGISTRY_VERSION,
+} = require('./builder-check-run-activity-registry.cjs');
 const { createBuilderCheckRun } = require('./builder-check-run.cjs');
 const { sanitizeBuilderCheckRuntimeIdentity } = require('./builder-check-runtime-identity.cjs');
 
@@ -15,6 +18,7 @@ const CREATE_KEYS = Object.freeze([
   'clock',
   'workspace_materializer',
   'runtime_registry',
+  'activity_registry',
   'terminate_process_tree',
 ]);
 const RUN_KEYS = Object.freeze([
@@ -196,6 +200,14 @@ function createBuilderCheckRunRunner(rawOptions) {
   const cleanupWorkspace = methodValue(materializer, 'cleanup');
   const registry = options.runtime_registry.value;
   const readPrivateRuntime = methodValue(registry, 'read_private_runtime');
+  const activityRegistry = options.activity_registry.value;
+  if (
+    activityRegistry === null
+    || typeof activityRegistry !== 'object'
+    || activityRegistry.registry_version !== BUILDER_CHECK_RUN_ACTIVITY_REGISTRY_VERSION
+  ) fail();
+  const beginCheckRun = methodValue(activityRegistry, 'begin_check_run');
+  const endCheckRun = methodValue(activityRegistry, 'end_check_run');
   const usedAdmissions = new Set();
   const inFlight = new Map();
 
@@ -220,7 +232,10 @@ function createBuilderCheckRunRunner(rawOptions) {
     assertWorkspaceBinding(workspaceAdmission, admission);
     let cleanupRequired = false;
     let cleanupSafe = false;
+    let activityRegistered = false;
     try {
+      if (beginCheckRun({ check_run_admission: admission }) !== true) fail();
+      activityRegistered = true;
       const workspacePath = safeAbsolutePath(readWorkspacePath(workspaceAdmission));
       cleanupRequired = true;
       const command = commandFor(admission, runtime);
@@ -342,9 +357,18 @@ function createBuilderCheckRunRunner(rawOptions) {
       fail();
     } finally {
       inFlight.delete(admission.admission_id);
+      let finalizationFailed = false;
       if (cleanupRequired && cleanupSafe) {
-        try { cleanupWorkspace(workspaceAdmission); } catch { fail(); }
+        try { cleanupWorkspace(workspaceAdmission); } catch { finalizationFailed = true; }
       }
+      if (activityRegistered) {
+        try {
+          if (endCheckRun({ check_run_admission: admission }) !== true) finalizationFailed = true;
+        } catch {
+          finalizationFailed = true;
+        }
+      }
+      if (finalizationFailed) fail();
     }
   }
 

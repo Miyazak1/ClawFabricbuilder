@@ -9,6 +9,9 @@ const {
 const {
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
+const {
+  BUILDER_CHECK_RUN_SAVE_GATE_VERSION,
+} = require('./builder-check-run-save-gate.cjs');
 
 const BUILDER_PROJECT_SAVE_AUTHORITY_VERSION = 'builder-project-save-authority.v1';
 const BUILDER_PROJECT_SAVE_RESULT_VERSION = 'builder-project-save-result.v1';
@@ -21,6 +24,7 @@ const OPTION_KEYS = Object.freeze([
   'workspaceReadAuthority',
   'conversationService',
   'automaticDraftCheckpointService',
+  'checkRunSaveGate',
   'createUuid',
   'nowMs',
 ]);
@@ -231,6 +235,10 @@ function sanitizeOptions(value) {
   const workspaceReadAuthority = valueAt(value, 'workspaceReadAuthority');
   const conversationService = valueAt(value, 'conversationService');
   const automaticDraftCheckpointService = valueAt(value, 'automaticDraftCheckpointService');
+  const checkRunSaveGate = valueAt(value, 'checkRunSaveGate');
+  const checkRunSaveGateVersion = isPlainObject(checkRunSaveGate)
+    ? Object.getOwnPropertyDescriptor(checkRunSaveGate, 'gate_version')
+    : null;
   const createUuid = valueAt(value, 'createUuid');
   const nowMs = valueAt(value, 'nowMs');
   if (
@@ -238,6 +246,9 @@ function sanitizeOptions(value) {
     || utilTypes.isProxy(createUuid)
     || typeof nowMs !== 'function'
     || utilTypes.isProxy(nowMs)
+    || !checkRunSaveGateVersion
+    || !Object.hasOwn(checkRunSaveGateVersion, 'value')
+    || checkRunSaveGateVersion.value !== BUILDER_CHECK_RUN_SAVE_GATE_VERSION
   ) fail('builder_project_save_invalid');
   return Object.freeze({
     generationDrafts,
@@ -262,6 +273,11 @@ function sanitizeOptions(value) {
     verifyCurrentCandidateCheckpoint: ownMethod(
       automaticDraftCheckpointService,
       'verify_current_candidate_checkpoint',
+    ),
+    checkRunSaveGate,
+    withCurrentCandidateSaveGate: ownMethod(
+      checkRunSaveGate,
+      'with_current_candidate_save_gate',
     ),
     createUuid,
     nowMs,
@@ -696,7 +712,11 @@ function normalizeError(error) {
     || code === 'builder_git_current_projection_invalid'
     || code === 'builder_project_read_integrity_failed'
     || code === 'builder_generation_draft_conflict'
+    || code === 'builder_check_run_save_gate_invalid'
   ) return new BuilderProjectSaveAuthorityError('builder_project_save_invalid');
+  if (code === 'builder_check_run_save_gate_stale') {
+    return new BuilderProjectSaveAuthorityError('builder_project_save_conflict');
+  }
   return new BuilderProjectSaveAuthorityError('builder_project_save_unavailable');
 }
 
@@ -793,7 +813,7 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         || gitReceipt.resulting_tree_digest !== candidate.resulting_tree_digest
         || gitReceipt.expected_base_oid !== expectedBaseOid
       ) fail('builder_project_save_invalid');
-      sanitizeCheckpointVerification(
+      const checkpoint = sanitizeCheckpointVerification(
         Reflect.apply(
           options.verifyCurrentCandidateCheckpoint,
           options.automaticDraftCheckpointService,
@@ -831,6 +851,22 @@ function createBuilderProjectSaveAuthority(rawOptions) {
           !== workspaceBase.base_source_tree_digest
       ) fail('builder_project_save_conflict');
       const project = await projectIdentity(candidate);
+      return await Reflect.apply(
+        options.withCurrentCandidateSaveGate,
+        options.checkRunSaveGate,
+        [{
+          project_id: candidate.project_id,
+          conversation_id: candidate.conversation_id,
+          turn_id: candidate.turn_id,
+          task_id: candidate.task_id,
+          run_id: candidate.run_id,
+          draft_id: draft.draft_id,
+          draft_checkpoint_id: checkpoint.checkpoint_id,
+          draft_checkpoint_sequence: checkpoint.checkpoint_sequence,
+          candidate_id: candidate.candidate_id,
+          candidate_digest: candidate.candidate_digest,
+          resulting_tree_digest: candidate.resulting_tree_digest,
+        }, async () => {
       const attempt = attemptFor(draft, project);
       const record = await Reflect.apply(options.recordProjectRevisionReceipt, options.metadataAuthority, [{
         idempotency: { idempotency_key: attempt.idempotency_key },
@@ -952,6 +988,8 @@ function createBuilderProjectSaveAuthority(rawOptions) {
           renderer_authority: 'draft_id_only',
         },
       });
+        }],
+      );
     } catch (error) {
       throw normalizeError(error);
     }

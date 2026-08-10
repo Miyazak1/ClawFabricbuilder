@@ -11,6 +11,9 @@ const {
   createBuilderCheckRunRunner,
 } = require('../electron/builder-check-run-runner.cjs');
 const {
+  createBuilderCheckRunActivityRegistry,
+} = require('../electron/builder-check-run-activity-registry.cjs');
+const {
   createBuilderCheckRunAdmission,
   createBuilderCheckRunExecutionApproval,
 } = require('../electron/builder-check-run-admission.cjs');
@@ -141,6 +144,7 @@ function harness(selected = admittedCheck(), overrides = {}) {
   const launcher = path.resolve('C:\\runtime\\node.exe');
   const cli = selected.admission.package_manager === 'bun'
     ? null : path.resolve('C:\\runtime\\cli.cjs');
+  const activityRegistry = createBuilderCheckRunActivityRegistry();
   const runner = createBuilderCheckRunRunner({
     spawn_process(file, args, options) {
       spawnCall = { file, args, options };
@@ -168,10 +172,11 @@ function harness(selected = admittedCheck(), overrides = {}) {
         cli_entry_path: cli,
       }),
     },
+    activity_registry: activityRegistry,
     terminate_process_tree: overrides.terminate ?? (async () => true),
   });
   return {
-    selected, workspace, child, runner,
+    selected, workspace, child, runner, activityRegistry,
     get spawnCall() { return spawnCall; },
     get cleaned() { return cleaned; },
     setNow(value) { now = value; },
@@ -189,6 +194,22 @@ function runInput(h) {
     check_run_admission: h.selected.admission,
     workspace_admission: h.workspace,
     runtime_identity: h.selected.runtime,
+  };
+}
+
+function currentCandidate(admission) {
+  return {
+    project_id: admission.project_id,
+    conversation_id: admission.conversation_id,
+    turn_id: admission.turn_id,
+    task_id: admission.task_id,
+    run_id: admission.run_id,
+    draft_id: admission.draft_id,
+    draft_checkpoint_id: admission.draft_checkpoint_id,
+    draft_checkpoint_sequence: admission.draft_checkpoint_sequence,
+    candidate_id: admission.candidate_id,
+    candidate_digest: admission.candidate_digest,
+    resulting_tree_digest: admission.resulting_tree_digest,
   };
 }
 
@@ -221,6 +242,20 @@ test('uses a minimal environment and strips inherited secrets', async () => {
   assert.equal(Object.hasOwn(h.spawnCall.options.env, 'NODE_OPTIONS'), false);
   assert.equal(h.spawnCall.options.env.CI, '1');
   delete process.env.CLAWFABRIC_TEST_API_KEY;
+});
+
+test('holds candidate activity until the admitted check and cleanup finish', async () => {
+  const h = harness();
+  const pending = h.runner.run_check(runInput(h));
+  assert.throws(() => h.activityRegistry.acquire_candidate_save({
+    current_candidate: currentCandidate(h.selected.admission),
+  }), { code: 'builder_check_run_activity_busy' });
+  h.child.emit('close', 0, null);
+  await pending;
+  const guard = h.activityRegistry.acquire_candidate_save({
+    current_candidate: currentCandidate(h.selected.admission),
+  });
+  assert.equal(h.activityRegistry.release_candidate_save({ save_guard: guard }), true);
 });
 
 test('records timeout, cancellation, and output overflow after process-tree termination', async () => {

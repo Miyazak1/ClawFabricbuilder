@@ -467,6 +467,60 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-check-run-store.cjs') {
+        return {
+          createBuilderCheckRunStore: (databasePath) => {
+            probes.checkRunDatabasePath = databasePath;
+            context.__checkRunStore = {
+              closed: false,
+              store_version: 'builder-check-run-store.v1',
+              read_latest_check_run() {},
+              close() { this.closed = true; return true; },
+            };
+            return context.__checkRunStore;
+          },
+        };
+      }
+      if (specifier === './builder-check-run-status-service.cjs') {
+        return {
+          createBuilderCheckRunStatusService: (options) => {
+            assert.equal(options.check_run_store, context.__checkRunStore);
+            context.__checkRunStatusService = {
+              service_version: 'builder-check-run-status-service.v1',
+              read_current_check_run_status() {
+                return { check_run_status_projection: null };
+              },
+            };
+            return context.__checkRunStatusService;
+          },
+        };
+      }
+      if (specifier === './builder-check-run-activity-registry.cjs') {
+        return {
+          createBuilderCheckRunActivityRegistry: () => {
+            context.__checkRunActivityRegistry = {
+              registry_version: 'builder-check-run-activity-registry.v1',
+              acquire_candidate_save() {},
+              release_candidate_save() {},
+            };
+            return context.__checkRunActivityRegistry;
+          },
+        };
+      }
+      if (specifier === './builder-check-run-save-gate.cjs') {
+        return {
+          createBuilderCheckRunSaveGate: (options) => {
+            assert.equal(options.check_run_store, context.__checkRunStore);
+            assert.equal(options.activity_registry, context.__checkRunActivityRegistry);
+            if (probes.failCheckRunSaveGate) throw new Error('private check gate failure');
+            context.__checkRunSaveGate = {
+              gate_version: 'builder-check-run-save-gate.v1',
+              with_current_candidate_save_gate() {},
+            };
+            return context.__checkRunSaveGate;
+          },
+        };
+      }
       if (specifier === './builder-conversation-main-service.cjs') {
         return {
           createBuilderConversationMainService: (options) => {
@@ -482,6 +536,7 @@ function runtimeWithService(service, probes = {}) {
               context.__providerContextDisclosureStatusService,
             );
             assert.equal(options.automaticDraftCheckpointService, context.__automaticDraftCheckpointService);
+            assert.equal(options.checkRunStatusService, context.__checkRunStatusService);
             context.__conversationService = {
               begin_work() {},
               begin_queued_followup_work() {},
@@ -545,6 +600,7 @@ function runtimeWithService(service, probes = {}) {
               options.automaticDraftCheckpointService,
               context.__automaticDraftCheckpointService,
             );
+            assert.equal(options.checkRunSaveGate, context.__checkRunSaveGate);
             return {
               save: async (body) => {
                 if (typeof probes.saveDraft === 'function') return probes.saveDraft(body);
@@ -1021,6 +1077,10 @@ test('registers exactly the controlled generation channels and keeps provider st
   );
   assert.equal(
     fs.existsSync(path.join(userDataPath, 'builder-draft-checkpoints-v1', 'draft-checkpoints.sqlite')),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(userDataPath, 'builder-check-runs-v1', 'check-runs.sqlite')),
     true,
   );
   assert.equal(runtime.register(), true);
@@ -2384,6 +2444,31 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   }
 });
 
+test('closes the CheckRun store when save-gate composition fails', (t) => {
+  const harness = runtimeWithService({
+    generate: async () => ({ ok: true }),
+    cancel: () => ({ cancelled: false }),
+    availability: () => ({ available: false }),
+  }, { failCheckRunSaveGate: true });
+  assert.throws(
+    () => harness.createRuntime({
+      fetchImpl: unreachableFetch,
+      grantPermissionForExplicitApproval,
+      ipcMain: fakeIpcMain(),
+      mainWindow: activeWindow(),
+      userDataPath: temporaryUserData(t),
+    }),
+    (error) => error.code === 'builder_generation_ipc_runtime_unavailable'
+      && !`${error.message}:${error.stack}`.includes('private'),
+  );
+  assert.equal(harness.context.__checkRunStore.closed, true);
+  assert.equal(harness.context.__draftCheckpointStore.closed, true);
+  assert.equal(harness.context.__sessionTaskAddressStore.closed, true);
+  assert.equal(harness.context.__projectUnderstandingStore.closed, true);
+  assert.equal(harness.context.__taskCapsuleStore.closed, true);
+  assert.equal(harness.context.__projectMainAuthority.closed, true);
+});
+
 test('closes project main authority when generation channel registration fails', (t) => {
   const harness = runtimeWithService({
     generate: async () => ({ ok: true }),
@@ -2403,6 +2488,7 @@ test('closes project main authority when generation channel registration fails',
   assert.equal(harness.context.__taskCapsuleStore.closed, false);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, false);
   assert.equal(harness.context.__draftCheckpointStore.closed, false);
+  assert.equal(harness.context.__checkRunStore.closed, false);
   assert.equal(harness.context.__contextCompactionSummaryStore.closed, false);
   assert.equal(harness.context.__handoffPacketStore.closed, false);
   assert.throws(() => runtime.register(), {
@@ -2412,6 +2498,7 @@ test('closes project main authority when generation channel registration fails',
   assert.equal(harness.context.__handoffPacketStore.closed, true);
   assert.equal(harness.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(harness.context.__draftCheckpointStore.closed, true);
+  assert.equal(harness.context.__checkRunStore.closed, true);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, true);
   assert.equal(harness.context.__projectUnderstandingStore.closed, true);
   assert.equal(harness.context.__taskCapsuleStore.closed, true);
@@ -2527,11 +2614,14 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(probes.saveOptions.conversationService,
     runtimeModule.context.__conversationService);
+  assert.equal(probes.saveOptions.checkRunSaveGate,
+    runtimeModule.context.__checkRunSaveGate);
   assert.equal(typeof runtimeModule.context.__conversationService.read_stream, 'function');
   assert.equal(runtime.dispose(), false);
   assert.equal(runtimeModule.context.__handoffPacketStore.closed, true);
   assert.equal(runtimeModule.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(runtimeModule.context.__draftCheckpointStore.closed, true);
+  assert.equal(runtimeModule.context.__checkRunStore.closed, true);
   assert.equal(runtimeModule.context.__sessionTaskAddressStore.closed, true);
   assert.equal(runtimeModule.context.__projectUnderstandingStore.closed, true);
   assert.equal(runtimeModule.context.__taskCapsuleStore.closed, true);

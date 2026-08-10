@@ -142,6 +142,18 @@ const {
 const {
   createBuilderAutomaticDraftCheckpointService,
 } = require('./builder-automatic-draft-checkpoint-service.cjs');
+const {
+  createBuilderCheckRunStore,
+} = require('./builder-check-run-store.cjs');
+const {
+  createBuilderCheckRunStatusService,
+} = require('./builder-check-run-status-service.cjs');
+const {
+  createBuilderCheckRunActivityRegistry,
+} = require('./builder-check-run-activity-registry.cjs');
+const {
+  createBuilderCheckRunSaveGate,
+} = require('./builder-check-run-save-gate.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
@@ -152,6 +164,8 @@ const SESSION_TASK_ADDRESS_DIRECTORY = 'builder-session-task-addresses-v1';
 const SESSION_TASK_ADDRESS_DATABASE = 'session-task-addresses.sqlite';
 const DRAFT_CHECKPOINT_DIRECTORY = 'builder-draft-checkpoints-v1';
 const DRAFT_CHECKPOINT_DATABASE = 'draft-checkpoints.sqlite';
+const CHECK_RUN_DIRECTORY = 'builder-check-runs-v1';
+const CHECK_RUN_DATABASE = 'check-runs.sqlite';
 const CONTEXT_COMPACTION_SUMMARY_DIRECTORY = 'builder-context-compaction-summaries-v1';
 const CONTEXT_COMPACTION_SUMMARY_DATABASE = 'context-compaction-summaries.sqlite';
 const HANDOFF_PACKET_DIRECTORY = 'builder-handoff-packets-v1';
@@ -1154,6 +1168,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let projectUnderstandingStore = null;
   let sessionTaskAddressStore = null;
   let draftCheckpointStore = null;
+  let checkRunStore = null;
   let contextCompactionSummaryStore = null;
   let handoffPacketStore = null;
   let projectMainAuthority = null;
@@ -1235,6 +1250,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       draft_checkpoint_recording_service: draftCheckpointRecordingService,
       now_ms: () => Date.now(),
     });
+    const checkRunRoot = path.join(options.userDataPath, CHECK_RUN_DIRECTORY);
+    fs.mkdirSync(checkRunRoot, { recursive: true, mode: 0o700 });
+    checkRunStore = createBuilderCheckRunStore(path.join(checkRunRoot, CHECK_RUN_DATABASE));
+    const checkRunStatusService = createBuilderCheckRunStatusService({
+      check_run_store: checkRunStore,
+    });
+    const checkRunActivityRegistry = createBuilderCheckRunActivityRegistry();
+    const checkRunSaveGate = createBuilderCheckRunSaveGate({
+      check_run_store: checkRunStore,
+      activity_registry: checkRunActivityRegistry,
+    });
     const contextCompactionSummaryRoot = path.join(options.userDataPath, CONTEXT_COMPACTION_SUMMARY_DIRECTORY);
     fs.mkdirSync(contextCompactionSummaryRoot, { recursive: true, mode: 0o700 });
     contextCompactionSummaryStore = createBuilderContextCompactionSummaryStore(
@@ -1287,6 +1313,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       workingContextStateService,
       providerContextDisclosureStatusService,
       automaticDraftCheckpointService,
+      checkRunStatusService,
     });
     const sourceContextCollector = createBuilderToolSourceContextCollector({
       conversation_service: conversationService,
@@ -1404,6 +1431,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       workspaceReadAuthority: saveWorkspaceReadAuthority,
       conversationService,
       automaticDraftCheckpointService,
+      checkRunSaveGate,
       createUuid: randomUUID,
       nowMs: () => Date.now(),
     });
@@ -1972,6 +2000,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   } catch {
     try { handoffPacketStore?.close(); } catch { /* fixed failure below */ }
     try { contextCompactionSummaryStore?.close(); } catch { /* fixed failure below */ }
+    try { checkRunStore?.close(); } catch { /* fixed failure below */ }
     try { draftCheckpointStore?.close(); } catch { /* fixed failure below */ }
     try { sessionTaskAddressStore?.close(); } catch { /* fixed failure below */ }
     try { projectUnderstandingStore?.close(); } catch { /* fixed failure below */ }
@@ -2123,6 +2152,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
   }
 
+  function closeCheckRunStore() {
+    if (checkRunStore === null) return true;
+    try {
+      checkRunStore.close();
+      checkRunStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function closeContextCompactionSummaryStore() {
     if (contextCompactionSummaryStore === null) return true;
     try {
@@ -2166,13 +2206,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const removed = removeInstalledHandlers();
         const handoffsClosed = closeHandoffPacketStore();
         const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
-        const checkpointsClosed = compactionsClosed ? closeDraftCheckpointStore() : false;
+        const checksClosed = compactionsClosed ? closeCheckRunStore() : false;
+        const checkpointsClosed = checksClosed ? closeDraftCheckpointStore() : false;
         const addressesClosed = checkpointsClosed ? closeSessionTaskAddressStore() : false;
         const understandingsClosed = addressesClosed ? closeProjectUnderstandingStore() : false;
         const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        state = removed && handoffsClosed && compactionsClosed && checkpointsClosed && addressesClosed
+        state = removed && handoffsClosed && compactionsClosed && checksClosed && checkpointsClosed && addressesClosed
           && understandingsClosed && taskCapsulesClosed && permissionsClosed && closed
           ? 'disposed'
           : 'cleanup_required';
@@ -2184,13 +2225,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       if (state === 'idle') {
         const handoffsClosed = closeHandoffPacketStore();
         const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
-        const checkpointsClosed = compactionsClosed ? closeDraftCheckpointStore() : false;
+        const checksClosed = compactionsClosed ? closeCheckRunStore() : false;
+        const checkpointsClosed = checksClosed ? closeDraftCheckpointStore() : false;
         const addressesClosed = checkpointsClosed ? closeSessionTaskAddressStore() : false;
         const understandingsClosed = addressesClosed ? closeProjectUnderstandingStore() : false;
         const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-        if (!handoffsClosed || !compactionsClosed || !checkpointsClosed || !addressesClosed
+        if (!handoffsClosed || !compactionsClosed || !checksClosed || !checkpointsClosed || !addressesClosed
           || !understandingsClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
           state = 'cleanup_required';
           fail();
@@ -2202,13 +2244,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const removed = removeInstalledHandlers();
       const handoffsClosed = cancelled ? closeHandoffPacketStore() : false;
       const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
-      const checkpointsClosed = compactionsClosed ? closeDraftCheckpointStore() : false;
+      const checksClosed = compactionsClosed ? closeCheckRunStore() : false;
+      const checkpointsClosed = checksClosed ? closeDraftCheckpointStore() : false;
       const addressesClosed = checkpointsClosed ? closeSessionTaskAddressStore() : false;
       const understandingsClosed = addressesClosed ? closeProjectUnderstandingStore() : false;
       const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
       const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
       const closed = permissionsClosed ? closeProjectMainAuthority() : false;
-      if (!cancelled || !removed || !handoffsClosed || !compactionsClosed || !checkpointsClosed || !addressesClosed
+      if (!cancelled || !removed || !handoffsClosed || !compactionsClosed || !checksClosed || !checkpointsClosed || !addressesClosed
         || !understandingsClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();

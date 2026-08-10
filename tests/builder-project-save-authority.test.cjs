@@ -483,11 +483,18 @@ function createSaveAuthority(options) {
       return checkpointVerificationResult(request);
     },
   };
+  const checkRunSaveGate = options.checkRunSaveGate ?? {
+    gate_version: 'builder-check-run-save-gate.v1',
+    with_current_candidate_save_gate(currentCandidate, operation) {
+      return operation({ save_admission: 'allow_not_run', check_run: null });
+    },
+  };
   return createBuilderProjectSaveAuthority({
     ...options,
     gitAuthority,
     workspaceReadAuthority,
     automaticDraftCheckpointService,
+    checkRunSaveGate,
   });
 }
 
@@ -686,6 +693,16 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
         return checkpointVerificationResult(request);
       },
     },
+    checkRunSaveGate: {
+      gate_version: 'builder-check-run-save-gate.v1',
+      with_current_candidate_save_gate(currentCandidate, operation) {
+        stages.push('check_gate');
+        assert.equal(currentCandidate.project_id, PROJECT_ID);
+        assert.match(currentCandidate.candidate_id, /^builder-code-change-candidate:/u);
+        assert.match(currentCandidate.draft_id, /^builder-generation-draft:/u);
+        return operation({ save_admission: 'allow_not_run', check_run: null });
+      },
+    },
     createUuid: uuidFactory(),
     nowMs: () => acceptanceTime,
   });
@@ -702,12 +719,13 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   assert.equal(saved.save_evidence.projection_authority, 'git_main_ref_and_materialized_worktree');
   assert.equal(saved.save_evidence.projection_main_ref, 'updated');
   assert.equal(saved.save_evidence.worktree_projection, 'materialized');
-  assert.deepEqual(stages.slice(0, 8), [
+  assert.deepEqual(stages.slice(0, 9), [
     'git_verify',
     'checkpoint_verify',
     'git_workspace_base',
     'workspace_read',
     'metadata_identity',
+    'check_gate',
     'metadata_record',
     'project_current',
     'read_current',
@@ -918,6 +936,57 @@ test('fails closed before revision admission when the current candidate checkpoi
   await assert.rejects(
     saveAuthority.save({ draft_id: draft.draft_id }),
     expectSaveError('builder_project_save_unavailable', ['private-checkpoint-marker']),
+  );
+  assert.equal(metadataWrites, 0);
+  assert.equal(conversationService.accepted.length, 0);
+  assert.equal(generationDrafts.released.length, 0);
+});
+
+test('fails closed before revision admission when the latest current-candidate check failed', async () => {
+  const value = candidate({
+    index: 1,
+    operations: [{ operation: 'upsert', path: 'src/app.js', content: 'export const safe = true;\n' }],
+  });
+  const draft = pending(value);
+  const generationDrafts = draftsStore(draft);
+  const gitReceipt = candidateGitReceipts.get(value);
+  const conversationService = conversationServiceFor(draft);
+  let metadataWrites = 0;
+  const saveAuthority = createSaveAuthority({
+    generationDrafts,
+    conversationService,
+    gitAuthority: {
+      async verify_candidate_receipt() {
+        return createBuilderGitCandidateVerificationReceipt(gitReceipt);
+      },
+    },
+    checkRunSaveGate: {
+      gate_version: 'builder-check-run-save-gate.v1',
+      with_current_candidate_save_gate(currentCandidate) {
+        assert.equal(currentCandidate.project_id, value.project_id);
+        assert.equal(currentCandidate.candidate_id, value.candidate_id);
+        const error = new Error('private check output');
+        error.code = 'builder_check_run_save_gate_failed';
+        throw error;
+      },
+    },
+    currentProjection: {
+      async project_current() { assert.fail('projection must not run'); },
+    },
+    metadataAuthority: {
+      async load_project_identity() { return projectIdentityResult(25_000); },
+      async record_project_revision_receipt() { metadataWrites += 1; },
+    },
+    projectReadAuthority: {
+      async load_current() { assert.fail('current revision must not load'); },
+    },
+    createUuid: uuidFactory(),
+    nowMs: () => 25_000,
+  });
+
+  await assert.rejects(
+    saveAuthority.save({ draft_id: draft.draft_id }),
+    expectSaveError('builder_project_save_unavailable'),
   );
   assert.equal(metadataWrites, 0);
   assert.equal(conversationService.accepted.length, 0);
