@@ -67,7 +67,46 @@ const AUTHORITY_KEYS = Object.freeze([
   'network_authority',
 ]);
 const CHECK_RUN_ID_PATTERN = /^builder-check-run:[0-9a-f]{64}$/u;
+const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const ADMISSION_ID_PATTERN = /^builder-check-run-admission:[0-9a-f]{64}$/u;
+const APPROVAL_ID_PATTERN = /^builder-check-run-execution-approval:[0-9a-f]{64}$/u;
+const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
+const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
+const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
+const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
+const CHECKPOINT_ID_PATTERN = /^builder-draft-checkpoint:[0-9a-f]{64}$/u;
+const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
+const COMMAND_PROFILE_ID_PATTERN = /^builder-command-profile:[0-9a-f]{32}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const COMMAND_KINDS = Object.freeze(['lint', 'typecheck', 'test', 'build']);
+const COMMAND_DISPLAYS = Object.freeze({
+  lint: Object.freeze(['npm run lint', 'pnpm run lint', 'yarn lint', 'bun run lint']),
+  typecheck: Object.freeze(['npm run typecheck', 'pnpm run typecheck', 'yarn typecheck', 'bun run typecheck']),
+  test: Object.freeze(['npm test', 'pnpm test', 'yarn test', 'bun test']),
+  build: Object.freeze(['npm run build', 'pnpm run build', 'yarn build', 'bun run build']),
+});
+const EXECUTION_POLICY_KEYS = Object.freeze([
+  'workspace_kind',
+  'shell',
+  'environment_policy',
+  'sandbox_status',
+  'filesystem_enforcement',
+  'network_policy',
+  'network_enforcement',
+  'descendant_termination',
+]);
+const EXECUTION_POLICY = Object.freeze({
+  workspace_kind: 'main_owned_candidate_snapshot',
+  shell: false,
+  environment_policy: 'minimal_scrubbed',
+  sandbox_status: 'unavailable',
+  filesystem_enforcement: 'not_enforced_outside_temporary_workspace',
+  network_policy: 'not_requested',
+  network_enforcement: 'unavailable',
+  descendant_termination: 'best_effort',
+});
 const STATUSES = Object.freeze([
   'passed',
   'failed',
@@ -186,6 +225,16 @@ function safeStatus(value) {
   return value;
 }
 
+function safeCommandKind(value) {
+  if (typeof value !== 'string' || !COMMAND_KINDS.includes(value)) fail();
+  return value;
+}
+
+function safeCommandDisplay(value, kind) {
+  if (typeof value !== 'string' || !COMMAND_DISPLAYS[kind].includes(value)) fail();
+  return value;
+}
+
 function safeExitCode(value, status) {
   if (status === 'passed') {
     if (value !== 0) fail();
@@ -234,6 +283,14 @@ function assertAuthority(value) {
   exactObject(value, AUTHORITY_KEYS);
   for (const key of AUTHORITY_KEYS) if (valueAt(value, key) !== AUTHORITY[key]) fail();
   return freezeDeep({ ...AUTHORITY });
+}
+
+function assertExecutionPolicy(value) {
+  exactObject(value, EXECUTION_POLICY_KEYS);
+  for (const key of EXECUTION_POLICY_KEYS) {
+    if (valueAt(value, key) !== EXECUTION_POLICY[key]) fail();
+  }
+  return freezeDeep({ ...EXECUTION_POLICY });
 }
 
 function createBuilderCheckRun(rawInput) {
@@ -287,26 +344,63 @@ function createBuilderCheckRun(rawInput) {
 function sanitizeBuilderCheckRun(rawValue) {
   try {
     const value = exactObject(rawValue, RECORD_KEYS);
+    const commandKind = safeCommandKind(valueAt(value, 'command_kind'));
     const normalized = {
-      ...value,
+      check_run_version: valueAt(value, 'check_run_version'),
       check_run_id: safePattern(valueAt(value, 'check_run_id'), CHECK_RUN_ID_PATTERN),
+      admission_id: safePattern(valueAt(value, 'admission_id'), ADMISSION_ID_PATTERN),
       admission_digest: safePattern(valueAt(value, 'admission_digest'), DIGEST_PATTERN),
+      approval_id: safePattern(valueAt(value, 'approval_id'), APPROVAL_ID_PATTERN),
       approval_digest: safePattern(valueAt(value, 'approval_digest'), DIGEST_PATTERN),
+      project_id: safePattern(valueAt(value, 'project_id'), PROJECT_ID_PATTERN),
+      conversation_id: safePattern(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN),
+      turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN),
+      task_id: safePattern(valueAt(value, 'task_id'), TASK_ID_PATTERN),
+      run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN),
+      draft_id: safePattern(valueAt(value, 'draft_id'), DRAFT_ID_PATTERN),
+      draft_checkpoint_id: safePattern(
+        valueAt(value, 'draft_checkpoint_id'),
+        CHECKPOINT_ID_PATTERN,
+      ),
+      draft_checkpoint_sequence: valueAt(value, 'draft_checkpoint_sequence'),
+      candidate_id: safePattern(valueAt(value, 'candidate_id'), CANDIDATE_ID_PATTERN),
+      candidate_digest: safePattern(valueAt(value, 'candidate_digest'), DIGEST_PATTERN),
+      resulting_tree_digest: safePattern(
+        valueAt(value, 'resulting_tree_digest'),
+        DIGEST_PATTERN,
+      ),
+      command_profile_id: safePattern(
+        valueAt(value, 'command_profile_id'),
+        COMMAND_PROFILE_ID_PATTERN,
+      ),
+      command_kind: commandKind,
+      command_display: safeCommandDisplay(valueAt(value, 'command_display'), commandKind),
       script_digest: safePattern(valueAt(value, 'script_digest'), DIGEST_PATTERN),
       invocation_digest: safePattern(valueAt(value, 'invocation_digest'), DIGEST_PATTERN),
+      execution_policy: assertExecutionPolicy(valueAt(value, 'execution_policy')),
       output_digest: safePattern(valueAt(value, 'output_digest'), DIGEST_PATTERN),
       status: safeStatus(valueAt(value, 'status')),
+      exit_code: valueAt(value, 'exit_code'),
+      failure_class: valueAt(value, 'failure_class'),
       started_at_ms: safeTimestamp(valueAt(value, 'started_at_ms')),
       completed_at_ms: safeTimestamp(valueAt(value, 'completed_at_ms')),
+      output_summary: valueAt(value, 'output_summary'),
+      authority: assertAuthority(valueAt(value, 'authority')),
       check_run_digest: safePattern(valueAt(value, 'check_run_digest'), DIGEST_PATTERN),
     };
     if (
       normalized.check_run_version !== BUILDER_CHECK_RUN_VERSION
       || normalized.output_summary !== SUMMARY_BY_STATUS[normalized.status]
       || normalized.failure_class !== FAILURE_CLASS_BY_STATUS[normalized.status]
+      || !Number.isSafeInteger(normalized.draft_checkpoint_sequence)
+      || normalized.draft_checkpoint_sequence < 1
+      || normalized.draft_checkpoint_sequence > 1_000_000
+      || normalized.admission_id !== `builder-check-run-admission:${normalized.admission_digest.slice('sha256:'.length)}`
+      || normalized.approval_id !== `builder-check-run-execution-approval:${normalized.approval_digest.slice('sha256:'.length)}`
+      || normalized.completed_at_ms < normalized.started_at_ms
+      || normalized.completed_at_ms - normalized.started_at_ms > 150_000
     ) fail();
     safeExitCode(normalized.exit_code, normalized.status);
-    normalized.authority = assertAuthority(normalized.authority);
     const expectedDigest = sha256Canonical(checkRunBody(normalized));
     if (
       normalized.check_run_digest !== expectedDigest
