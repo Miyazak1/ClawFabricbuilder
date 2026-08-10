@@ -546,6 +546,11 @@ dependency environment fails honestly instead of installing packages.
 contract across runtime resolution, one-shot approval/admission, candidate
 materialization, execution, SQLite recording, cleanup fallback, and safe status
 re-read without exposing IPC or renderer authority.
+`builder-check-run-current-draft-service.v1` closes the next authority gap: the
+renderer may identify only the current draft and a displayed CommandProfile.
+Main replays the candidate conversation, re-reads the verified Git tree,
+re-verifies the current DraftCheckpoint, derives a fresh candidate-bound
+ProjectUnderstandingSnapshot, and only then invokes the CheckRun orchestrator.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
 Electron composition, the user approval/control surface, environment-readiness
