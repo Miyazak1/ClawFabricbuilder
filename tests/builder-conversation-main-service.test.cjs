@@ -251,6 +251,39 @@ function providerContextDisclosureStatusProjection(overrides = {}) {
   };
 }
 
+function draftCheckpointStatusProjection() {
+  return {
+    projection_version: 'builder-draft-checkpoint-status-projection.v1',
+    status: 'ready',
+    label: 'Checkpoint saved',
+    tone: 'success',
+    next_action_hint: 'You can compare, restore, continue, or save a version.',
+    can_compare: true,
+    can_restore: true,
+    can_save_version: true,
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+    authority: {
+      projection_authority: 'main_owned_draft_checkpoint_status_projection_v1',
+      checkpoint_store_read: 'verified_latest_read_result',
+      checkpoint_fact: 'verified_not_exposed',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_read: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      save_authority: false,
+      publication: false,
+    },
+  };
+}
+
 function beginQuestion(service, baseRevision = null, question = 'What changed in this project?') {
   return service.begin_question({
     project_id: PROJECT_ID,
@@ -3574,6 +3607,45 @@ test('read_stream carries main-owned provider context disclosure status when ava
       JSON.stringify(stream.provider_context_disclosure_status_projection),
       /builder-provider-context-disclosure-request|builder-context-assembly|request_id|assembly_id|context_digest|builder-task-address:|builder-conversation:|sha256:|"provider_context":|api[_-]?key|credential|source_tree/iu,
     );
+  } finally {
+    item.close();
+  }
+});
+
+test('read_stream projects checkpoint only while the latest candidate is unreviewed', () => {
+  const requests = [];
+  const item = fixture(1, 1_000, {
+    automaticDraftCheckpointService: {
+      read_current_checkpoint_status(request) {
+        requests.push(request);
+        return {
+          draft_checkpoint_status_projection: draftCheckpointStatusProjection(),
+        };
+      },
+    },
+  });
+  try {
+    const context = begin(item.service);
+    const candidate = candidateResult(context);
+    item.service.complete_candidate({
+      context,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+
+    const ready = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(ready.draft_checkpoint_status_projection.label, 'Checkpoint saved');
+    assert.equal(ready.draft_checkpoint_status_projection.changed_file_count, 2);
+    assert.deepEqual(requests, [{
+      project_id: PROJECT_ID,
+      conversation_id: context.conversation.conversation_id,
+      candidate_id: candidate.git_candidate_receipt.candidate_id,
+    }]);
+
+    item.service.reject_candidate({ draft_id: candidate.draft_id });
+    const rejected = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(Object.hasOwn(rejected, 'draft_checkpoint_status_projection'), false);
+    assert.equal(requests.length, 1);
   } finally {
     item.close();
   }

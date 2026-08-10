@@ -2180,6 +2180,10 @@ export function BuilderPage({
     && current?.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
   const activity = visibleActivitySnapshot(conversationSnapshot);
+  const draftCheckpointStatus = activity?.status === 'ready'
+    && activity.conversation?.state === 'ready'
+    ? activity.conversation.draft_checkpoint_status_projection ?? null
+    : null;
   const history = visibleHistorySnapshot(historySnapshot);
   const visibleLiveOutput = liveOutput;
   const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
@@ -3276,6 +3280,16 @@ export function BuilderPage({
               <span className="cf-builder-status-pill" data-builder-unsaved-draft="true">
                 Unsaved draft
               </span>
+              {draftCheckpointStatus?.status === 'ready' ? (
+                <span
+                  className="cf-builder-status-pill"
+                  data-builder-draft-checkpoint-status="ready"
+                  title={draftCheckpointStatus.next_action_hint}
+                >
+                  {draftCheckpointStatus.label} · {draftCheckpointStatus.changed_file_count}{' '}
+                  {draftCheckpointStatus.changed_file_count === 1 ? 'file' : 'files'}
+                </span>
+              ) : null}
               {version === null ? null : (
                 <span className="text-xs text-muted-foreground" data-builder-current-version="true">
                   Version {version}

@@ -435,6 +435,44 @@ async function candidateActivity(rejected = false) {
   return controller.load(PROJECT_ID);
 }
 
+async function candidateCheckpointActivity() {
+  const wire = createTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    draft_checkpoint_status_projection: {
+      projection_version: 'builder-draft-checkpoint-status-projection.v1',
+      status: 'ready',
+      label: 'Checkpoint saved',
+      tone: 'success',
+      next_action_hint: 'You can compare, restore, continue, or save a version.',
+      can_compare: true,
+      can_restore: true,
+      can_save_version: true,
+      changed_file_count: 2,
+      verification_status: 'candidate_verified',
+      authority: {
+        projection_authority: 'main_owned_draft_checkpoint_status_projection_v1',
+        checkpoint_store_read: 'verified_latest_read_result',
+        checkpoint_fact: 'verified_not_exposed',
+        renderer_authority: 'not_present',
+        ipc_authority: 'not_present',
+        provider_dispatch: false,
+        tool_dispatch: false,
+        source_read: 'not_present',
+        source_write: 'not_present',
+        git_read: 'not_present',
+        git_write: false,
+        sqlite_write: false,
+        permission_grant: false,
+        revision_admission: 'not_created',
+        save_authority: false,
+        publication: false,
+      },
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function absentActivity() {
   const controller = createBuilderConversationController(taskStreamPort(
     async () => ({
@@ -2641,6 +2679,25 @@ describe('BuilderPage v2', () => {
     expect(onSave).not.toHaveBeenCalled();
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('shows the main-owned automatic checkpoint beside the current unsaved draft', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateCheckpointActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        snapshot={draftReady}
+      />,
+    );
+
+    const checkpoint = container.querySelector('[data-builder-draft-checkpoint-status="ready"]');
+    expect(checkpoint?.textContent).toContain('Checkpoint saved');
+    expect(checkpoint?.textContent).toContain('2 files');
+    expect(checkpoint?.getAttribute('title'))
+      .toBe('You can compare, restore, continue, or save a version.');
   });
 
   it('uses the draft composer review shortcut without sending or saving', async () => {

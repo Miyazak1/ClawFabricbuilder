@@ -1717,6 +1717,56 @@ test('generates first draft for a bound local project before any saved revision 
   );
 });
 
+test('records an automatic checkpoint after Git verification and before exposing a draft', async () => {
+  const lifecycle = conversationService();
+  const checkpointCalls = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    automaticDraftCheckpointService: {
+      record_verified_candidate_checkpoint(input) {
+        assert.equal(lifecycle.calls.candidate.length, 0);
+        checkpointCalls.push(input);
+        return { status: 'ready' };
+      },
+    },
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+
+  const result = await service.generate(request());
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(checkpointCalls.length, 1);
+  assert.equal(checkpointCalls[0].candidate_receipt.candidate_id, result.candidate.candidate_id);
+  assert.equal(checkpointCalls[0].candidate_verification.candidate_id, result.candidate.candidate_id);
+  assert.equal(checkpointCalls[0].base_revision_ref, null);
+  assert.equal(checkpointCalls[0].summary, 'A quiet timer for focused work.');
+  assert.equal(checkpointCalls[0].changed_file_count, 2);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+});
+
+test('fails closed before Conversation draft readiness when automatic checkpoint recording fails', async () => {
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    automaticDraftCheckpointService: {
+      record_verified_candidate_checkpoint() {
+        throw new Error(PRIVATE_MARKER);
+      },
+    },
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+
+  await assert.rejects(service.generate(request()), {
+    code: 'builder_generation_service_unavailable',
+  });
+  assert.equal(lifecycle.calls.candidate.length, 0);
+});
+
 test('re-reads the bound workspace and admits an ordinary candidate before Git persistence', async () => {
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],

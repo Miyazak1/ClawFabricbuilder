@@ -226,6 +226,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
             assert.equal(options.projectUnderstandingService, context.__projectUnderstandingService);
             assert.equal(options.sessionTaskAddressRecordingService, context.__sessionTaskAddressRecordingService);
+            assert.equal(options.automaticDraftCheckpointService, context.__automaticDraftCheckpointService);
             assert.equal(options.workingContextStateService, context.__workingContextStateService);
             assert.equal(
               options.providerContextDisclosureDecisionService,
@@ -417,6 +418,54 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-draft-checkpoint-store.cjs') {
+        return {
+          createBuilderDraftCheckpointStore: (databasePath) => {
+            probes.draftCheckpointDatabasePath = databasePath;
+            context.__draftCheckpointStore = {
+              closed: false,
+              store_version: 'builder-draft-checkpoint-store.v1',
+              record_draft_checkpoint() {},
+              read_draft_checkpoint() {},
+              read_latest_draft_checkpoint_for_task() {},
+              list_draft_checkpoints_for_task() {},
+              close() { this.closed = true; return true; },
+            };
+            return context.__draftCheckpointStore;
+          },
+        };
+      }
+      if (specifier === './builder-draft-checkpoint-recording-service.cjs') {
+        return {
+          createBuilderDraftCheckpointRecordingService: (options) => {
+            assert.equal(options.draft_checkpoint_store, context.__draftCheckpointStore);
+            context.__draftCheckpointRecordingService = {
+              service_version: 'builder-draft-checkpoint-recording-service.v1',
+              record_draft_checkpoint_from_candidate() {},
+            };
+            return context.__draftCheckpointRecordingService;
+          },
+        };
+      }
+      if (specifier === './builder-automatic-draft-checkpoint-service.cjs') {
+        return {
+          createBuilderAutomaticDraftCheckpointService: (options) => {
+            assert.equal(options.address_store, context.__sessionTaskAddressStore);
+            assert.equal(options.draft_checkpoint_store, context.__draftCheckpointStore);
+            assert.equal(
+              options.draft_checkpoint_recording_service,
+              context.__draftCheckpointRecordingService,
+            );
+            assert.equal(typeof options.now_ms, 'function');
+            context.__automaticDraftCheckpointService = {
+              service_version: 'builder-automatic-draft-checkpoint-service.v1',
+              record_verified_candidate_checkpoint() {},
+              read_current_checkpoint_status() {},
+            };
+            return context.__automaticDraftCheckpointService;
+          },
+        };
+      }
       if (specifier === './builder-conversation-main-service.cjs') {
         return {
           createBuilderConversationMainService: (options) => {
@@ -431,6 +480,7 @@ function runtimeWithService(service, probes = {}) {
               options.providerContextDisclosureStatusService,
               context.__providerContextDisclosureStatusService,
             );
+            assert.equal(options.automaticDraftCheckpointService, context.__automaticDraftCheckpointService);
             context.__conversationService = {
               begin_work() {},
               begin_queued_followup_work() {},
@@ -962,6 +1012,10 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite')), true);
   assert.equal(
     fs.existsSync(path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite')),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(userDataPath, 'builder-draft-checkpoints-v1', 'draft-checkpoints.sqlite')),
     true,
   );
   assert.equal(runtime.register(), true);
@@ -2343,6 +2397,7 @@ test('closes project main authority when generation channel registration fails',
   assert.equal(harness.context.__projectMainAuthority.closed, false);
   assert.equal(harness.context.__taskCapsuleStore.closed, false);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, false);
+  assert.equal(harness.context.__draftCheckpointStore.closed, false);
   assert.equal(harness.context.__contextCompactionSummaryStore.closed, false);
   assert.equal(harness.context.__handoffPacketStore.closed, false);
   assert.throws(() => runtime.register(), {
@@ -2351,6 +2406,7 @@ test('closes project main authority when generation channel registration fails',
   assert.deepEqual([...ipcMain.handlers.keys()], []);
   assert.equal(harness.context.__handoffPacketStore.closed, true);
   assert.equal(harness.context.__contextCompactionSummaryStore.closed, true);
+  assert.equal(harness.context.__draftCheckpointStore.closed, true);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, true);
   assert.equal(harness.context.__projectUnderstandingStore.closed, true);
   assert.equal(harness.context.__taskCapsuleStore.closed, true);
@@ -2470,6 +2526,7 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.equal(runtime.dispose(), false);
   assert.equal(runtimeModule.context.__handoffPacketStore.closed, true);
   assert.equal(runtimeModule.context.__contextCompactionSummaryStore.closed, true);
+  assert.equal(runtimeModule.context.__draftCheckpointStore.closed, true);
   assert.equal(runtimeModule.context.__sessionTaskAddressStore.closed, true);
   assert.equal(runtimeModule.context.__projectUnderstandingStore.closed, true);
   assert.equal(runtimeModule.context.__taskCapsuleStore.closed, true);

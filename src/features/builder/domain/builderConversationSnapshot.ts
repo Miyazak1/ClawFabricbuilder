@@ -6,6 +6,10 @@ import {
   sanitizeBuilderProviderContextDisclosureStatusProjectionWire,
   type BuilderProviderContextDisclosureStatusProjectionWire,
 } from './builderProviderContextDisclosureStatusProjection';
+import {
+  sanitizeBuilderDraftCheckpointStatusProjectionWire,
+  type BuilderDraftCheckpointStatusProjectionWire,
+} from './builderDraftCheckpointStatusProjection';
 
 export const BUILDER_TASK_STREAM_READ_RESULT_VERSION =
   'builder-task-stream-read-result.v1' as const;
@@ -322,6 +326,7 @@ export type BuilderConversationReadySnapshot = Readonly<{
   provider_context_disclosure_status_projection?:
     | BuilderProviderContextDisclosureStatusProjectionWire
     | null;
+  draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   conversation: Readonly<{
     conversation_id: string;
     created_at_ms: number;
@@ -345,6 +350,7 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
   provider_context_disclosure_status_projection?:
     | BuilderProviderContextDisclosureStatusProjectionWire
     | null;
+  draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   conversation: null;
   authority: BuilderConversationAuthority;
 }>;
@@ -386,6 +392,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
 const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze([
   'context_status_projection',
   'provider_context_disclosure_status_projection',
+  'draft_checkpoint_status_projection',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'conversation',
@@ -789,6 +796,17 @@ function optionalProviderContextDisclosureStatusProjection(
   const value = source.provider_context_disclosure_status_projection;
   if (value === null) return null;
   const projection = sanitizeBuilderProviderContextDisclosureStatusProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
+}
+
+function optionalDraftCheckpointStatusProjection(
+  source: Record<string, unknown>,
+): BuilderDraftCheckpointStatusProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'draft_checkpoint_status_projection')) return undefined;
+  const value = source.draft_checkpoint_status_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderDraftCheckpointStatusProjectionWire(value);
   if (projection === null) throw unavailable();
   return projection;
 }
@@ -2871,6 +2889,7 @@ export function sanitizeBuilderConversationSnapshot(
     const contextStatusProjection = optionalContextStatusProjection(source);
     const providerContextDisclosureStatusProjection =
       optionalProviderContextDisclosureStatusProjection(source);
+    const draftCheckpointStatusProjection = optionalDraftCheckpointStatusProjection(source);
     if (source.conversation === null) {
       const absent = {
         state: 'absent' as const,
@@ -2885,6 +2904,9 @@ export function sanitizeBuilderConversationSnapshot(
             provider_context_disclosure_status_projection:
               providerContextDisclosureStatusProjection,
           }),
+        ...(draftCheckpointStatusProjection === undefined
+          ? {}
+          : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
         conversation: null,
         authority,
       };
@@ -2939,6 +2961,9 @@ export function sanitizeBuilderConversationSnapshot(
           provider_context_disclosure_status_projection:
             providerContextDisclosureStatusProjection,
         }),
+      ...(draftCheckpointStatusProjection === undefined
+        ? {}
+        : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
       conversation: {
         conversation_id: conversationId,
         created_at_ms: createdAtMs,

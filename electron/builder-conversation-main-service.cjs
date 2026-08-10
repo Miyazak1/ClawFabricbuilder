@@ -80,6 +80,7 @@ const OPTION_KEYS = Object.freeze([
   'onTaskStreamChanged',
   'workingContextStateService',
   'providerContextDisclosureStatusService',
+  'automaticDraftCheckpointService',
 ]);
 const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
 const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
@@ -577,6 +578,9 @@ function sanitizeOptions(value) {
   const providerContextDisclosureStatusService = keys.includes('providerContextDisclosureStatusService')
     ? valueAt(value, 'providerContextDisclosureStatusService')
     : null;
+  const automaticDraftCheckpointService = keys.includes('automaticDraftCheckpointService')
+    ? valueAt(value, 'automaticDraftCheckpointService')
+    : null;
   if (
     typeof createUuid !== 'function'
     || utilTypes.isProxy(createUuid)
@@ -597,6 +601,10 @@ function sanitizeOptions(value) {
         || utilTypes.isProxy(providerContextDisclosureStatusService)
       )
     )
+    || (
+      automaticDraftCheckpointService !== null
+      && (!isPlainObject(automaticDraftCheckpointService) || utilTypes.isProxy(automaticDraftCheckpointService))
+    )
   ) fail();
   return Object.freeze({
     metadataAuthority,
@@ -609,6 +617,7 @@ function sanitizeOptions(value) {
     onTaskStreamChanged,
     workingContextStateService,
     providerContextDisclosureStatusService,
+    automaticDraftCheckpointService,
     readCurrentWorkingContextStateForConversation: workingContextStateService === null
       ? null
       : ownMethod(workingContextStateService, 'read_current_working_context_state_for_conversation'),
@@ -619,6 +628,9 @@ function sanitizeOptions(value) {
           providerContextDisclosureStatusService,
           'read_current_provider_context_disclosure_status_for_conversation',
         ),
+    readCurrentDraftCheckpointStatus: automaticDraftCheckpointService === null
+      ? null
+      : ownMethod(automaticDraftCheckpointService, 'read_current_checkpoint_status'),
   });
 }
 
@@ -962,6 +974,52 @@ function createBuilderConversationMainService(rawOptions) {
         conversation: null,
       });
       return projected.provider_context_disclosure_status_projection;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function latestCandidateId(state) {
+    for (let turnIndex = state.snapshot.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+      const turn = state.snapshot.turns[turnIndex];
+      for (let runIndex = turn.runs.length - 1; runIndex >= 0; runIndex -= 1) {
+        const run = turn.runs[runIndex];
+        if (run.candidate_result === null) continue;
+        return run.candidate_review === null
+          ? run.candidate_result.git_candidate_receipt.candidate_id
+          : null;
+      }
+    }
+    return null;
+  }
+
+  function currentDraftCheckpointStatusProjection(state, projectId, conversationId) {
+    if (options.readCurrentDraftCheckpointStatus === null) return undefined;
+    const candidateId = latestCandidateId(state);
+    if (candidateId === null) return undefined;
+    try {
+      const result = Reflect.apply(
+        options.readCurrentDraftCheckpointStatus,
+        options.automaticDraftCheckpointService,
+        [{ project_id: projectId, conversation_id: conversationId, candidate_id: candidateId }],
+      );
+      if (!isPlainObject(result) || utilTypes.isProxy(result)) return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        result,
+        'draft_checkpoint_status_projection',
+      );
+      if (
+        !descriptor
+        || descriptor.enumerable !== true
+        || !Object.hasOwn(descriptor, 'value')
+        || descriptor.value === null
+      ) return undefined;
+      const projected = projectBuilderTaskStream({
+        project_id: projectId,
+        draft_checkpoint_status_projection: descriptor.value,
+        conversation: null,
+      });
+      return projected.draft_checkpoint_status_projection;
     } catch {
       return undefined;
     }
@@ -3139,6 +3197,9 @@ function createBuilderConversationMainService(rawOptions) {
       const providerContextDisclosureStatusProjection = state === null
         ? undefined
         : currentProviderContextDisclosureStatusProjection(projectId, conversationId);
+      const draftCheckpointStatusProjection = state === null
+        ? undefined
+        : currentDraftCheckpointStatusProjection(state, projectId, conversationId);
       return projectBuilderTaskStream({
         project_id: projectId,
         ...(contextStatusProjection === undefined
@@ -3150,6 +3211,9 @@ function createBuilderConversationMainService(rawOptions) {
             provider_context_disclosure_status_projection:
               providerContextDisclosureStatusProjection,
           }),
+        ...(draftCheckpointStatusProjection === undefined
+          ? {}
+          : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
         conversation: state === null ? null : {
           conversation_id: state.conversation.conversation_id,
           created_at_ms: state.conversation.created_at_ms,

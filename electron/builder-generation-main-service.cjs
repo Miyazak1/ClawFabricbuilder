@@ -122,6 +122,7 @@ const OPTION_KEYS = Object.freeze([
   'taskCapsuleRecordingService',
   'sessionTaskAddressRecordingService',
   'sessionTaskAddressBindingService',
+  'automaticDraftCheckpointService',
   'workingContextStateService',
   'providerContextDisclosureDecisionService',
   'providerContextDisclosureStatusService',
@@ -1205,6 +1206,12 @@ function sanitizeOptions(value) {
     fail();
   }
   if (
+    keys.includes('automaticDraftCheckpointService')
+    && !isPlainObject(descriptors.automaticDraftCheckpointService.value)
+  ) {
+    fail();
+  }
+  if (
     keys.includes('workingContextStateService')
     && !isPlainObject(descriptors.workingContextStateService.value)
   ) {
@@ -1249,6 +1256,9 @@ function sanitizeOptions(value) {
       : {}),
     ...(keys.includes('sessionTaskAddressBindingService')
       ? { sessionTaskAddressBindingService: descriptors.sessionTaskAddressBindingService.value }
+      : {}),
+    ...(keys.includes('automaticDraftCheckpointService')
+      ? { automaticDraftCheckpointService: descriptors.automaticDraftCheckpointService.value }
       : {}),
     ...(keys.includes('workingContextStateService')
       ? { workingContextStateService: descriptors.workingContextStateService.value }
@@ -1519,6 +1529,16 @@ function candidateProofFromCandidate(candidate) {
       : candidate.base_revision_evidence.commit_oid,
     base_revision: baseRevision === null ? null : { ...baseRevision },
   });
+}
+
+function baseRevisionRefFromCandidate(candidate) {
+  const baseRevision = candidate.run_binding.base_revision;
+  return baseRevision === null
+    ? null
+    : freezeDeep({
+      revision_receipt_digest: baseRevision.revision_receipt_digest,
+      commit_oid: baseRevision.commit_oid,
+    });
 }
 
 function sanitizeConversationDraft(value, expectedDraftId) {
@@ -1816,6 +1836,12 @@ function createBuilderGenerationMainService(rawOptions) {
       options.sessionTaskAddressBindingService,
       'bind_draft_continuation_to_current_task_address',
     );
+  const recordVerifiedCandidateCheckpoint = options.automaticDraftCheckpointService === undefined
+    ? null
+    : ownMethod(
+      options.automaticDraftCheckpointService,
+      'record_verified_candidate_checkpoint',
+    );
   const readCurrentWorkingContextStateForConversation = options.workingContextStateService === undefined
     ? null
     : ownMethod(
@@ -1847,6 +1873,26 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingRetryContexts = new Map();
   const pendingGenerateRouteDecisionHints = new Map();
   const pendingGenerateQueuedFollowups = new Map();
+
+  function recordAutomaticDraftCheckpoint(candidate, receiptPair, summary) {
+    if (recordVerifiedCandidateCheckpoint === null) return null;
+    const changedPaths = new Set(candidate.operations.map((operation) => operation.path));
+    try {
+      return Reflect.apply(
+        recordVerifiedCandidateCheckpoint,
+        options.automaticDraftCheckpointService,
+        [{
+          candidate_receipt: receiptPair.candidate_receipt,
+          candidate_verification: receiptPair.verification_receipt,
+          base_revision_ref: baseRevisionRefFromCandidate(candidate),
+          summary,
+          changed_file_count: changedPaths.size,
+        }],
+      );
+    } catch {
+      fail('builder_generation_service_unavailable');
+    }
+  }
   const generationContexts = new WeakMap();
   const providerContextProjections = new WeakMap();
   const draftContinuationContexts = new WeakMap();
@@ -3454,6 +3500,7 @@ function createBuilderGenerationMainService(rawOptions) {
         );
         const title = 'Restored saved version';
         const summary = 'Review this restored draft before saving it as a new version.';
+        recordAutomaticDraftCheckpoint(candidate, receiptPair, summary);
         const recorded = Reflect.apply(
           completeConversationCandidate,
           options.conversationService,
@@ -3552,6 +3599,7 @@ function createBuilderGenerationMainService(rawOptions) {
         gitCandidateReceipt,
         gitVerificationReceipt,
       );
+      recordAutomaticDraftCheckpoint(internal.candidate, receiptPair, internal.summary);
       const recorded = Reflect.apply(
         completeConversationCandidate,
         options.conversationService,
@@ -3651,6 +3699,7 @@ function createBuilderGenerationMainService(rawOptions) {
         gitCandidateReceipt,
         gitVerificationReceipt,
       );
+      recordAutomaticDraftCheckpoint(internal.candidate, receiptPair, internal.summary);
       const recorded = Reflect.apply(
         completeConversationCandidate,
         options.conversationService,
