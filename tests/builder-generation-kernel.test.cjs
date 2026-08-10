@@ -204,6 +204,7 @@ function runContextSnapshot(contextAssemblyValue, projection, gate) {
     },
     latest_task_capsule: null,
     working_context_state: workingContextState(),
+    project_understanding: null,
     context_assembly: contextAssemblyValue,
     provider_context_projection: projection,
     provider_context_prompt_egress_gate: gate,

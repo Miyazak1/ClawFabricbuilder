@@ -18,8 +18,12 @@ const {
 const {
   sanitizeBuilderProviderContextPromptEgressGate,
 } = require('./builder-provider-context-prompt-egress-gate.cjs');
+const {
+  builderProjectUnderstandingSnapshotDigest,
+  sanitizeBuilderProjectUnderstandingSnapshot,
+} = require('./builder-project-understanding.cjs');
 
-const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v1';
+const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v2';
 const SNAPSHOT_ID_PREFIX = 'builder-run-context-snapshot:';
 const SNAPSHOT_KEYS = Object.freeze([
   'snapshot_version',
@@ -33,6 +37,7 @@ const SNAPSHOT_KEYS = Object.freeze([
   'route_decision',
   'brief_reference',
   'context_refs',
+  'project_understanding_ref',
   'context_assembly_ref',
   'provider_context_projection_ref',
   'provider_context_prompt_egress_gate_ref',
@@ -53,6 +58,7 @@ const SNAPSHOT_BODY_KEYS = Object.freeze([
   'route_decision',
   'brief_reference',
   'context_refs',
+  'project_understanding_ref',
   'context_assembly_ref',
   'provider_context_projection_ref',
   'provider_context_prompt_egress_gate_ref',
@@ -81,6 +87,15 @@ const CONTEXT_REFS_KEYS = Object.freeze([
   'working_context_state_updated_at_ms',
   'compaction_refs',
   'handoff_refs',
+]);
+const PROJECT_UNDERSTANDING_REF_KEYS = Object.freeze([
+  'snapshot_digest',
+  'source_tree_digest',
+  'updated_at_ms',
+]);
+const PROJECT_UNDERSTANDING_RECORD_KEYS = Object.freeze([
+  'snapshot_digest',
+  'project_understanding_snapshot',
 ]);
 const COMPACTION_REF_KEYS = Object.freeze(['summary_digest', 'source_range_digest', 'compacted_at_ms']);
 const HANDOFF_REF_KEYS = Object.freeze(['packet_digest', 'inserted_at_ms', 'adopted_at_ms']);
@@ -123,6 +138,8 @@ const CONTEXT_ASSEMBLY_ID_PATTERN = /^builder-context-assembly:[0-9a-f]{64}$/u;
 const PROVIDER_CONTEXT_PROJECTION_ID_PATTERN = /^builder-provider-context-projection:[0-9a-f]{64}$/u;
 const PROVIDER_CONTEXT_PROMPT_EGRESS_GATE_ID_PATTERN =
   /^builder-provider-context-prompt-egress-gate:[0-9a-f]{64}$/u;
+const PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PATTERN =
+  /^builder-project-understanding-snapshot:[0-9a-f]{64}$/u;
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
 const DISPATCHES = Object.freeze(['reply', 'brief_update', 'plan', 'build', 'ask_workspace', 'ask_permission', 'blocked']);
@@ -139,6 +156,7 @@ const CREATE_INPUT_KEYS = Object.freeze([
   'route_decision',
   'latest_task_capsule',
   'working_context_state',
+  'project_understanding',
   'context_assembly',
   'provider_context_projection',
   'provider_context_prompt_egress_gate',
@@ -439,6 +457,43 @@ function contextRefsFromWorkingContextState(value, projectId, conversationId) {
   };
 }
 
+function sanitizeProjectUnderstandingRef(value, createdAtMs) {
+  if (value === null) return null;
+  const source = exactObject(value, PROJECT_UNDERSTANDING_REF_KEYS);
+  const updatedAtMs = safeTimestamp(valueAt(source, 'updated_at_ms'));
+  if (updatedAtMs > createdAtMs) fail();
+  return {
+    snapshot_digest: safePattern(
+      valueAt(source, 'snapshot_digest'),
+      PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PATTERN,
+    ),
+    source_tree_digest: safePattern(valueAt(source, 'source_tree_digest'), DIGEST_PATTERN),
+    updated_at_ms: updatedAtMs,
+  };
+}
+
+function projectUnderstandingRefFromRecord(value, projectId, createdAtMs) {
+  if (value === null) return null;
+  const record = exactObject(value, PROJECT_UNDERSTANDING_RECORD_KEYS);
+  const snapshot = sanitizeBuilderProjectUnderstandingSnapshot(
+    valueAt(record, 'project_understanding_snapshot'),
+  );
+  const snapshotDigest = safePattern(
+    valueAt(record, 'snapshot_digest'),
+    PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PATTERN,
+  );
+  if (
+    snapshot.project_id !== projectId
+    || snapshot.updated_at_ms > createdAtMs
+    || builderProjectUnderstandingSnapshotDigest(snapshot) !== snapshotDigest
+  ) fail();
+  return sanitizeProjectUnderstandingRef({
+    snapshot_digest: snapshotDigest,
+    source_tree_digest: snapshot.source_tree_digest,
+    updated_at_ms: snapshot.updated_at_ms,
+  }, createdAtMs);
+}
+
 function sanitizeContextAssemblyRef(value, createdAtMs, contextRefs) {
   const source = exactObject(value, CONTEXT_ASSEMBLY_REF_KEYS);
   const assemblyId = nullable(
@@ -653,7 +708,11 @@ function sanitizePermissions(value) {
 function sanitizeCapabilities(value) {
   const source = exactObject(value, CAPABILITIES_KEYS);
   return {
-    project_source: safeEnum(valueAt(source, 'project_source'), ['base_revision_reference_only', 'new_project_empty_base']),
+    project_source: safeEnum(valueAt(source, 'project_source'), [
+      'base_revision_reference_only',
+      'selected_local_workspace_reference',
+      'unsaved_project_reference_only',
+    ]),
     command_execution: safeEnum(valueAt(source, 'command_execution'), ['not_included']),
     network_access: safeEnum(valueAt(source, 'network_access'), ['not_included']),
   };
@@ -669,6 +728,10 @@ function snapshotBodyFrom(value) {
   const briefReference = sanitizeBriefReference(valueAt(source, 'brief_reference'));
   const createdAtMs = safeTimestamp(valueAt(source, 'created_at_ms'));
   const contextRefs = sanitizeContextRefs(valueAt(source, 'context_refs'), createdAtMs);
+  const projectUnderstandingRef = sanitizeProjectUnderstandingRef(
+    valueAt(source, 'project_understanding_ref'),
+    createdAtMs,
+  );
   const contextAssemblyRef = sanitizeContextAssemblyRef(
     valueAt(source, 'context_assembly_ref'),
     createdAtMs,
@@ -693,6 +756,7 @@ function snapshotBodyFrom(value) {
     route_decision: sanitizeRouteDecision(valueAt(source, 'route_decision')),
     brief_reference: briefReference,
     context_refs: contextRefs,
+    project_understanding_ref: projectUnderstandingRef,
     context_assembly_ref: contextAssemblyRef,
     provider_context_projection_ref: providerContextProjectionRef,
     provider_context_prompt_egress_gate_ref: sanitizeProviderContextPromptEgressGateRef(
@@ -728,6 +792,7 @@ function sanitizeBuilderRunContextSnapshot(value, expected = null) {
     route_decision: valueAt(source, 'route_decision'),
     brief_reference: valueAt(source, 'brief_reference'),
     context_refs: valueAt(source, 'context_refs'),
+    project_understanding_ref: valueAt(source, 'project_understanding_ref'),
     context_assembly_ref: valueAt(source, 'context_assembly_ref'),
     provider_context_projection_ref: valueAt(source, 'provider_context_projection_ref'),
     provider_context_prompt_egress_gate_ref: valueAt(source, 'provider_context_prompt_egress_gate_ref'),
@@ -825,6 +890,11 @@ function createBuilderRunContextSnapshot(input) {
     valueAt(source, 'provider_context_projection'),
     contextAssemblyRef,
   );
+  const projectUnderstandingRef = projectUnderstandingRefFromRecord(
+    valueAt(source, 'project_understanding'),
+    projectId,
+    safeTimestamp(valueAt(source, 'created_at_ms')),
+  );
   const body = snapshotBodyFrom({
     snapshot_version: SNAPSHOT_VERSION,
     project_id: projectId,
@@ -848,6 +918,7 @@ function createBuilderRunContextSnapshot(input) {
       contextual_build_ready: true,
     },
     context_refs: contextRefs,
+    project_understanding_ref: projectUnderstandingRef,
     context_assembly_ref: contextAssemblyRef,
     provider_context_projection_ref: providerContextProjectionRef,
     provider_context_prompt_egress_gate_ref: providerContextPromptEgressGateRefFromGate(
@@ -862,7 +933,9 @@ function createBuilderRunContextSnapshot(input) {
     },
     capabilities: {
       project_source: valueAt(source, 'base_revision') === null
-        ? 'new_project_empty_base'
+        ? projectUnderstandingRef === null
+          ? 'unsaved_project_reference_only'
+          : 'selected_local_workspace_reference'
         : 'base_revision_reference_only',
       command_execution: 'not_included',
       network_access: 'not_included',

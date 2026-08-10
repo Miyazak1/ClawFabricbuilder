@@ -38,6 +38,7 @@ const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
 const {
+  builderProjectUnderstandingSnapshotDigest,
   createBuilderProjectUnderstandingSnapshot,
 } = require('../electron/builder-project-understanding.cjs');
 const {
@@ -725,6 +726,7 @@ function conversationService(options = {}) {
   function runContextSnapshotEvent(
     context,
     workingContextState = null,
+    projectUnderstanding = null,
     contextAssembly = null,
     providerContextProjection = null,
     providerContextPromptEgressGate = null,
@@ -743,6 +745,7 @@ function conversationService(options = {}) {
       route_decision: submitted.payload.route_decision,
       latest_task_capsule: null,
       working_context_state: workingContextState,
+      project_understanding: projectUnderstanding,
       context_assembly: contextAssembly,
       provider_context_projection: providerContextProjection,
       provider_context_prompt_egress_gate: providerContextPromptEgressGate,
@@ -1046,6 +1049,7 @@ function conversationService(options = {}) {
       const event = runContextSnapshotEvent(
         input.context,
         input.working_context_state,
+        input.project_understanding,
         input.context_assembly,
         input.provider_context_projection,
         input.provider_context_prompt_egress_gate,
@@ -1421,7 +1425,7 @@ function localWorkspaceReadResult(sourceTree = createBuilderProjectSourceTree({
   };
 }
 
-function projectUnderstandingRefreshResult(sourceTree, snapshotDigestCharacter = 'a') {
+function projectUnderstandingRefreshResult(sourceTree) {
   const snapshot = createBuilderProjectUnderstandingSnapshot({
     project_id: PROJECT_ID,
     root_digest: `sha256:${'b'.repeat(64)}`,
@@ -1430,8 +1434,7 @@ function projectUnderstandingRefreshResult(sourceTree, snapshotDigestCharacter =
     updated_at_ms: 10,
   });
   const record = {
-    snapshot_digest:
-      `builder-project-understanding-snapshot:${snapshotDigestCharacter.repeat(64)}`,
+    snapshot_digest: builderProjectUnderstandingSnapshotDigest(snapshot),
     project_understanding_snapshot: snapshot,
   };
   return {
@@ -2528,8 +2531,8 @@ test('records a main-only plan proposal from collected source context without so
   const transportInputs = [];
   const started = [];
   const understandingCalls = [];
-  const understandingSnapshotDigest =
-    `builder-project-understanding-snapshot:${'a'.repeat(64)}`;
+  const understandingSnapshotDigest = projectUnderstandingRefreshResult(currentSource)
+    .project_understanding.snapshot_digest;
   const lifecycle = conversationService();
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
@@ -2619,6 +2622,22 @@ test('records a main-only plan proposal from collected source context without so
   assert.equal(lifecycle.calls.begin.length, 1);
   assert.equal(lifecycle.calls.begin[0].instruction, 'Plan a smaller settings panel.');
   assert.equal(lifecycle.calls.begin[0].base_revision.commit_oid, '2'.repeat(40));
+  assert.equal(
+    lifecycle.calls.contextSnapshot[0].project_understanding.snapshot_digest,
+    understandingSnapshotDigest,
+  );
+  const planContextSnapshot = lifecycle.calls.plan[0].context.events.find(
+    (event) => event.event_type === 'run_context_snapshot_recorded',
+  ).payload.snapshot;
+  assert.deepEqual(planContextSnapshot.project_understanding_ref, {
+    snapshot_digest: understandingSnapshotDigest,
+    source_tree_digest: currentSource.source_tree_digest,
+    updated_at_ms: 10,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(planContextSnapshot),
+    /project_understanding_snapshot|command_profiles|important_paths|"source_tree":|credential/iu,
+  );
   assert.equal(collected.length, 1);
   assert.equal(collected[0].context.project.project_id, PROJECT_ID);
   assert.deepEqual(collected[0].resource_ids, ['project:/src/app.tsx']);
@@ -2756,6 +2775,12 @@ test('records a plan proposal for a bound local project before the first saved r
   assert.equal(result.existing_project_id, PROJECT_ID);
   assert.equal(lifecycle.calls.begin.length, 1);
   assert.equal(lifecycle.calls.begin[0].base_revision, null);
+  assert.equal(lifecycle.calls.contextSnapshot[0].project_understanding, null);
+  const localPlanContextSnapshot = lifecycle.calls.plan[0].context.events.find(
+    (event) => event.event_type === 'run_context_snapshot_recorded',
+  ).payload.snapshot;
+  assert.equal(localPlanContextSnapshot.project_understanding_ref, null);
+  assert.equal(localPlanContextSnapshot.capabilities.project_source, 'unsaved_project_reference_only');
   assert.deepEqual(collected.map((entry) => entry.resource_ids), [[]]);
   assert.equal(lifecycle.calls.plan.length, 1);
   assert.equal(lifecycle.calls.plan[0].plan_proposal_record.context_binding.file_count, 0);

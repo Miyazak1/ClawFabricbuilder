@@ -198,6 +198,7 @@ function runContextSnapshot({ turnId, taskId, runId, routeDecisionRecord, messag
     route_decision: routeDecisionRecord,
     latest_task_capsule: null,
     working_context_state: null,
+    project_understanding: null,
     context_assembly: null,
     provider_context_projection: null,
     provider_context_prompt_egress_gate: null,

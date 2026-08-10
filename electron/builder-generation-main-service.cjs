@@ -30,6 +30,7 @@ const {
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
 const {
+  builderProjectUnderstandingSnapshotDigest,
   sanitizeBuilderProjectUnderstandingSnapshot,
 } = require('./builder-project-understanding.cjs');
 const {
@@ -1345,6 +1346,7 @@ function sanitizeProjectUnderstandingRecord(value, expectedProjectId, expectedSo
   if (
     snapshot.project_id !== expectedProjectId
     || snapshot.source_tree_digest !== expectedSourceTreeDigest
+    || builderProjectUnderstandingSnapshotDigest(snapshot) !== snapshotDigest
   ) fail();
   return freezeDeep({
     snapshot_digest: snapshotDigest,
@@ -2356,7 +2358,7 @@ function createBuilderGenerationMainService(rawOptions) {
     clearProviderContextDisclosureStatusForContext(activeContexts.get(key));
   }
 
-  async function recordConversationContextSnapshot(conversationContext) {
+  async function recordConversationContextSnapshot(conversationContext, projectUnderstanding = null) {
     const workingContextState = workingContextStateForSnapshot(conversationContext);
     const contextAssembly = contextAssemblyForSnapshot(conversationContext, workingContextState);
     const providerContextProjection = await providerContextProjectionForSnapshot(contextAssembly);
@@ -2367,6 +2369,7 @@ function createBuilderGenerationMainService(rawOptions) {
       [{
         context: conversationContext,
         working_context_state: workingContextState,
+        project_understanding: projectUnderstanding,
         context_assembly: contextAssembly,
         provider_context_projection: providerContextProjection,
         provider_context_prompt_egress_gate: providerContextPromptEgressGate,
@@ -2841,10 +2844,11 @@ function createBuilderGenerationMainService(rawOptions) {
         options.projectReadAuthority,
         options.projectIdentityAuthority,
       );
+      let projectUnderstanding = null;
       if (refreshProjectUnderstanding !== null) {
         setupPhase = 'plan_refresh_project_understanding';
         try {
-          sanitizeProjectUnderstandingRefreshResult(
+          projectUnderstanding = sanitizeProjectUnderstandingRefreshResult(
             await Reflect.apply(refreshProjectUnderstanding, options.projectUnderstandingService, [{
               project_id: projectId,
             }]),
@@ -2870,7 +2874,10 @@ function createBuilderGenerationMainService(rawOptions) {
       setupPhase = 'plan_record_session_task_address';
       recordSessionTaskAddressesFromWorkContext(conversationContext);
       setupPhase = 'plan_record_context_snapshot';
-      conversationContext = await recordConversationContextSnapshot(conversationContext);
+      conversationContext = await recordConversationContextSnapshot(
+        conversationContext,
+        projectUnderstanding,
+      );
       setupPhase = 'plan_activate_context';
       activeContexts.set(key, conversationContext);
       retryableContexts.delete(key);

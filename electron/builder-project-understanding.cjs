@@ -10,6 +10,8 @@ const {
 
 const BUILDER_PROJECT_UNDERSTANDING_SNAPSHOT_VERSION =
   'builder-project-understanding-snapshot.v1';
+const BUILDER_PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PREFIX =
+  'builder-project-understanding-snapshot:';
 const BUILDER_COMMAND_PROFILE_VERSION = 'builder-command-profile.v1';
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const PROJECT_ID_PATTERN =
@@ -617,6 +619,12 @@ function createBuilderProjectUnderstandingSnapshot(rawInput) {
   });
 }
 
+function builderProjectUnderstandingSnapshotDigest(rawSnapshot) {
+  const snapshot = sanitizeBuilderProjectUnderstandingSnapshot(rawSnapshot);
+  return `${BUILDER_PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PREFIX}`
+    + sha256Canonical(snapshot).slice('sha256:'.length);
+}
+
 function safeBoundary(fn) {
   return (...args) => {
     try {
@@ -630,8 +638,11 @@ function safeBoundary(fn) {
 
 module.exports = Object.freeze({
   BUILDER_COMMAND_PROFILE_VERSION,
+  BUILDER_PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PREFIX,
   BUILDER_PROJECT_UNDERSTANDING_SNAPSHOT_VERSION,
   BuilderProjectUnderstandingError,
+  builderProjectUnderstandingSnapshotDigest:
+    safeBoundary(builderProjectUnderstandingSnapshotDigest),
   createBuilderProjectUnderstandingSnapshot: safeBoundary(createBuilderProjectUnderstandingSnapshot),
   sanitizeBuilderProjectUnderstandingSnapshot: safeBoundary(sanitizeBuilderProjectUnderstandingSnapshot),
 });

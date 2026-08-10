@@ -8,6 +8,7 @@ const { types: utilTypes } = require('node:util');
 
 const {
   BuilderProjectUnderstandingError,
+  builderProjectUnderstandingSnapshotDigest,
   sanitizeBuilderProjectUnderstandingSnapshot,
 } = require('./builder-project-understanding.cjs');
 
@@ -277,7 +278,7 @@ function openDatabase(databasePath) {
 }
 
 function snapshotDigest(snapshot) {
-  return `builder-project-understanding-snapshot:${sha256Canonical(snapshot)}`;
+  return builderProjectUnderstandingSnapshotDigest(snapshot);
 }
 
 function normalizeSnapshotError(error) {

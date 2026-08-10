@@ -20,6 +20,13 @@ const {
 const {
   assessBuilderProviderContextPromptEgress,
 } = require('../electron/builder-provider-context-prompt-egress-gate.cjs');
+const {
+  createBuilderProjectSourceTree,
+} = require('../electron/builder-project-source-tree.cjs');
+const {
+  builderProjectUnderstandingSnapshotDigest,
+  createBuilderProjectUnderstandingSnapshot,
+} = require('../electron/builder-project-understanding.cjs');
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -83,6 +90,7 @@ function snapshotInput(overrides = {}) {
     route_decision: routeDecision(),
     latest_task_capsule: null,
     working_context_state: null,
+    project_understanding: null,
     context_assembly: null,
     provider_context_projection: null,
     provider_context_prompt_egress_gate: null,
@@ -179,6 +187,24 @@ function latestTaskCapsule() {
   };
 }
 
+function projectUnderstandingRecord(overrides = {}) {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'private/secret.ts', content: 'export const privateValue = true;\n' }],
+  });
+  const snapshot = createBuilderProjectUnderstandingSnapshot({
+      project_id: PROJECT_ID,
+      root_digest: `sha256:${'9'.repeat(64)}`,
+      source_tree: sourceTree,
+      previous_successful_check_runs: [],
+      updated_at_ms: 9,
+      ...overrides,
+    });
+  return {
+    snapshot_digest: builderProjectUnderstandingSnapshotDigest(snapshot),
+    project_understanding_snapshot: snapshot,
+  };
+}
+
 function priorBriefTaskCapsule() {
   return {
     message_id: BRIEF_MESSAGE_ID,
@@ -249,6 +275,51 @@ test('creates a digest-bound run context snapshot without private source authori
   assert.doesNotMatch(
     JSON.stringify(snapshot),
     /"provider_context":|provider_prompt_context|credential|source_tree|api[_-]?key|git_candidate_receipt|tree_oid|parent_oid/iu,
+  );
+});
+
+test('binds a project understanding reference without embedding its source or command details', () => {
+  const projectUnderstanding = projectUnderstandingRecord();
+  const snapshot = createBuilderRunContextSnapshot(snapshotInput({
+    project_understanding: projectUnderstanding,
+    base_revision: null,
+  }));
+
+  assert.deepEqual(snapshot.project_understanding_ref, {
+    snapshot_digest: projectUnderstanding.snapshot_digest,
+    source_tree_digest:
+      projectUnderstanding.project_understanding_snapshot.source_tree_digest,
+    updated_at_ms: 9,
+  });
+  assert.equal(snapshot.capabilities.project_source, 'selected_local_workspace_reference');
+  assert.deepEqual(sanitizeBuilderRunContextSnapshot(structuredClone(snapshot)), snapshot);
+  assert.doesNotMatch(
+    JSON.stringify(snapshot),
+    /private\/secret|privateValue|entrypoints|important_paths|command_profiles|"source_tree":/iu,
+  );
+
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      project_understanding: projectUnderstandingRecord({ updated_at_ms: 11 }),
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      project_understanding: projectUnderstandingRecord({
+        project_id: 'builder-project:22222222-2222-4222-8222-222222222222',
+      }),
+    })),
+    BuilderRunContextSnapshotError,
+  );
+  assert.throws(
+    () => createBuilderRunContextSnapshot(snapshotInput({
+      project_understanding: {
+        ...projectUnderstanding,
+        snapshot_digest: `builder-project-understanding-snapshot:${'7'.repeat(64)}`,
+      },
+    })),
+    BuilderRunContextSnapshotError,
   );
 });
 

@@ -1919,6 +1919,7 @@ function createBuilderConversationMainService(rawOptions) {
     exactObject(rawRequest, [
       'context',
       'working_context_state',
+      'project_understanding',
       'context_assembly',
       'provider_context_projection',
       'provider_context_prompt_egress_gate',
@@ -1948,6 +1949,7 @@ function createBuilderConversationMainService(rawOptions) {
       route_decision: submitted.payload.route_decision,
       latest_task_capsule: latestTaskCapsuleFromEvents(context.events),
       working_context_state: valueAt(rawRequest, 'working_context_state'),
+      project_understanding: valueAt(rawRequest, 'project_understanding'),
       context_assembly: valueAt(rawRequest, 'context_assembly'),
       provider_context_projection: valueAt(rawRequest, 'provider_context_projection'),
       provider_context_prompt_egress_gate: valueAt(rawRequest, 'provider_context_prompt_egress_gate'),

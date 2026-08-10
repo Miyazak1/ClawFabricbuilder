@@ -785,6 +785,7 @@ test('supports digest-bound run context snapshots without source or provider aut
     route_decision: submitted.payload.route_decision,
     latest_task_capsule: null,
     working_context_state: null,
+    project_understanding: null,
     context_assembly: null,
     provider_context_projection: null,
     provider_context_prompt_egress_gate: null,

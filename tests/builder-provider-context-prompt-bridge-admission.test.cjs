@@ -187,6 +187,7 @@ function runContextSnapshot(contextAssemblyValue, providerContextProjection, gat
     route_decision: routeDecision(),
     latest_task_capsule: null,
     working_context_state: workingContextState(),
+    project_understanding: null,
     context_assembly: contextAssemblyValue,
     provider_context_projection: providerContextProjection,
     provider_context_prompt_egress_gate: gate,
