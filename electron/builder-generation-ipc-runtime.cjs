@@ -1378,6 +1378,20 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         }
       },
     });
+    const generationWorkspaceReadAuthority = Object.freeze({
+      async load_fresh_workspace(rawRequest) {
+        const projectId = requiredProjectId(rawRequest);
+        return localWorkspaceReadResult(
+          projectRootPathFromWorkspace(
+            await projectMainAuthority.metadata_authority.load_project_workspace({
+              project_id: projectId,
+            }),
+            projectId,
+          ),
+          projectId,
+        );
+      },
+    });
     const projectUnderstandingService = createBuilderProjectUnderstandingService({
       project_read_authority: generationProjectReadAuthority,
       project_understanding_store: projectUnderstandingStore,
@@ -1386,6 +1400,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
       projectReadAuthority: generationProjectReadAuthority,
+      workspaceReadAuthority: generationWorkspaceReadAuthority,
       projectUnderstandingService,
       projectIdentityAuthority: projectMainAuthority.metadata_authority,
       conversationService,

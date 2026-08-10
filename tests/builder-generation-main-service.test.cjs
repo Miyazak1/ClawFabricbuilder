@@ -1717,6 +1717,122 @@ test('generates first draft for a bound local project before any saved revision 
   );
 });
 
+test('re-reads the bound workspace and admits an ordinary candidate before Git persistence', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const workspaceReads = [];
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(sourceTree); },
+      },
+      workspaceReadAuthority: {
+        load_fresh_workspace(input) {
+          workspaceReads.push(input);
+          return localWorkspaceReadResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        operations: [
+          { operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' },
+        ],
+      })),
+    }),
+  });
+
+  const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
+
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.deepEqual(workspaceReads, [{ project_id: PROJECT_ID }]);
+  assert.equal(git.receipts.length, 1);
+});
+
+test('blocks Git candidate persistence when the workspace changes during provider work', async () => {
+  const base = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
+  });
+  const observed = createBuilderProjectSourceTree({
+    files: [
+      { path: 'notes.txt', content: 'user work added while AI was running\n' },
+      { path: 'src/app.js', content: 'export const before = true;\n' },
+    ],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(base); },
+      },
+      workspaceReadAuthority: {
+        load_fresh_workspace() { return localWorkspaceReadResult(observed); },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        operations: [
+          { operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' },
+        ],
+      })),
+    }),
+  });
+
+  await assert.rejects(
+    service.generate(request({ existingProjectId: PROJECT_ID })),
+    { code: 'builder_generation_workspace_changed' },
+  );
+  assert.equal(git.receipts.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 1);
+  assert.equal(lifecycle.calls.failure[0].failure_code, 'builder_generation_workspace_changed');
+});
+
+test('blocks protected paths and approval-required edits before Git persistence', async () => {
+  for (const [operations, expectedCode] of [
+    [
+      [{ operation: 'upsert', path: '.env', content: 'MODE=development\n' }],
+      'builder_generation_workspace_guard_denied',
+    ],
+    [
+      [{ operation: 'upsert', path: 'package-lock.json', content: '{"lockfileVersion":3}\n' }],
+      'builder_generation_workspace_guard_approval_required',
+    ],
+  ]) {
+    const base = createBuilderProjectSourceTree({ files: [] });
+    const git = gitAuthority();
+    const service = createBuilderGenerationMainService({
+      ...repositories({
+        gitAuthority: git,
+        projectReadAuthority: {
+          load_current() { return localWorkspaceReadResult(base); },
+        },
+        workspaceReadAuthority: {
+          load_fresh_workspace() { return localWorkspaceReadResult(base); },
+        },
+      }),
+      transport: async () => ({
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({ operations })),
+      }),
+    });
+
+    await assert.rejects(
+      service.generate(request({ existingProjectId: PROJECT_ID })),
+      { code: expectedCode },
+    );
+    assert.equal(git.receipts.length, 0, expectedCode);
+  }
+});
+
 test('restores a saved revision as a new unsaved Git candidate without provider dispatch', async () => {
   const currentSourceTree = createBuilderProjectSourceTree({
     files: [
@@ -1729,6 +1845,7 @@ test('restores a saved revision as a new unsaved Git candidate without provider 
     files: [
       { path: 'index.html', content: '<main>Restored</main>\n' },
       { path: 'README.md', content: '# Restored version\n' },
+      { path: 'src/old.js', content: 'export const old = true;\n' },
       { path: 'src/theme.css', content: 'body { color: black; }\n' },
     ],
   });
@@ -1776,7 +1893,7 @@ test('restores a saved revision as a new unsaved Git candidate without provider 
   assert.equal(result.source_tree.source_tree_digest, targetSourceTree.source_tree_digest);
   assert.deepEqual(
     result.source_tree.files.map((file) => file.path),
-    ['README.md', 'index.html', 'src/theme.css'],
+    ['README.md', 'index.html', 'src/old.js', 'src/theme.css'],
   );
   assert.equal(result.base_revision_evidence.source_tree_digest, currentSourceTree.source_tree_digest);
   assert.deepEqual(currentReads, [{ project_id: PROJECT_ID }]);
@@ -1802,7 +1919,55 @@ test('restores a saved revision as a new unsaved Git candidate without provider 
   assert.equal(git.receipts[0].resulting_tree_digest, targetSourceTree.source_tree_digest);
   assert.doesNotMatch(
     JSON.stringify(result),
-    /git_candidate_receipt|verification_receipt|provider|credential|operations|src\/old\.js/iu,
+    /git_candidate_receipt|verification_receipt|provider|credential|operations/iu,
+  );
+});
+
+test('does not create a restore candidate when restoring would delete a project file', async () => {
+  const currentSourceTree = createBuilderProjectSourceTree({
+    files: [
+      { path: 'index.html', content: '<main>Current</main>\n' },
+      { path: 'src/current-only.js', content: 'export const current = true;\n' },
+    ],
+  });
+  const targetSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Restored</main>\n' }],
+  });
+  const targetDigest = `sha256:${'4'.repeat(64)}`;
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(currentSourceTree); },
+        load_revision() {
+          return revisionReadResult({
+            sourceTree: targetSourceTree,
+            revisionDigest: targetDigest,
+          });
+        },
+      },
+    }),
+    transport: async () => {
+      throw new Error('restore must not dispatch provider transport');
+    },
+  });
+
+  await assert.rejects(
+    service.restore_revision_as_draft({
+      project_id: PROJECT_ID,
+      revision_receipt_digest: targetDigest,
+    }),
+    { code: 'builder_generation_workspace_guard_approval_required' },
+  );
+  assert.equal(git.receipts.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 1);
+  assert.equal(
+    lifecycle.calls.failure[0].failure_code,
+    'builder_generation_workspace_guard_approval_required',
   );
 });
 

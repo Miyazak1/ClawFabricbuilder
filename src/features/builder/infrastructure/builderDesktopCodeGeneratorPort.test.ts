@@ -778,6 +778,55 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     });
   });
 
+  it.each([
+    [
+      'builder_generation_workspace_changed',
+      true,
+      'The project changed while AI was working. Review it and try again.',
+    ],
+    [
+      'builder_generation_workspace_guard_denied',
+      false,
+      'The proposed file changes were blocked to protect this project.',
+    ],
+    [
+      'builder_generation_workspace_guard_approval_required',
+      false,
+      'The proposed file changes need additional approval.',
+    ],
+  ] as const)('maps the fixed %s diagnostic envelope', async (code, retryable, message) => {
+    const request = await createBuilderGenerationRequest('Update the project safely.');
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      continueDraft: async () => null,
+      proposePlan: async () => null,
+      preparePlanSourceReadApproval: async () => null,
+      approvePlanSourceRead: async () => null,
+      prepareCurrentProjectWriteApproval: async () => null,
+      approveCurrentProjectWrite: async () => null,
+      generate: async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: { code, retryable },
+      }),
+      retry: async () => null,
+      answer: async () => null,
+      answerDraft: async () => null,
+      restoreDraft: async () => null,
+      restoreRevisionAsDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      queueFollowup: async () => null,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    await expect(port.generate(request)).rejects.toMatchObject({ code, retryable, message });
+  });
+
   it('forwards one bounded answer request without renderer-owned authority', async () => {
     const request = await createBuilderGenerationRequest('What does this project do?');
     const explanation = Object.freeze({

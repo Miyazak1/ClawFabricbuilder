@@ -4048,6 +4048,45 @@ test('records fixed public failure summaries for provider connection failures', 
   }
 });
 
+test('records fixed public failure summaries for workspace guard outcomes', () => {
+  const cases = [
+    [
+      'builder_generation_workspace_changed',
+      'The project changed while I was working. Review it, then retry.',
+    ],
+    [
+      'builder_generation_workspace_guard_denied',
+      'I blocked these file changes to protect the project.',
+    ],
+    [
+      'builder_generation_workspace_guard_approval_required',
+      'These file changes need additional approval before I can continue.',
+    ],
+  ];
+
+  for (const [failureCode, expectedText] of cases) {
+    const item = fixture();
+    try {
+      const context = begin(item.service, null, 'Update the project safely.');
+      item.service.record_retryable_failure({
+        context,
+        failure_code: failureCode,
+      });
+
+      const stream = item.service.read_stream({ project_id: PROJECT_ID });
+      const terminal = stream.conversation.items.find((entry) => entry.item_kind === 'run_completed');
+      assert.equal(terminal.assistant_message.text, expectedText);
+      assert.doesNotMatch(
+        JSON.stringify(stream),
+        /provider\.example|credential|api[_-]?key|Bearer/u,
+      );
+    } finally {
+      item.database.close();
+      removeRoot(item.root);
+    }
+  }
+});
+
 test('closes a retryable failed turn before starting a distinct new turn', () => {
   const item = fixture();
   try {

@@ -67,6 +67,9 @@ export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_parent_unavailable'
   | 'builder_generation_project_workspace_required'
   | 'builder_generation_project_write_permission_required'
+  | 'builder_generation_workspace_changed'
+  | 'builder_generation_workspace_guard_denied'
+  | 'builder_generation_workspace_guard_approval_required'
   | 'builder_generation_provider_unavailable'
   | 'builder_generation_timeout'
   | 'builder_generation_provider_http_error'
@@ -81,6 +84,9 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   builder_generation_parent_unavailable: true,
   builder_generation_project_workspace_required: false,
   builder_generation_project_write_permission_required: false,
+  builder_generation_workspace_changed: true,
+  builder_generation_workspace_guard_denied: false,
+  builder_generation_workspace_guard_approval_required: false,
   builder_generation_provider_unavailable: false,
   builder_generation_timeout: true,
   builder_generation_provider_http_error: true,
@@ -94,6 +100,9 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, stri
   builder_generation_parent_unavailable: 'The current project version is unavailable.',
   builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
   builder_generation_project_write_permission_required: 'Allow current project changes before building.',
+  builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
+  builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
+  builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
   builder_generation_timeout: 'AI project generation timed out.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',

@@ -26,6 +26,10 @@ const {
   createBuilderCodeChangeCandidate,
 } = require('./builder-code-change-kernel.cjs');
 const {
+  createBuilderEditIntentPlan,
+  evaluateBuilderWorkspaceGuard,
+} = require('./builder-edit-intent-workspace-guard.cjs');
+const {
   createBuilderProjectSourceTree,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
@@ -104,6 +108,7 @@ const PROJECT_UNDERSTANDING_RECORD_KEYS = Object.freeze([
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
+  'workspaceReadAuthority',
   'projectUnderstandingService',
   'projectIdentityAuthority',
   'conversationService',
@@ -172,6 +177,9 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_draft_conflict: 'The generated project draft could not be verified.',
   builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
+  builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
+  builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
+  builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
   builder_generation_service_unavailable: 'AI project generation is unavailable.',
 });
 
@@ -188,8 +196,8 @@ class BuilderGenerationMainServiceError extends Error {
   }
 }
 
-function fail() {
-  throw new BuilderGenerationMainServiceError();
+function fail(code) {
+  throw new BuilderGenerationMainServiceError(code);
 }
 
 function safeCanaryGenerationDebugCode(error) {
@@ -1174,6 +1182,7 @@ function sanitizeOptions(value) {
   if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   if (keys.includes('sourceContextCollector') && !isPlainObject(descriptors.sourceContextCollector.value)) fail();
+  if (keys.includes('workspaceReadAuthority') && !isPlainObject(descriptors.workspaceReadAuthority.value)) fail();
   if (keys.includes('projectUnderstandingService') && !isPlainObject(descriptors.projectUnderstandingService.value)) {
     fail();
   }
@@ -1216,6 +1225,9 @@ function sanitizeOptions(value) {
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
+    ...(keys.includes('workspaceReadAuthority')
+      ? { workspaceReadAuthority: descriptors.workspaceReadAuthority.value }
+      : {}),
     ...(keys.includes('projectUnderstandingService')
       ? { projectUnderstandingService: descriptors.projectUnderstandingService.value }
       : {}),
@@ -1731,6 +1743,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
   const bindCurrentAuthority = ownMethod(options.providerConfigRepository, 'bind_current_authority');
   const loadCurrentProject = ownMethod(options.projectReadAuthority, 'load_current');
+  const loadFreshWorkspace = options.workspaceReadAuthority === undefined
+    ? null
+    : ownMethod(options.workspaceReadAuthority, 'load_fresh_workspace');
   const loadProjectIdentity = options.projectIdentityAuthority === null
     ? null
     : ownMethod(options.projectIdentityAuthority, 'load_project_identity');
@@ -3199,6 +3214,40 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  async function admitCandidateWorkspaceGuard(candidate, existingProjectId) {
+    const editIntentPlan = createBuilderEditIntentPlan({
+      candidate,
+      created_at_ms: safeTimestamp(Date.now()),
+    });
+    let observed;
+    if (existingProjectId === null) {
+      observed = freezeDeep({ source_tree: candidate.base_source_tree });
+    } else if (existingProjectId !== candidate.project_id) {
+      fail('builder_generation_workspace_changed');
+    } else if (loadFreshWorkspace !== null) {
+      observed = sanitizeLocalWorkspaceReadResult(
+        await Reflect.apply(loadFreshWorkspace, options.workspaceReadAuthority, [{
+          project_id: candidate.project_id,
+        }]),
+        candidate.project_id,
+      );
+    } else {
+      observed = freezeDeep({ source_tree: candidate.base_source_tree });
+    }
+    const report = evaluateBuilderWorkspaceGuard({
+      candidate,
+      edit_intent_plan: editIntentPlan,
+      observed_workspace_source_tree: observed.source_tree,
+      evaluated_at_ms: safeTimestamp(Date.now()),
+    });
+    if (report.status === 'allowed') return freezeDeep({ edit_intent_plan: editIntentPlan, report });
+    if (report.summary.workspace_conflict_count > 0) fail('builder_generation_workspace_changed');
+    if (report.status === 'approval_required') {
+      fail('builder_generation_workspace_guard_approval_required');
+    }
+    fail('builder_generation_workspace_guard_denied');
+  }
+
   async function prepareApprovedPlanEditContext(rawRequest) {
     let setupPhase = 'approved_plan_prepare_start';
     try {
@@ -3382,6 +3431,7 @@ function createBuilderGenerationMainService(rawOptions) {
           run_id: candidate.run_id,
           restore_revision_receipt_digest: request.revision_receipt_digest,
         }).slice('sha256:'.length)}`;
+        await admitCandidateWorkspaceGuard(candidate, request.project_id);
         const gitCandidateReceipt = await Reflect.apply(
           persistCandidateCommit,
           options.gitAuthority,
@@ -3481,6 +3531,7 @@ function createBuilderGenerationMainService(rawOptions) {
         candidate_digest: internal.candidate.candidate_digest,
         run_id: internal.candidate.run_id,
       }).slice('sha256:'.length)}`;
+      await admitCandidateWorkspaceGuard(internal.candidate, request.existing_project_id);
       const gitCandidateReceipt = await Reflect.apply(
         persistCandidateCommit,
         options.gitAuthority,
@@ -3579,6 +3630,7 @@ function createBuilderGenerationMainService(rawOptions) {
         continuation_base_digest: continuationContext.base.base_digest,
         previous_draft_id: continuationContext.admission.draft_id,
       }).slice('sha256:'.length)}`;
+      await admitCandidateWorkspaceGuard(internal.candidate, request.existing_project_id);
       const gitCandidateReceipt = await Reflect.apply(
         persistCandidateCommit,
         options.gitAuthority,

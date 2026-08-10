@@ -1674,6 +1674,15 @@ function createBuilderConversationMainService(rawOptions) {
     if (failureCode === 'builder_generation_provider_http_error') {
       return 'The AI service rejected the request. Check the API key, model, or account.';
     }
+    if (failureCode === 'builder_generation_workspace_changed') {
+      return 'The project changed while I was working. Review it, then retry.';
+    }
+    if (failureCode === 'builder_generation_workspace_guard_denied') {
+      return 'I blocked these file changes to protect the project.';
+    }
+    if (failureCode === 'builder_generation_workspace_guard_approval_required') {
+      return 'These file changes need additional approval before I can continue.';
+    }
     if (failureCode === 'builder_generation_timeout') {
       return mode === 'question'
         ? 'Answering took too long.'

@@ -1003,6 +1003,9 @@ function failedStatusMessage(
   if (status === 'submit_failed') {
     if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I build.';
     if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I build.';
+    if (error === 'builder_generation_workspace_changed') return 'The project changed while I was working. Review it, then retry.';
+    if (error === 'builder_generation_workspace_guard_denied') return 'I blocked these file changes to protect the project.';
+    if (error === 'builder_generation_workspace_guard_approval_required') return 'These file changes need additional approval before I can continue.';
     if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
     if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
     if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
@@ -1011,6 +1014,9 @@ function failedStatusMessage(
   }
   if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I make a draft.';
   if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I make a draft.';
+  if (error === 'builder_generation_workspace_changed') return 'The project changed while I was working. Review it, then retry.';
+  if (error === 'builder_generation_workspace_guard_denied') return 'I blocked these file changes to protect the project.';
+  if (error === 'builder_generation_workspace_guard_approval_required') return 'These file changes need additional approval before I can continue.';
   if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
   if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
   if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
