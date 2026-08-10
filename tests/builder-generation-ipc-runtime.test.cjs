@@ -489,6 +489,7 @@ function runtimeWithService(service, probes = {}) {
           createBuilderProjectSaveAuthority: (options) => {
             probes.saveOptions = options;
             assert.equal(options.currentProjection, context.__projectMainAuthority.git_current_projection);
+            assert.equal(typeof options.workspaceReadAuthority.load_fresh_workspace, 'function');
             return {
               save: async (body) => {
                 if (typeof probes.saveDraft === 'function') return probes.saveDraft(body);
@@ -699,6 +700,9 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-local-workspace-source-tree.cjs') {
+        return require('../electron/builder-local-workspace-source-tree.cjs');
+      }
       if (specifier === './builder-project-main-authority.cjs') {
         return {
           PROJECT_REPOSITORY_DIRECTORY: 'builder-projects-v2',
@@ -713,6 +717,7 @@ function runtimeWithService(service, probes = {}) {
                 persist_candidate_commit() {},
                 verify_candidate_receipt() {},
                 read_verified_candidate() {},
+                read_candidate_workspace_base() {},
               },
               git_current_projection: {
                 project_current() {},

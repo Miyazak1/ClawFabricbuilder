@@ -67,11 +67,9 @@ const {
   createBuilderGenerationRequest,
 } = require('./builder-generation-kernel.cjs');
 const {
-  MAX_SOURCE_FILE_UTF8_BYTES,
-  MAX_SOURCE_FILES,
-  MAX_SOURCE_TREE_UTF8_BYTES,
-  createBuilderProjectSourceTree,
-} = require('./builder-project-source-tree.cjs');
+  inspectBuilderLocalWorkspaceSourceTree,
+  readBuilderLocalWorkspaceSourceTree,
+} = require('./builder-local-workspace-source-tree.cjs');
 const {
   GIT_RUNTIME_DIRECTORY,
   METADATA_DATABASE,
@@ -914,96 +912,12 @@ function workspacePlanResourceIds(workspaceRootPath) {
   return selectedPlanResourceIdsFromPaths(filePaths);
 }
 
-function localWorkspaceSourceTree(workspaceRootPath) {
-  let rootRealPath;
-  try {
-    const rootStat = fs.lstatSync(workspaceRootPath);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) fail();
-    rootRealPath = path.resolve(fs.realpathSync.native(workspaceRootPath));
-    if (!sameFilesystemPath(rootRealPath, workspaceRootPath)) fail();
-  } catch {
-    fail();
-  }
-  const pending = [Object.freeze({ absolutePath: rootRealPath, relativePath: '' })];
-  const files = [];
-  let inspected = 0;
-  let totalBytes = 0;
-  while (
-    pending.length > 0
-    && inspected < MAX_WORKSPACE_PLAN_SCAN_ENTRIES
-    && files.length < MAX_SOURCE_FILES
-    && totalBytes <= MAX_SOURCE_TREE_UTF8_BYTES
-  ) {
-    const current = pending.shift();
-    let entries;
-    try {
-      entries = fs.readdirSync(current.absolutePath, { withFileTypes: true });
-    } catch {
-      inspected += 1;
-      continue;
-    }
-    entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
-    for (const entry of entries) {
-      inspected += 1;
-      if (
-        inspected > MAX_WORKSPACE_PLAN_SCAN_ENTRIES
-        || files.length >= MAX_SOURCE_FILES
-        || totalBytes > MAX_SOURCE_TREE_UTF8_BYTES
-      ) break;
-      if (entry.isSymbolicLink()) continue;
-      const relativePath = current.relativePath.length === 0
-        ? entry.name
-        : `${current.relativePath}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (!PLAN_WORKSPACE_DIRECTORY_SKIP_NAMES.has(entry.name.toLowerCase())) {
-          pending.push(Object.freeze({
-            absolutePath: path.join(current.absolutePath, entry.name),
-            relativePath,
-          }));
-        }
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      let sourcePath;
-      try {
-        sourcePath = safeProjectSourcePath(relativePath);
-      } catch {
-        continue;
-      }
-      const absolutePath = path.join(current.absolutePath, entry.name);
-      let stat;
-      try {
-        stat = fs.lstatSync(absolutePath);
-      } catch {
-        continue;
-      }
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_UTF8_BYTES) continue;
-      let content;
-      try {
-        content = fs.readFileSync(absolutePath, 'utf8');
-      } catch {
-        continue;
-      }
-      totalBytes += Buffer.byteLength(content, 'utf8');
-      if (totalBytes > MAX_SOURCE_TREE_UTF8_BYTES) break;
-      const candidate = Object.freeze({ path: sourcePath, content });
-      try {
-        createBuilderProjectSourceTree({ files: [candidate] });
-      } catch {
-        continue;
-      }
-      files.push(candidate);
-    }
-  }
-  return createBuilderProjectSourceTree({ files });
-}
-
 function localWorkspaceReadResult(workspaceRootPath, projectId) {
   return Object.freeze({
     result_version: 'builder-project-local-workspace-read-result.v1',
     operation: 'local_workspace_loaded',
     project_id: projectId,
-    source_tree: localWorkspaceSourceTree(workspaceRootPath),
+    source_tree: readBuilderLocalWorkspaceSourceTree(workspaceRootPath),
     authority_evidence: Object.freeze({
       workspace_authority: 'sqlite_bound_project_workspace',
       source_read_authority: 'main_selected_workspace_filesystem_read',
@@ -1392,6 +1306,26 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         );
       },
     });
+    const saveWorkspaceReadAuthority = Object.freeze({
+      async load_fresh_workspace(rawRequest) {
+        const projectId = requiredProjectId(rawRequest);
+        const workspaceRootPath = projectRootPathFromWorkspace(
+          await projectMainAuthority.metadata_authority.load_project_workspace({
+            project_id: projectId,
+          }),
+          projectId,
+        );
+        const inspected = inspectBuilderLocalWorkspaceSourceTree(workspaceRootPath);
+        return Object.freeze({
+          result_version: 'builder-project-save-workspace-read-result.v1',
+          project_id: projectId,
+          source_tree: inspected.source_tree,
+          scan_status: inspected.scan_status,
+          incomplete_reasons: inspected.incomplete_reasons,
+          read_admission: 'main_bound_workspace_fresh_read',
+        });
+      },
+    });
     const projectUnderstandingService = createBuilderProjectUnderstandingService({
       project_read_authority: generationProjectReadAuthority,
       project_understanding_store: projectUnderstandingStore,
@@ -1439,6 +1373,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       currentProjection: projectMainAuthority.git_current_projection,
       metadataAuthority: projectMainAuthority.metadata_authority,
       projectReadAuthority: projectMainAuthority.project_read_authority,
+      workspaceReadAuthority: saveWorkspaceReadAuthority,
       conversationService,
       createUuid: randomUUID,
       nowMs: () => Date.now(),

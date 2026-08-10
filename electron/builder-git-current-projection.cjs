@@ -19,6 +19,10 @@ const {
   BuilderProjectSourceTreeError,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
+const {
+  BuilderLocalWorkspaceSourceTreeError,
+  inspectBuilderLocalWorkspaceSourceTree,
+} = require('./builder-local-workspace-source-tree.cjs');
 
 const BUILDER_GIT_CURRENT_PROJECTION_VERSION = 'builder-git-current-projection.v1';
 const BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION =
@@ -39,11 +43,16 @@ const DEFAULT_OPTION_KEYS_WITH_RESOLVER = Object.freeze([
   'git_repository',
   'resolve_project_root',
 ]);
-const PROJECT_REQUEST_KEYS = Object.freeze(['candidate_receipt', 'projection_mode']);
+const PROJECT_REQUEST_KEYS = Object.freeze([
+  'candidate_receipt',
+  'expected_workspace_source_tree_digest',
+  'projection_mode',
+]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const PROTECTED_SOURCE_NAMES = new Set(['.git', '.gitmodules', '.gitattributes', '.clawfabric']);
 const ERROR_MESSAGES = Object.freeze({
   builder_git_current_projection_invalid: 'The current project version could not be verified.',
@@ -144,6 +153,13 @@ function projectUuid(projectId) {
   const match = PROJECT_ID_PATTERN.exec(projectId);
   if (!match || !UUID_PATTERN.test(match[1])) fail('builder_git_current_projection_invalid');
   return match[1];
+}
+
+function safeDigest(value) {
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) {
+    fail('builder_git_current_projection_invalid');
+  }
+  return value;
 }
 
 function projectDirectory(projectsRoot, projectId, resolveProjectRoot) {
@@ -327,22 +343,44 @@ async function updateMainRef(runner, projectRoot, receipt, expectedOldOid) {
   }
 }
 
-function removeProjectedEntries(projectRoot) {
-  for (const entry of fs.readdirSync(projectRoot, { withFileTypes: true })) {
-    const target = path.join(projectRoot, entry.name);
-    assertInsideProject(projectRoot, target);
-    if (foldedName(entry.name) === '.git' || foldedName(entry.name) === '.clawfabric') continue;
-    fs.rmSync(target, { recursive: true, force: true });
+function ensureSafeParentDirectories(projectRoot, relativePath) {
+  const segments = relativePath.split('/').slice(0, -1);
+  let current = projectRoot;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    assertInsideProject(projectRoot, current);
+    if (fs.existsSync(current)) {
+      const stat = fs.lstatSync(current);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        fail('builder_git_current_projection_conflict');
+      }
+      continue;
+    }
+    fs.mkdirSync(current, { mode: 0o700 });
   }
 }
 
-function materializeSourceTree(projectRoot, sourceTree) {
-  removeProjectedEntries(projectRoot);
+function materializeSourceTree(projectRoot, baseSourceTree, sourceTree) {
+  const nextPaths = new Set(sourceTree.files.map((entry) => entry.path));
+  for (const entry of baseSourceTree.files) {
+    if (nextPaths.has(entry.path)) continue;
+    const relative = safeRelativeProjectPath(entry.path);
+    const target = path.join(projectRoot, ...relative.split('/'));
+    assertInsideProject(projectRoot, target);
+    if (!fs.existsSync(target)) continue;
+    const stat = fs.lstatSync(target);
+    if (!stat.isFile() || stat.isSymbolicLink()) fail('builder_git_current_projection_conflict');
+    fs.rmSync(target, { force: false });
+  }
   for (const entry of sourceTree.files) {
     const relative = safeRelativeProjectPath(entry.path);
     const target = path.join(projectRoot, ...relative.split('/'));
     assertInsideProject(projectRoot, target);
-    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    ensureSafeParentDirectories(projectRoot, relative);
+    if (fs.existsSync(target)) {
+      const stat = fs.lstatSync(target);
+      if (!stat.isFile() || stat.isSymbolicLink()) fail('builder_git_current_projection_conflict');
+    }
     fs.writeFileSync(target, entry.content, { encoding: 'utf8', mode: 0o600 });
   }
 }
@@ -368,6 +406,9 @@ function normalizeError(error) {
     || ownCode(error, BuilderProjectSourceTreeError)
     || ownCode(error, BuilderGitCommandRunnerError) === 'builder_git_command_invalid'
   ) return new BuilderGitCurrentProjectionError('builder_git_current_projection_invalid');
+  if (ownCode(error, BuilderLocalWorkspaceSourceTreeError)) {
+    return new BuilderGitCurrentProjectionError('builder_git_current_projection_conflict');
+  }
   return new BuilderGitCurrentProjectionError('builder_git_current_projection_unavailable');
 }
 
@@ -421,6 +462,8 @@ function sanitizeProjectRequest(value) {
   }
   return freezeDeep({
     candidate_receipt: sanitizeBuilderGitCandidateReceipt(valueAt(value, 'candidate_receipt')),
+    expected_workspace_source_tree_digest:
+      safeDigest(valueAt(value, 'expected_workspace_source_tree_digest')),
     projection_mode: projectionMode,
   });
 }
@@ -446,10 +489,12 @@ function createBuilderGitCurrentProjection(rawOptions) {
   async function projectCurrent(rawRequest) {
     let receipt;
     let projectionMode;
+    let expectedWorkspaceSourceTreeDigest;
     try {
       const request = sanitizeProjectRequest(rawRequest);
       receipt = request.candidate_receipt;
       projectionMode = request.projection_mode;
+      expectedWorkspaceSourceTreeDigest = request.expected_workspace_source_tree_digest;
     } catch (error) {
       return Promise.reject(normalizeError(error));
     }
@@ -460,14 +505,22 @@ function createBuilderGitCurrentProjection(rawOptions) {
           receipt.project_id,
           options.resolveProjectRoot,
         );
-        assertProjectRoot(options.projectsRoot, projectRoot, options.resolveProjectRoot !== null);
         const verified = sanitizeVerifiedCandidateRead(
           await Reflect.apply(options.readVerifiedCandidate, undefined, [receipt]),
           receipt,
         );
+        assertProjectRoot(options.projectsRoot, projectRoot, options.resolveProjectRoot !== null);
         const previousMainOid = await readMainRef(options.gitRunner, projectRoot);
+        const workspace = inspectBuilderLocalWorkspaceSourceTree(projectRoot);
+        const expectedWorkspaceDigest = previousMainOid === receipt.commit_oid
+          ? receipt.resulting_tree_digest
+          : expectedWorkspaceSourceTreeDigest;
+        if (
+          workspace.scan_status !== 'complete'
+          || workspace.source_tree.source_tree_digest !== expectedWorkspaceDigest
+        ) fail('builder_git_current_projection_conflict');
         if (previousMainOid === receipt.commit_oid) {
-          materializeSourceTree(projectRoot, verified.source_tree);
+          materializeSourceTree(projectRoot, workspace.source_tree, verified.source_tree);
           return freezeDeep({
             result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
             project_id: receipt.project_id,
@@ -487,7 +540,7 @@ function createBuilderGitCurrentProjection(rawOptions) {
             fail('builder_git_current_projection_conflict');
           }
           await updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid);
-          materializeSourceTree(projectRoot, verified.source_tree);
+          materializeSourceTree(projectRoot, workspace.source_tree, verified.source_tree);
           return freezeDeep({
             result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
             project_id: receipt.project_id,
@@ -503,7 +556,7 @@ function createBuilderGitCurrentProjection(rawOptions) {
           });
         }
         await updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid);
-        materializeSourceTree(projectRoot, verified.source_tree);
+        materializeSourceTree(projectRoot, workspace.source_tree, verified.source_tree);
         return freezeDeep({
           result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
           project_id: receipt.project_id,

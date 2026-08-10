@@ -158,6 +158,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
       'persist_candidate_commit',
       'verify_candidate_receipt',
       'read_verified_candidate',
+      'read_candidate_workspace_base',
     ]);
     const gitCurrentProjectionAuthority = methodFacade(gitCurrentProjection, [
       'project_current',

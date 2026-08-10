@@ -6,6 +6,9 @@ const { types: utilTypes } = require('node:util');
 const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
+const {
+  sanitizeBuilderProjectSourceTree,
+} = require('./builder-project-source-tree.cjs');
 
 const BUILDER_PROJECT_SAVE_AUTHORITY_VERSION = 'builder-project-save-authority.v1';
 const BUILDER_PROJECT_SAVE_RESULT_VERSION = 'builder-project-save-result.v1';
@@ -15,6 +18,7 @@ const OPTION_KEYS = Object.freeze([
   'currentProjection',
   'metadataAuthority',
   'projectReadAuthority',
+  'workspaceReadAuthority',
   'conversationService',
   'createUuid',
   'nowMs',
@@ -33,6 +37,16 @@ const ID_PATTERNS = Object.freeze({
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
+const WORKSPACE_SCAN_INCOMPLETE_REASONS = new Set([
+  'byte_limit',
+  'entry_limit',
+  'file_limit',
+  'oversized_file',
+  'symbolic_link',
+  'unreadable_directory',
+  'unreadable_file',
+  'unsupported_file',
+]);
 const ERROR_MESSAGES = Object.freeze({
   builder_project_save_invalid: 'The project save request could not be verified.',
   builder_project_save_not_found: 'The generated project draft is no longer available.',
@@ -213,6 +227,7 @@ function sanitizeOptions(value) {
   const currentProjection = valueAt(value, 'currentProjection');
   const metadataAuthority = valueAt(value, 'metadataAuthority');
   const projectReadAuthority = valueAt(value, 'projectReadAuthority');
+  const workspaceReadAuthority = valueAt(value, 'workspaceReadAuthority');
   const conversationService = valueAt(value, 'conversationService');
   const createUuid = valueAt(value, 'createUuid');
   const nowMs = valueAt(value, 'nowMs');
@@ -228,6 +243,7 @@ function sanitizeOptions(value) {
     releasePendingDraft: ownMethod(generationDrafts, 'release_pending_draft'),
     gitAuthority,
     verifyCandidateReceipt: ownMethod(gitAuthority, 'verify_candidate_receipt'),
+    readCandidateWorkspaceBase: ownMethod(gitAuthority, 'read_candidate_workspace_base'),
     currentProjection,
     projectCurrent: ownMethod(currentProjection, 'project_current'),
     metadataAuthority,
@@ -235,11 +251,81 @@ function sanitizeOptions(value) {
     recordProjectRevisionReceipt: ownMethod(metadataAuthority, 'record_project_revision_receipt'),
     projectReadAuthority,
     loadCurrent: ownMethod(projectReadAuthority, 'load_current'),
+    workspaceReadAuthority,
+    loadFreshWorkspace: ownMethod(workspaceReadAuthority, 'load_fresh_workspace'),
     conversationService,
     verifyConversationCandidate: ownMethod(conversationService, 'verify_candidate'),
     acceptConversationCandidate: ownMethod(conversationService, 'accept_candidate'),
     createUuid,
     nowMs,
+  });
+}
+
+function sanitizeCandidateWorkspaceBase(value, candidate) {
+  exactObject(value, [
+    'result_version',
+    'project_id',
+    'candidate_id',
+    'candidate_digest',
+    'base_source_tree_digest',
+    'read_admission',
+  ]);
+  if (
+    valueAt(value, 'result_version') !== 'builder-git-candidate-workspace-base.v1'
+    || valueAt(value, 'project_id') !== candidate.project_id
+    || valueAt(value, 'candidate_id') !== candidate.candidate_id
+    || valueAt(value, 'candidate_digest') !== candidate.candidate_digest
+    || valueAt(value, 'read_admission') !== 'verified_git_candidate_commit_trailer'
+  ) fail('builder_project_save_invalid');
+  return freezeDeep({
+    base_source_tree_digest: safeDigest(valueAt(value, 'base_source_tree_digest')),
+  });
+}
+
+function sanitizeFreshWorkspace(value, candidate) {
+  exactObject(value, [
+    'result_version',
+    'project_id',
+    'source_tree',
+    'scan_status',
+    'incomplete_reasons',
+    'read_admission',
+  ]);
+  const rawReasons = valueAt(value, 'incomplete_reasons');
+  if (
+    !Array.isArray(rawReasons)
+    || utilTypes.isProxy(rawReasons)
+    || Object.getPrototypeOf(rawReasons) !== Array.prototype
+    || rawReasons.length > WORKSPACE_SCAN_INCOMPLETE_REASONS.size
+  ) fail('builder_project_save_invalid');
+  const reasonKeys = Reflect.ownKeys(rawReasons);
+  if (
+    reasonKeys.some((key) => typeof key === 'symbol')
+    || reasonKeys.length !== rawReasons.length + 1
+  ) fail('builder_project_save_invalid');
+  const reasons = rawReasons.map((reason, index) => {
+    const descriptor = Object.getOwnPropertyDescriptor(rawReasons, String(index));
+    if (
+      !descriptor
+      || descriptor.enumerable !== true
+      || !Object.hasOwn(descriptor, 'value')
+      || typeof reason !== 'string'
+      || !WORKSPACE_SCAN_INCOMPLETE_REASONS.has(reason)
+    ) fail('builder_project_save_invalid');
+    return reason;
+  });
+  const scanStatus = valueAt(value, 'scan_status');
+  if (
+    valueAt(value, 'result_version') !== 'builder-project-save-workspace-read-result.v1'
+    || valueAt(value, 'project_id') !== candidate.project_id
+    || !['complete', 'incomplete'].includes(scanStatus)
+    || new Set(reasons).size !== reasons.length
+    || (scanStatus === 'complete' ? reasons.length !== 0 : reasons.length === 0)
+    || valueAt(value, 'read_admission') !== 'main_bound_workspace_fresh_read'
+  ) fail('builder_project_save_invalid');
+  return freezeDeep({
+    source_tree: sanitizeBuilderProjectSourceTree(valueAt(value, 'source_tree')),
+    scan_status: scanStatus,
   });
 }
 
@@ -511,6 +597,14 @@ function savedRevisionFromReceipt(value, expectedReceipt) {
   });
 }
 
+function projectionModeFromMetadataRecord(value) {
+  if (!isPlainObject(value)) fail('builder_project_save_invalid');
+  const operation = valueAt(value, 'operation');
+  if (operation === 'recorded') return 'base_cas';
+  if (operation === 'replayed') return 'sqlite_current_repair';
+  fail('builder_project_save_invalid');
+}
+
 function ownCode(error) {
   if (!error || typeof error !== 'object' || utilTypes.isProxy(error)) return null;
   try {
@@ -655,6 +749,27 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         || gitReceipt.resulting_tree_digest !== candidate.resulting_tree_digest
         || gitReceipt.expected_base_oid !== expectedBaseOid
       ) fail('builder_project_save_invalid');
+      const workspaceBase = sanitizeCandidateWorkspaceBase(
+        await Reflect.apply(
+          options.readCandidateWorkspaceBase,
+          options.gitAuthority,
+          [gitReceipt],
+        ),
+        candidate,
+      );
+      const freshWorkspace = sanitizeFreshWorkspace(
+        await Reflect.apply(
+          options.loadFreshWorkspace,
+          options.workspaceReadAuthority,
+          [{ project_id: candidate.project_id }],
+        ),
+        candidate,
+      );
+      if (
+        freshWorkspace.scan_status !== 'complete'
+        || freshWorkspace.source_tree.source_tree_digest
+          !== workspaceBase.base_source_tree_digest
+      ) fail('builder_project_save_conflict');
       const project = await projectIdentity(candidate);
       const attempt = attemptFor(draft, project);
       const record = await Reflect.apply(options.recordProjectRevisionReceipt, options.metadataAuthority, [{
@@ -720,10 +835,12 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         },
         expected_current_revision_receipt_digest: expectedCurrent,
       }]);
+      const projectionMode = projectionModeFromMetadataRecord(record);
       const projection = sanitizeCurrentProjection(
         await Reflect.apply(options.projectCurrent, options.currentProjection, [{
           candidate_receipt: gitReceipt,
-          projection_mode: 'sqlite_current_repair',
+          expected_workspace_source_tree_digest: workspaceBase.base_source_tree_digest,
+          projection_mode: projectionMode,
         }]),
         gitReceipt,
       );

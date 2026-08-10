@@ -79,6 +79,7 @@ const COMMIT_TRAILER_ORDER = Object.freeze([
   'Request-Id',
   'Semantic-Identity-Digest',
   'Candidate-Digest',
+  'Base-Source-Tree-Digest',
   'Expected-Base-Oid',
 ]);
 
@@ -207,6 +208,13 @@ function safeOid(value, nullable = false) {
   return value;
 }
 
+function safeDigest(value) {
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) {
+    fail('builder_git_project_integrity_failed');
+  }
+  return value;
+}
+
 function safeBuilderId(value, key) {
   if (typeof value !== 'string' || !BUILDER_ID_PATTERNS[key].test(value)) {
     fail('builder_git_project_invalid');
@@ -271,9 +279,29 @@ function semanticIdentity(request, treeOid) {
     request_id: request.request_id,
     candidate_id: candidate.candidate_id,
     candidate_digest: candidate.candidate_digest,
+    base_source_tree_digest: candidate.base_source_tree.source_tree_digest,
     expected_base_oid: request.expected_base_oid,
     candidate_tree_oid: treeOid,
     resulting_tree_digest: candidate.resulting_tree_digest,
+  };
+}
+
+function semanticIdentityFromReceipt(receipt, baseSourceTreeDigest) {
+  return {
+    semantic_identity_version: 'builder-git-candidate-semantic-identity.v1',
+    object_format: BUILDER_GIT_OBJECT_FORMAT,
+    project_id: receipt.project_id,
+    conversation_id: receipt.conversation_id,
+    turn_id: receipt.turn_id,
+    task_id: receipt.task_id,
+    run_id: receipt.run_id,
+    request_id: receipt.request_id,
+    candidate_id: receipt.candidate_id,
+    candidate_digest: receipt.candidate_digest,
+    expected_base_oid: receipt.expected_base_oid,
+    candidate_tree_oid: receipt.tree_oid,
+    resulting_tree_digest: receipt.resulting_tree_digest,
+    base_source_tree_digest: baseSourceTreeDigest,
   };
 }
 
@@ -422,7 +450,7 @@ function parseCommitObject(source) {
   };
 }
 
-function expectedCommitTrailers(receipt) {
+function expectedCommitTrailers(receipt, baseSourceTreeDigest) {
   return new Map([
     ['Object-Format', BUILDER_GIT_OBJECT_FORMAT],
     ['Project-Id', receipt.project_id],
@@ -433,6 +461,7 @@ function expectedCommitTrailers(receipt) {
     ['Request-Id', receipt.request_id],
     ['Semantic-Identity-Digest', receipt.semantic_identity_digest],
     ['Candidate-Digest', receipt.candidate_digest],
+    ['Base-Source-Tree-Digest', baseSourceTreeDigest],
     ['Expected-Base-Oid', receipt.expected_base_oid ?? 'none'],
   ]);
 }
@@ -448,11 +477,17 @@ function assertCommitMatchesReceipt(parsed, receipt) {
     || !/^ClawFabric Builder <builder@localhost> \d+ \+0000$/u.test(parsed.committer)
     || parsed.author !== parsed.committer
   ) fail('builder_git_project_integrity_failed');
-  const expectedTrailers = expectedCommitTrailers(receipt);
+  const baseSourceTreeDigest = safeDigest(parsed.trailers.get('Base-Source-Tree-Digest'));
+  if (
+    `sha256:${sha256Hex(canonicalJson(semanticIdentityFromReceipt(receipt, baseSourceTreeDigest)))}`
+      !== receipt.semantic_identity_digest
+  ) fail('builder_git_project_integrity_failed');
+  const expectedTrailers = expectedCommitTrailers(receipt, baseSourceTreeDigest);
   if (parsed.trailers.size !== expectedTrailers.size) fail('builder_git_project_integrity_failed');
   for (const [key, value] of expectedTrailers) {
     if (parsed.trailers.get(key) !== value) fail('builder_git_project_integrity_failed');
   }
+  return baseSourceTreeDigest;
 }
 
 async function readExistingRef(runner, projectRoot, operation, requestHash, semanticHash, timeoutMs) {
@@ -710,13 +745,14 @@ function createBuilderGitProjectRepository(rawOptions) {
         { object_format: BUILDER_GIT_OBJECT_FORMAT, oid: receipt.commit_oid },
         { timeout_ms: DEFAULT_TIMEOUT_MS },
       );
-      assertCommitMatchesReceipt(parseCommitObject(commit.stdout), receipt);
+      const baseSourceTreeDigest = assertCommitMatchesReceipt(parseCommitObject(commit.stdout), receipt);
       const verification = createBuilderGitCandidateVerificationReceipt(receipt);
       sanitizeBuilderGitCandidateReceiptPair(receipt, verification);
       return freezeDeep({
         candidate_receipt: receipt,
         verification_receipt: verification,
         source_tree: sourceTree,
+        base_source_tree_digest: baseSourceTreeDigest,
       });
     } catch (error) {
       return Promise.reject(normalizeError(error));
@@ -737,6 +773,18 @@ function createBuilderGitProjectRepository(rawOptions) {
       source_tree: verified.source_tree,
       code_authority: 'git_commit_tree',
       read_admission: 'verified',
+    });
+  }
+
+  async function readCandidateWorkspaceBase(rawReceipt) {
+    const verified = await verifyReceiptAndSourceFromDisk(rawReceipt);
+    return freezeDeep({
+      result_version: 'builder-git-candidate-workspace-base.v1',
+      project_id: verified.candidate_receipt.project_id,
+      candidate_id: verified.candidate_receipt.candidate_id,
+      candidate_digest: verified.candidate_receipt.candidate_digest,
+      base_source_tree_digest: verified.base_source_tree_digest,
+      read_admission: 'verified_git_candidate_commit_trailer',
     });
   }
 
@@ -908,6 +956,8 @@ function createBuilderGitProjectRepository(rawOptions) {
             request_id: prepared.request.request_id,
             semantic_identity_digest: `sha256:${prepared.semantic.semantic_hash}`,
             candidate_digest: prepared.request.candidate.candidate_digest,
+            base_source_tree_digest:
+              prepared.request.candidate.base_source_tree.source_tree_digest,
             expected_base_oid: prepared.request.expected_base_oid,
             author_time: nowSeconds(),
           },
@@ -945,6 +995,7 @@ function createBuilderGitProjectRepository(rawOptions) {
     prepare_change: prepareChange,
     persist_candidate_commit: persistCandidateCommit,
     read_verified_candidate: readVerifiedCandidate,
+    read_candidate_workspace_base: readCandidateWorkspaceBase,
     verify_candidate_receipt: verifyReceiptFromDisk,
   });
 }

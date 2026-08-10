@@ -463,6 +463,17 @@ test('read_verified_candidate returns a fresh verified Git tree for initial, upd
     assert.equal(Object.isFrozen(firstRead.candidate_receipt), true);
     assert.equal(Object.isFrozen(firstRead.verification_receipt), true);
     assert.equal(Object.isFrozen(firstRead.source_tree), true);
+    assert.deepEqual(
+      await value.repository.read_candidate_workspace_base(firstReceipt),
+      {
+        result_version: 'builder-git-candidate-workspace-base.v1',
+        project_id: firstReceipt.project_id,
+        candidate_id: firstReceipt.candidate_id,
+        candidate_digest: firstReceipt.candidate_digest,
+        base_source_tree_digest: firstChange.base_source_tree.source_tree_digest,
+        read_admission: 'verified_git_candidate_commit_trailer',
+      },
+    );
 
     const secondChange = updateCandidate(firstRead.source_tree);
     const secondReceipt = await value.repository.persist_candidate_commit(
@@ -472,6 +483,11 @@ test('read_verified_candidate returns a fresh verified Git tree for initial, upd
     assert.equal(restartedRead.candidate_receipt.commit_oid, secondReceipt.commit_oid);
     assert.equal(restartedRead.candidate_receipt.parent_oid, firstReceipt.commit_oid);
     assert.deepEqual(restartedRead.source_tree, secondChange.resulting_source_tree);
+    assert.equal(
+      (await value.restart().read_candidate_workspace_base(structuredClone(secondReceipt)))
+        .base_source_tree_digest,
+      secondChange.base_source_tree.source_tree_digest,
+    );
   } finally {
     fs.rmSync(value.root, { recursive: true, force: true });
   }
@@ -763,7 +779,7 @@ test('replay rejects tampered commit tree, parent, and trailers', async () => {
       `Builder-Request-Id: ${restoredReceipt.request_id}`,
       `Builder-Semantic-Identity-Digest: ${restoredReceipt.semantic_identity_digest}`,
       `Builder-Candidate-Digest: ${restoredReceipt.candidate_digest}`,
-      'Builder-Unexpected: accepted',
+      `Builder-Base-Source-Tree-Digest: sha256:${'f'.repeat(64)}`,
       `Builder-Expected-Base-Oid: ${restoredReceipt.expected_base_oid ?? 'none'}`,
       '',
     ].join('\n');

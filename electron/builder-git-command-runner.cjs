@@ -518,6 +518,7 @@ function commandFor(operation, rawRequest) {
         'request_id',
         'semantic_identity_digest',
         'candidate_digest',
+        'base_source_tree_digest',
         'expected_base_oid',
         'author_time',
       ]);
@@ -525,6 +526,7 @@ function commandFor(operation, rawRequest) {
       const treeOid = safeOid(valueAt(rawRequest, 'tree_oid'), objectFormat);
       const parentOid = safeOid(valueAt(rawRequest, 'parent_oid'), objectFormat, true);
       const candidateDigest = safeDigest(valueAt(rawRequest, 'candidate_digest'));
+      const baseSourceTreeDigest = safeDigest(valueAt(rawRequest, 'base_source_tree_digest'));
       const semanticIdentityDigest = safeDigest(
         valueAt(rawRequest, 'semantic_identity_digest'),
       );
@@ -547,6 +549,7 @@ function commandFor(operation, rawRequest) {
           `Builder-Request-Id: ${safeTrailerValue(valueAt(rawRequest, 'request_id'))}`,
           `Builder-Semantic-Identity-Digest: ${semanticIdentityDigest}`,
           `Builder-Candidate-Digest: ${candidateDigest}`,
+          `Builder-Base-Source-Tree-Digest: ${baseSourceTreeDigest}`,
           `Builder-Expected-Base-Oid: ${expectedBase}`,
           '',
         ].join('\n'),

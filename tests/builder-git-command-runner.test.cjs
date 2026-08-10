@@ -200,6 +200,7 @@ test('ignores hostile local config, replace refs, hooks, attributes, and filters
       request_id: 'builder-git-request:00000000-0000-4000-8000-000000000001',
       semantic_identity_digest: `sha256:${'1'.repeat(64)}`,
       candidate_digest: `sha256:${'2'.repeat(64)}`,
+      base_source_tree_digest: `sha256:${'3'.repeat(64)}`,
       expected_base_oid: null,
       author_time: 1_750_000_000,
     });

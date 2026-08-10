@@ -44,6 +44,7 @@ const CONVERSATION_ID = `builder-conversation:${UUID}`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
 const ONE_DIGEST = `sha256:${'1'.repeat(64)}`;
 const TWO_DIGEST = `sha256:${'2'.repeat(64)}`;
+const EMPTY_SOURCE_TREE = createBuilderProjectSourceTree({ files: [] });
 
 function uuid(index) {
   return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
@@ -244,7 +245,7 @@ function receiptForSourceTree(sourceTree) {
   };
 }
 
-test('projects a verified candidate to Git main and repairs the materialized worktree', async (t) => {
+test('projects a verified candidate to Git main and refuses to overwrite later worktree drift', async (t) => {
   const value = fixture(t);
   const first = candidate({
     index: 1,
@@ -255,12 +256,14 @@ test('projects a verified candidate to Git main and repairs the materialized wor
     ],
   });
   const receipt = await value.repository.persist_candidate_commit(request(first, 1));
-  fs.writeFileSync(path.join(value.projectRoot, 'scratch.txt'), 'local drift\n');
+  fs.mkdirSync(path.join(value.projectRoot, 'node_modules', 'local-only'), { recursive: true });
+  fs.writeFileSync(path.join(value.projectRoot, 'node_modules', 'local-only', 'index.js'), 'preserved\n');
   fs.mkdirSync(path.join(value.projectRoot, '.clawfabric'), { recursive: true });
   fs.writeFileSync(path.join(value.projectRoot, '.clawfabric', 'identity.json'), '{}\n');
 
   const projected = await value.projection.project_current({
     candidate_receipt: receipt,
+    expected_workspace_source_tree_digest: first.base_source_tree.source_tree_digest,
     projection_mode: 'base_cas',
   });
   assert.equal(projected.result_version, BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION);
@@ -280,19 +283,23 @@ test('projects a verified candidate to Git main and repairs the materialized wor
   assert.equal(main.stdout.trim(), receipt.commit_oid);
   assert.equal(fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'), '<main>Hello</main>\n');
   assert.equal(fs.readFileSync(path.join(value.projectRoot, 'src', 'app.js'), 'utf8'), 'document.title = "Hello";\n');
-  assert.equal(fs.existsSync(path.join(value.projectRoot, 'scratch.txt')), false);
+  assert.equal(
+    fs.readFileSync(path.join(value.projectRoot, 'node_modules', 'local-only', 'index.js'), 'utf8'),
+    'preserved\n',
+  );
   assert.equal(fs.readFileSync(path.join(value.projectRoot, '.clawfabric', 'identity.json'), 'utf8'), '{}\n');
 
   fs.writeFileSync(path.join(value.projectRoot, 'index.html'), '<main>drift</main>\n');
-  fs.writeFileSync(path.join(value.projectRoot, 'scratch-again.txt'), 'drift\n');
-  const replay = await value.projection.project_current({
-    candidate_receipt: structuredClone(receipt),
-    projection_mode: 'base_cas',
-  });
-  assert.equal(replay.main_ref, 'already_current');
-  assert.equal(replay.previous_main_oid, receipt.commit_oid);
-  assert.equal(fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'), '<main>Hello</main>\n');
-  assert.equal(fs.existsSync(path.join(value.projectRoot, 'scratch-again.txt')), false);
+  await assert.rejects(
+    value.projection.project_current({
+      candidate_receipt: structuredClone(receipt),
+      expected_workspace_source_tree_digest: first.base_source_tree.source_tree_digest,
+      projection_mode: 'base_cas',
+    }),
+    expectProjectionError('builder_git_current_projection_conflict'),
+  );
+  assert.equal(fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'), '<main>drift</main>\n');
+  assert.equal(fs.existsSync(path.join(value.projectRoot, 'node_modules', 'local-only', 'index.js')), true);
 });
 
 test('projects a verified candidate into the selected source folder from project identity', async (t) => {
@@ -334,10 +341,12 @@ test('projects a verified candidate into the selected source folder from project
   const internalProjectRoot = path.join(projectsRoot, UUID);
   assert.equal(fs.existsSync(internalProjectRoot), false);
   assert.equal(fs.existsSync(path.join(selectedRoot, 'index.html')), false);
-  fs.writeFileSync(path.join(selectedRoot, 'scratch.txt'), 'local drift\n');
+  fs.mkdirSync(path.join(selectedRoot, 'node_modules', 'local-only'), { recursive: true });
+  fs.writeFileSync(path.join(selectedRoot, 'node_modules', 'local-only', 'index.js'), 'preserved\n');
 
   const projected = await projection.project_current({
     candidate_receipt: receipt,
+    expected_workspace_source_tree_digest: first.base_source_tree.source_tree_digest,
     projection_mode: 'base_cas',
   });
 
@@ -350,7 +359,7 @@ test('projects a verified candidate into the selected source folder from project
   assert.equal(fs.existsSync(internalProjectRoot), false);
   assert.equal(fs.readFileSync(path.join(selectedRoot, 'index.html'), 'utf8'), '<main>Selected source</main>\n');
   assert.equal(fs.readFileSync(path.join(selectedRoot, 'src', 'app.js'), 'utf8'), 'document.title = "Selected";\n');
-  assert.equal(fs.existsSync(path.join(selectedRoot, 'scratch.txt')), false);
+  assert.equal(fs.existsSync(path.join(selectedRoot, 'node_modules', 'local-only', 'index.js')), true);
   const main = await runner.run('read_main_ref', selectedRoot, { object_format: 'sha1' });
   assert.equal(main.stdout.trim(), receipt.commit_oid);
   assert.equal(resolverCalls.every((projectId) => projectId === PROJECT_ID), true);
@@ -366,6 +375,7 @@ test('fails closed on main CAS conflict without releasing a false projection', a
   const firstReceipt = await value.repository.persist_candidate_commit(request(first, 1));
   await value.projection.project_current({
     candidate_receipt: firstReceipt,
+    expected_workspace_source_tree_digest: first.base_source_tree.source_tree_digest,
     projection_mode: 'base_cas',
   });
   const base = (await value.repository.read_verified_candidate(firstReceipt)).source_tree;
@@ -394,24 +404,29 @@ test('fails closed on main CAS conflict without releasing a false projection', a
   );
   await value.projection.project_current({
     candidate_receipt: conflictingReceipt,
+    expected_workspace_source_tree_digest: base.source_tree_digest,
     projection_mode: 'sqlite_current_repair',
   });
 
   await assert.rejects(
     value.projection.project_current({
       candidate_receipt: selectedReceipt,
+      expected_workspace_source_tree_digest: base.source_tree_digest,
       projection_mode: 'base_cas',
     }),
     expectProjectionError('builder_git_current_projection_conflict'),
   );
-  const repaired = await value.projection.project_current({
-    candidate_receipt: selectedReceipt,
-    projection_mode: 'sqlite_current_repair',
-  });
-  assert.equal(repaired.main_ref, 'repaired');
-  const repairedMain = await value.runner.run('read_main_ref', value.projectRoot, { object_format: 'sha1' });
-  assert.equal(repairedMain.stdout.trim(), selectedReceipt.commit_oid);
-  assert.equal(fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'), '<main>Selected</main>\n');
+  await assert.rejects(
+    value.projection.project_current({
+      candidate_receipt: selectedReceipt,
+      expected_workspace_source_tree_digest: base.source_tree_digest,
+      projection_mode: 'sqlite_current_repair',
+    }),
+    expectProjectionError('builder_git_current_projection_conflict'),
+  );
+  const currentMain = await value.runner.run('read_main_ref', value.projectRoot, { object_format: 'sha1' });
+  assert.equal(currentMain.stdout.trim(), conflictingReceipt.commit_oid);
+  assert.equal(fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'), '<main>Conflict</main>\n');
 });
 
 test('rejects protected source paths before touching main', async (t) => {
@@ -461,6 +476,7 @@ test('rejects protected source paths before touching main', async (t) => {
     await assert.rejects(
       projection.project_current({
         candidate_receipt: receipt,
+        expected_workspace_source_tree_digest: EMPTY_SOURCE_TREE.source_tree_digest,
         projection_mode: 'base_cas',
       }),
       expectProjectionError('builder_git_current_projection_invalid', ['private marker']),
@@ -481,6 +497,7 @@ test('rejects case-drifted local config roots before updating main', async (t) =
   await assert.rejects(
     value.projection.project_current({
       candidate_receipt: receipt,
+      expected_workspace_source_tree_digest: first.base_source_tree.source_tree_digest,
       projection_mode: 'base_cas',
     }),
     expectProjectionError('builder_git_current_projection_unavailable'),
@@ -530,6 +547,7 @@ test('maps update-ref failures to unavailable when main has not changed', async 
   await assert.rejects(
     projection.project_current({
       candidate_receipt: receipt,
+      expected_workspace_source_tree_digest: EMPTY_SOURCE_TREE.source_tree_digest,
       projection_mode: 'base_cas',
     }),
     expectProjectionError('builder_git_current_projection_unavailable'),

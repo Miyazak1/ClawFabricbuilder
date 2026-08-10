@@ -35,6 +35,7 @@ test('owns Builder project Git, SQLite metadata, and read authority facades', (t
   assert.equal(fs.existsSync(path.join(userDataPath, METADATA_DIRECTORY, METADATA_DATABASE)), true);
   assert.deepEqual(Object.keys(authority.git_authority).sort(), [
     'persist_candidate_commit',
+    'read_candidate_workspace_base',
     'read_verified_candidate',
     'verify_candidate_receipt',
   ]);
