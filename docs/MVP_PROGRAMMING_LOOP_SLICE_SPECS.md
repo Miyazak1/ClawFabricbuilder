@@ -555,11 +555,22 @@ The production composition is isolated behind
 `builder-check-run-runtime-composition.v1` and a main-only process adapter. The
 adapter accepts only the runner's shell-disabled process shape, tracks child
 identity, and bounds cancellation to children it created.
+Generation runtime now owns that composition and exposes only a main-only
+current-draft service handle for a separate approval runtime. The first
+`builder-check-run-approval-ipc-runtime.v1` contract accepts only current draft
+and displayed CommandProfile identity, requires the active main frame,
+coalesces repeated reads, rejects concurrent runs for the same draft, and
+sanitizes fixed command labels plus CheckRun status projection. It is
+intentionally not registered in Electron startup or preload yet: production
+registration must first gain a cancel-or-drain lifecycle that confirms every
+spawned check has stopped before generation runtime closes SQLite and Git
+authorities.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
-Electron composition, the user approval/control surface, environment-readiness
-projection, durable `Not checked` activity, and packaged end-to-end CheckRun
-orchestration remain required before Slice 6 is product-complete.
+Electron approval-runtime registration, cancellation/drain, preload and user
+approval controls, environment-readiness projection, durable `Not checked`
+activity, and packaged end-to-end CheckRun orchestration remain required before
+Slice 6 is product-complete.
 
 ## Slice 7: Save Version And Restart Recovery Canary
 
