@@ -67,6 +67,8 @@ const SUMMARY_BY_STATUS = Object.freeze({
   environment_unavailable: 'Check could not start in the current environment.',
   cancelled: 'Check was cancelled.',
   spawn_failed: 'Check could not be started.',
+  output_exceeded: 'Check output exceeded the review limit.',
+  termination_failed: 'Check termination could not be confirmed.',
 });
 const FAILURE_BY_STATUS = Object.freeze({
   passed: 'none',
@@ -75,6 +77,8 @@ const FAILURE_BY_STATUS = Object.freeze({
   environment_unavailable: 'environment_unavailable',
   cancelled: 'cancelled',
   spawn_failed: 'spawn_failed',
+  output_exceeded: 'output_exceeded',
+  termination_failed: 'termination_failed',
 });
 const AUTHORITY = Object.freeze({
   record_authority: 'main_owned_check_run_contract_v1',

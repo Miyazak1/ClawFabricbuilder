@@ -150,6 +150,8 @@ test('records admitted failure states without claiming false success', () => {
     ['environment_unavailable', 'environment_unavailable'],
     ['cancelled', 'cancelled'],
     ['spawn_failed', 'spawn_failed'],
+    ['output_exceeded', 'output_exceeded'],
+    ['termination_failed', 'termination_failed'],
   ]) {
     const record = createBuilderCheckRun(resultInput({
       status,

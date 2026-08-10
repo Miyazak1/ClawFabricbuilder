@@ -65,7 +65,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     CHECK (schema_version = 'builder-check-run-store-schema.v1'),
     CHECK (check_run_version = 'builder-check-run.v1'),
     CHECK (draft_checkpoint_sequence BETWEEN 1 AND 1000000),
-    CHECK (status IN ('passed', 'failed', 'timed_out', 'environment_unavailable', 'cancelled', 'spawn_failed')),
+    CHECK (status IN ('passed', 'failed', 'timed_out', 'environment_unavailable', 'cancelled', 'spawn_failed', 'output_exceeded', 'termination_failed')),
     CHECK (started_at_ms >= 0),
     CHECK (completed_at_ms >= started_at_ms),
     CHECK (length(record_json) BETWEEN 2 AND 131072)
