@@ -355,6 +355,15 @@ Evidence:
 - downloads denied;
 - no preload or Node integration.
 
+Current checkpoint:
+
+- add a preview-specific main-only WebContentsView runtime;
+- accept only an existing `LivePreviewAdmission` and read-only static server;
+- install navigation, network, permission, new-window, and download policies;
+- return only a main-owned handle for future attachment;
+- do not register IPC, change renderer UI, or touch provider/source mutation
+  paths.
+
 ### Slice LP4: Evidence Collector
 
 Capture console, navigation, network, screenshot, canvas, and WebGL summaries.
