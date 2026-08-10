@@ -113,6 +113,14 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
   const options = safeOptions(rawOptions);
   const activeReads = new Map();
   const activeRuns = new Set();
+  const activeOperations = new Set();
+  let shutdownOperation = null;
+
+  function trackOperation(operation) {
+    activeOperations.add(operation);
+    operation.finally(() => activeOperations.delete(operation)).catch(() => undefined);
+    return operation;
+  }
 
   function readAvailableChecks(request) {
     const existing = activeReads.get(request.draft_id);
@@ -126,25 +134,24 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     operation.finally(() => {
       if (activeReads.get(request.draft_id) === operation) activeReads.delete(request.draft_id);
     }).catch(() => undefined);
-    return operation;
+    return trackOperation(operation);
   }
 
-  async function approveAndRunCheck(request) {
+  function approveAndRunCheck(request) {
     if (activeRuns.has(request.draft_id)) {
       const error = new Error('A project check is already in progress.');
       error.code = 'builder_check_run_approval_busy';
-      throw error;
+      return Promise.reject(error);
     }
     activeRuns.add(request.draft_id);
-    try {
-      return await Reflect.apply(
+    const operation = Promise.resolve().then(() => Reflect.apply(
         options.currentDraftCheckRunService.run_approved_check,
         options.currentDraftCheckRunService,
         [request],
-      );
-    } finally {
+      )).finally(() => {
       activeRuns.delete(request.draft_id);
-    }
+    });
+    return trackOperation(operation);
   }
 
   let adapter;
@@ -202,6 +209,29 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
           : undefined);
       }
       return false;
+    },
+    shutdown() {
+      if (state === 'disposed') return Promise.resolve(false);
+      if (shutdownOperation !== null) return shutdownOperation;
+      shutdownOperation = (async () => {
+        if (state === 'idle') {
+          state = 'disposed';
+          return false;
+        }
+        if (state !== 'draining') {
+          if (!removeInstalledHandlers()) {
+            state = 'cleanup_required';
+            fail('builder_check_run_approval_ipc_runtime_cleanup_required');
+          }
+          state = 'draining';
+        }
+        while (activeOperations.size > 0) {
+          await Promise.allSettled([...activeOperations]);
+        }
+        state = 'disposed';
+        return true;
+      })();
+      return shutdownOperation;
     },
     dispose() {
       if (state === 'disposed') return false;

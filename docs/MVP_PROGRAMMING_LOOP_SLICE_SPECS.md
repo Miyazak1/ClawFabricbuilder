@@ -562,12 +562,14 @@ and displayed CommandProfile identity, requires the active main frame,
 coalesces repeated reads, rejects concurrent runs for the same draft, and
 sanitizes fixed command labels plus CheckRun status projection. It is
 intentionally not registered in Electron startup or preload yet: production
-registration must first gain a cancel-or-drain lifecycle that confirms every
-spawned check has stopped before generation runtime closes SQLite and Git
-authorities.
+registration must use its asynchronous drain lifecycle, which removes handlers,
+rejects new work, and waits for every accepted bounded CheckRun to settle before
+generation runtime closes SQLite and Git authorities. Direct cancellation can
+remain a later optimization because the runner already bounds timeout and
+process-tree termination; app shutdown must not bypass the drain.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
-Electron approval-runtime registration, cancellation/drain, preload and user
+Electron approval-runtime registration and ordered shutdown, preload and user
 approval controls, environment-readiness projection, durable `Not checked`
 activity, and packaged end-to-end CheckRun orchestration remain required before
 Slice 6 is product-complete.

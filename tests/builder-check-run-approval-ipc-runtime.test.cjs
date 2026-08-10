@@ -200,6 +200,42 @@ test('stops accepting requests and requires a drain before disposal completes', 
   assert.equal(value.runtime.dispose(), false);
 });
 
+test('shutdown removes handlers then awaits every accepted operation before disposal', async () => {
+  const readPending = deferred();
+  const runPending = deferred();
+  const value = setup({
+    read: () => readPending.promise,
+    run: () => runPending.promise,
+  });
+  value.runtime.register();
+  const readOperation = value.handlers.get(READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL)(
+    value.event,
+    { draft_id: DRAFT_ID },
+  );
+  const runOperation = value.handlers.get(APPROVE_CURRENT_DRAFT_CHECK_CHANNEL)(
+    value.event,
+    { draft_id: DRAFT_ID, command_profile_id: PROFILE_ID },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  let shutdownSettled = false;
+  const shutdown = value.runtime.shutdown().then((result) => {
+    shutdownSettled = true;
+    return result;
+  });
+  assert.equal(value.handlers.size, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(shutdownSettled, false);
+  readPending.resolve(readResult());
+  await readOperation;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(shutdownSettled, false);
+  runPending.resolve(runResult());
+  await runOperation;
+  assert.equal(await shutdown, true);
+  assert.equal(await value.runtime.shutdown(), false);
+  assert.equal(value.runtime.dispose(), false);
+});
+
 test('rolls back partial registration and rejects malformed services', () => {
   const failed = setup({ failOn: APPROVE_CURRENT_DRAFT_CHECK_CHANNEL });
   assert.throws(() => failed.runtime.register(), {
