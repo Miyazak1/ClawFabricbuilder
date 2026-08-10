@@ -19,6 +19,12 @@ const {
   sanitizeBuilderRunContextSnapshot,
 } = require('./builder-run-context-snapshot.cjs');
 const {
+  sanitizeBuilderExecutionApproval,
+} = require('./builder-execution-approval.cjs');
+const {
+  sanitizeBuilderProgrammingRunAdmission,
+} = require('./builder-programming-run-admission.cjs');
+const {
   sanitizeBuilderAgentStepProgressConversationAdmission,
 } = require('./builder-agent-step-progress-conversation-admission.cjs');
 const {
@@ -139,6 +145,9 @@ const PAYLOAD_KEYS = Object.freeze({
   ]),
   task_brief_updated: Object.freeze(['turn_id', 'run_id', 'message_id', 'task_capsule']),
   run_context_snapshot_recorded: Object.freeze(['turn_id', 'run_id', 'snapshot']),
+  programming_run_admitted: Object.freeze([
+    'turn_id', 'run_id', 'execution_approval', 'programming_run_admission',
+  ]),
   candidate_rejected: Object.freeze([
     'turn_id', 'run_id', 'draft_id', 'review_id', 'reviewer_id', 'reviewed_at_ms', 'decision',
   ]),
@@ -688,6 +697,32 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         turn_id: turnId,
         run_id: runId,
         snapshot,
+      };
+    }
+    case 'programming_run_admitted': {
+      const turnId = safeTurnId(valueAt(value, 'turn_id'));
+      const runId = safeRunId(valueAt(value, 'run_id'));
+      const executionApproval = sanitizeBuilderExecutionApproval(
+        valueAt(value, 'execution_approval'),
+      );
+      const programmingRunAdmission = sanitizeBuilderProgrammingRunAdmission(
+        valueAt(value, 'programming_run_admission'),
+      );
+      if (
+        executionApproval.project_id !== projectId
+        || executionApproval.conversation_id !== conversationId
+        || programmingRunAdmission.project_id !== projectId
+        || programmingRunAdmission.conversation_id !== conversationId
+        || programmingRunAdmission.turn_id !== turnId
+        || programmingRunAdmission.run_id !== runId
+        || programmingRunAdmission.execution_approval_id !== executionApproval.approval_id
+        || programmingRunAdmission.execution_approval_digest !== executionApproval.approval_digest
+      ) fail();
+      return {
+        turn_id: turnId,
+        run_id: runId,
+        execution_approval: executionApproval,
+        programming_run_admission: programmingRunAdmission,
       };
     }
     case 'candidate_rejected':

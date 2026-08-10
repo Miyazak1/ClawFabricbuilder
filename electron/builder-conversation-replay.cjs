@@ -231,6 +231,8 @@ function applyRunStarted(state, payload) {
     candidate_result: null,
     candidate_review: null,
     context_snapshot: null,
+    execution_approval: null,
+    programming_run_admission: null,
     tool_calls: [],
     progress_stages: [],
     interrupt_request_id: null,
@@ -275,6 +277,38 @@ function applyRunContextSnapshotRecorded(state, payload) {
     fail();
   }
   run.context_snapshot = { ...snapshot };
+}
+
+function applyProgrammingRunAdmitted(state, payload) {
+  const turn = requireActiveTurn(state, payload.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  const approval = payload.execution_approval;
+  const admission = payload.programming_run_admission;
+  if (
+    turn.mode !== 'work'
+    || turn.task === null
+    || run === null
+    || run.run_id !== payload.run_id
+    || run.status !== 'running'
+    || run.context_snapshot === null
+    || run.execution_approval !== null
+    || run.programming_run_admission !== null
+    || run.progress_stages.length > 0
+    || run.tool_calls.length > 0
+    || approval.project_id !== state.projectId
+    || approval.conversation_id !== state.conversationId
+    || admission.project_id !== state.projectId
+    || admission.conversation_id !== state.conversationId
+    || admission.turn_id !== turn.turn_id
+    || admission.task_id !== turn.task.task_id
+    || admission.run_id !== run.run_id
+    || admission.context_snapshot_id !== run.context_snapshot.snapshot_id
+    || admission.context_digest !== run.context_snapshot.context_digest
+    || admission.execution_approval_id !== approval.approval_id
+    || admission.execution_approval_digest !== approval.approval_digest
+  ) fail();
+  run.execution_approval = { ...approval };
+  run.programming_run_admission = { ...admission };
 }
 
 function applyRunProgressRecorded(state, payload) {
@@ -618,6 +652,7 @@ const TRANSITIONS = Object.freeze({
   plan_reviewed: applyPlanReviewed,
   run_started: applyRunStarted,
   run_context_snapshot_recorded: applyRunContextSnapshotRecorded,
+  programming_run_admitted: applyProgrammingRunAdmitted,
   run_progress_recorded: applyRunProgressRecorded,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
@@ -664,6 +699,20 @@ function publicTurn(turn) {
             required_permissions: [...run.context_snapshot.permissions.required_permissions],
           },
           capabilities: { ...run.context_snapshot.capabilities },
+        },
+        execution_approval: run.execution_approval === null ? null : {
+          ...run.execution_approval,
+          project_understanding_ref: run.execution_approval.project_understanding_ref === null
+            ? null
+            : { ...run.execution_approval.project_understanding_ref },
+          permission_decision_ref: { ...run.execution_approval.permission_decision_ref },
+          lifecycle: { ...run.execution_approval.lifecycle },
+          authority: { ...run.execution_approval.authority },
+        },
+        programming_run_admission: run.programming_run_admission === null ? null : {
+          ...run.programming_run_admission,
+          lifecycle: { ...run.programming_run_admission.lifecycle },
+          authority: { ...run.programming_run_admission.authority },
         },
         progress_stages: [...run.progress_stages],
         tool_calls: run.tool_calls.map((toolCall) => ({

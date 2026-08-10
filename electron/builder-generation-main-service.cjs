@@ -37,6 +37,15 @@ const {
   sanitizeBuilderProviderConfig,
 } = require('./builder-provider-config.cjs');
 const {
+  createBuilderExecutionApproval,
+} = require('./builder-execution-approval.cjs');
+const {
+  createBuilderProgrammingRunAdmission,
+} = require('./builder-programming-run-admission.cjs');
+const {
+  sanitizeBuilderRunContextSnapshot,
+} = require('./builder-run-context-snapshot.cjs');
+const {
   sanitizeBuilderApprovedPlanContinuationAdmission,
 } = require('./builder-approved-plan-continuation-admission.cjs');
 const {
@@ -1737,6 +1746,10 @@ function createBuilderGenerationMainService(rawOptions) {
     options.conversationService,
     'record_run_context_snapshot',
   );
+  const recordProgrammingRunAdmission = ownMethod(
+    options.conversationService,
+    'record_programming_run_admission',
+  );
   const recordConversationRunProgress = ownMethod(options.conversationService, 'record_run_progress');
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
   const beginApprovedPlanWork = ownMethod(options.conversationService, 'begin_approved_plan_work');
@@ -1830,6 +1843,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingAnswerRouteDecisionHints = new Map();
   const pendingAnswerQueuedFollowups = new Map();
   const pendingApprovedPlanEditContexts = new Map();
+  const executionAdmissionContexts = new WeakMap();
   const pendingPlanRequests = new Map();
   const planContexts = new WeakMap();
   let pendingAuthority = null;
@@ -2386,6 +2400,27 @@ function createBuilderGenerationMainService(rawOptions) {
     return snapshottedContext;
   }
 
+  function currentRunContextSnapshot(conversationContext) {
+    const recorded = [...conversationContext.events].reverse().find((event) => (
+      valueAt(event, 'event_type') === 'run_context_snapshot_recorded'
+      && valueAt(valueAt(event, 'payload'), 'turn_id') === conversationContext.ids.turn_id
+      && valueAt(valueAt(event, 'payload'), 'run_id') === conversationContext.ids.run_id
+    ));
+    if (recorded === undefined) fail();
+    return sanitizeBuilderRunContextSnapshot(valueAt(valueAt(recorded, 'payload'), 'snapshot'), {
+      project_id: conversationContext.project.project_id,
+      conversation_id: conversationContext.conversation.conversation_id,
+      turn_id: conversationContext.ids.turn_id,
+      run_id: conversationContext.ids.run_id,
+      task_id: conversationContext.ids.task_id,
+    });
+  }
+
+  function inheritExecutionAdmissionContext(source, target) {
+    const admissionContext = executionAdmissionContexts.get(source);
+    if (admissionContext !== undefined) executionAdmissionContexts.set(target, admissionContext);
+  }
+
   function recordSessionTaskAddressesFromWorkContext(conversationContext) {
     if (recordSessionTaskAddressesFromConversation === null) return;
     Reflect.apply(
@@ -2569,11 +2604,14 @@ function createBuilderGenerationMainService(rawOptions) {
           conversationContext,
           approvedPlanEditContext,
         );
-        conversationContext = await recordConversationContextSnapshot(conversationContext);
+        conversationContext = await recordConversationContextSnapshot(
+          conversationContext,
+          approvedPlanEditContext.project_understanding,
+        );
         activeContexts.set(key, conversationContext);
         retryableContexts.delete(key);
         notifyGenerationStarted(request, approvedPlanEditContext.project_id);
-        return generationContextFromConversation(
+        const generationContext = generationContextFromConversation(
           request,
           {
             base_revision: approvedPlanEditContext.base_revision,
@@ -2582,6 +2620,11 @@ function createBuilderGenerationMainService(rawOptions) {
           },
           conversationContext,
         );
+        executionAdmissionContexts.set(generationContext, freezeDeep({
+          edit_context: approvedPlanEditContext,
+          run_context_snapshot: currentRunContextSnapshot(conversationContext),
+        }));
+        return generationContext;
       }
       setupPhase = 'retry_context_lookup';
       const retryableContext = pendingRetryContexts.get(key);
@@ -2917,6 +2960,49 @@ function createBuilderGenerationMainService(rawOptions) {
     buildDraftContinuationContext,
     buildExplanationContext,
     buildPlanContext,
+    admitProviderDispatch: async ({ context, provider_config_digest: providerConfigDigest }) => {
+      const pending = executionAdmissionContexts.get(context);
+      if (pending === undefined) return context;
+      executionAdmissionContexts.delete(context);
+      const admittedAtMs = safeTimestamp(Date.now());
+      const executionApproval = createBuilderExecutionApproval({
+        approved_plan_continuation: pending.edit_context.approved_plan_continuation,
+        write_permission_decision: pending.edit_context.write_permission_decision,
+        provider_config_digest: safeDigest(providerConfigDigest),
+        source_tree_digest: pending.edit_context.base_source_tree.source_tree_digest,
+        project_understanding: pending.edit_context.project_understanding,
+        approved_at_ms: admittedAtMs,
+        expires_at_ms: admittedAtMs + 30_000,
+      });
+      const programmingRunAdmission = createBuilderProgrammingRunAdmission({
+        execution_approval: executionApproval,
+        run_context_snapshot: pending.run_context_snapshot,
+        admitted_at_ms: admittedAtMs,
+      });
+      const conversationContext = latestConversationContext(context, generationContexts.get(context));
+      if (conversationContext === undefined) fail();
+      const admittedConversationContext = Reflect.apply(
+        recordProgrammingRunAdmission,
+        options.conversationService,
+        [{
+          context: conversationContext,
+          execution_approval: executionApproval,
+          programming_run_admission: programmingRunAdmission,
+        }],
+      );
+      const admittedContext = freezeDeep({
+        ...context,
+        conversation_events: admittedConversationContext.events,
+      });
+      inheritLiveOutputState(context, admittedContext);
+      generationContexts.set(admittedContext, admittedConversationContext);
+      liveOutputContextsByRunId.set(admittedConversationContext.ids.run_id, admittedConversationContext);
+      activeContexts.set(
+        operationKey(GENERATE_OPERATION_PREFIX, admittedConversationContext.request_digest),
+        admittedConversationContext,
+      );
+      return admittedContext;
+    },
     onProgress({ context, stage }) {
       const generationContext = latestConversationContext(context, generationContexts.get(context));
       if (generationContext !== undefined) {
@@ -2930,6 +3016,7 @@ function createBuilderGenerationMainService(rawOptions) {
           conversation_events: progressed.events,
         });
         inheritLiveOutputState(context, updated);
+        inheritExecutionAdmissionContext(context, updated);
         generationContexts.set(updated, progressed);
         liveOutputContextsByRunId.set(progressed.ids.run_id, progressed);
         activeContexts.set(
@@ -3143,6 +3230,17 @@ function createBuilderGenerationMainService(rawOptions) {
         await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: request.project_id }]),
         request.project_id,
       );
+      let projectUnderstanding = null;
+      if (refreshProjectUnderstanding !== null) {
+        setupPhase = 'approved_plan_prepare_refresh_project_understanding';
+        projectUnderstanding = sanitizeProjectUnderstandingRefreshResult(
+          await Reflect.apply(refreshProjectUnderstanding, options.projectUnderstandingService, [{
+            project_id: request.project_id,
+          }]),
+          request.project_id,
+          base.source_tree.source_tree_digest,
+        );
+      }
       setupPhase = 'approved_plan_prepare_return_context';
       return freezeDeep({
         context_version: 'builder-approved-plan-edit-context.v1',
@@ -3156,6 +3254,8 @@ function createBuilderGenerationMainService(rawOptions) {
         conversation_head: { ...continuationAdmission.conversation_head },
         continuation_id: continuationAdmission.continuation_id,
         continuation_admission_digest: continuationAdmission.admission_digest,
+        approved_plan_continuation: continuationAdmission,
+        project_understanding: projectUnderstanding,
         base_revision: base.base_revision === null ? null : { ...base.base_revision },
         base_revision_evidence: base.base_revision_evidence === null ? null : { ...base.base_revision_evidence },
         base_source_tree: base.source_tree,
@@ -3592,8 +3692,13 @@ function createBuilderGenerationMainService(rawOptions) {
     let request = null;
     let setupPhase = 'approved_plan_generate_start';
     try {
+      exactObject(rawRequest, ['request', 'write_permission_decision']);
       setupPhase = 'approved_plan_generate_prepare_context';
-      const editContext = await prepareApprovedPlanEditContext(rawRequest);
+      const prepared = await prepareApprovedPlanEditContext(valueAt(rawRequest, 'request'));
+      const editContext = freezeDeep({
+        ...prepared,
+        write_permission_decision: valueAt(rawRequest, 'write_permission_decision'),
+      });
       setupPhase = 'approved_plan_generate_request_from_plan';
       request = generationRequestFromApprovedPlan(editContext);
       const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);

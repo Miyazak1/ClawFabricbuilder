@@ -3018,22 +3018,29 @@ test('keeps selected project identity in main and accepts only instruction over 
     })`, runtimeModule.context),
   );
   assert.equal(approvedPlanGenerated.length, 1);
-  assert.equal(approvedPlanGenerated[0].project_id, PROJECT_ID);
+  assert.deepEqual(Reflect.ownKeys(approvedPlanGenerated[0]).sort(), [
+    'request',
+    'write_permission_decision',
+  ]);
+  assert.equal(approvedPlanGenerated[0].request.project_id, PROJECT_ID);
   assert.equal(
-    approvedPlanGenerated[0].conversation_id,
+    approvedPlanGenerated[0].request.conversation_id,
     'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
   );
   assert.equal(
-    approvedPlanGenerated[0].turn_id,
+    approvedPlanGenerated[0].request.turn_id,
     'builder-turn:123e4567-e89b-42d3-a456-426614174001',
   );
   assert.equal(
-    approvedPlanGenerated[0].run_id,
+    approvedPlanGenerated[0].request.run_id,
     'builder-run:123e4567-e89b-42d3-a456-426614174002',
   );
-  assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'instruction'), false);
-  assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'request_digest'), false);
-  assert.equal(Object.hasOwn(approvedPlanGenerated[0], 'source_tree'), false);
+  assert.equal(approvedPlanGenerated[0].write_permission_decision.decision, 'allowed');
+  assert.equal(approvedPlanGenerated[0].write_permission_decision.action, 'project.edit');
+  assert.equal(approvedPlanGenerated[0].write_permission_decision.resource.project_id, PROJECT_ID);
+  assert.equal(Object.hasOwn(approvedPlanGenerated[0].request, 'instruction'), false);
+  assert.equal(Object.hasOwn(approvedPlanGenerated[0].request, 'request_digest'), false);
+  assert.equal(Object.hasOwn(approvedPlanGenerated[0].request, 'source_tree'), false);
   await assert.rejects(
     async () => ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
       { sender: mainWindow.webContents },

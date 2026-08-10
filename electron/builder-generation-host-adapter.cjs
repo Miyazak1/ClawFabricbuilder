@@ -279,6 +279,9 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const buildPlanContext = options.buildPlanContext === undefined
     ? null
     : requiredMethod(options.buildPlanContext, 'builder_generation_base_unavailable');
+  const admitProviderDispatch = options.admitProviderDispatch === undefined
+    ? null
+    : requiredMethod(options.admitProviderDispatch, 'builder_generation_failed');
   const transport = options.transport === undefined
     ? createBuilderOpenAICompatibleTransport()
     : requiredMethod(options.transport);
@@ -361,6 +364,24 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  async function admittedProviderContext(context, providerConfigDigest, signal) {
+    if (admitProviderDispatch === null) return context;
+    if (signal.aborted) fail('builder_generation_cancelled');
+    try {
+      return exactObject(
+        await Reflect.apply(admitProviderDispatch, undefined, [{
+          context,
+          provider_config_digest: providerConfigDigest,
+        }]),
+        GENERATION_CONTEXT_KEYS,
+        'builder_generation_failed',
+      );
+    } catch {
+      if (signal.aborted) fail('builder_generation_cancelled');
+      fail('builder_generation_failed');
+    }
+  }
+
   async function run(request, controller) {
     let context = await boundedContext(
       request,
@@ -378,9 +399,10 @@ function createBuilderGenerationHostAdapter(options = {}) {
     } catch (error) {
       mapKernelError(error);
     }
-    context = await progressContext(context, 'context_ready', GENERATION_CONTEXT_KEYS, controller.signal);
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
+    context = await admittedProviderContext(context, config.config_digest, controller.signal);
+    context = await progressContext(context, 'context_ready', GENERATION_CONTEXT_KEYS, controller.signal);
     context = await progressContext(
       context,
       'provider_request_started',

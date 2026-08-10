@@ -52,8 +52,15 @@ const {
 } = require('../electron/builder-plan-proposal-records.cjs');
 const {
   BUILDER_APPROVED_PLAN_CONTINUATION_ADMISSION_VERSION,
+  createBuilderApprovedPlanContinuationAdmission,
   sanitizeBuilderApprovedPlanContinuationAdmission,
 } = require('../electron/builder-approved-plan-continuation-admission.cjs');
+const {
+  createBuilderExecutionApproval,
+} = require('../electron/builder-execution-approval.cjs');
+const {
+  createBuilderProgrammingRunAdmission,
+} = require('../electron/builder-programming-run-admission.cjs');
 const {
   createBuilderDraftContinuationAdmission,
 } = require('../electron/builder-draft-continuation-admission.cjs');
@@ -1028,6 +1035,102 @@ test('records a digest-bound run context snapshot before progress or tools', () 
     }), {
       code: 'builder_conversation_main_service_unavailable',
     });
+  } finally {
+    item.close();
+  }
+});
+
+test('records programming run admission after context snapshot and before progress', () => {
+  const item = fixture();
+  try {
+    const first = begin(item.service);
+    const snapshotted = item.service.record_run_context_snapshot({
+      context: first,
+      working_context_state: null,
+      project_understanding: null,
+      context_assembly: null,
+      provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
+    });
+    const snapshot = snapshotted.events.at(-1).payload.snapshot;
+    const continuation = createBuilderApprovedPlanContinuationAdmission({
+      approved_plan: {
+        result_version: APPROVED_PLAN_READ_RESULT_VERSION,
+        project_id: PROJECT_ID,
+        conversation_id: first.conversation.conversation_id,
+        turn_id: 'builder-turn:22222222-2222-4222-8222-222222222222',
+        task_id: 'builder-task:33333333-3333-4333-8333-333333333333',
+        run_id: 'builder-run:44444444-4444-4444-8444-444444444444',
+        decision: 'approved',
+        plan_result_digest: `sha256:${'8'.repeat(64)}`,
+        conversation_head: {
+          sequence: 7,
+          event_id: `builder-conversation-event:${'9'.repeat(64)}`,
+          event_digest: `sha256:${'a'.repeat(64)}`,
+        },
+        authority: {
+          conversation: 'sqlite_replay_current_head_verified',
+          plan_review: 'approved_current_head',
+          renderer_authority: 'not_present',
+          provider_dispatch: false,
+          tool_dispatch: 'not_performed',
+          source_mutation: 'not_performed',
+          git_authority: 'not_present',
+          revision_admission: 'not_created',
+        },
+      },
+      continuation_id: 'builder-approved-plan-continuation:55555555-5555-4555-8555-555555555555',
+      admitted_at_ms: 990,
+    });
+    const executionApproval = createBuilderExecutionApproval({
+      approved_plan_continuation: continuation,
+      write_permission_decision: {
+        decision_version: BUILDER_PERMISSION_DECISION_VERSION,
+        policy_version: BUILDER_PERMISSION_POLICY_VERSION,
+        actor_id: 'builder-user:00000000-0000-4000-8000-000000000001',
+        action: 'project.edit',
+        resource: { resource_kind: 'project', project_id: PROJECT_ID, resource_id: 'project:self' },
+        evaluated_at_ms: 995,
+        decision: 'allowed',
+        reason: 'matching_active_grant',
+        permission_id: `builder-permission:${'b'.repeat(64)}`,
+        permission_authority: 'builder_permission_facts_deny_by_default_v1',
+        ui_selection_authority: 'not_permission',
+      },
+      provider_config_digest: `sha256:${'c'.repeat(64)}`,
+      source_tree_digest: createBuilderProjectSourceTree({ files: [] }).source_tree_digest,
+      project_understanding: null,
+      approved_at_ms: 1_001,
+      expires_at_ms: 31_001,
+    });
+    const programmingRunAdmission = createBuilderProgrammingRunAdmission({
+      execution_approval: executionApproval,
+      run_context_snapshot: snapshot,
+      admitted_at_ms: 1_002,
+    });
+    const admitted = item.service.record_programming_run_admission({
+      context: snapshotted,
+      execution_approval: executionApproval,
+      programming_run_admission: programmingRunAdmission,
+    });
+
+    assert.equal(admitted.events.at(-1).event_type, 'programming_run_admitted');
+    const replay = replayBuilderConversation(admitted.events);
+    const run = replay.turns[0].runs[0];
+    assert.equal(run.execution_approval.approval_id, executionApproval.approval_id);
+    assert.equal(run.programming_run_admission.admission_id, programmingRunAdmission.admission_id);
+    assert.equal(run.programming_run_admission.context_snapshot_id, snapshot.snapshot_id);
+    assert.throws(() => item.service.record_programming_run_admission({
+      context: admitted,
+      execution_approval: executionApproval,
+      programming_run_admission: programmingRunAdmission,
+    }), { code: 'builder_conversation_main_service_unavailable' });
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.doesNotMatch(
+      JSON.stringify(stream),
+      /execution_approval|programming_run_admission|provider_config_digest|permission_id/iu,
+    );
   } finally {
     item.close();
   }

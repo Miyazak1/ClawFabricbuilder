@@ -62,6 +62,12 @@ const {
   createBuilderRunContextSnapshot,
 } = require('./builder-run-context-snapshot.cjs');
 const {
+  sanitizeBuilderExecutionApproval,
+} = require('./builder-execution-approval.cjs');
+const {
+  sanitizeBuilderProgrammingRunAdmission,
+} = require('./builder-programming-run-admission.cjs');
+const {
   sanitizeBuilderAgentStepProgressConversationAdmission,
 } = require('./builder-agent-step-progress-conversation-admission.cjs');
 
@@ -1985,6 +1991,68 @@ function createBuilderConversationMainService(rawOptions) {
     return snapshottedContext;
   }
 
+  function recordProgrammingRunAdmission(rawRequest) {
+    exactObject(rawRequest, ['context', 'execution_approval', 'programming_run_admission']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (context.run_terminal_failure_code !== null || context.cancel_requested) fail();
+    const { run } = openRunFromContext(context);
+    if (
+      run.context_snapshot === null
+      || run.execution_approval !== null
+      || run.programming_run_admission !== null
+      || run.progress_stages.length > 0
+      || run.tool_calls.length > 0
+    ) fail();
+    const executionApproval = sanitizeBuilderExecutionApproval(
+      valueAt(rawRequest, 'execution_approval'),
+    );
+    const programmingRunAdmission = sanitizeBuilderProgrammingRunAdmission(
+      valueAt(rawRequest, 'programming_run_admission'),
+    );
+    if (
+      executionApproval.project_id !== context.project.project_id
+      || executionApproval.conversation_id !== context.conversation.conversation_id
+      || programmingRunAdmission.project_id !== context.project.project_id
+      || programmingRunAdmission.conversation_id !== context.conversation.conversation_id
+      || programmingRunAdmission.turn_id !== context.ids.turn_id
+      || programmingRunAdmission.task_id !== context.ids.task_id
+      || programmingRunAdmission.run_id !== context.ids.run_id
+      || programmingRunAdmission.context_snapshot_id !== run.context_snapshot.snapshot_id
+      || programmingRunAdmission.context_digest !== run.context_snapshot.context_digest
+      || programmingRunAdmission.execution_approval_id !== executionApproval.approval_id
+      || programmingRunAdmission.execution_approval_digest !== executionApproval.approval_digest
+    ) fail();
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'programming_run_admitted',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        execution_approval: executionApproval,
+        programming_run_admission: programmingRunAdmission,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
+      recordedAtMs,
+    });
+    const admittedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(admittedContext);
+    return admittedContext;
+  }
+
   function completeCandidate(rawRequest) {
     exactObject(rawRequest, ['context', 'candidate_result', 'assistant_text']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
@@ -3092,6 +3160,7 @@ function createBuilderConversationMainService(rawOptions) {
     begin_queued_followup_work: beginQueuedFollowupWork,
     record_retryable_failure: recordRetryableFailure,
     record_run_context_snapshot: recordRunContextSnapshot,
+    record_programming_run_admission: recordProgrammingRunAdmission,
     record_run_progress: recordRunProgress,
     record_agent_step_progress: recordAgentStepProgress,
     retry_after_failure: retryAfterFailure,

@@ -293,6 +293,8 @@ function itemFromEvent(event, progressStagesByRun) {
         },
       };
     }
+    case 'programming_run_admitted':
+      return null;
     case 'run_progress_recorded':
       return {
         item_kind: 'run_progress_recorded',
@@ -551,7 +553,8 @@ function projectBuilderTaskStream(rawInput) {
     const firstVisibleIndex = Math.max(0, events.length - MAX_PUBLIC_ITEMS);
     const progressStagesByRun = latestProgressStagesByRun(events);
     for (let index = firstVisibleIndex; index < events.length; index += 1) {
-      visibleItems.push(itemFromEvent(events[index], progressStagesByRun));
+      const item = itemFromEvent(events[index], progressStagesByRun);
+      if (item !== null) visibleItems.push(item);
     }
     return boundResult(withOptionalStatusProjections({
       stream_version: BUILDER_TASK_STREAM_VERSION,
@@ -564,7 +567,7 @@ function projectBuilderTaskStream(rawInput) {
         window: {
           first_sequence: visibleItems[0].sequence,
           last_sequence: visibleItems.at(-1).sequence,
-          has_earlier: events.length > visibleItems.length,
+          has_earlier: firstVisibleIndex > 0,
         },
         items: visibleItems,
       },

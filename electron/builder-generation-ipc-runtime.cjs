@@ -1442,6 +1442,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         now_ms: Date.now(),
       });
       if (decision.decision !== 'allowed') failGenerationProjectWritePermissionRequired();
+      return decision;
     }
 
     function trackedGenerationOperation(rawRequest, method, queuedMethod = null) {
@@ -1519,8 +1520,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       if (selectionPending) fail();
       const request = approvedPlanGenerationRequest(rawRequest);
       if (selectedProjectId !== request.project_id) fail();
-      await assertSelectedProjectWriteAllowed(request.project_id);
-      return service.generate_approved_plan(request);
+      const writePermissionDecision = await assertSelectedProjectWriteAllowed(request.project_id);
+      return service.generate_approved_plan({
+        request,
+        write_permission_decision: writePermissionDecision,
+      });
     }
 
     async function trackedProposePlan(rawRequest) {

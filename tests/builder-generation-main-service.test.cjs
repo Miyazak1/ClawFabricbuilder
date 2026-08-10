@@ -182,6 +182,29 @@ function approvedPlanEditRequest(overrides = {}) {
   };
 }
 
+function approvedPlanExecutionRequest(requestOverrides = {}) {
+  return {
+    request: approvedPlanEditRequest(requestOverrides),
+    write_permission_decision: {
+      decision_version: 'builder-permission-decision.v1',
+      policy_version: 'builder-permission-policy.v1',
+      actor_id: 'builder-user:00000000-0000-4000-8000-000000000001',
+      action: 'project.edit',
+      resource: {
+        resource_kind: 'project',
+        project_id: PROJECT_ID,
+        resource_id: 'project:self',
+      },
+      evaluated_at_ms: 1,
+      decision: 'allowed',
+      reason: 'matching_active_grant',
+      permission_id: `builder-permission:${'d'.repeat(64)}`,
+      permission_authority: 'builder_permission_facts_deny_by_default_v1',
+      ui_selection_authority: 'not_permission',
+    },
+  };
+}
+
 function createUuidFactory(seed = 0) {
   let index = seed;
   return () => {
@@ -684,6 +707,7 @@ function conversationService(options = {}) {
     failure: [],
     completeFailure: [],
     contextSnapshot: [],
+    programmingRunAdmission: [],
     progress: [],
     retry: [],
     cancel: [],
@@ -765,6 +789,25 @@ function conversationService(options = {}) {
         turn_id: context.ids.turn_id,
         run_id: context.ids.run_id,
         snapshot,
+      },
+      authority: { ...CONVERSATION_AUTHORITY },
+    });
+  }
+  function programmingRunAdmissionEvent(context, executionApproval, programmingRunAdmission) {
+    return createBuilderConversationEvent({
+      record_version: CONVERSATION_EVENT_VERSION,
+      record_kind: CONVERSATION_EVENT_KIND,
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      command_id: nextProgressCommandId(),
+      event_type: 'programming_run_admitted',
+      previous_event: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        execution_approval: executionApproval,
+        programming_run_admission: programmingRunAdmission,
       },
       authority: { ...CONVERSATION_AUTHORITY },
     });
@@ -1053,6 +1096,19 @@ function conversationService(options = {}) {
         input.context_assembly,
         input.provider_context_projection,
         input.provider_context_prompt_egress_gate,
+      );
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
+      };
+    },
+    record_programming_run_admission(input) {
+      calls.programmingRunAdmission.push(input);
+      const event = programmingRunAdmissionEvent(
+        input.context,
+        input.execution_approval,
+        input.programming_run_admission,
       );
       return {
         ...input.context,
@@ -1979,6 +2035,7 @@ test('generates an unsaved candidate from the current approved plan through main
     },
     transport: async (input) => {
       transportInputs.push(input);
+      assert.equal(lifecycle.calls.programmingRunAdmission.length, 1);
       assert.match(input.messages[1].content, /Review the approved plan/u);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
@@ -1989,7 +2046,7 @@ test('generates an unsaved candidate from the current approved plan through main
     },
   });
 
-  const result = await service.generate_approved_plan(approvedPlanEditRequest());
+  const result = await service.generate_approved_plan(approvedPlanExecutionRequest());
 
   assert.equal(result.version, 'builder-generation-result.v2');
   assert.equal(result.project_id, PROJECT_ID);
@@ -2001,6 +2058,15 @@ test('generates an unsaved candidate from the current approved plan through main
   assert.equal(lifecycle.calls.readApprovedPlan.length, 1);
   assert.equal(lifecycle.calls.approvedPlanContinuation.length, 1);
   assert.equal(lifecycle.calls.approvedPlanWork.length, 1);
+  assert.equal(lifecycle.calls.programmingRunAdmission.length, 1);
+  assert.equal(
+    lifecycle.calls.programmingRunAdmission[0].programming_run_admission.status,
+    'admitted',
+  );
+  assert.equal(
+    lifecycle.calls.programmingRunAdmission[0].execution_approval.approved_subject_digest,
+    `sha256:${'a'.repeat(64)}`,
+  );
   assert.equal(lifecycle.calls.begin.length, 1);
   assert.equal(lifecycle.calls.begin[0].instruction, 'Review the approved plan.\n\nPlan:\n1. Build the approved change.');
   assert.equal(lifecycle.calls.begin[0].base_revision.commit_oid, '2'.repeat(40));
@@ -2044,7 +2110,7 @@ test('generates an approved-plan candidate from a local workspace before the fir
     },
   });
 
-  const result = await service.generate_approved_plan(approvedPlanEditRequest());
+  const result = await service.generate_approved_plan(approvedPlanExecutionRequest());
 
   assert.equal(result.version, 'builder-generation-result.v2');
   assert.equal(result.project_id, PROJECT_ID);
@@ -5743,6 +5809,7 @@ test('binds approved-plan continuation to the current product Task Address befor
     }),
     transport: async () => {
       assert.equal(bindingCalls.length, 1);
+      assert.equal(lifecycle.calls.programmingRunAdmission.length, 1);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput({
@@ -5753,10 +5820,11 @@ test('binds approved-plan continuation to the current product Task Address befor
     },
   });
 
-  const result = await service.generate_approved_plan(approvedPlanEditRequest());
+  const result = await service.generate_approved_plan(approvedPlanExecutionRequest());
 
   assert.equal(result.title, 'Approved plan work');
   assert.equal(lifecycle.calls.approvedPlanWork.length, 1);
+  assert.equal(lifecycle.calls.programmingRunAdmission.length, 1);
   assert.equal(bindingCalls.length, 1);
   assert.equal(bindingCalls[0].context.mode, 'work');
   assert.equal(bindingCalls[0].context.project.project_id, PROJECT_ID);
@@ -5806,7 +5874,40 @@ test('fails closed before provider dispatch when approved-plan continuation Task
   });
 
   await assert.rejects(
-    service.generate_approved_plan(approvedPlanEditRequest()),
+    service.generate_approved_plan(approvedPlanExecutionRequest()),
+    (error) => {
+      assert.equal(error.code, 'builder_generation_service_unavailable');
+      assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
+      return true;
+    },
+  );
+  assert.equal(providerCalled, false);
+});
+
+test('fails closed before provider dispatch when programming run admission cannot be recorded', async () => {
+  let providerCalled = false;
+  const lifecycle = conversationService();
+  lifecycle.record_programming_run_admission = function rejectProgrammingRunAdmission() {
+    throw new Error(PRIVATE_MARKER);
+  };
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: {
+        load_current() { return readResult(); },
+      },
+    }),
+    transport: async () => {
+      providerCalled = true;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  await assert.rejects(
+    service.generate_approved_plan(approvedPlanExecutionRequest()),
     (error) => {
       assert.equal(error.code, 'builder_generation_service_unavailable');
       assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
