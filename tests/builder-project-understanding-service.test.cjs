@@ -104,7 +104,7 @@ function serviceWith({
       },
     },
     project_understanding_store: store,
-    now_ms: () => nowMs,
+    now_ms: typeof nowMs === 'function' ? nowMs : () => nowMs,
   });
   return { service, store, reads };
 }
@@ -176,10 +176,12 @@ test('refreshes project understanding from an unsaved selected local workspace s
   assert.deepEqual(result.project_understanding.project_understanding_snapshot.command_profiles, []);
 });
 
-test('replays the same understanding snapshot idempotently', async (t) => {
-  const { service } = serviceWith({ t });
+test('replays the same understanding snapshot idempotently when refresh time advances', async (t) => {
+  let nowMs = 1_000;
+  const { service } = serviceWith({ t, nowMs: () => nowMs });
 
   const first = await service.refresh_project_understanding({ project_id: PROJECT_ID });
+  nowMs = 2_000;
   const second = await service.refresh_project_understanding({ project_id: PROJECT_ID });
 
   assert.equal(first.operation, 'project_understanding_refreshed');

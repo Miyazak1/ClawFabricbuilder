@@ -9,9 +9,12 @@ const {
 } = require('./builder-project-source-tree.cjs');
 const {
   BuilderProjectUnderstandingError,
+  builderProjectUnderstandingSnapshotDigest,
   createBuilderProjectUnderstandingSnapshot,
+  sanitizeBuilderProjectUnderstandingSnapshot,
 } = require('./builder-project-understanding.cjs');
 const {
+  BUILDER_PROJECT_UNDERSTANDING_STORE_READ_RESULT_VERSION,
   BUILDER_PROJECT_UNDERSTANDING_STORE_VERSION,
   BuilderProjectUnderstandingStoreError,
 } = require('./builder-project-understanding-store.cjs');
@@ -283,6 +286,57 @@ function serviceEvidence(current) {
   });
 }
 
+function currentStoredUnderstanding(options, projectId, current) {
+  const latest = options.project_understanding_store.read_latest_project_understanding_snapshot({
+    project_id: projectId,
+  });
+  exactObject(latest, ['result_version', 'operation', 'project_understanding', 'store_evidence']);
+  if (
+    valueAt(latest, 'result_version') !== BUILDER_PROJECT_UNDERSTANDING_STORE_READ_RESULT_VERSION
+    || !isPlainObject(valueAt(latest, 'store_evidence'))
+  ) fail();
+  const operation = valueAt(latest, 'operation');
+  const rawUnderstanding = valueAt(latest, 'project_understanding');
+  if (operation === 'project_understanding_latest_absent_read') {
+    if (rawUnderstanding !== null) fail();
+    return null;
+  }
+  if (operation !== 'project_understanding_latest_ready_read') fail();
+  exactObject(rawUnderstanding, ['snapshot_digest', 'project_understanding_snapshot']);
+  const snapshot = sanitizeBuilderProjectUnderstandingSnapshot(
+    valueAt(rawUnderstanding, 'project_understanding_snapshot'),
+  );
+  const snapshotDigest = builderProjectUnderstandingSnapshotDigest(snapshot);
+  if (
+    valueAt(rawUnderstanding, 'snapshot_digest') !== snapshotDigest
+    || snapshot.project_id !== projectId
+  ) fail();
+  if (snapshot.source_tree_digest !== current.source_tree.source_tree_digest) return null;
+  if (snapshot.root_digest !== rootDigestForCurrentSource(projectId, current)) {
+    fail('builder_project_understanding_service_conflict');
+  }
+  return freezeDeep({
+    latest,
+    project_understanding: {
+      snapshot_digest: snapshotDigest,
+      project_understanding_snapshot: snapshot,
+    },
+  });
+}
+
+function refreshResult(operation, projectId, projectUnderstanding, latest, current) {
+  return freezeDeep({
+    result_version: BUILDER_PROJECT_UNDERSTANDING_SERVICE_RESULT_VERSION,
+    service_version: BUILDER_PROJECT_UNDERSTANDING_SERVICE_VERSION,
+    operation,
+    status: 'ready',
+    project_id: projectId,
+    project_understanding: projectUnderstanding,
+    latest_project_understanding_read: latest,
+    evidence: serviceEvidence(current),
+  });
+}
+
 async function refreshProjectUnderstanding(options, rawRequest) {
   exactObject(rawRequest, REFRESH_KEYS);
   const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
@@ -290,6 +344,16 @@ async function refreshProjectUnderstanding(options, rawRequest) {
     await options.project_read_authority.load_current({ project_id: projectId }),
     projectId,
   );
+  const existing = currentStoredUnderstanding(options, projectId, current);
+  if (existing !== null) {
+    return refreshResult(
+      'project_understanding_refresh_replayed',
+      projectId,
+      existing.project_understanding,
+      existing.latest,
+      current,
+    );
+  }
   const snapshot = createBuilderProjectUnderstandingSnapshot({
     project_id: projectId,
     root_digest: rootDigestForCurrentSource(projectId, current),
@@ -308,18 +372,15 @@ async function refreshProjectUnderstanding(options, rawRequest) {
     || latest.project_understanding.snapshot_digest !== record.project_understanding.snapshot_digest
   ) fail('builder_project_understanding_service_conflict');
 
-  return freezeDeep({
-    result_version: BUILDER_PROJECT_UNDERSTANDING_SERVICE_RESULT_VERSION,
-    service_version: BUILDER_PROJECT_UNDERSTANDING_SERVICE_VERSION,
-    operation: record.operation === 'project_understanding_snapshot_replayed'
+  return refreshResult(
+    record.operation === 'project_understanding_snapshot_replayed'
       ? 'project_understanding_refresh_replayed'
       : 'project_understanding_refreshed',
-    status: 'ready',
-    project_id: projectId,
-    project_understanding: record.project_understanding,
-    latest_project_understanding_read: latest,
-    evidence: serviceEvidence(current),
-  });
+    projectId,
+    record.project_understanding,
+    latest,
+    current,
+  );
 }
 
 function createBuilderProjectUnderstandingService(rawOptions) {
