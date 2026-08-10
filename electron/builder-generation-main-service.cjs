@@ -1272,6 +1272,40 @@ function sanitizeReadResult(value, expectedProjectId, expectedOperation = 'curre
   });
 }
 
+function sanitizeLocalWorkspaceReadResult(value, expectedProjectId) {
+  exactObject(value, [
+    'result_version',
+    'operation',
+    'project_id',
+    'source_tree',
+    'authority_evidence',
+  ]);
+  if (
+    valueAt(value, 'result_version') !== 'builder-project-local-workspace-read-result.v1'
+    || valueAt(value, 'operation') !== 'local_workspace_loaded'
+    || safeProjectId(valueAt(value, 'project_id')) !== expectedProjectId
+  ) fail();
+  return freezeDeep({
+    base_revision: null,
+    base_revision_evidence: null,
+    source_tree: sanitizeBuilderProjectSourceTree(valueAt(value, 'source_tree')),
+  });
+}
+
+function sanitizeCurrentOrLocalWorkspaceReadResult(value, expectedProjectId) {
+  if (isPlainObject(value)) {
+    const resultVersion = Object.getOwnPropertyDescriptor(value, 'result_version');
+    if (
+      resultVersion
+      && Object.hasOwn(resultVersion, 'value')
+      && resultVersion.value === 'builder-project-local-workspace-read-result.v1'
+    ) {
+      return sanitizeLocalWorkspaceReadResult(value, expectedProjectId);
+    }
+  }
+  return sanitizeReadResult(value, expectedProjectId);
+}
+
 function sanitizeRestoreRevisionRequest(value) {
   exactObject(value, RESTORE_REVISION_REQUEST_KEYS);
   return freezeDeep({
@@ -3003,7 +3037,7 @@ function createBuilderGenerationMainService(rawOptions) {
         || continuationAdmission.conversation_head.event_digest !== approvedPlan.conversation_head.event_digest
       ) fail();
       setupPhase = 'approved_plan_prepare_load_current_project';
-      const base = sanitizeReadResult(
+      const base = sanitizeCurrentOrLocalWorkspaceReadResult(
         await Reflect.apply(loadCurrentProject, options.projectReadAuthority, [{ project_id: request.project_id }]),
         request.project_id,
       );
@@ -3020,13 +3054,15 @@ function createBuilderGenerationMainService(rawOptions) {
         conversation_head: { ...continuationAdmission.conversation_head },
         continuation_id: continuationAdmission.continuation_id,
         continuation_admission_digest: continuationAdmission.admission_digest,
-        base_revision: { ...base.base_revision },
-        base_revision_evidence: { ...base.base_revision_evidence },
+        base_revision: base.base_revision === null ? null : { ...base.base_revision },
+        base_revision_evidence: base.base_revision_evidence === null ? null : { ...base.base_revision_evidence },
         base_source_tree: base.source_tree,
         lifecycle: {
           approved_plan_continuation: 'fresh_current_head_verified',
           approved_plan_public_text: 'sqlite_public_assistant_message_verified',
-          source_read: 'git_sqlite_current_verified',
+          source_read: base.base_revision === null
+            ? 'selected_workspace_source_verified'
+            : 'git_sqlite_current_verified',
           provider_dispatch: 'not_started',
           tool_dispatch: 'not_started',
           source_mutation: 'not_performed',
@@ -3037,7 +3073,9 @@ function createBuilderGenerationMainService(rawOptions) {
           context_authority: 'main_generation_approved_plan_edit_context_v1',
           conversation_binding: 'fresh_approved_plan_continuation_required',
           approved_plan_text_authority: 'sqlite_replay_public_assistant_message',
-          project_read_authority: 'git_sqlite_current_source_verified',
+          project_read_authority: base.base_revision === null
+            ? 'main_selected_workspace_source_verified'
+            : 'git_sqlite_current_source_verified',
           renderer_authority: 'not_present',
           provider_dispatch: false,
           credential_readback: false,

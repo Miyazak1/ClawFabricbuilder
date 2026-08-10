@@ -201,6 +201,27 @@ test('creates a deterministic multi-file candidate from a replayed active work r
   assert.ok(Object.isFrozen(first.operations));
 });
 
+test('allows an unsaved local workspace source tree before the first saved revision', () => {
+  const base = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Local workspace</main>\n' }],
+  });
+  const value = createBuilderCodeChangeCandidate(candidateInput({
+    base_source_tree: base,
+    base_revision_evidence: null,
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main><h1>Focus</h1></main>\n' },
+      { operation: 'upsert', path: 'src/app.js', content: 'console.log("ready");\n' },
+    ],
+  }));
+
+  assert.equal(value.base_revision_evidence, null);
+  assert.equal(value.run_binding.base_revision, null);
+  assert.deepEqual(value.resulting_source_tree.files.map((entry) => entry.path), [
+    'index.html',
+    'src/app.js',
+  ]);
+});
+
 test('cross-binds the replayed turn base to explicit Git and SQLite read evidence', () => {
   const base = createBuilderProjectSourceTree({
     files: [

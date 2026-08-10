@@ -216,7 +216,9 @@ function runtimeWithService(service, probes = {}) {
           createBuilderGenerationMainService: (options) => {
             probes.serviceOptions = options;
             assert.equal(options.transport, context.__sentinelTransport);
-            assert.equal(options.projectReadAuthority, context.__projectMainAuthority.project_read_authority);
+            assert.notEqual(options.projectReadAuthority, context.__projectMainAuthority.project_read_authority);
+            assert.equal(typeof options.projectReadAuthority.load_current, 'function');
+            assert.equal(options.projectReadAuthority.load_revision, context.__projectMainAuthority.project_read_authority.load_revision);
             assert.equal(options.conversationService, context.__conversationService);
             assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
             assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
@@ -651,6 +653,15 @@ function runtimeWithService(service, probes = {}) {
               instruction: body.instruction,
               existing_project_id: body.existing_project_id,
             });
+          },
+        };
+      }
+      if (specifier === './builder-project-source-tree.cjs') {
+        const actual = require('../electron/builder-project-source-tree.cjs');
+        return {
+          ...actual,
+          createBuilderProjectSourceTree(value) {
+            return actual.createBuilderProjectSourceTree(JSON.parse(JSON.stringify(value)));
           },
         };
       }
@@ -1585,25 +1596,36 @@ test('proposes a plan for a newly bound local workspace before the first saved r
     { sender: mainWindow.webContents },
     vm.runInContext('({ project_id: null, project_title: "New project" })', harness.context),
   );
-  const approvalStatus = await ipcMain.handlers.get(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL)(
-    { sender: mainWindow.webContents },
-    vm.runInContext(`({ project_id: ${JSON.stringify(selected.project_id)} })`, harness.context),
-  );
-  const proposal = await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
-    { sender: mainWindow.webContents },
-    vm.runInContext('({ instruction: "Plan a technical blog." })', harness.context),
-  );
+  fs.writeFileSync(path.join(selectedProjectRootPath, 'index.html'), '<main>Local plan workspace</main>\n');
+  let approvalStatus;
+  try {
+    approvalStatus = await ipcMain.handlers.get(PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({ project_id: ${JSON.stringify(selected.project_id)} })`, harness.context),
+    );
+  } catch (error) {
+    assert.fail(`plan source-read approval failed: ${error.code ?? error.message}`);
+  }
+  let proposal;
+  try {
+    proposal = await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext('({ instruction: "Plan a technical blog." })', harness.context),
+    );
+  } catch (error) {
+    assert.fail(`plan proposal failed: ${error.code ?? error.message}`);
+  }
 
   assert.deepEqual(JSON.parse(JSON.stringify(approvalStatus)), {
     result_version: 'builder-plan-source-read-approval-status.v1',
     project_id: selected.project_id,
-    state: 'ready',
-    file_count: 0,
+    state: 'approval_required',
+    file_count: 1,
     approval_scope: 'current_project_plan_source_read',
     authority: 'main_selected_project_bounded_filesystem_read_v1',
   });
   assert.deepEqual(JSON.parse(JSON.stringify(proposal)), { result_kind: 'plan' });
-  assert.deepEqual(Array.from(probes.proposePlanBody.resource_ids), []);
+  assert.deepEqual(Array.from(probes.proposePlanBody.resource_ids), ['project:/index.html']);
   assert.equal(probes.proposePlanBody.request.existing_project_id, selected.project_id);
   assert.equal(JSON.stringify(approvalStatus).includes(selectedProjectRootPath), false);
   runtime.dispose();
@@ -2337,8 +2359,11 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__contextCompactionSummaryStore);
   assert.equal(probes.workingContextStateOptions.handoff_packet_store,
     runtimeModule.context.__handoffPacketStore);
-  assert.equal(probes.serviceOptions.projectReadAuthority,
+  assert.notEqual(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
+  assert.equal(typeof probes.serviceOptions.projectReadAuthority.load_current, 'function');
+  assert.equal(probes.serviceOptions.projectReadAuthority.load_revision,
+    runtimeModule.context.__projectMainAuthority.project_read_authority.load_revision);
   assert.equal(probes.serviceOptions.conversationService,
     runtimeModule.context.__conversationService);
   assert.equal(probes.serviceOptions.gitAuthority,

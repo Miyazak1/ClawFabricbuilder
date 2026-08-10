@@ -1402,6 +1402,22 @@ function readResult(sourceTree = createBuilderProjectSourceTree({
   };
 }
 
+function localWorkspaceReadResult(sourceTree = createBuilderProjectSourceTree({
+  files: [{ path: 'index.html', content: '<main>Local workspace</main>\n' }],
+})) {
+  return {
+    result_version: 'builder-project-local-workspace-read-result.v1',
+    operation: 'local_workspace_loaded',
+    project_id: PROJECT_ID,
+    source_tree: sourceTree,
+    authority_evidence: {
+      workspace_authority: 'sqlite_bound_project_workspace',
+      source_read_authority: 'main_selected_workspace_filesystem_read',
+      current_revision: 'not_saved_yet',
+    },
+  };
+}
+
 function revisionReadResult({
   sourceTree,
   revisionDigest = `sha256:${'3'.repeat(64)}`,
@@ -1957,6 +1973,52 @@ test('generates an unsaved candidate from the current approved plan through main
   assert.equal(transportInputs.length, 1);
   assert.equal(started.length, 1);
   assert.equal(started[0].project_id, PROJECT_ID);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /provider_config|provider_secret|credential_secret|credential_value|secret_ref|provider\.example|builder-model|git_candidate_receipt|operations|conversation_events/iu,
+  );
+});
+
+test('generates an approved-plan candidate from a local workspace before the first saved revision', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Local workspace</main>\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const transportInputs = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current(input) {
+          assert.deepEqual(input, { project_id: PROJECT_ID });
+          return localWorkspaceReadResult(sourceTree);
+        },
+      },
+    }),
+    transport: async (input) => {
+      transportInputs.push(input);
+      assert.match(input.messages[1].content, /Review the approved plan/u);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput()),
+      };
+    },
+  });
+
+  const result = await service.generate_approved_plan(approvedPlanEditRequest());
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.summary, 'A quiet timer for focused work.');
+  assert.equal(lifecycle.calls.approvedPlanContinuation.length, 1);
+  assert.equal(lifecycle.calls.approvedPlanWork.length, 1);
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.begin[0].base_revision, null);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(git.receipts[0].expected_base_oid, null);
+  assert.equal(transportInputs.length, 1);
   assert.doesNotMatch(
     JSON.stringify(result),
     /provider_config|provider_secret|credential_secret|credential_value|secret_ref|provider\.example|builder-model|git_candidate_receipt|operations|conversation_events/iu,

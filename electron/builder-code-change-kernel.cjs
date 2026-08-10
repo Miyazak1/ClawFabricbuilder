@@ -232,8 +232,6 @@ function sanitizeConversationHead(value) {
 function sanitizeBaseRevisionEvidence(value, projectId, sourceTreeDigest, conversationBase) {
   if (value === null) {
     if (conversationBase !== null) fail();
-    const emptyDigest = createBuilderProjectSourceTree({ files: [] }).source_tree_digest;
-    if (sourceTreeDigest !== emptyDigest) fail();
     return null;
   }
   if (conversationBase === null) fail();
