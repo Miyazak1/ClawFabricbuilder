@@ -1,5 +1,6 @@
 'use strict';
 
+const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -154,6 +155,12 @@ const {
 const {
   createBuilderCheckRunSaveGate,
 } = require('./builder-check-run-save-gate.cjs');
+const {
+  createBuilderCheckRunProcessAdapter,
+} = require('./builder-check-run-process-adapter.cjs');
+const {
+  createBuilderCheckRunRuntimeComposition,
+} = require('./builder-check-run-runtime-composition.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
@@ -166,6 +173,7 @@ const DRAFT_CHECKPOINT_DIRECTORY = 'builder-draft-checkpoints-v1';
 const DRAFT_CHECKPOINT_DATABASE = 'draft-checkpoints.sqlite';
 const CHECK_RUN_DIRECTORY = 'builder-check-runs-v1';
 const CHECK_RUN_DATABASE = 'check-runs.sqlite';
+const PACKAGED_CHECK_WORKER = 'builder-packaged-check-script-worker.cjs';
 const CONTEXT_COMPACTION_SUMMARY_DIRECTORY = 'builder-context-compaction-summaries-v1';
 const CONTEXT_COMPACTION_SUMMARY_DATABASE = 'context-compaction-summaries.sqlite';
 const HANDOFF_PACKET_DIRECTORY = 'builder-handoff-packets-v1';
@@ -1178,6 +1186,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let taskStreamAdapter;
   let planReviewAdapter;
   let providerContextDisclosureStatusService = null;
+  let checkRunCurrentDraftService = null;
   let selectedProjectId = null;
   let selectedConversationProjectId = null;
   let selectionEpoch = 0;
@@ -1315,6 +1324,33 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       automaticDraftCheckpointService,
       checkRunStatusService,
     });
+    const checkRunClock = Object.freeze({
+      clock_version: 'builder-clock.v1',
+      now_ms: () => Date.now(),
+      set_timeout: (callback, delay) => setTimeout(callback, delay),
+      clear_timeout: (timer) => clearTimeout(timer),
+    });
+    const checkRunProcessAdapter = createBuilderCheckRunProcessAdapter({
+      spawn_process: spawn,
+      platform: process.platform,
+      windows_root: process.platform === 'win32'
+        ? (process.env.SystemRoot ?? path.join(path.parse(process.execPath).root, 'Windows'))
+        : null,
+    });
+    const checkRunComposition = createBuilderCheckRunRuntimeComposition({
+      user_data_path: options.userDataPath,
+      launcher_path: process.execPath,
+      worker_path: path.join(__dirname, PACKAGED_CHECK_WORKER),
+      process_adapter: checkRunProcessAdapter,
+      clock: checkRunClock,
+      conversation_service: conversationService,
+      git_authority: projectMainAuthority.git_authority,
+      automatic_draft_checkpoint_service: automaticDraftCheckpointService,
+      check_run_store: checkRunStore,
+      check_run_status_service: checkRunStatusService,
+      activity_registry: checkRunActivityRegistry,
+    });
+    checkRunCurrentDraftService = checkRunComposition.current_draft_service;
     const sourceContextCollector = createBuilderToolSourceContextCollector({
       conversation_service: conversationService,
       permission_admission: permissionAdmission,
@@ -2191,6 +2227,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime() {
       if (providerContextDisclosureStatusService === null || state === 'disposed') fail();
       return providerContextDisclosureStatusService;
+    },
+    readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime() {
+      if (checkRunCurrentDraftService === null || state === 'disposed') fail();
+      return checkRunCurrentDraftService;
     },
     register() {
       if (state === 'registered') return false;

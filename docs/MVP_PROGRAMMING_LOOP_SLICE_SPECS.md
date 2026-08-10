@@ -551,6 +551,10 @@ renderer may identify only the current draft and a displayed CommandProfile.
 Main replays the candidate conversation, re-reads the verified Git tree,
 re-verifies the current DraftCheckpoint, derives a fresh candidate-bound
 ProjectUnderstandingSnapshot, and only then invokes the CheckRun orchestrator.
+The production composition is isolated behind
+`builder-check-run-runtime-composition.v1` and a main-only process adapter. The
+adapter accepts only the runner's shell-disabled process shape, tracks child
+identity, and bounds cancellation to children it created.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
 Electron composition, the user approval/control surface, environment-readiness

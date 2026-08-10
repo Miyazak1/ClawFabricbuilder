@@ -115,6 +115,8 @@ for (const expected of [
   '/electron/builder-check-run-save-gate.cjs',
   '/electron/builder-check-run-main-service.cjs',
   '/electron/builder-check-run-current-draft-service.cjs',
+  '/electron/builder-check-run-process-adapter.cjs',
+  '/electron/builder-check-run-runtime-composition.cjs',
   '/electron/builder-packaged-check-runtime-contract.cjs',
   '/electron/builder-packaged-check-script-worker.cjs',
   '/electron/builder-packaged-check-runtime-resolver.cjs',

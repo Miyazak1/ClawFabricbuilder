@@ -521,6 +521,61 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-check-run-process-adapter.cjs') {
+        return {
+          createBuilderCheckRunProcessAdapter: (options) => {
+            probes.checkRunProcessAdapterOptions = options;
+            assert.equal(typeof options.spawn_process, 'function');
+            assert.equal(options.platform, process.platform);
+            assert.equal(
+              options.windows_root === null,
+              process.platform !== 'win32',
+            );
+            context.__checkRunProcessAdapter = {
+              adapter_version: 'builder-check-run-process-adapter.v1',
+              spawn_process() {},
+              terminate_process_tree() {},
+            };
+            return context.__checkRunProcessAdapter;
+          },
+        };
+      }
+      if (specifier === './builder-check-run-runtime-composition.cjs') {
+        return {
+          createBuilderCheckRunRuntimeComposition: (options) => {
+            probes.checkRunCompositionOptions = options;
+            assert.equal(options.user_data_path, context.__userDataPath);
+            assert.equal(options.launcher_path, process.execPath);
+            assert.equal(
+              options.worker_path,
+              path.join(path.dirname(runtimePath), 'builder-packaged-check-script-worker.cjs'),
+            );
+            assert.equal(options.process_adapter, context.__checkRunProcessAdapter);
+            assert.equal(options.conversation_service, context.__conversationService);
+            assert.equal(options.git_authority, context.__projectMainAuthority.git_authority);
+            assert.equal(
+              options.automatic_draft_checkpoint_service,
+              context.__automaticDraftCheckpointService,
+            );
+            assert.equal(options.check_run_store, context.__checkRunStore);
+            assert.equal(options.check_run_status_service, context.__checkRunStatusService);
+            assert.equal(options.activity_registry, context.__checkRunActivityRegistry);
+            assert.equal(options.clock.clock_version, 'builder-clock.v1');
+            assert.equal(typeof options.clock.now_ms, 'function');
+            assert.equal(typeof options.clock.set_timeout, 'function');
+            assert.equal(typeof options.clock.clear_timeout, 'function');
+            context.__checkRunCurrentDraftService = {
+              service_version: 'builder-check-run-current-draft-service.v1',
+              list_available_checks() {},
+              run_selected_check() {},
+            };
+            return {
+              composition_version: 'builder-check-run-runtime-composition.v1',
+              current_draft_service: context.__checkRunCurrentDraftService,
+            };
+          },
+        };
+      }
       if (specifier === './builder-conversation-main-service.cjs') {
         return {
           createBuilderConversationMainService: (options) => {
@@ -1082,6 +1137,14 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(
     fs.existsSync(path.join(userDataPath, 'builder-check-runs-v1', 'check-runs.sqlite')),
     true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(userDataPath, 'builder-check-workspaces-v1')),
+    true,
+  );
+  assert.equal(
+    runtime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime().service_version,
+    'builder-check-run-current-draft-service.v1',
   );
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
@@ -2581,6 +2644,21 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtime.readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime(),
     runtimeModule.context.__providerContextDisclosureStatusService,
   );
+  assert.equal(
+    runtime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
+    runtimeModule.context.__checkRunCurrentDraftService,
+  );
+  assert.equal(probes.checkRunCompositionOptions.user_data_path, userDataPath);
+  assert.equal(probes.checkRunCompositionOptions.conversation_service,
+    runtimeModule.context.__conversationService);
+  assert.equal(probes.checkRunCompositionOptions.git_authority,
+    runtimeModule.context.__projectMainAuthority.git_authority);
+  assert.equal(probes.checkRunCompositionOptions.check_run_store,
+    runtimeModule.context.__checkRunStore);
+  assert.equal(probes.checkRunCompositionOptions.check_run_status_service,
+    runtimeModule.context.__checkRunStatusService);
+  assert.equal(probes.checkRunCompositionOptions.activity_registry,
+    runtimeModule.context.__checkRunActivityRegistry);
   assert.equal(probes.providerContextDisclosureDecisionOptions.actor_id,
     'builder-user:00000000-0000-4000-8000-000000000001');
   assert.equal(typeof probes.providerContextDisclosureDecisionOptions.evaluate_permission, 'function');
@@ -2618,6 +2696,10 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__checkRunSaveGate);
   assert.equal(typeof runtimeModule.context.__conversationService.read_stream, 'function');
   assert.equal(runtime.dispose(), false);
+  assert.throws(
+    () => runtime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
   assert.equal(runtimeModule.context.__handoffPacketStore.closed, true);
   assert.equal(runtimeModule.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(runtimeModule.context.__draftCheckpointStore.closed, true);
