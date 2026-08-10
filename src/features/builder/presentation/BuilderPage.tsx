@@ -3298,6 +3298,7 @@ export function BuilderPage({
       className="cf-builder-page bg-background text-foreground"
       data-builder-page="true"
       data-builder-project-status={status}
+      data-builder-project-error={snapshot.error ?? 'none'}
     >
       <header className="cf-builder-surface-toolbar">
         <div className="min-w-0">

@@ -54,7 +54,7 @@ function temporaryStores() {
   };
 }
 
-function candidateReceipt(index) {
+function candidateReceipt(index, { firstDraft = false } = {}) {
   const character = index.toString(16);
   const seed = {
     receipt_version: BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
@@ -73,8 +73,8 @@ function candidateReceipt(index) {
     object_format: BUILDER_GIT_RECEIPT_OBJECT_FORMAT,
     commit_oid: character.repeat(40).slice(0, 40),
     tree_oid: (index + 1).toString(16).repeat(40).slice(0, 40),
-    parent_oid: BASE_OID,
-    expected_base_oid: BASE_OID,
+    parent_oid: firstDraft ? null : BASE_OID,
+    expected_base_oid: firstDraft ? null : BASE_OID,
     code_authority: CODE_AUTHORITY,
     product_revision_admission: PRODUCT_REVISION_ADMISSION,
     replay: false,
@@ -144,12 +144,14 @@ function setup(t) {
   return { service, checkpointStore };
 }
 
-function recordRequest(index) {
-  const receipt = candidateReceipt(index);
+function recordRequest(index, { firstDraft = false } = {}) {
+  const receipt = candidateReceipt(index, { firstDraft });
   return {
     candidate_receipt: receipt,
     candidate_verification: createBuilderGitCandidateVerificationReceipt(receipt),
-    base_revision_ref: { revision_receipt_digest: digest('f'), commit_oid: BASE_OID },
+    base_revision_ref: firstDraft
+      ? { revision_receipt_digest: null, commit_oid: null }
+      : { revision_receipt_digest: digest('f'), commit_oid: BASE_OID },
     summary: `Automatic checkpoint ${index}`,
     changed_file_count: index,
   };
@@ -173,6 +175,15 @@ test('records, replays, and increments automatic checkpoints for the current tas
     }).draft_checkpoints.length,
     2,
   );
+});
+
+test('records the first automatic checkpoint without a saved base revision', (t) => {
+  const { service } = setup(t);
+  const result = service.record_verified_candidate_checkpoint(recordRequest(1, { firstDraft: true }));
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.draft_checkpoint.draft_checkpoint.base_revision_ref.revision_receipt_digest, null);
+  assert.equal(result.draft_checkpoint.draft_checkpoint.base_revision_ref.commit_oid, null);
 });
 
 test('projects status only for the current candidate and fails closed without an address', (t) => {

@@ -116,6 +116,20 @@ function codeChangeOutput(index) {
           '',
         ].join('\n'),
       },
+      {
+        operation: 'upsert',
+        path: 'package.json',
+        content: `${JSON.stringify({
+          name: 'clawfabric-packaged-canary',
+          private: true,
+          scripts: { test: 'node --check check.js' },
+        }, null, 2)}\n`,
+      },
+      {
+        operation: 'upsert',
+        path: 'check.js',
+        content: "const canary = 'packaged-check-ready';\nvoid canary;\n",
+      },
     ],
   });
 }
@@ -248,10 +262,19 @@ async function main() {
         base_url: providerServer.baseUrl,
       },
     })]);
-    await runCli({
+    const result = await runCli({
       argv: ['--execute'],
       stdin,
     });
+    const checkRun = result?.draft?.initial?.check_run;
+    if (
+      checkRun?.status !== 'passed'
+      || checkRun.packaged_runtime_executed !== true
+      || checkRun.command_profile_selected_by_main !== true
+    ) {
+      throw new BuilderPackagedCanaryError('canary_check_run_failed');
+    }
+    return result;
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) {
       error.diagnostic = Object.freeze({

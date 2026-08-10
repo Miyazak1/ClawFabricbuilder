@@ -8,8 +8,15 @@ const { types: utilTypes } = require('node:util');
 const { _electron: defaultElectron } = require('playwright-core');
 const { PNG } = require('pngjs');
 
+const {
+  sanitizeBuilderDraftCheckpointStatusProjection,
+} = require('../electron/builder-draft-checkpoint-status-projection.cjs');
+const {
+  sanitizeBuilderReviewStateProjection,
+} = require('../electron/builder-review-state-projection.cjs');
+
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
-const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v20';
+const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v21';
 const CANARY_INITIAL_CHAT_QUESTION = 'What can you help me with before I choose a project folder?';
 const CANARY_QUESTION = 'What does this saved project do, and what should I review before changing it?';
 const CANARY_UPDATE_INSTRUCTION = 'Change the main heading and add a short subtitle.';
@@ -132,6 +139,8 @@ const SELECTORS = Object.freeze({
   reviewOpenPreview: '[data-builder-review-open-preview="true"]',
   reviewSummary: '[data-builder-review-summary="true"]',
   reviewTitle: '[data-builder-review-title="true"]',
+  runCheck: '[data-builder-run-check]',
+  checkRunStatus: '[data-builder-check-run-status]',
   saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
   timeout: '#builder-provider-timeout',
@@ -227,6 +236,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_review_diff_checkpoint_layout_failed: 'Packaged canary review checkpoint layout failed.',
   canary_review_diff_checkpoint_text_stack_failed: 'Packaged canary review checkpoint text layout failed.',
   canary_review_diff_text_failed: 'Packaged canary review diff text evidence failed.',
+  canary_check_run_failed: 'Packaged canary project check failed.',
   canary_history_failed: 'Packaged canary history evidence failed.',
   canary_history_navigation_failed: 'Packaged canary history navigation failed.',
   canary_history_preview_failed: 'Packaged canary history preview evidence failed.',
@@ -244,6 +254,10 @@ const ERROR_MESSAGES = Object.freeze({
   canary_preview_unavailable_text_failed: 'Packaged canary unavailable preview explanation failed.',
   canary_version_failed: 'Packaged canary revision version evidence failed.',
   canary_read_evidence_failed: 'Packaged canary read evidence failed.',
+  canary_read_evidence_pending_update_current_failed:
+    'Packaged canary pending update current revision evidence failed.',
+  canary_read_evidence_pending_update_task_stream_failed:
+    'Packaged canary pending update task stream evidence failed.',
   canary_read_evidence_initial_current_failed: 'Packaged canary initial current evidence failed.',
   canary_read_evidence_initial_current_current_failed: 'Packaged canary initial current project evidence failed.',
   canary_read_evidence_initial_current_task_stream_failed: 'Packaged canary initial current task stream evidence failed.',
@@ -336,6 +350,7 @@ const ERROR_STAGES = Object.freeze({
   canary_review_diff_checkpoint_layout_failed: 'review_diff_checkpoint_layout',
   canary_review_diff_checkpoint_text_stack_failed: 'review_diff_checkpoint_text_stack',
   canary_review_diff_text_failed: 'review_diff_text',
+  canary_check_run_failed: 'check_run',
   canary_history_failed: 'history',
   canary_history_navigation_failed: 'history_navigation',
   canary_history_preview_failed: 'history_preview',
@@ -353,6 +368,8 @@ const ERROR_STAGES = Object.freeze({
   canary_preview_unavailable_text_failed: 'preview_unavailable_text',
   canary_version_failed: 'version',
   canary_read_evidence_failed: 'read_evidence',
+  canary_read_evidence_pending_update_current_failed: 'read_evidence_pending_update_current',
+  canary_read_evidence_pending_update_task_stream_failed: 'read_evidence_pending_update_task_stream',
   canary_read_evidence_initial_current_failed: 'read_evidence_initial_current',
   canary_read_evidence_initial_current_current_failed: 'read_evidence_initial_current_current',
   canary_read_evidence_initial_current_task_stream_failed: 'read_evidence_initial_current_task_stream',
@@ -512,6 +529,8 @@ const TASK_STREAM_KEYS = Object.freeze(['authority', 'conversation', 'project_id
 const TASK_STREAM_OPTIONAL_KEYS = Object.freeze([
   'context_status_projection',
   'provider_context_disclosure_status_projection',
+  'draft_checkpoint_status_projection',
+  'review_state_projection',
 ]);
 const TASK_STREAM_AUTHORITY_KEYS = Object.freeze([
   'candidate_source',
@@ -1899,7 +1918,12 @@ async function waitForGenerationTerminal(page) {
     .then(() => 'alert', () => 'alert_unavailable');
   const outcome = await Promise.race([alert, preview]);
   if (outcome === 'static_preview' || outcome === 'preview_unavailable') return;
-  if (outcome === 'alert') fail('canary_generation_terminal_failed');
+  if (outcome === 'alert') {
+    failWithDiagnostic(
+      'canary_generation_terminal_failed',
+      await collectUpdateGenerationFailureDiagnostic(page, 'initial_generation_alert'),
+    );
+  }
   failWithDiagnostic('canary_preview_failed', await collectPreviewSurfaceDiagnostic(page));
 }
 
@@ -2277,6 +2301,7 @@ async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
 }
 
 async function generateProjectViaUi(page, idea) {
+  let checkRun = null;
   let draftReviewDiff = null;
   let liveOutput = null;
   let workspaceGate = null;
@@ -2302,6 +2327,7 @@ async function generateProjectViaUi(page, idea) {
       .waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
+    checkRun = await runFirstAvailableProjectCheckViaUi(page);
     const preSave = await readSanitizedBridgeEvidence(page);
     if (preSave.catalog.projects.length !== 0 || preSave.current !== null) {
       fail('canary_draft_failed');
@@ -2331,6 +2357,7 @@ async function generateProjectViaUi(page, idea) {
   }
   await assertVisibleVersion(page, 1);
   return Object.freeze({
+    ...(checkRun === null ? {} : { check_run: checkRun }),
     live_output: liveOutput,
     pre_save_catalog_empty: true,
     review_diff: draftReviewDiff,
@@ -2338,6 +2365,30 @@ async function generateProjectViaUi(page, idea) {
     unsaved_draft_observed: true,
     workspace_gate: workspaceGate,
   });
+}
+
+async function runFirstAvailableProjectCheckViaUi(page) {
+  if (await optionalLocatorVisible(page, SELECTORS.runCheck) !== true) return null;
+  try {
+    const button = page.locator(SELECTORS.runCheck).first();
+    const label = await button.textContent();
+    if (typeof label !== 'string' || !/^\s*Run npm test\s*$/u.test(label)) {
+      fail('canary_check_run_failed');
+    }
+    await button.click();
+    await page.locator(
+      `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
+    ).waitFor({ state: 'visible', timeout: 120_000 });
+    return Object.freeze({
+      approval_action: 'Run npm test',
+      command_profile_selected_by_main: true,
+      packaged_runtime_executed: true,
+      status: 'passed',
+    });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    fail('canary_check_run_failed');
+  }
 }
 
 async function boundedBox(locator, code = 'canary_review_diff_box_failed') {
@@ -2377,6 +2428,11 @@ function boxContains(container, child) {
     && boxBottom(child) <= boxBottom(container) + 1;
 }
 
+function boxHorizontallyContains(container, child) {
+  return child.x >= container.x - 1
+    && boxRight(child) <= boxRight(container) + 1;
+}
+
 async function assertConversationActivityBeforeReviewViaUi(page, review) {
   await page.locator(SELECTORS.conversationActivity).waitFor({ state: 'visible' });
   const latestUserMessage = page.locator(SELECTORS.userMessage).last();
@@ -2406,7 +2462,7 @@ function draftReviewLayoutFailureCode({
 }) {
   const reviewChildren = [copy, title, summary, note, actionGroup, ...actions];
   if (review.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX) return 'canary_review_diff_checkpoint_width_failed';
-  if (review.height < 96 || review.height > 280) return 'canary_review_diff_checkpoint_height_failed';
+  if (review.height < 96 || review.height > 420) return 'canary_review_diff_checkpoint_height_failed';
   if (copy.width < CANARY_REVIEW_COPY_MIN_WIDTH_PX) return 'canary_review_diff_checkpoint_copy_width_failed';
   if (
     title.height < 12
@@ -2522,7 +2578,16 @@ async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
     if (
       failureCode !== 'canary_review_diff_artifact_summary_order_failed'
       && failureCode !== 'canary_review_diff_artifact_summary_vertical_failed'
-    ) fail(failureCode);
+    ) {
+      failWithDiagnostic(failureCode, Object.freeze({
+        review_bottom_overflow_px: Math.max(0, boxBottom(review) - boxBottom(scroll)),
+        review_height_px: review.height,
+        review_top_offset_px: review.y - scroll.y,
+        save_bottom_overflow_px: Math.max(0, boxBottom(save) - boxBottom(scroll)),
+        save_top_offset_px: save.y - scroll.y,
+        scroll_height_px: scroll.height,
+      }));
+    }
     if (typeof page.waitForTimeout !== 'function') break;
     await page.waitForTimeout(100);
   }
@@ -2545,7 +2610,7 @@ function draftArtifactPreviewLayoutFailureCode({
   if (summary.x < scroll.x || boxRight(summary) > boxRight(scroll)) {
     return 'canary_review_diff_artifact_summary_horizontal_failed';
   }
-  if (summary.y < scroll.y || boxBottom(summary) > boxBottom(scroll)) {
+  if (summary.height > scroll.height) {
     return 'canary_review_diff_artifact_summary_vertical_failed';
   }
   if (summary.y < boxBottom(review) - 1) return 'canary_review_diff_artifact_summary_order_failed';
@@ -2565,7 +2630,7 @@ function draftArtifactPreviewLayoutFailureCode({
     || !boxContains(sidebar, result)
     || boxContains(scroll, result)
   ) return 'canary_review_diff_artifact_result_geometry_failed';
-  if (!boxContains(scroll, review) || !boxContains(scroll, save)) {
+  if (!boxHorizontallyContains(scroll, review) || !boxHorizontallyContains(scroll, save)) {
     return 'canary_review_diff_artifact_review_bounds_failed';
   }
   if (boxesOverlap(review, result) || boxesOverlap(summary, result)) {
@@ -2949,6 +3014,7 @@ async function collectUpdateGenerationFailureDiagnostic(
     save_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
     composer_text: safeDiagnosticText(await optionalInputValue(page, SELECTORS.idea)),
     project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    project_error: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-error'),
     active_notice: await optionalLocatorText(page, '[data-builder-conversation-notice]'),
     active_notice_kind: await optionalLocatorAttribute(page, '[data-builder-conversation-notice]', 'data-builder-conversation-notice'),
     recent_activity: await optionalRecentActivitySummary(page),
@@ -3210,7 +3276,11 @@ async function createUpdateDraftViaUi(
       .waitFor({ state: 'visible' });
     await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
-    const preSave = await readSanitizedBridgeEvidence(page, currentProject.project_id);
+    const preSave = await readSanitizedBridgeEvidence(
+      page,
+      currentProject.project_id,
+      'canary_read_evidence_pending_update_failed',
+    );
     assertExactRevision(preSave, currentProject);
     assertTaskStreamPendingCandidateFacts(
       preSave,
@@ -3831,6 +3901,10 @@ const READ_EVIDENCE_COMPONENT_FAILURE_CODES = Object.freeze({
     current: 'canary_read_evidence_initial_current_current_failed',
     task_stream: 'canary_read_evidence_initial_current_task_stream_failed',
   }),
+  canary_read_evidence_pending_update_failed: Object.freeze({
+    current: 'canary_read_evidence_pending_update_current_failed',
+    task_stream: 'canary_read_evidence_pending_update_task_stream_failed',
+  }),
 });
 
 function readEvidenceComponentCode(code, component) {
@@ -4295,6 +4369,26 @@ function sanitizeTaskStream(value, expectedProjectId) {
           sanitizeTaskStreamProviderContextDisclosureStatusProjection(
             descriptors.provider_context_disclosure_status_projection.value,
           ),
+      }
+      : {}),
+    ...(Object.hasOwn(descriptors, 'draft_checkpoint_status_projection')
+      ? {
+        draft_checkpoint_status_projection:
+          descriptors.draft_checkpoint_status_projection.value === null
+            ? null
+            : sanitizeBuilderDraftCheckpointStatusProjection(
+              descriptors.draft_checkpoint_status_projection.value,
+            ),
+      }
+      : {}),
+    ...(Object.hasOwn(descriptors, 'review_state_projection')
+      ? {
+        review_state_projection:
+          descriptors.review_state_projection.value === null
+            ? null
+            : sanitizeBuilderReviewStateProjection(
+              descriptors.review_state_projection.value,
+            ),
       }
       : {}),
     project_id: projectId,

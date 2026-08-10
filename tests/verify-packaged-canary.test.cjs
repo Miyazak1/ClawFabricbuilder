@@ -231,6 +231,10 @@ class FakeLocator {
     if (this.selector === SELECTORS.submitTurn) {
       submitFakeCanaryInstruction(this.page);
     }
+    if (this.selector === SELECTORS.runCheck) {
+      if (this.page.checkRunAvailable !== true) throw new Error('project check unavailable');
+      this.page.checkRunStatus = 'passed';
+    }
     if (this.selector === SELECTORS.workspaceChip) {
       this.page.workspacePickerVisible = true;
       this.page.newProjectPanelVisible = false;
@@ -424,6 +428,7 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
     if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
+    if (this.selector === SELECTORS.runCheck) return this.page.checkRunAvailable;
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
       return this.page.unsavedDraftVisible;
     }
@@ -435,6 +440,7 @@ class FakeLocator {
     if (this.selector === SELECTORS.currentVersion) {
       return this.page.forcedVersionLabel ?? this.page.versionLabel;
     }
+    if (this.selector === SELECTORS.runCheck) return 'Run npm test';
     if (this.selector === SELECTORS.versionSavedActivity) {
       if (this.page.savedActivityTextOverride !== null) return this.page.savedActivityTextOverride;
       if (this.page.savedActivityRevision <= 0) return '';
@@ -518,6 +524,10 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.retryDraft) {
       this.page.assertSelectorVisibility(this.selector, this.page.retryDraftVisible, state);
+      return;
+    }
+    if (this.selector === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`) {
+      this.page.assertSelectorVisibility(this.selector, this.page.checkRunStatus === 'passed', state);
       return;
     }
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
@@ -731,6 +741,8 @@ class FakePage {
     this.changesPanelVisible = false;
     this.changesDisclosureOpen = false;
     this.changesTextOverride = null;
+    this.checkRunAvailable = false;
+    this.checkRunStatus = 'not_run';
     this.composerAddMenuVisible = false;
     this.briefCorrectionActive = false;
     this.currentProjectWriteApprovalVisible = false;
@@ -2636,6 +2648,29 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.ok(saveClick < versionWait);
 });
 
+test('runs the main-selected project check before saving Version 1', async (t) => {
+  const page = new FakePage();
+  page.checkRunAvailable = true;
+  installBridge(page);
+  t.after(() => { delete globalThis.clawfabricBuilder; });
+
+  const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
+
+  assert.deepEqual(draftEvidence.check_run, {
+    approval_action: 'Run npm test',
+    command_profile_selected_by_main: true,
+    packaged_runtime_executed: true,
+    status: 'passed',
+  });
+  const checkClick = page.events.findIndex(
+    (event) => event[0] === 'click' && event[1] === SELECTORS.runCheck,
+  );
+  const saveClick = page.events.findIndex(
+    (event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion,
+  );
+  assert.ok(checkClick >= 0 && checkClick < saveClick);
+});
+
 test('approves current project write gate before waiting for draft output', async (t) => {
   const page = new FakePage();
   installBridge(page);
@@ -2815,6 +2850,12 @@ test('rejects draft review checkpoint bounds that cannot support review actions'
     (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
   );
 
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 421 });
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
+  );
+
   page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 136 });
   page.reviewLayoutBoxes.set(SELECTORS.reviewCopy, { x: 326, y: 234, width: 300, height: 62 });
   await assert.rejects(
@@ -2929,7 +2970,7 @@ test('rejects draft artifact summaries that are too narrow or before review acti
 
   const vertical = new FakePage();
   vertical.unsavedDraftVisible = true;
-  vertical.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 616, width: 596, height: 72 });
+  vertical.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 616, width: 596, height: 621 });
   await assert.rejects(
     inspectDraftReviewDiffViaUi(vertical),
     (error) => error.code === 'canary_review_diff_artifact_summary_vertical_failed'

@@ -1534,7 +1534,7 @@ function candidateProofFromCandidate(candidate) {
 function baseRevisionRefFromCandidate(candidate) {
   const baseRevision = candidate.run_binding.base_revision;
   return baseRevision === null
-    ? null
+    ? freezeDeep({ revision_receipt_digest: null, commit_oid: null })
     : freezeDeep({
       revision_receipt_digest: baseRevision.revision_receipt_digest,
       commit_oid: baseRevision.commit_oid,
@@ -3552,6 +3552,7 @@ function createBuilderGenerationMainService(rawOptions) {
       inFlight.set(key, operation);
       return operation;
     } catch (error) {
+      recordCanaryGenerationDebug('restore_candidate_prepare', error);
       if (error instanceof BuilderGenerationMainServiceError) throw error;
       fail();
     }
@@ -3638,6 +3639,7 @@ function createBuilderGenerationMainService(rawOptions) {
       retryableContexts.delete(key);
       return publicDraftResult(stored);
     }).catch((error) => {
+      recordCanaryGenerationDebug('generate_candidate_prepare', error);
       recordFailure(key, error);
       throw error;
     }).finally(() => {
@@ -3745,6 +3747,7 @@ function createBuilderGenerationMainService(rawOptions) {
       retryableContexts.delete(key);
       return publicDraftResult(stored);
     }).catch((error) => {
+      recordCanaryGenerationDebug('draft_continuation_candidate_prepare', error);
       recordFailure(key, error);
       throw error;
     }).finally(() => {

@@ -1740,7 +1740,10 @@ test('records an automatic checkpoint after Git verification and before exposing
   assert.equal(checkpointCalls.length, 1);
   assert.equal(checkpointCalls[0].candidate_receipt.candidate_id, result.candidate.candidate_id);
   assert.equal(checkpointCalls[0].candidate_verification.candidate_id, result.candidate.candidate_id);
-  assert.equal(checkpointCalls[0].base_revision_ref, null);
+  assert.deepEqual(checkpointCalls[0].base_revision_ref, {
+    revision_receipt_digest: null,
+    commit_oid: null,
+  });
   assert.equal(checkpointCalls[0].summary, 'A quiet timer for focused work.');
   assert.equal(checkpointCalls[0].changed_file_count, 2);
   assert.equal(lifecycle.calls.candidate.length, 1);
