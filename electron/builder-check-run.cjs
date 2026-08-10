@@ -39,6 +39,13 @@ const RECORD_KEYS = Object.freeze([
   'command_kind',
   'command_display',
   'script_digest',
+  'runtime_identity_id',
+  'runtime_identity_digest',
+  'package_manager',
+  'launcher_kind',
+  'launcher_binary_digest',
+  'cli_entry_digest',
+  'package_manager_version',
   'invocation_digest',
   'execution_policy',
   'status',
@@ -79,12 +86,15 @@ const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const CHECKPOINT_ID_PATTERN = /^builder-draft-checkpoint:[0-9a-f]{64}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const COMMAND_PROFILE_ID_PATTERN = /^builder-command-profile:[0-9a-f]{32}$/u;
+const RUNTIME_IDENTITY_ID_PATTERN = /^builder-check-runtime-identity:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const COMMAND_KINDS = Object.freeze(['lint', 'typecheck', 'test', 'build']);
+const PACKAGE_MANAGERS = Object.freeze(['npm', 'pnpm', 'yarn', 'bun']);
+const RUNTIME_VERSION_PATTERN = /^(?:unknown|[vV]?[0-9][0-9A-Za-z.+_-]{0,63})$/u;
 const COMMAND_DISPLAYS = Object.freeze({
   lint: Object.freeze(['npm run lint', 'pnpm run lint', 'yarn lint', 'bun run lint']),
   typecheck: Object.freeze(['npm run typecheck', 'pnpm run typecheck', 'yarn typecheck', 'bun run typecheck']),
-  test: Object.freeze(['npm test', 'pnpm test', 'yarn test', 'bun test']),
+  test: Object.freeze(['npm test', 'pnpm test', 'yarn test', 'bun run test']),
   build: Object.freeze(['npm run build', 'pnpm run build', 'yarn build', 'bun run build']),
 });
 const EXECUTION_POLICY_KEYS = Object.freeze([
@@ -230,6 +240,25 @@ function safeCommandKind(value) {
   return value;
 }
 
+function safePackageManager(value) {
+  if (typeof value !== 'string' || !PACKAGE_MANAGERS.includes(value)) fail();
+  return value;
+}
+
+function safeLauncherKind(value, packageManager) {
+  const expected = packageManager === 'bun' ? 'native_binary' : 'node_cli';
+  if (value !== expected) fail();
+  return value;
+}
+
+function safeCliEntryDigest(value, launcherKind) {
+  if (launcherKind === 'native_binary') {
+    if (value !== null) fail();
+    return null;
+  }
+  return safePattern(value, DIGEST_PATTERN);
+}
+
 function safeCommandDisplay(value, kind) {
   if (typeof value !== 'string' || !COMMAND_DISPLAYS[kind].includes(value)) fail();
   return value;
@@ -318,6 +347,13 @@ function createBuilderCheckRun(rawInput) {
       command_kind: admission.command_kind,
       command_display: admission.command_display,
       script_digest: admission.script_digest,
+      runtime_identity_id: admission.runtime_identity_id,
+      runtime_identity_digest: admission.runtime_identity_digest,
+      package_manager: admission.package_manager,
+      launcher_kind: admission.launcher_kind,
+      launcher_binary_digest: admission.launcher_binary_digest,
+      cli_entry_digest: admission.cli_entry_digest,
+      package_manager_version: admission.package_manager_version,
       invocation_digest: admission.invocation_digest,
       execution_policy: admission.execution_policy,
       status: result.status,
@@ -376,6 +412,25 @@ function sanitizeBuilderCheckRun(rawValue) {
       command_kind: commandKind,
       command_display: safeCommandDisplay(valueAt(value, 'command_display'), commandKind),
       script_digest: safePattern(valueAt(value, 'script_digest'), DIGEST_PATTERN),
+      runtime_identity_id: safePattern(
+        valueAt(value, 'runtime_identity_id'),
+        RUNTIME_IDENTITY_ID_PATTERN,
+      ),
+      runtime_identity_digest: safePattern(
+        valueAt(value, 'runtime_identity_digest'),
+        DIGEST_PATTERN,
+      ),
+      package_manager: safePackageManager(valueAt(value, 'package_manager')),
+      launcher_kind: null,
+      launcher_binary_digest: safePattern(
+        valueAt(value, 'launcher_binary_digest'),
+        DIGEST_PATTERN,
+      ),
+      cli_entry_digest: null,
+      package_manager_version: safePattern(
+        valueAt(value, 'package_manager_version'),
+        RUNTIME_VERSION_PATTERN,
+      ),
       invocation_digest: safePattern(valueAt(value, 'invocation_digest'), DIGEST_PATTERN),
       execution_policy: assertExecutionPolicy(valueAt(value, 'execution_policy')),
       output_digest: safePattern(valueAt(value, 'output_digest'), DIGEST_PATTERN),
@@ -388,6 +443,14 @@ function sanitizeBuilderCheckRun(rawValue) {
       authority: assertAuthority(valueAt(value, 'authority')),
       check_run_digest: safePattern(valueAt(value, 'check_run_digest'), DIGEST_PATTERN),
     };
+    normalized.launcher_kind = safeLauncherKind(
+      valueAt(value, 'launcher_kind'),
+      normalized.package_manager,
+    );
+    normalized.cli_entry_digest = safeCliEntryDigest(
+      valueAt(value, 'cli_entry_digest'),
+      normalized.launcher_kind,
+    );
     if (
       normalized.check_run_version !== BUILDER_CHECK_RUN_VERSION
       || normalized.output_summary !== SUMMARY_BY_STATUS[normalized.status]

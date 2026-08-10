@@ -48,6 +48,13 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     command_profile_id TEXT NOT NULL,
     command_kind TEXT NOT NULL,
     script_digest TEXT NOT NULL,
+    runtime_identity_id TEXT NOT NULL,
+    runtime_identity_digest TEXT NOT NULL,
+    package_manager TEXT NOT NULL,
+    launcher_kind TEXT NOT NULL,
+    launcher_binary_digest TEXT NOT NULL,
+    cli_entry_digest TEXT,
+    package_manager_version TEXT NOT NULL,
     invocation_digest TEXT NOT NULL,
     execution_policy_json TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -372,6 +379,13 @@ function checkRunColumns() {
     'command_profile_id',
     'command_kind',
     'script_digest',
+    'runtime_identity_id',
+    'runtime_identity_digest',
+    'package_manager',
+    'launcher_kind',
+    'launcher_binary_digest',
+    'cli_entry_digest',
+    'package_manager_version',
     'invocation_digest',
     'execution_policy_json',
     'status',
@@ -418,6 +432,13 @@ function rowToCheckRun(row) {
     || row.command_profile_id !== checkRun.command_profile_id
     || row.command_kind !== checkRun.command_kind
     || row.script_digest !== checkRun.script_digest
+    || row.runtime_identity_id !== checkRun.runtime_identity_id
+    || row.runtime_identity_digest !== checkRun.runtime_identity_digest
+    || row.package_manager !== checkRun.package_manager
+    || row.launcher_kind !== checkRun.launcher_kind
+    || row.launcher_binary_digest !== checkRun.launcher_binary_digest
+    || row.cli_entry_digest !== checkRun.cli_entry_digest
+    || row.package_manager_version !== checkRun.package_manager_version
     || row.invocation_digest !== checkRun.invocation_digest
     || row.execution_policy_json !== canonicalJson(checkRun.execution_policy)
     || row.status !== checkRun.status
@@ -479,9 +500,11 @@ function createBuilderCheckRunStore(databasePath) {
             approval_id, approval_digest, project_id, conversation_id, turn_id, task_id, run_id,
             draft_id, draft_checkpoint_id, draft_checkpoint_sequence, candidate_id,
             candidate_digest, resulting_tree_digest, command_profile_id, command_kind,
-            script_digest, invocation_digest, execution_policy_json, status,
+            script_digest, runtime_identity_id, runtime_identity_digest, package_manager,
+            launcher_kind, launcher_binary_digest, cli_entry_digest, package_manager_version,
+            invocation_digest, execution_policy_json, status,
             started_at_ms, completed_at_ms, record_json, schema_version
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
           [
             checkRun.check_run_id,
             checkRun.check_run_version,
@@ -504,6 +527,13 @@ function createBuilderCheckRunStore(databasePath) {
             checkRun.command_profile_id,
             checkRun.command_kind,
             checkRun.script_digest,
+            checkRun.runtime_identity_id,
+            checkRun.runtime_identity_digest,
+            checkRun.package_manager,
+            checkRun.launcher_kind,
+            checkRun.launcher_binary_digest,
+            checkRun.cli_entry_digest,
+            checkRun.package_manager_version,
             checkRun.invocation_digest,
             canonicalJson(checkRun.execution_policy),
             checkRun.status,

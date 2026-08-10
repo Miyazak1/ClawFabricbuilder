@@ -89,7 +89,7 @@ const ENTRYPOINT_KINDS = Object.freeze([
 const ENTRYPOINT_CONFIDENCES = Object.freeze(['high', 'manifest_declared', 'manifest_or_file_hint', 'file_hint']);
 const IMPORTANT_PATH_KINDS = Object.freeze(['manifest', 'lockfile', 'config', 'documentation', 'entrypoint']);
 const UNKNOWNS = Object.freeze(['package_manifest_unreadable', 'no_known_check_commands', 'empty_project']);
-const COMMAND_RISK_CLASS = 'read_only_project_check';
+const COMMAND_RISK_CLASS = 'project_script_execution';
 const SCRIPT_BY_KIND = Object.freeze({
   lint: 'lint',
   typecheck: 'typecheck',
@@ -478,7 +478,7 @@ function commandDisplay(packageManager, kind) {
   const scriptName = SCRIPT_BY_KIND[kind];
   if (packageManager === 'pnpm') return kind === 'test' ? 'pnpm test' : `pnpm run ${scriptName}`;
   if (packageManager === 'yarn') return kind === 'test' ? 'yarn test' : `yarn ${scriptName}`;
-  if (packageManager === 'bun') return kind === 'test' ? 'bun test' : `bun run ${scriptName}`;
+  if (packageManager === 'bun') return `bun run ${scriptName}`;
   return kind === 'test' ? 'npm test' : `npm run ${scriptName}`;
 }
 

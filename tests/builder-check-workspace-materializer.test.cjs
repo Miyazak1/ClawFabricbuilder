@@ -21,6 +21,9 @@ const {
   createBuilderProjectUnderstandingSnapshot,
 } = require('../electron/builder-project-understanding.cjs');
 const {
+  checkRuntimeIdentity,
+} = require('./helpers/builder-check-runtime-identity-fixture.cjs');
+const {
   BUILDER_CHECK_WORKSPACE_MATERIALIZER_VERSION,
   BUILDER_CHECK_WORKSPACE_ADMISSION_VERSION,
   BuilderCheckWorkspaceMaterializerError,
@@ -98,6 +101,7 @@ function checkRunAdmission(tree = sourceTree()) {
     git_verification_receipt: verification,
     project_understanding_snapshot: understanding,
     command_profile_id: understanding.command_profiles[0].command_profile_id,
+    runtime_identity: checkRuntimeIdentity(),
     approved_at_ms: 100,
     expires_at_ms: 300_100,
   });
@@ -107,6 +111,7 @@ function checkRunAdmission(tree = sourceTree()) {
     git_candidate_receipt: candidate,
     git_verification_receipt: verification,
     project_understanding_snapshot: understanding,
+    runtime_identity: checkRuntimeIdentity(),
     admitted_at_ms: 101,
   });
 }

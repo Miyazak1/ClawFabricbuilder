@@ -24,6 +24,9 @@ const {
 const {
   createBuilderProjectUnderstandingSnapshot,
 } = require('../electron/builder-project-understanding.cjs');
+const {
+  checkRuntimeIdentity,
+} = require('./helpers/builder-check-runtime-identity-fixture.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -85,6 +88,7 @@ function admittedCheck() {
     git_verification_receipt: verification,
     project_understanding_snapshot: understanding,
     command_profile_id: understanding.command_profiles[0].command_profile_id,
+    runtime_identity: checkRuntimeIdentity(),
     approved_at_ms: 100,
     expires_at_ms: 300_100,
   });
@@ -94,6 +98,7 @@ function admittedCheck() {
     git_candidate_receipt: candidate,
     git_verification_receipt: verification,
     project_understanding_snapshot: understanding,
+    runtime_identity: checkRuntimeIdentity(),
     admitted_at_ms: 101,
   });
 }
@@ -129,6 +134,7 @@ test('creates a deterministic terminal CheckRun bound to its exact admission', (
   assert.equal(passed.approval_id, input.check_run_admission.approval_id);
   assert.equal(passed.script_digest, input.check_run_admission.script_digest);
   assert.equal(passed.invocation_digest, input.check_run_admission.invocation_digest);
+  assert.equal(passed.runtime_identity_id, input.check_run_admission.runtime_identity_id);
   assert.equal(passed.draft_checkpoint_sequence, 1);
   assert.equal(passed.status, 'passed');
   assert.equal(passed.output_summary, 'Check completed successfully.');

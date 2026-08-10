@@ -9,6 +9,9 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { types: utilTypes } = require('node:util');
 const test = require('node:test');
+const {
+  checkRuntimeIdentity,
+} = require('./helpers/builder-check-runtime-identity-fixture.cjs');
 
 const STORE_PATH = path.join(__dirname, '..', 'electron', 'builder-check-run-store.cjs');
 const CONTRACT_PATH = path.join(__dirname, '..', 'electron', 'builder-check-run.cjs');
@@ -38,6 +41,13 @@ const RECORD_KEYS = Object.freeze([
   'command_kind',
   'command_display',
   'script_digest',
+  'runtime_identity_id',
+  'runtime_identity_digest',
+  'package_manager',
+  'launcher_kind',
+  'launcher_binary_digest',
+  'cli_entry_digest',
+  'package_manager_version',
   'invocation_digest',
   'execution_policy',
   'status',
@@ -197,6 +207,7 @@ function hex(index, length = 64) {
 }
 
 function checkRun(index = 1, overrides = {}) {
+  const runtime = checkRuntimeIdentity();
   const status = overrides.status ?? 'passed';
   const startedAtMs = overrides.started_at_ms ?? 10_000 + index * 100;
   const completedAtMs = overrides.completed_at_ms ?? startedAtMs + 25;
@@ -221,6 +232,13 @@ function checkRun(index = 1, overrides = {}) {
     command_kind: 'lint',
     command_display: 'npm run lint',
     script_digest: `sha256:${hex(index + 2)}`,
+    runtime_identity_id: runtime.runtime_identity_id,
+    runtime_identity_digest: runtime.runtime_identity_digest,
+    package_manager: runtime.package_manager,
+    launcher_kind: runtime.launcher_kind,
+    launcher_binary_digest: runtime.launcher_binary_digest,
+    cli_entry_digest: runtime.cli_entry_digest,
+    package_manager_version: runtime.package_manager_version,
     invocation_digest: `sha256:${hex(index + 3)}`,
     execution_policy: { ...EXECUTION_POLICY },
     status,

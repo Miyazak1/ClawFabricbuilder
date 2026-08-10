@@ -9,6 +9,9 @@ const {
 const {
   sanitizeBuilderProjectUnderstandingSnapshot,
 } = require('./builder-project-understanding.cjs');
+const {
+  sanitizeBuilderCheckRuntimeIdentity,
+} = require('./builder-check-runtime-identity.cjs');
 
 const BUILDER_CHECK_RUN_EXECUTION_APPROVAL_VERSION = 'builder-check-run-execution-approval.v1';
 const BUILDER_CHECK_RUN_ADMISSION_VERSION = 'builder-check-run-admission.v1';
@@ -19,6 +22,7 @@ const APPROVAL_INPUT_KEYS = Object.freeze([
   'git_verification_receipt',
   'project_understanding_snapshot',
   'command_profile_id',
+  'runtime_identity',
   'approved_at_ms',
   'expires_at_ms',
 ]);
@@ -28,6 +32,7 @@ const ADMISSION_INPUT_KEYS = Object.freeze([
   'git_candidate_receipt',
   'git_verification_receipt',
   'project_understanding_snapshot',
+  'runtime_identity',
   'admitted_at_ms',
 ]);
 const CHECKPOINT_REF_KEYS = Object.freeze([
@@ -58,6 +63,13 @@ const APPROVAL_KEYS = Object.freeze([
   'command_kind',
   'command_display',
   'script_digest',
+  'runtime_identity_id',
+  'runtime_identity_digest',
+  'package_manager',
+  'launcher_kind',
+  'launcher_binary_digest',
+  'cli_entry_digest',
+  'package_manager_version',
   'invocation_digest',
   'approved_at_ms',
   'expires_at_ms',
@@ -89,6 +101,13 @@ const ADMISSION_KEYS = Object.freeze([
   'command_kind',
   'command_display',
   'script_digest',
+  'runtime_identity_id',
+  'runtime_identity_digest',
+  'package_manager',
+  'launcher_kind',
+  'launcher_binary_digest',
+  'cli_entry_digest',
+  'package_manager_version',
   'invocation_digest',
   'timeout_ms',
   'output_budget_bytes',
@@ -155,6 +174,7 @@ const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const CHECKPOINT_ID_PATTERN = /^builder-draft-checkpoint:[0-9a-f]{64}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const COMMAND_PROFILE_ID_PATTERN = /^builder-command-profile:[0-9a-f]{32}$/u;
+const RUNTIME_IDENTITY_ID_PATTERN = /^builder-check-runtime-identity:[0-9a-f]{64}$/u;
 const APPROVAL_ID_PATTERN = /^builder-check-run-execution-approval:[0-9a-f]{64}$/u;
 const ADMISSION_ID_PATTERN = /^builder-check-run-admission:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -163,10 +183,12 @@ const MAX_APPROVAL_LIFETIME_MS = 5 * 60 * 1000;
 const CHECK_TIMEOUT_MS = 2 * 60 * 1000;
 const CHECK_OUTPUT_BUDGET_BYTES = 64 * 1024;
 const COMMAND_KINDS = Object.freeze(['lint', 'typecheck', 'test', 'build']);
+const PACKAGE_MANAGERS = Object.freeze(['npm', 'pnpm', 'yarn', 'bun']);
+const RUNTIME_VERSION_PATTERN = /^(?:unknown|[vV]?[0-9][0-9A-Za-z.+_-]{0,63})$/u;
 const COMMAND_DISPLAYS = Object.freeze({
   lint: Object.freeze(['npm run lint', 'pnpm run lint', 'yarn lint', 'bun run lint']),
   typecheck: Object.freeze(['npm run typecheck', 'pnpm run typecheck', 'yarn typecheck', 'bun run typecheck']),
-  test: Object.freeze(['npm test', 'pnpm test', 'yarn test', 'bun test']),
+  test: Object.freeze(['npm test', 'pnpm test', 'yarn test', 'bun run test']),
   build: Object.freeze(['npm run build', 'pnpm run build', 'yarn build', 'bun run build']),
 });
 const EXECUTION_POLICY = Object.freeze({
@@ -292,6 +314,25 @@ function safeCommandKind(value) {
   return value;
 }
 
+function safePackageManager(value) {
+  if (typeof value !== 'string' || !PACKAGE_MANAGERS.includes(value)) fail();
+  return value;
+}
+
+function safeLauncherKind(value, packageManager) {
+  const expected = packageManager === 'bun' ? 'native_binary' : 'node_cli';
+  if (value !== expected) fail();
+  return value;
+}
+
+function safeCliEntryDigest(value, launcherKind) {
+  if (launcherKind === 'native_binary') {
+    if (value !== null) fail();
+    return null;
+  }
+  return safePattern(value, DIGEST_PATTERN);
+}
+
 function safeCommandDisplay(value, kind) {
   if (typeof value !== 'string' || !COMMAND_DISPLAYS[kind].includes(value)) fail();
   return value;
@@ -320,7 +361,7 @@ function selectedProfile(rawSnapshot, profileId, candidate) {
     || snapshot.source_tree_digest !== candidate.resulting_tree_digest
     || profile.source_tree_digest !== candidate.resulting_tree_digest
     || profile.requires_user_approval !== true
-    || profile.risk_class !== 'read_only_project_check'
+    || profile.risk_class !== 'project_script_execution'
   ) fail();
   return profile;
 }
@@ -338,7 +379,22 @@ function candidateFacts(rawCandidate, rawVerification, rawCheckpointRef) {
   return freezeDeep({ candidate, verification, checkpoint });
 }
 
-function invocationDigest(candidate, profile) {
+function packageManagerForDisplay(display) {
+  return PACKAGE_MANAGERS.find((manager) => display.startsWith(`${manager} `)) ?? null;
+}
+
+function verifiedRuntime(rawRuntime, profile, approvedAtMs, expiresAtMs) {
+  const runtime = sanitizeBuilderCheckRuntimeIdentity(rawRuntime);
+  if (
+    packageManagerForDisplay(profile.command_display) !== runtime.package_manager
+    || approvedAtMs < runtime.resolved_at_ms
+    || approvedAtMs >= runtime.expires_at_ms
+    || expiresAtMs > runtime.expires_at_ms
+  ) fail();
+  return runtime;
+}
+
+function invocationDigest(candidate, profile, runtime) {
   return sha256Canonical({
     project_id: candidate.project_id,
     candidate_id: candidate.candidate_id,
@@ -348,6 +404,12 @@ function invocationDigest(candidate, profile) {
     command_kind: profile.command_kind,
     command_display: profile.command_display,
     script_digest: profile.script_digest,
+    runtime_identity_id: runtime.runtime_identity_id,
+    runtime_identity_digest: runtime.runtime_identity_digest,
+    package_manager: runtime.package_manager,
+    launcher_kind: runtime.launcher_kind,
+    launcher_binary_digest: runtime.launcher_binary_digest,
+    cli_entry_digest: runtime.cli_entry_digest,
     execution_policy: EXECUTION_POLICY,
     timeout_ms: CHECK_TIMEOUT_MS,
     output_budget_bytes: CHECK_OUTPUT_BUDGET_BYTES,
@@ -391,6 +453,12 @@ function createBuilderCheckRunExecutionApproval(rawInput) {
     const approvedAtMs = safeTimestamp(valueAt(input, 'approved_at_ms'));
     const expiresAtMs = safeTimestamp(valueAt(input, 'expires_at_ms'));
     if (expiresAtMs <= approvedAtMs || expiresAtMs - approvedAtMs > MAX_APPROVAL_LIFETIME_MS) fail();
+    const runtime = verifiedRuntime(
+      valueAt(input, 'runtime_identity'),
+      profile,
+      approvedAtMs,
+      expiresAtMs,
+    );
     const unsigned = freezeDeep({
       approval_version: BUILDER_CHECK_RUN_EXECUTION_APPROVAL_VERSION,
       project_id: candidate.project_id,
@@ -411,7 +479,14 @@ function createBuilderCheckRunExecutionApproval(rawInput) {
       command_kind: profile.command_kind,
       command_display: profile.command_display,
       script_digest: profile.script_digest,
-      invocation_digest: invocationDigest(candidate, profile),
+      runtime_identity_id: runtime.runtime_identity_id,
+      runtime_identity_digest: runtime.runtime_identity_digest,
+      package_manager: runtime.package_manager,
+      launcher_kind: runtime.launcher_kind,
+      launcher_binary_digest: runtime.launcher_binary_digest,
+      cli_entry_digest: runtime.cli_entry_digest,
+      package_manager_version: runtime.package_manager_version,
+      invocation_digest: invocationDigest(candidate, profile, runtime),
       approved_at_ms: approvedAtMs,
       expires_at_ms: expiresAtMs,
       status: 'approved_once',
@@ -454,6 +529,25 @@ function sanitizeBuilderCheckRunExecutionApproval(rawValue) {
       command_kind: safeCommandKind(valueAt(value, 'command_kind')),
       command_display: null,
       script_digest: safePattern(valueAt(value, 'script_digest'), DIGEST_PATTERN),
+      runtime_identity_id: safePattern(
+        valueAt(value, 'runtime_identity_id'),
+        RUNTIME_IDENTITY_ID_PATTERN,
+      ),
+      runtime_identity_digest: safePattern(
+        valueAt(value, 'runtime_identity_digest'),
+        DIGEST_PATTERN,
+      ),
+      package_manager: safePackageManager(valueAt(value, 'package_manager')),
+      launcher_kind: null,
+      launcher_binary_digest: safePattern(
+        valueAt(value, 'launcher_binary_digest'),
+        DIGEST_PATTERN,
+      ),
+      cli_entry_digest: null,
+      package_manager_version: safePattern(
+        valueAt(value, 'package_manager_version'),
+        RUNTIME_VERSION_PATTERN,
+      ),
       invocation_digest: safePattern(valueAt(value, 'invocation_digest'), DIGEST_PATTERN),
       approved_at_ms: safeTimestamp(valueAt(value, 'approved_at_ms')),
       expires_at_ms: safeTimestamp(valueAt(value, 'expires_at_ms')),
@@ -473,6 +567,14 @@ function sanitizeBuilderCheckRunExecutionApproval(rawValue) {
     normalized.command_display = safeCommandDisplay(
       valueAt(value, 'command_display'),
       normalized.command_kind,
+    );
+    normalized.launcher_kind = safeLauncherKind(
+      valueAt(value, 'launcher_kind'),
+      normalized.package_manager,
+    );
+    normalized.cli_entry_digest = safeCliEntryDigest(
+      valueAt(value, 'cli_entry_digest'),
+      normalized.launcher_kind,
     );
     if (
       normalized.approval_version !== BUILDER_CHECK_RUN_EXECUTION_APPROVAL_VERSION
@@ -495,7 +597,7 @@ function sanitizeBuilderCheckRunExecutionApproval(rawValue) {
   }
 }
 
-function sameApprovalFacts(approval, facts, profile) {
+function sameApprovalFacts(approval, facts, profile, runtime) {
   const candidate = facts.candidate;
   return approval.project_id === candidate.project_id
     && approval.conversation_id === candidate.conversation_id
@@ -514,7 +616,14 @@ function sameApprovalFacts(approval, facts, profile) {
     && approval.command_kind === profile.command_kind
     && approval.command_display === profile.command_display
     && approval.script_digest === profile.script_digest
-    && approval.invocation_digest === invocationDigest(candidate, profile);
+    && approval.runtime_identity_id === runtime.runtime_identity_id
+    && approval.runtime_identity_digest === runtime.runtime_identity_digest
+    && approval.package_manager === runtime.package_manager
+    && approval.launcher_kind === runtime.launcher_kind
+    && approval.launcher_binary_digest === runtime.launcher_binary_digest
+    && approval.cli_entry_digest === runtime.cli_entry_digest
+    && approval.package_manager_version === runtime.package_manager_version
+    && approval.invocation_digest === invocationDigest(candidate, profile, runtime);
 }
 
 function createBuilderCheckRunAdmission(rawInput) {
@@ -532,10 +641,16 @@ function createBuilderCheckRunAdmission(rawInput) {
       facts.candidate,
     );
     const admittedAtMs = safeTimestamp(valueAt(input, 'admitted_at_ms'));
+    const runtime = verifiedRuntime(
+      valueAt(input, 'runtime_identity'),
+      profile,
+      admittedAtMs,
+      admittedAtMs,
+    );
     if (
       admittedAtMs < approval.approved_at_ms
       || admittedAtMs >= approval.expires_at_ms
-      || !sameApprovalFacts(approval, facts, profile)
+      || !sameApprovalFacts(approval, facts, profile, runtime)
     ) fail();
     const unsigned = freezeDeep({
       admission_version: BUILDER_CHECK_RUN_ADMISSION_VERSION,
@@ -559,6 +674,13 @@ function createBuilderCheckRunAdmission(rawInput) {
       command_kind: approval.command_kind,
       command_display: approval.command_display,
       script_digest: approval.script_digest,
+      runtime_identity_id: approval.runtime_identity_id,
+      runtime_identity_digest: approval.runtime_identity_digest,
+      package_manager: approval.package_manager,
+      launcher_kind: approval.launcher_kind,
+      launcher_binary_digest: approval.launcher_binary_digest,
+      cli_entry_digest: approval.cli_entry_digest,
+      package_manager_version: approval.package_manager_version,
       invocation_digest: approval.invocation_digest,
       timeout_ms: CHECK_TIMEOUT_MS,
       output_budget_bytes: CHECK_OUTPUT_BUDGET_BYTES,
@@ -606,6 +728,25 @@ function sanitizeBuilderCheckRunAdmission(rawValue) {
       command_kind: safeCommandKind(valueAt(value, 'command_kind')),
       command_display: null,
       script_digest: safePattern(valueAt(value, 'script_digest'), DIGEST_PATTERN),
+      runtime_identity_id: safePattern(
+        valueAt(value, 'runtime_identity_id'),
+        RUNTIME_IDENTITY_ID_PATTERN,
+      ),
+      runtime_identity_digest: safePattern(
+        valueAt(value, 'runtime_identity_digest'),
+        DIGEST_PATTERN,
+      ),
+      package_manager: safePackageManager(valueAt(value, 'package_manager')),
+      launcher_kind: null,
+      launcher_binary_digest: safePattern(
+        valueAt(value, 'launcher_binary_digest'),
+        DIGEST_PATTERN,
+      ),
+      cli_entry_digest: null,
+      package_manager_version: safePattern(
+        valueAt(value, 'package_manager_version'),
+        RUNTIME_VERSION_PATTERN,
+      ),
       invocation_digest: safePattern(valueAt(value, 'invocation_digest'), DIGEST_PATTERN),
       timeout_ms: valueAt(value, 'timeout_ms'),
       output_budget_bytes: valueAt(value, 'output_budget_bytes'),
@@ -631,6 +772,14 @@ function sanitizeBuilderCheckRunAdmission(rawValue) {
     normalized.command_display = safeCommandDisplay(
       valueAt(value, 'command_display'),
       normalized.command_kind,
+    );
+    normalized.launcher_kind = safeLauncherKind(
+      valueAt(value, 'launcher_kind'),
+      normalized.package_manager,
+    );
+    normalized.cli_entry_digest = safeCliEntryDigest(
+      valueAt(value, 'cli_entry_digest'),
+      normalized.launcher_kind,
     );
     if (
       normalized.admission_version !== BUILDER_CHECK_RUN_ADMISSION_VERSION

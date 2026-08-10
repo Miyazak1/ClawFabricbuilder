@@ -22,6 +22,9 @@ const {
 const {
   createBuilderProjectUnderstandingSnapshot,
 } = require('../electron/builder-project-understanding.cjs');
+const {
+  checkRuntimeIdentity,
+} = require('./helpers/builder-check-runtime-identity-fixture.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -102,6 +105,7 @@ function approvalInput(selected = facts(), overrides = {}) {
     git_verification_receipt: selected.verification,
     project_understanding_snapshot: selected.understanding,
     command_profile_id: selected.understanding.command_profiles[0].command_profile_id,
+    runtime_identity: checkRuntimeIdentity(),
     approved_at_ms: 100,
     expires_at_ms: 100 + (5 * 60 * 1000),
     ...overrides,
@@ -115,6 +119,7 @@ function admissionInput(approval, selected = facts(), overrides = {}) {
     git_candidate_receipt: selected.candidate,
     git_verification_receipt: selected.verification,
     project_understanding_snapshot: selected.understanding,
+    runtime_identity: checkRuntimeIdentity(),
     admitted_at_ms: 101,
     ...overrides,
   };
@@ -140,6 +145,8 @@ test('creates a one-shot candidate and script-bound check execution approval', (
   assert.equal(approval.resulting_tree_digest, selected.candidate.resulting_tree_digest);
   assert.equal(approval.command_display, 'npm test');
   assert.equal(approval.script_digest, selected.understanding.command_profiles[0].script_digest);
+  assert.equal(approval.runtime_identity_id, checkRuntimeIdentity().runtime_identity_id);
+  assert.equal(approval.package_manager, 'npm');
   assert.equal(approval.status, 'approved_once');
   assert.equal(approval.execution_policy.sandbox_status, 'unavailable');
   assert.equal(approval.execution_policy.network_enforcement, 'unavailable');
@@ -191,12 +198,27 @@ test('rejects expired approval, candidate drift, checkpoint drift, and script dr
   const changedTree = sourceTree('node --test');
   const changed = facts(changedTree);
   assertAdmissionError(() => createBuilderCheckRunAdmission(admissionInput(approval, changed)));
+
+  const runtimeDrift = checkRuntimeIdentity({
+    launcher_binary_digest: `sha256:${'c'.repeat(64)}`,
+  });
+  assertAdmissionError(() => createBuilderCheckRunAdmission(admissionInput(
+    approval,
+    selected,
+    { runtime_identity: runtimeDrift },
+  )));
 });
 
 test('rejects unsafe lifetime, forged policy, wrong commands, accessors, and proxies', () => {
   const selected = facts();
   assertAdmissionError(() => createBuilderCheckRunExecutionApproval(approvalInput(selected, {
     expires_at_ms: 100 + (5 * 60 * 1000) + 1,
+  })));
+  assertAdmissionError(() => createBuilderCheckRunExecutionApproval(approvalInput(selected, {
+    runtime_identity: checkRuntimeIdentity({ package_manager: 'pnpm' }),
+  })));
+  assertAdmissionError(() => createBuilderCheckRunExecutionApproval(approvalInput(selected, {
+    runtime_identity: checkRuntimeIdentity({ expires_at_ms: 200 }),
   })));
   const approval = createBuilderCheckRunExecutionApproval(approvalInput(selected));
   assertAdmissionError(() => sanitizeBuilderCheckRunExecutionApproval({

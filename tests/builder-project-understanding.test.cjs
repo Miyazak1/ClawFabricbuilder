@@ -103,7 +103,7 @@ test('creates a Node/frontend project understanding snapshot with command profil
     && profile.project_id === PROJECT_ID
     && profile.cwd === '.'
     && profile.requires_user_approval === true
-    && profile.risk_class === 'read_only_project_check'
+    && profile.risk_class === 'project_script_execution'
     && profile.discovered_from === 'package.json:scripts'
     && /^sha256:[0-9a-f]{64}$/u.test(profile.script_digest)
   )));
@@ -229,6 +229,20 @@ test('supports package-manager equivalents only when declared by the manifest', 
     ],
   );
   assert.doesNotMatch(JSON.stringify(snapshot), /deploy|wrangler/u);
+
+  const bun = createBuilderProjectUnderstandingSnapshot(request({
+    source_tree: sourceTree([{
+      path: 'package.json',
+      content: `${JSON.stringify({ scripts: { test: 'bun:test' } })}\n`,
+    }, {
+      path: 'bun.lock',
+      content: 'lockfileVersion = 1\n',
+    }]),
+  }));
+  assert.deepEqual(
+    bun.command_profiles.map((profile) => profile.command_display),
+    ['bun run test'],
+  );
 });
 
 test('fails closed on malformed input, proxies, accessors, and source digest drift', () => {
