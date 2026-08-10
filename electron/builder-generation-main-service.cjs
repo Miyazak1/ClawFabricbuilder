@@ -30,6 +30,9 @@ const {
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
 const {
+  sanitizeBuilderProjectUnderstandingSnapshot,
+} = require('./builder-project-understanding.cjs');
+const {
   sanitizeBuilderProviderConfig,
 } = require('./builder-provider-config.cjs');
 const {
@@ -74,6 +77,20 @@ const RESTORE_REVISION_REQUEST_KEYS = Object.freeze([
   'project_id',
   'revision_receipt_digest',
 ]);
+const PROJECT_UNDERSTANDING_REFRESH_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'service_version',
+  'operation',
+  'status',
+  'project_id',
+  'project_understanding',
+  'latest_project_understanding_read',
+  'evidence',
+]);
+const PROJECT_UNDERSTANDING_RECORD_KEYS = Object.freeze([
+  'snapshot_digest',
+  'project_understanding_snapshot',
+]);
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
@@ -106,6 +123,8 @@ const EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
+const PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PATTERN =
+  /^builder-project-understanding-snapshot:[0-9a-f]{64}$/u;
 const CREDENTIAL_PATTERN =
   /(?:["'`]?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|secret|credential|client[_-]?secret|private[_-]?key)["'`]?\s*[:=]\s*(?!["'`]?\s*(?:null|undefined)\b)\S|\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|https?:\/\/[^\s/:@]+:[^\s/@]+@|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/iu;
 const LOCAL_PATH_PATTERN =
@@ -1313,6 +1332,58 @@ function sanitizeCurrentOrLocalWorkspaceReadResult(value, expectedProjectId) {
   return sanitizeReadResult(value, expectedProjectId);
 }
 
+function sanitizeProjectUnderstandingRecord(value, expectedProjectId, expectedSourceTreeDigest) {
+  exactObject(value, PROJECT_UNDERSTANDING_RECORD_KEYS);
+  const snapshotDigest = safePattern(
+    valueAt(value, 'snapshot_digest'),
+    PROJECT_UNDERSTANDING_SNAPSHOT_DIGEST_PATTERN,
+    103,
+  );
+  const snapshot = sanitizeBuilderProjectUnderstandingSnapshot(
+    valueAt(value, 'project_understanding_snapshot'),
+  );
+  if (
+    snapshot.project_id !== expectedProjectId
+    || snapshot.source_tree_digest !== expectedSourceTreeDigest
+  ) fail();
+  return freezeDeep({
+    snapshot_digest: snapshotDigest,
+    project_understanding_snapshot: snapshot,
+  });
+}
+
+function sanitizeProjectUnderstandingRefreshResult(value, expectedProjectId, expectedSourceTreeDigest) {
+  exactObject(value, PROJECT_UNDERSTANDING_REFRESH_RESULT_KEYS);
+  if (
+    valueAt(value, 'result_version') !== 'builder-project-understanding-service-result.v1'
+    || valueAt(value, 'service_version') !== 'builder-project-understanding-service.v1'
+    || !['project_understanding_refreshed', 'project_understanding_refresh_replayed']
+      .includes(valueAt(value, 'operation'))
+    || valueAt(value, 'status') !== 'ready'
+    || safeProjectId(valueAt(value, 'project_id')) !== expectedProjectId
+    || !isPlainObject(valueAt(value, 'evidence'))
+  ) fail();
+  const recorded = sanitizeProjectUnderstandingRecord(
+    valueAt(value, 'project_understanding'),
+    expectedProjectId,
+    expectedSourceTreeDigest,
+  );
+  const latest = valueAt(value, 'latest_project_understanding_read');
+  exactObject(latest, ['result_version', 'operation', 'project_understanding', 'store_evidence']);
+  if (
+    valueAt(latest, 'result_version') !== 'builder-project-understanding-store-read-result.v1'
+    || valueAt(latest, 'operation') !== 'project_understanding_latest_ready_read'
+    || !isPlainObject(valueAt(latest, 'store_evidence'))
+  ) fail();
+  const latestRecord = sanitizeProjectUnderstandingRecord(
+    valueAt(latest, 'project_understanding'),
+    expectedProjectId,
+    expectedSourceTreeDigest,
+  );
+  if (latestRecord.snapshot_digest !== recorded.snapshot_digest) fail();
+  return recorded;
+}
+
 function sanitizeRestoreRevisionRequest(value) {
   exactObject(value, RESTORE_REVISION_REQUEST_KEYS);
   return freezeDeep({
@@ -1380,7 +1451,7 @@ function emptyBaseForBoundProject(value, expectedProjectId) {
 
 async function loadBaseForExistingProject(projectId, loadCurrentProject, loadProjectIdentity, projectReadAuthority, projectIdentityAuthority) {
   try {
-    return sanitizeReadResult(
+    return sanitizeCurrentOrLocalWorkspaceReadResult(
       await Reflect.apply(loadCurrentProject, projectReadAuthority, [{ project_id: projectId }]),
       projectId,
     );
@@ -1688,6 +1759,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const collectProjectSourceContext = options.sourceContextCollector === undefined
     ? null
     : ownMethod(options.sourceContextCollector, 'collect_project_source_context');
+  const refreshProjectUnderstanding = options.projectUnderstandingService === undefined
+    ? null
+    : ownMethod(options.projectUnderstandingService, 'refresh_project_understanding');
   const readLatestTaskCapsule = options.taskCapsuleStore === undefined
     ? null
     : ownMethod(options.taskCapsuleStore, 'read_latest_task_capsule');
@@ -2767,6 +2841,20 @@ function createBuilderGenerationMainService(rawOptions) {
         options.projectReadAuthority,
         options.projectIdentityAuthority,
       );
+      if (refreshProjectUnderstanding !== null) {
+        setupPhase = 'plan_refresh_project_understanding';
+        try {
+          sanitizeProjectUnderstandingRefreshResult(
+            await Reflect.apply(refreshProjectUnderstanding, options.projectUnderstandingService, [{
+              project_id: projectId,
+            }]),
+            projectId,
+            base.source_tree.source_tree_digest,
+          );
+        } catch (error) {
+          recordCanaryGenerationDebug('plan_project_understanding_unavailable', error);
+        }
+      }
       setupPhase = 'plan_begin_work';
       let conversationContext = Reflect.apply(
         beginConversationWork,
@@ -4100,6 +4188,7 @@ function createBuilderGenerationMainService(rawOptions) {
       approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
+      plan_project_understanding: 'main_only_refresh_before_plan_provider_no_prompt_egress',
       draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
       draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
       draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',

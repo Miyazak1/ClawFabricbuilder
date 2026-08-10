@@ -38,6 +38,9 @@ const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
 const {
+  createBuilderProjectUnderstandingSnapshot,
+} = require('../electron/builder-project-understanding.cjs');
+const {
   createBuilderApprovedPlanContinuationAdmission,
 } = require('../electron/builder-approved-plan-continuation-admission.cjs');
 const {
@@ -1418,6 +1421,36 @@ function localWorkspaceReadResult(sourceTree = createBuilderProjectSourceTree({
   };
 }
 
+function projectUnderstandingRefreshResult(sourceTree, snapshotDigestCharacter = 'a') {
+  const snapshot = createBuilderProjectUnderstandingSnapshot({
+    project_id: PROJECT_ID,
+    root_digest: `sha256:${'b'.repeat(64)}`,
+    source_tree: sourceTree,
+    previous_successful_check_runs: [],
+    updated_at_ms: 10,
+  });
+  const record = {
+    snapshot_digest:
+      `builder-project-understanding-snapshot:${snapshotDigestCharacter.repeat(64)}`,
+    project_understanding_snapshot: snapshot,
+  };
+  return {
+    result_version: 'builder-project-understanding-service-result.v1',
+    service_version: 'builder-project-understanding-service.v1',
+    operation: 'project_understanding_refreshed',
+    status: 'ready',
+    project_id: PROJECT_ID,
+    project_understanding: record,
+    latest_project_understanding_read: {
+      result_version: 'builder-project-understanding-store-read-result.v1',
+      operation: 'project_understanding_latest_ready_read',
+      project_understanding: record,
+      store_evidence: {},
+    },
+    evidence: {},
+  };
+}
+
 function revisionReadResult({
   sourceTree,
   revisionDigest = `sha256:${'3'.repeat(64)}`,
@@ -1536,6 +1569,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     approved_plan_edit_context: 'main_only_fresh_continuation_current_source_no_dispatch',
     approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
     plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
+    plan_project_understanding: 'main_only_refresh_before_plan_provider_no_prompt_egress',
     draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
     draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
     draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
@@ -2493,6 +2527,9 @@ test('records a main-only plan proposal from collected source context without so
   const observed = [];
   const transportInputs = [];
   const started = [];
+  const understandingCalls = [];
+  const understandingSnapshotDigest =
+    `builder-project-understanding-snapshot:${'a'.repeat(64)}`;
   const lifecycle = conversationService();
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
@@ -2511,6 +2548,12 @@ test('records a main-only plan proposal from collected source context without so
           return sourceContextResult(input.context, [
             { path: 'src/app.tsx', content: 'export const Settings = () => null;\n' },
           ]);
+        },
+      },
+      projectUnderstandingService: {
+        refresh_project_understanding(input) {
+          understandingCalls.push(input);
+          return projectUnderstandingRefreshResult(currentSource);
         },
       },
     }),
@@ -2532,6 +2575,8 @@ test('records a main-only plan proposal from collected source context without so
       assert.doesNotMatch(input.messages[0].content, /builder_code_change_operations|builder_conversation_explanation/u);
       assert.match(input.messages[1].content, /Plan a smaller settings panel/u);
       assert.match(input.messages[1].content, /export const Settings/u);
+      assert.doesNotMatch(JSON.stringify(input.messages), /project_understanding/iu);
+      assert.doesNotMatch(JSON.stringify(input.messages), new RegExp(understandingSnapshotDigest, 'u'));
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerPlan()),
@@ -2549,6 +2594,7 @@ test('records a main-only plan proposal from collected source context without so
   });
 
   assert.deepEqual(reads, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(understandingCalls, [{ project_id: PROJECT_ID }]);
   assert.equal(result.version, 'builder-generation-result.v2');
   assert.equal(result.result_kind, 'plan');
   assert.equal(result.request_id, raw.request_digest);
@@ -2637,6 +2683,10 @@ test('records a plan proposal for a bound local project before the first saved r
   const identityReads = [];
   const collected = [];
   const transportInputs = [];
+  const understandingCalls = [];
+  const localSource = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Existing local blog</main>\n' }],
+  });
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
     ...repositories({
@@ -2644,9 +2694,7 @@ test('records a plan proposal for a bound local project before the first saved r
       projectReadAuthority: {
         load_current(query) {
           readAttempts.push(query);
-          const error = new Error('current revision missing');
-          error.code = 'builder_project_read_not_found';
-          throw error;
+          return localWorkspaceReadResult(localSource);
         },
       },
       projectIdentityAuthority: {
@@ -2671,6 +2719,14 @@ test('records a plan proposal for a bound local project before the first saved r
           return sourceContextResult(input.context, []);
         },
       },
+      projectUnderstandingService: {
+        refresh_project_understanding(input) {
+          understandingCalls.push(input);
+          const error = new Error(PRIVATE_MARKER);
+          error.code = 'builder_project_understanding_service_unavailable';
+          throw error;
+        },
+      },
     }),
     transport: async (input) => {
       transportInputs.push(input);
@@ -2693,7 +2749,8 @@ test('records a plan proposal for a bound local project before the first saved r
   });
 
   assert.deepEqual(readAttempts, [{ project_id: PROJECT_ID }]);
-  assert.deepEqual(identityReads, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(identityReads, []);
+  assert.deepEqual(understandingCalls, [{ project_id: PROJECT_ID }]);
   assert.equal(result.result_kind, 'plan');
   assert.equal(result.project_id, PROJECT_ID);
   assert.equal(result.existing_project_id, PROJECT_ID);
