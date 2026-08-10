@@ -487,6 +487,34 @@ Current checkpoint:
 - do not attach `WebContentsView` to UI yet, do not mutate source/Git/SQLite,
   do not dispatch provider/tools, and do not save or admit revisions.
 
+### Slice LP5b: Main-Owned Preview Source Resolver
+
+Resolve trusted preview source snapshots for future Live Preview services.
+
+Evidence:
+
+- current draft source resolves only from the current DraftCheckpoint plus a
+  fresh verified Git candidate read;
+- saved revision source resolves only from existing Git plus SQLite Project
+  Revision read authority;
+- both paths bind exact project, conversation, candidate/checkpoint or revision,
+  commit/tree, and source tree digest;
+- renderer cannot provide `source_tree`, paths, URLs, HTML, or file contents;
+- output is a main-only in-memory snapshot for future preview services;
+- no user workspace write, server start, WebContentsView attachment, IPC
+  registration, package/canary change, provider/tool dispatch, Save, or Revision
+  admission.
+
+Current checkpoint:
+
+- add `builder-live-preview-source-resolver.v1`;
+- expose `resolveCurrentDraftPreviewSource` and
+  `resolveSavedRevisionPreviewSource`;
+- fail closed with unavailable status when the required existing authority is
+  absent, and reject drifted checkpoint, candidate, revision, commit/tree, or
+  source tree digest evidence;
+- keep the current renderer UI unchanged.
+
 ### Slice LP6: Packaged Live Preview Canary
 
 Add `verify:packaged-live-preview` and include it in release only after stable.
