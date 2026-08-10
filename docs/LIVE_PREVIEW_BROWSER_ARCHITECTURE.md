@@ -28,6 +28,41 @@ Current preview is a renderer-side static iframe:
 
 This is good and should remain. Live Preview must be additive.
 
+## Static Preview Retirement Policy
+
+Static Preview is a temporary primary preview surface and a long-term safety
+fallback. It should not stay as a user-facing peer once the built-in browser is
+proven reliable.
+
+Retirement should happen in three stages:
+
+1. **Primary de-emphasis**
+   After Live Preview V1 has a real source resolver, WebContentsView attachment,
+   packaged canary, restart cleanup, and nonblank JavaScript/canvas/WebGL
+   evidence, Browser Preview becomes the default for web projects. Static moves
+   behind a secondary `Safe preview` action.
+
+2. **User-facing removal**
+   After Browser Preview has passed at least one release cycle with packaged
+   evidence for saved revisions, current drafts, failed runtime fallback,
+   restart recovery, and permission-denied states, the `Static` mode switch can
+   be removed from the normal Review Workspace. Static remains available only
+   through error fallback, diagnostics, or a security review surface.
+
+3. **Code deletion**
+   Delete `BuilderStaticPreview` and static-preview canary coverage only after a
+   replacement Browser Preview can prove every current static-preview guarantee:
+   safe rendering without source mutation, no app IPC/Node/provider/tool
+   authority, deterministic restart restoration, nonblank visual evidence, and
+   clear behavior when JavaScript, WebGL, local servers, or network access are
+   denied. If any guarantee is still unique to Static Preview, keep the code as
+   hidden infrastructure instead of deleting it.
+
+Do not delete Static Preview during the MVP Programming Loop. The first deletion
+candidate is post-Live Preview V2, after dynamic dev-server preview has its own
+permission, process lifecycle, network policy, packaged canary, and rollback
+evidence.
+
 ## Electron Surface Choice
 
 Use main-owned `WebContentsView` as the long-term embedded browser surface.
