@@ -456,11 +456,19 @@ type LockedComposerSubmit = Readonly<{
   options: SubmitInstructionTextOptions;
 }>;
 
+type BuilderApprovedPlanContinuation = Readonly<{
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  run_id: string;
+}>;
+
 type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
   project_id: string;
   instruction: string;
   message_id: string;
   queuedFollowup: BuilderQueuedFollowupReference | null;
+  approvedPlanContinuation: BuilderApprovedPlanContinuation | null;
   state: 'pending' | 'approving' | 'failed';
 }>;
 
@@ -1484,6 +1492,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
           queuedFollowup: pendingBuild.queuedFollowup,
+          approvedPlanContinuation: null,
           state: 'pending' as const,
         });
         currentProjectWriteApprovalRef.current = prompt;
@@ -1596,6 +1605,26 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setIdea('');
   }, [project, publishQueuedActiveRunFollowup, refreshActiveConversation]);
 
+  const continueApprovedPlanAfterWriteApproval = useCallback(async (
+    continuation: BuilderApprovedPlanContinuation,
+    commandEpoch: number,
+  ) => {
+    setLiveOutput(null);
+    approvedPlanWaitingProjectRef.current = continuation.project_id;
+    let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
+    try {
+      result = await project.generateApprovedPlan(continuation);
+    } finally {
+      if (approvedPlanWaitingProjectRef.current === continuation.project_id) {
+        approvedPlanWaitingProjectRef.current = null;
+      }
+    }
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    setApprovedPlanContinuationFailure(result.status === 'generation_failed' ? continuation : null);
+    await readActivityAfterTerminal(result, commandEpoch, continuation.project_id);
+    setLiveOutput(null);
+  }, [project, readActivityAfterTerminal]);
+
   const reviewPlan = useCallback(async (request: BuilderPlanReviewRequest) => {
     if (planReviewInFlightRef.current !== null) return;
     const inFlight = Object.freeze({
@@ -1641,19 +1670,57 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     setLiveOutput(null);
-    approvedPlanWaitingProjectRef.current = request.project_id;
-    let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
+    let approval: BuilderCurrentProjectWriteApprovalStatus;
     try {
-      result = await project.generateApprovedPlan({
+      approval = await ports.generator.prepareCurrentProjectWriteApproval({
         project_id: request.project_id,
-        conversation_id: request.conversation_id,
-        turn_id: request.turn_id,
-        run_id: request.run_id,
       });
-    } finally {
-      if (approvedPlanWaitingProjectRef.current === request.project_id) {
-        approvedPlanWaitingProjectRef.current = null;
+    } catch {
+      approval = Object.freeze({
+        result_version: 'builder-current-project-write-approval-status.v1',
+        project_id: request.project_id,
+        state: 'approval_required' as const,
+        approval_scope: 'current_project_write' as const,
+        authority: 'main_selected_project_project_edit_v1' as const,
+      });
+    }
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    const nextPermissionStatus = Object.freeze({
+      project_id: request.project_id,
+      state: approval.state,
+    });
+    currentProjectWriteApprovalStatusRef.current = nextPermissionStatus;
+    setCurrentProjectWriteApprovalStatus(nextPermissionStatus);
+    const continuation = Object.freeze({
+      project_id: request.project_id,
+      conversation_id: request.conversation_id,
+      turn_id: request.turn_id,
+      run_id: request.run_id,
+    });
+    if (approval.state === 'approval_required') {
+      const prompt = Object.freeze({
+        project_id: request.project_id,
+        instruction: 'Apply the approved plan.',
+        message_id: `approved-plan:${inFlightKey}`,
+        queuedFollowup: null,
+        approvedPlanContinuation: continuation,
+        state: 'pending' as const,
+      });
+      currentProjectWriteApprovalRef.current = prompt;
+      setCurrentProjectWriteApproval(prompt);
+      if (
+        planReviewInFlightRef.current !== null
+        && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
+      ) {
+        publishPlanReviewInFlight(null);
       }
+      return;
+    }
+    currentProjectWriteApprovalRef.current = null;
+    setCurrentProjectWriteApproval(null);
+    try {
+      await continueApprovedPlanAfterWriteApproval(continuation, commandEpoch);
+    } finally {
       if (
         planReviewInFlightRef.current !== null
         && planReviewInFlightKey(planReviewInFlightRef.current) === inFlightKey
@@ -1661,11 +1728,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         publishPlanReviewInFlight(null);
       }
     }
-    if (workspaceEpochRef.current !== commandEpoch) return;
-    setApprovedPlanContinuationFailure(result.status === 'generation_failed' ? inFlight : null);
-    await readActivityAfterTerminal(result, commandEpoch, request.project_id);
-    setLiveOutput(null);
-  }, [conversation, ports.planReview, project, publishPlanReviewInFlight, readActivityAfterTerminal]);
+  }, [
+    continueApprovedPlanAfterWriteApproval,
+    conversation,
+    ports.generator,
+    ports.planReview,
+    publishPlanReviewInFlight,
+  ]);
 
   const runPlanProposal = useCallback(async (
     submittedIdea: string,
@@ -1838,6 +1907,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
           queuedFollowup: options.queuedFollowup ?? null,
+          approvedPlanContinuation: null,
           state: 'pending' as const,
         });
         currentProjectWriteApprovalRef.current = prompt;
@@ -1904,6 +1974,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             instruction: submittedIdea,
             message_id: routeEvidence.messageId,
             queuedFollowup: options.queuedFollowup ?? null,
+            approvedPlanContinuation: null,
             state: 'pending' as const,
           });
           currentProjectWriteApprovalRef.current = prompt;
@@ -2082,6 +2153,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       approvalModeRef.current = 'allow_current_project';
       setApprovalMode('allow_current_project');
       if (prompt !== null && prompt.project_id === projectId) {
+        if (prompt.approvedPlanContinuation !== null) {
+          setIdea('');
+          publishSubmitInFlight(true);
+          try {
+            await continueApprovedPlanAfterWriteApproval(prompt.approvedPlanContinuation, workspaceEpochRef.current);
+          } finally {
+            publishSubmitInFlight(false);
+          }
+          return;
+        }
         setIdea('');
         void submitInstructionTextRef.current?.(prompt.instruction, {
           existingMessageId: prompt.message_id,
@@ -2092,7 +2173,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       approvalModeRef.current = 'ask_before_write';
       setApprovalMode('ask_before_write');
     }
-  }, [ports.generator]);
+  }, [
+    continueApprovedPlanAfterWriteApproval,
+    ports.generator,
+    publishSubmitInFlight,
+  ]);
 
   const clearComposerMode = useCallback(() => {
     composerModeRef.current = null;
@@ -2147,6 +2232,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setCurrentProjectWriteApprovalStatus(allowed);
       currentProjectWriteApprovalRef.current = null;
       setCurrentProjectWriteApproval(null);
+      if (prompt.approvedPlanContinuation !== null) {
+        setIdea('');
+        await continueApprovedPlanAfterWriteApproval(prompt.approvedPlanContinuation, commandEpoch);
+        return;
+      }
       const decision = decideBuilderComposerIntent(
         prompt.instruction,
         composerIntentContext(
@@ -2190,6 +2280,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [
     createComposerRouteEvidence,
+    continueApprovedPlanAfterWriteApproval,
     ports.generator,
     project,
     publishSubmitInFlight,

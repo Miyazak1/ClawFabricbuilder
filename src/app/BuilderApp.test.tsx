@@ -4723,6 +4723,67 @@ describe('BuilderApp v2', () => {
     );
   });
 
+  it('asks for current-project write approval before executing an approved plan', async () => {
+    const {
+      approveCurrentProjectWrite,
+      container,
+      generate,
+      generateApprovedPlan,
+      prepareCurrentProjectWriteApproval,
+      reviewPlan,
+      saveDraft,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+      pendingPlanActivity: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+
+    click(container, 'Approve plan');
+
+    await waitFor(() => {
+      expect(reviewPlan).toHaveBeenCalledOnce();
+      expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+      });
+      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
+        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
+        .toContain('Allow current project changes?');
+    });
+    expect(generateApprovedPlan).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+
+    click(container, 'Allow and continue');
+
+    await waitFor(() => {
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+      });
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(reviewPlan).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(
+      /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
+    );
+  });
+
   it('keeps approved plan continuation retryable when the draft is not created', async () => {
     const {
       container,
