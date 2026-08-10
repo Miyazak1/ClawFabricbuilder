@@ -224,6 +224,7 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
             assert.equal(options.taskCapsuleStore, context.__taskCapsuleStore);
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
+            assert.equal(options.projectUnderstandingService, context.__projectUnderstandingService);
             assert.equal(options.sessionTaskAddressRecordingService, context.__sessionTaskAddressRecordingService);
             assert.equal(options.workingContextStateService, context.__workingContextStateService);
             assert.equal(
@@ -269,6 +270,39 @@ function runtimeWithService(service, probes = {}) {
               record_task_capsule_from_conversation() {},
             };
             return context.__taskCapsuleRecordingService;
+          },
+        };
+      }
+      if (specifier === './builder-project-understanding-store.cjs') {
+        return {
+          createBuilderProjectUnderstandingStore: (databasePath) => {
+            probes.projectUnderstandingDatabasePath = databasePath;
+            context.__projectUnderstandingStore = {
+              closed: false,
+              store_version: 'builder-project-understanding-store.v1',
+              record_project_understanding_snapshot() {},
+              read_project_understanding_snapshot() {},
+              read_latest_project_understanding_snapshot() {},
+              close() {
+                this.closed = true;
+                return true;
+              },
+            };
+            return context.__projectUnderstandingStore;
+          },
+        };
+      }
+      if (specifier === './builder-project-understanding-service.cjs') {
+        return {
+          createBuilderProjectUnderstandingService: (options) => {
+            probes.projectUnderstandingServiceOptions = options;
+            assert.equal(options.project_understanding_store, context.__projectUnderstandingStore);
+            assert.equal(typeof options.now_ms, 'function');
+            context.__projectUnderstandingService = {
+              service_version: 'builder-project-understanding-service.v1',
+              refresh_project_understanding() {},
+            };
+            return context.__projectUnderstandingService;
           },
         };
       }
@@ -2313,6 +2347,7 @@ test('closes project main authority when generation channel registration fails',
   assert.equal(harness.context.__handoffPacketStore.closed, true);
   assert.equal(harness.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(harness.context.__sessionTaskAddressStore.closed, true);
+  assert.equal(harness.context.__projectUnderstandingStore.closed, true);
   assert.equal(harness.context.__taskCapsuleStore.closed, true);
   assert.equal(harness.context.__projectMainAuthority.closed, true);
   assert.equal(runtime.dispose(), false);
@@ -2343,6 +2378,8 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.deepEqual(Object.keys(probes.projectMainAuthorityOptions), ['userDataPath']);
   assert.equal(probes.taskCapsuleDatabasePath,
     path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite'));
+  assert.equal(probes.projectUnderstandingDatabasePath,
+    path.join(userDataPath, 'builder-project-understandings-v1', 'understanding.sqlite'));
   assert.equal(probes.sessionTaskAddressDatabasePath,
     path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite'));
   assert.equal(probes.contextCompactionSummaryDatabasePath,
@@ -2351,6 +2388,10 @@ test('composes project main authority and closes it on dispose', (t) => {
     path.join(userDataPath, 'builder-handoff-packets-v1', 'handoff-packets.sqlite'));
   assert.equal(probes.taskCapsuleRecordingOptions.task_capsule_store,
     runtimeModule.context.__taskCapsuleStore);
+  assert.equal(probes.projectUnderstandingServiceOptions.project_read_authority,
+    probes.serviceOptions.projectReadAuthority);
+  assert.equal(probes.projectUnderstandingServiceOptions.project_understanding_store,
+    runtimeModule.context.__projectUnderstandingStore);
   assert.equal(probes.workingContextStateOptions.task_capsule_store,
     runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.workingContextStateOptions.session_task_address_store,
@@ -2372,6 +2413,8 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__taskCapsuleStore);
   assert.equal(probes.serviceOptions.taskCapsuleRecordingService,
     runtimeModule.context.__taskCapsuleRecordingService);
+  assert.equal(probes.serviceOptions.projectUnderstandingService,
+    runtimeModule.context.__projectUnderstandingService);
   assert.equal(probes.serviceOptions.workingContextStateService,
     runtimeModule.context.__workingContextStateService);
   assert.equal(probes.serviceOptions.providerContextDisclosureDecisionService,
@@ -2423,6 +2466,7 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.equal(runtimeModule.context.__handoffPacketStore.closed, true);
   assert.equal(runtimeModule.context.__contextCompactionSummaryStore.closed, true);
   assert.equal(runtimeModule.context.__sessionTaskAddressStore.closed, true);
+  assert.equal(runtimeModule.context.__projectUnderstandingStore.closed, true);
   assert.equal(runtimeModule.context.__taskCapsuleStore.closed, true);
   assert.equal(runtimeModule.context.__projectMainAuthority.closed, true);
 });

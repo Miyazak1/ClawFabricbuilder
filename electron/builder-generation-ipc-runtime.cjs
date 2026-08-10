@@ -129,10 +129,18 @@ const {
 const {
   createBuilderWorkingContextStateService,
 } = require('./builder-working-context-state-service.cjs');
+const {
+  createBuilderProjectUnderstandingStore,
+} = require('./builder-project-understanding-store.cjs');
+const {
+  createBuilderProjectUnderstandingService,
+} = require('./builder-project-understanding-service.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
 const TASK_CAPSULE_DATABASE = 'task-capsules.sqlite';
+const PROJECT_UNDERSTANDING_DIRECTORY = 'builder-project-understandings-v1';
+const PROJECT_UNDERSTANDING_DATABASE = 'understanding.sqlite';
 const SESSION_TASK_ADDRESS_DIRECTORY = 'builder-session-task-addresses-v1';
 const SESSION_TASK_ADDRESS_DATABASE = 'session-task-addresses.sqlite';
 const CONTEXT_COMPACTION_SUMMARY_DIRECTORY = 'builder-context-compaction-summaries-v1';
@@ -1218,6 +1226,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let providerConfigRepository = null;
   let permissionFactStore = null;
   let taskCapsuleStore = null;
+  let projectUnderstandingStore = null;
   let sessionTaskAddressStore = null;
   let contextCompactionSummaryStore = null;
   let handoffPacketStore = null;
@@ -1266,6 +1275,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const taskCapsuleRecordingService = createBuilderTaskCapsuleRecordingService({
       task_capsule_store: taskCapsuleStore,
     });
+    const projectUnderstandingRoot = path.join(options.userDataPath, PROJECT_UNDERSTANDING_DIRECTORY);
+    fs.mkdirSync(projectUnderstandingRoot, { recursive: true, mode: 0o700 });
+    projectUnderstandingStore = createBuilderProjectUnderstandingStore(
+      path.join(projectUnderstandingRoot, PROJECT_UNDERSTANDING_DATABASE),
+    );
     const sessionTaskAddressRoot = path.join(options.userDataPath, SESSION_TASK_ADDRESS_DIRECTORY);
     fs.mkdirSync(sessionTaskAddressRoot, { recursive: true, mode: 0o700 });
     sessionTaskAddressStore = createBuilderSessionTaskAddressStore(
@@ -1364,9 +1378,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         }
       },
     });
+    const projectUnderstandingService = createBuilderProjectUnderstandingService({
+      project_read_authority: generationProjectReadAuthority,
+      project_understanding_store: projectUnderstandingStore,
+      now_ms: () => Date.now(),
+    });
     service = createBuilderGenerationMainService({
       providerConfigRepository: lazyProviderConfigRepository,
       projectReadAuthority: generationProjectReadAuthority,
+      projectUnderstandingService,
       projectIdentityAuthority: projectMainAuthority.metadata_authority,
       conversationService,
       gitAuthority: projectMainAuthority.git_authority,
@@ -1970,6 +1990,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     try { handoffPacketStore?.close(); } catch { /* fixed failure below */ }
     try { contextCompactionSummaryStore?.close(); } catch { /* fixed failure below */ }
     try { sessionTaskAddressStore?.close(); } catch { /* fixed failure below */ }
+    try { projectUnderstandingStore?.close(); } catch { /* fixed failure below */ }
     try { taskCapsuleStore?.close(); } catch { /* fixed failure below */ }
     try { permissionFactStore?.close(); } catch { /* fixed failure below */ }
     try { projectMainAuthority?.close(); } catch { /* fixed failure below */ }
@@ -2085,6 +2106,17 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
   }
 
+  function closeProjectUnderstandingStore() {
+    if (projectUnderstandingStore === null) return true;
+    try {
+      projectUnderstandingStore.close();
+      projectUnderstandingStore = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function closeSessionTaskAddressStore() {
     if (sessionTaskAddressStore === null) return true;
     try {
@@ -2140,11 +2172,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const handoffsClosed = closeHandoffPacketStore();
         const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
         const addressesClosed = compactionsClosed ? closeSessionTaskAddressStore() : false;
-        const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
+        const understandingsClosed = addressesClosed ? closeProjectUnderstandingStore() : false;
+        const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
         state = removed && handoffsClosed && compactionsClosed && addressesClosed
-          && taskCapsulesClosed && permissionsClosed && closed
+          && understandingsClosed && taskCapsulesClosed && permissionsClosed && closed
           ? 'disposed'
           : 'cleanup_required';
         fail();
@@ -2156,11 +2189,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const handoffsClosed = closeHandoffPacketStore();
         const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
         const addressesClosed = compactionsClosed ? closeSessionTaskAddressStore() : false;
-        const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
+        const understandingsClosed = addressesClosed ? closeProjectUnderstandingStore() : false;
+        const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
         if (!handoffsClosed || !compactionsClosed || !addressesClosed
-          || !taskCapsulesClosed || !permissionsClosed || !closed) {
+          || !understandingsClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
           state = 'cleanup_required';
           fail();
         }
@@ -2172,11 +2206,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const handoffsClosed = cancelled ? closeHandoffPacketStore() : false;
       const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
       const addressesClosed = compactionsClosed ? closeSessionTaskAddressStore() : false;
-      const taskCapsulesClosed = addressesClosed ? closeTaskCapsuleStore() : false;
+      const understandingsClosed = addressesClosed ? closeProjectUnderstandingStore() : false;
+      const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
       const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
       const closed = permissionsClosed ? closeProjectMainAuthority() : false;
       if (!cancelled || !removed || !handoffsClosed || !compactionsClosed || !addressesClosed
-        || !taskCapsulesClosed || !permissionsClosed || !closed) {
+        || !understandingsClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();
       }
@@ -2194,6 +2229,8 @@ module.exports = Object.freeze({
   METADATA_DATABASE,
   TASK_CAPSULE_DIRECTORY,
   TASK_CAPSULE_DATABASE,
+  PROJECT_UNDERSTANDING_DIRECTORY,
+  PROJECT_UNDERSTANDING_DATABASE,
   CONTEXT_COMPACTION_SUMMARY_DIRECTORY,
   CONTEXT_COMPACTION_SUMMARY_DATABASE,
   HANDOFF_PACKET_DIRECTORY,

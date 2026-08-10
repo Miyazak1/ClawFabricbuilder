@@ -77,6 +77,7 @@ const RESTORE_REVISION_REQUEST_KEYS = Object.freeze([
 const OPTION_KEYS = Object.freeze([
   'providerConfigRepository',
   'projectReadAuthority',
+  'projectUnderstandingService',
   'projectIdentityAuthority',
   'conversationService',
   'gitAuthority',
@@ -1144,6 +1145,9 @@ function sanitizeOptions(value) {
   if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   if (keys.includes('sourceContextCollector') && !isPlainObject(descriptors.sourceContextCollector.value)) fail();
+  if (keys.includes('projectUnderstandingService') && !isPlainObject(descriptors.projectUnderstandingService.value)) {
+    fail();
+  }
   if (keys.includes('taskCapsuleStore') && !isPlainObject(descriptors.taskCapsuleStore.value)) {
     fail();
   }
@@ -1183,6 +1187,9 @@ function sanitizeOptions(value) {
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
+    ...(keys.includes('projectUnderstandingService')
+      ? { projectUnderstandingService: descriptors.projectUnderstandingService.value }
+      : {}),
     projectIdentityAuthority: keys.includes('projectIdentityAuthority')
       ? descriptors.projectIdentityAuthority.value
       : null,
