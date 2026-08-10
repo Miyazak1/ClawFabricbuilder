@@ -222,6 +222,64 @@ export interface BuilderPlanReviewPort {
   review(request: BuilderPlanReviewRequest): Promise<BuilderPlanReviewResult>;
 }
 
+export type BuilderLivePreviewStatusProjection = Readonly<{
+  status_version: 'builder-live-preview-status-projection.v1';
+  project_id: string;
+  conversation_id: string;
+  preview_kind: 'live_static_web';
+  status:
+    | 'idle'
+    | 'unavailable'
+    | 'starting'
+    | 'ready'
+    | 'reloading'
+    | 'stopping'
+    | 'stopped'
+    | 'failed';
+  can_start: boolean;
+  can_reload: boolean;
+  can_stop: boolean;
+  message: string;
+  unavailable_reason:
+    | 'preview_source_resolver_not_connected'
+    | 'no_current_draft_preview_source'
+    | 'live_preview_runtime_unavailable'
+    | null;
+  updated_at_ms: number;
+  authority: Readonly<{
+    live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1';
+    renderer_authority: 'current_project_conversation_only';
+    active_renderer_required: true;
+    source_tree_from_renderer: 'not_accepted';
+    source_read: 'main_owned_preview_source_resolver_or_not_performed';
+    source_write: 'not_performed';
+    provider_dispatch: false;
+    tool_dispatch: false;
+    command_execution: false;
+    git_mutation: false;
+    sqlite_write: false;
+    permission_grant: false;
+    revision_admission: false;
+    save_admission: false;
+    electron_view_attachment: 'main_only_not_exposed_to_renderer';
+    preview_content_ipc: false;
+    node_integration: false;
+    preload: false;
+  }>;
+}>;
+
+export type BuilderLivePreviewRequest = Readonly<{
+  project_id: string;
+  conversation_id: string;
+}>;
+
+export interface BuilderLivePreviewPort {
+  requestCurrentDraftPreview(request: BuilderLivePreviewRequest): Promise<BuilderLivePreviewStatusProjection>;
+  reloadCurrentPreview(request: BuilderLivePreviewRequest): Promise<BuilderLivePreviewStatusProjection>;
+  stopCurrentPreview(request: BuilderLivePreviewRequest): Promise<BuilderLivePreviewStatusProjection>;
+  readCurrentPreviewStatus(request: BuilderLivePreviewRequest): Promise<BuilderLivePreviewStatusProjection>;
+}
+
 export type BuilderPermissionAction =
   | 'context.read'
   | 'project.read'

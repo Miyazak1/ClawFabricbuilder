@@ -2093,6 +2093,15 @@ Required boundaries:
 - canary evidence proves JavaScript execution, nonblank WebGL/canvas pixels,
   screenshot capture, console/error capture, and restart recovery.
 
+Current LP5 checkpoint:
+
+- `livePreview` preload/IPC/status bridge is available with exact
+  `{ project_id, conversation_id }` requests;
+- Preview panel has `Static` / `Live` mode and Live start/reload/stop controls;
+- renderer does not upload `source_tree`, HTML, paths, URLs, or view/session ids;
+- until a main-owned preview source resolver and WebContentsView attachment are
+  connected, Live mode must show unavailable instead of claiming execution.
+
 ### Gate R3 - Live Preview V2: Dev Server Adapters
 
 Add named dev-server adapters after V1. Initial targets are Vite, React, and

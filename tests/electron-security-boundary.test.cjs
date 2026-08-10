@@ -46,7 +46,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /\.catch\(\(\) => \{[\s\S]*disposeIpcRuntimes\(\)[\s\S]*app\.quit\(\)/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v22/u);
+  assert.match(preload, /builder-preload\.v23/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
   assert.match(preload, /openLocation/u);
@@ -115,12 +115,21 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /providerContextDisclosureApproval/u);
   assert.match(preload, /approveCurrent/u);
   assert.match(preload, /clawfabric-builder:provider-context-disclosure:approve-current/u);
+  assert.match(preload, /livePreview/u);
+  assert.match(preload, /requestCurrentDraftPreview/u);
+  assert.match(preload, /clawfabric-builder:live-preview:request-current-draft/u);
+  assert.match(preload, /reloadCurrentPreview/u);
+  assert.match(preload, /clawfabric-builder:live-preview:reload-current/u);
+  assert.match(preload, /stopCurrentPreview/u);
+  assert.match(preload, /clawfabric-builder:live-preview:stop-current/u);
+  assert.match(preload, /readCurrentPreviewStatus/u);
+  assert.match(preload, /clawfabric-builder:live-preview:read-current-status/u);
   assert.match(preload, /windowControls/u);
   assert.match(preload, /clawfabric-builder:window-controls:minimize/u);
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 39);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 43);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')

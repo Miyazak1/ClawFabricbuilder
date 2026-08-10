@@ -27,6 +27,9 @@ import type {
   BuilderCurrentProjectWriteApprovalStatus,
   BuilderGenerationOutputEvent,
   BuilderGenerationStartedEvent,
+  BuilderLivePreviewPort,
+  BuilderLivePreviewRequest,
+  BuilderLivePreviewStatusProjection,
   BuilderPlanReviewPort,
   BuilderPlanReviewRequest,
   BuilderTaskStreamChangedEvent,
@@ -47,6 +50,10 @@ import {
   BuilderDesktopPlanReviewPortError,
   createBuilderDesktopPlanReviewPort,
 } from '../features/builder/infrastructure/builderDesktopPlanReviewPort';
+import {
+  BuilderDesktopLivePreviewPortError,
+  createBuilderDesktopLivePreviewPort,
+} from '../features/builder/infrastructure/builderDesktopLivePreviewPort';
 import {
   type BuilderConversationControllerSnapshot,
 } from '../features/builder/application/builderConversationController';
@@ -135,6 +142,7 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   permissions: null,
   planReview: null,
   providerContextDisclosureApproval: null,
+  livePreview: null,
   taskStream: null,
   windowControls: null,
 });
@@ -357,6 +365,25 @@ const UNAVAILABLE_PLAN_REVIEW: BuilderPlanReviewPort = Object.freeze({
   },
 });
 
+const UNAVAILABLE_LIVE_PREVIEW: BuilderLivePreviewPort = Object.freeze({
+  requestCurrentDraftPreview(request: BuilderLivePreviewRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopLivePreviewPortError());
+  },
+  reloadCurrentPreview(request: BuilderLivePreviewRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopLivePreviewPortError());
+  },
+  stopCurrentPreview(request: BuilderLivePreviewRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopLivePreviewPortError());
+  },
+  readCurrentPreviewStatus(request: BuilderLivePreviewRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopLivePreviewPortError());
+  },
+});
+
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
   try {
     return value === undefined
@@ -372,6 +399,7 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   let generator = UNAVAILABLE_GENERATOR;
   let taskStream = UNAVAILABLE_TASK_STREAM;
   let planReview = UNAVAILABLE_PLAN_REVIEW;
+  let livePreview = UNAVAILABLE_LIVE_PREVIEW;
   try {
     workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
@@ -392,7 +420,12 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   } catch {
     planReview = UNAVAILABLE_PLAN_REVIEW;
   }
-  return Object.freeze({ generator, planReview, taskStream, workspace });
+  try {
+    livePreview = createBuilderDesktopLivePreviewPort(root.livePreview);
+  } catch {
+    livePreview = UNAVAILABLE_LIVE_PREVIEW;
+  }
+  return Object.freeze({ generator, livePreview, planReview, taskStream, workspace });
 }
 
 function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): string | null {
@@ -995,6 +1028,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const [providerContextDisclosureApprovalState, setProviderContextDisclosureApprovalState] =
     useState<'idle' | 'approving' | 'failed'>('idle');
+  const [livePreviewStatus, setLivePreviewStatus] =
+    useState<BuilderLivePreviewStatusProjection | null>(null);
+  const [livePreviewOperation, setLivePreviewOperation] =
+    useState<'starting' | 'reloading' | 'stopping' | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const initialWorkspaceAutoOpenRef = useRef(false);
@@ -2474,6 +2511,68 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     providerContextDisclosureApproval,
   ]);
 
+  const livePreviewRequest = useCallback((): BuilderLivePreviewRequest | null => {
+    const conversationSnapshot = conversation.snapshot;
+    if (
+      conversationSnapshot.project_id === null
+      || conversationSnapshot.conversation === null
+      || conversationSnapshot.conversation.state !== 'ready'
+    ) return null;
+    return Object.freeze({
+      project_id: conversationSnapshot.project_id,
+      conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
+    });
+  }, [conversation.snapshot]);
+
+  const runLivePreviewOperation = useCallback(async (
+    operation: 'starting' | 'reloading' | 'stopping',
+    action: (request: BuilderLivePreviewRequest) => Promise<BuilderLivePreviewStatusProjection>,
+  ) => {
+    const request = livePreviewRequest();
+    if (request === null) return;
+    setLivePreviewOperation(operation);
+    try {
+      setLivePreviewStatus(await action(request));
+    } catch {
+      setLivePreviewStatus(null);
+    } finally {
+      setLivePreviewOperation(null);
+    }
+  }, [livePreviewRequest]);
+
+  const requestLivePreview = useCallback(() => runLivePreviewOperation(
+    'starting',
+    ports.livePreview.requestCurrentDraftPreview,
+  ), [ports.livePreview, runLivePreviewOperation]);
+
+  const reloadLivePreview = useCallback(() => runLivePreviewOperation(
+    'reloading',
+    ports.livePreview.reloadCurrentPreview,
+  ), [ports.livePreview, runLivePreviewOperation]);
+
+  const stopLivePreview = useCallback(() => runLivePreviewOperation(
+    'stopping',
+    ports.livePreview.stopCurrentPreview,
+  ), [ports.livePreview, runLivePreviewOperation]);
+
+  useEffect(() => {
+    const request = livePreviewRequest();
+    if (request === null) return;
+    let active = true;
+    ports.livePreview.readCurrentPreviewStatus(request)
+      .then((status) => {
+        if (active) setLivePreviewStatus(status);
+      })
+      .catch(() => {
+        if (active) setLivePreviewStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [livePreviewRequest, ports.livePreview]);
+  const currentLivePreviewRequest = livePreviewRequest();
+  const visibleLivePreviewStatus = currentLivePreviewRequest === null ? null : livePreviewStatus;
+
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
       <header className="cf-builder-app-chrome" aria-label="ClawFabric Builder window" data-builder-app-chrome="true">
@@ -2601,6 +2700,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               currentProjectWriteApproval={currentProjectWriteApproval}
               instruction={idea}
               liveOutput={liveOutput}
+              livePreviewOperation={livePreviewOperation}
+              livePreviewStatus={visibleLivePreviewStatus}
               planReviewFailure={planReviewFailure}
               planReviewInFlight={planReviewInFlight}
               planReviewRecorded={planReviewRecorded}
@@ -2624,11 +2725,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onOpenProject={openProjectFromComposer}
               onOpenProjectLocation={openProjectLocation}
               onOpenSettings={() => setView('settings')}
+              onReloadLivePreview={reloadLivePreview}
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
+              onRequestLivePreview={requestLivePreview}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
               onSave={save}
+              onStopLivePreview={stopLivePreview}
               onSelectFile={setActiveFile}
               onRefreshConversation={conversation.refresh}
               onRefreshHistory={history.refresh}

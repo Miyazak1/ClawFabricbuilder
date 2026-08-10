@@ -3005,7 +3005,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(evaluateEvents.length, 1);
   assert.doesNotMatch(
     evaluateEvents[0][1],
-    /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent/u,
+    /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent|livePreview\.(?:requestCurrentDraftPreview|reloadCurrentPreview|stopCurrentPreview)|source_tree/u,
   );
 });
 
@@ -6216,7 +6216,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v22['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v23['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);
@@ -6224,6 +6224,16 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /approvePlanSourceRead/u);
   assert.match(preloadSource, /providerContextDisclosureApproval/u);
   assert.match(preloadSource, /provider-context-disclosure:approve-current/u);
+  assert.match(preloadSource, /livePreview:\s*Object\.freeze/u);
+  assert.match(preloadSource, /requestCurrentDraftPreview\(request\)/u);
+  assert.match(preloadSource, /live-preview:request-current-draft/u);
+  assert.match(preloadSource, /reloadCurrentPreview\(request\)/u);
+  assert.match(preloadSource, /live-preview:reload-current/u);
+  assert.match(preloadSource, /stopCurrentPreview\(request\)/u);
+  assert.match(preloadSource, /live-preview:stop-current/u);
+  assert.match(preloadSource, /readCurrentPreviewStatus\(request\)/u);
+  assert.match(preloadSource, /live-preview:read-current-status/u);
+  assert.doesNotMatch(preloadSource, /source_tree|sourceTree|entry_url|preview_origin/u);
   assert.match(preloadSource, /prepareCurrentProjectWriteApproval/u);
   assert.match(preloadSource, /approveCurrentProjectWrite/u);
   assert.match(preloadSource, /code-generator:prepare-plan-source-read-approval/u);

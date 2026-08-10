@@ -46,13 +46,21 @@ const REVIEW_PLAN_CHANNEL = 'clawfabric-builder:plan-review:review';
 const EVALUATE_PERMISSION_CHANNEL = 'clawfabric-builder:permissions:evaluate';
 const APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL =
   'clawfabric-builder:provider-context-disclosure:approve-current';
+const REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL =
+  'clawfabric-builder:live-preview:request-current-draft';
+const RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL =
+  'clawfabric-builder:live-preview:reload-current';
+const STOP_CURRENT_LIVE_PREVIEW_CHANNEL =
+  'clawfabric-builder:live-preview:stop-current';
+const READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL =
+  'clawfabric-builder:live-preview:read-current-status';
 const MINIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:minimize';
 const TOGGLE_MAXIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:toggle-maximize';
 const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v22',
+  bridgeVersion: 'builder-preload.v23',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -196,6 +204,20 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
   providerContextDisclosureApproval: Object.freeze({
     approveCurrent(request) {
       return ipcRenderer.invoke(APPROVE_PROVIDER_CONTEXT_DISCLOSURE_CHANNEL, request);
+    },
+  }),
+  livePreview: Object.freeze({
+    requestCurrentDraftPreview(request) {
+      return ipcRenderer.invoke(REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL, request);
+    },
+    reloadCurrentPreview(request) {
+      return ipcRenderer.invoke(RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL, request);
+    },
+    stopCurrentPreview(request) {
+      return ipcRenderer.invoke(STOP_CURRENT_LIVE_PREVIEW_CHANNEL, request);
+    },
+    readCurrentPreviewStatus(request) {
+      return ipcRenderer.invoke(READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL, request);
     },
   }),
   windowControls: Object.freeze({

@@ -220,6 +220,7 @@ Renderer-safe APIs should be narrow and status-oriented:
 
 ```text
 livePreview.requestCurrentDraftPreview({ project_id, conversation_id })
+livePreview.reloadCurrentPreview({ project_id, conversation_id })
 livePreview.stopCurrentPreview({ project_id, conversation_id })
 livePreview.readCurrentPreviewStatus({ project_id, conversation_id })
 ```
@@ -396,6 +397,24 @@ Evidence:
 - Live mode can start/stop/reload;
 - duplicated preview controls do not return;
 - newest chat remains visible.
+
+Current checkpoint:
+
+- add preview-specific `livePreview` preload namespace with
+  `requestCurrentDraftPreview`, `reloadCurrentPreview`,
+  `stopCurrentPreview`, and `readCurrentPreviewStatus`;
+- register a preview-specific IPC runtime with active-renderer binding and
+  exact `{ project_id, conversation_id }` payloads;
+- expose only renderer-safe `builder-live-preview-status-projection.v1`;
+- keep renderer source upload closed: renderer cannot pass `source_tree`, HTML,
+  paths, URLs, session partitions, WebContents ids, or preload data;
+- show `Static` / `Live` mode in the existing Preview panel, with Live
+  start/reload/stop controls;
+- when the main-owned preview source resolver is not connected, Live mode
+  shows a truthful unavailable state instead of pretending a browser is
+  running;
+- do not attach `WebContentsView` to UI yet, do not mutate source/Git/SQLite,
+  do not dispatch provider/tools, and do not save or admit revisions.
 
 ### Slice LP6: Packaged Live Preview Canary
 

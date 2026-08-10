@@ -28,6 +28,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
+  'infrastructure/builderDesktopLivePreviewPort.ts',
   'infrastructure/builderDesktopPlanReviewPort.ts',
   'infrastructure/builderDesktopPermissionPort.ts',
   'infrastructure/builderDesktopProjectWorkspacePort.ts',
@@ -136,6 +137,10 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'infrastructure', 'builderDesktopPlanReviewPort.ts'),
       'utf8',
     );
+    const livePreviewPort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopLivePreviewPort.ts'),
+      'utf8',
+    );
     const conversationController = readFileSync(
       join(BUILDER_ROOT, 'application', 'builderConversationController.ts'),
       'utf8',
@@ -173,6 +178,10 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('steer(request: Readonly<{ request_id: string; message: string }>)');
     expect(ports).toContain('queueFollowup(request: Readonly<{ request_id: string; message: string }>)');
     expect(ports).toContain('review(request: BuilderPlanReviewRequest)');
+    expect(ports).toContain('requestCurrentDraftPreview(request: BuilderLivePreviewRequest)');
+    expect(ports).toContain('reloadCurrentPreview(request: BuilderLivePreviewRequest)');
+    expect(ports).toContain('stopCurrentPreview(request: BuilderLivePreviewRequest)');
+    expect(ports).toContain('readCurrentPreviewStatus(request: BuilderLivePreviewRequest)');
     expect(ports).toContain('evaluate(request: BuilderPermissionRequest)');
     const portsWithoutLoadRevision = ports.replace(
       / {2}loadRevision\(request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>\): Promise<unknown>;\r?\n/u,
@@ -223,6 +232,11 @@ describe('Builder v2 architecture boundary', () => {
     expect(planReviewPort).toContain("review_admission: 'sqlite_recorded_no_execution'");
     expect(planReviewPort).not.toMatch(
       /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|source_tree|credential|plan_result_digest|review_id|reviewer_id|reviewed_at_ms/u,
+    );
+    expect(livePreviewPort).toContain("'requestCurrentDraftPreview'");
+    expect(livePreviewPort).toContain("source_tree_from_renderer: 'not_accepted'");
+    expect(livePreviewPort).not.toMatch(
+      /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|credential|entry_url|preview_origin|permission_id|revision_receipt/u,
     );
     expect(conversationController).toContain("port.read({ project_id: projectId })");
     expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);

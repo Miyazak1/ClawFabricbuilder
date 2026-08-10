@@ -69,4 +69,58 @@ describe('BuilderResultPanel', () => {
     act(() => expand?.click());
     expect(onExpandPreview).toHaveBeenCalledOnce();
   });
+
+  it('shows live preview controls without replacing static preview by default', () => {
+    const onRequestLivePreview = vi.fn();
+    const container = render(
+      <BuilderResultPanel
+        livePreviewStatus={{
+          status_version: 'builder-live-preview-status-projection.v1',
+          project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+          preview_kind: 'live_static_web',
+          status: 'unavailable',
+          can_start: false,
+          can_reload: false,
+          can_stop: false,
+          message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
+          unavailable_reason: 'preview_source_resolver_not_connected',
+          updated_at_ms: 10,
+          authority: {
+            live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+            renderer_authority: 'current_project_conversation_only',
+            active_renderer_required: true,
+            source_tree_from_renderer: 'not_accepted',
+            source_read: 'main_owned_preview_source_resolver_or_not_performed',
+            source_write: 'not_performed',
+            provider_dispatch: false,
+            tool_dispatch: false,
+            command_execution: false,
+            git_mutation: false,
+            sqlite_write: false,
+            permission_grant: false,
+            revision_admission: false,
+            save_admission: false,
+            electron_view_attachment: 'main_only_not_exposed_to_renderer',
+            preview_content_ipc: false,
+            node_integration: false,
+            preload: false,
+          },
+        }}
+        onRequestLivePreview={onRequestLivePreview}
+        placement="artifact"
+        projection={null}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-preview-unavailable="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-live-preview-panel="true"]')).toBeNull();
+    const liveMode = container.querySelector<HTMLButtonElement>('[data-builder-preview-mode="live"]');
+    act(() => liveMode?.click());
+    expect(container.querySelector('[data-builder-live-preview-panel="true"]')?.textContent)
+      .toContain('Live preview is unavailable until a main-owned preview source resolver is connected.');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-live-preview-start="true"]')?.disabled)
+      .toBe(true);
+    expect(onRequestLivePreview).not.toHaveBeenCalled();
+  });
 });

@@ -10,6 +10,10 @@ const { createBuilderPermissionIpcRuntime } = require('./builder-permission-ipc-
 const {
   createBuilderProviderContextDisclosureApprovalIpcRuntime,
 } = require('./builder-provider-context-disclosure-approval-ipc-runtime.cjs');
+const {
+  createBuilderLivePreviewIpcRuntime,
+  createUnavailableBuilderLivePreviewService,
+} = require('./builder-live-preview-ipc-runtime.cjs');
 const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
 const { createBuilderWindowControlsIpcRuntime } = require('./builder-window-controls-ipc-runtime.cjs');
 
@@ -239,6 +243,11 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
       mainWindowRef: () => mainWindow,
       providerContextDisclosureStatusService:
         generationRuntime.readProviderContextDisclosureStatusServiceForMainOnlyApprovalRuntime(),
+    }),
+    createBuilderLivePreviewIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      livePreviewService: createUnavailableBuilderLivePreviewService(),
     }),
     createBuilderWindowControlsIpcRuntime({
       ipcMain,

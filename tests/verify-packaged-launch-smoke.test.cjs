@@ -59,8 +59,9 @@ class FakePage {
 
   async evaluate() {
     return {
-      bridgeVersion: 'builder-preload.v22',
+      bridgeVersion: 'builder-preload.v23',
       codeGenerator: 'function',
+      livePreview: 'function',
       projectWorkspace: 'function',
       providerSettings: 'function',
       providerContextDisclosureApproval: 'function',

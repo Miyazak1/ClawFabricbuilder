@@ -44,6 +44,7 @@ import {
 } from '../application/builderProjectController';
 import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
+  type BuilderLivePreviewStatusProjection,
   type BuilderPlanReviewDecision,
   type BuilderPlanReviewRequest,
 } from '../application/builderPorts';
@@ -125,6 +126,8 @@ export type BuilderPageProps = {
   composerMode?: BuilderComposerMode | null;
   composerSubmitLocked?: boolean;
   liveOutput?: BuilderLiveOutputSnapshot | null;
+  livePreviewOperation?: 'starting' | 'reloading' | 'stopping' | null;
+  livePreviewStatus?: BuilderLivePreviewStatusProjection | null;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   answerFailureRecordedSuccess?: boolean;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
@@ -152,8 +155,11 @@ export type BuilderPageProps = {
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
+  onReloadLivePreview?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  onRequestLivePreview?: () => Promise<unknown> | void;
   onSave?: () => void;
+  onStopLivePreview?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenProjectLocation?: (projectId: string) => Promise<unknown> | void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
@@ -1899,13 +1905,17 @@ function BuilderArtifactSidebar({
   hasUnsavedDraft,
   inspectedRevisionReceiptDigest,
   liveOutput,
+  livePreviewOperation,
+  livePreviewStatus,
   onExpandPreview,
   onApproveProviderContextDisclosure,
   onInspectRevision,
   onOpenFile,
   onRefreshHistory,
+  onReloadLivePreview,
   onResizeKeyDown,
   onRestoreRevisionAsDraft,
+  onRequestLivePreview,
   onResizeStart,
   resizing,
   onSelectFile,
@@ -1922,6 +1932,7 @@ function BuilderArtifactSidebar({
   sourceFile,
   width,
   widthMaximum,
+  onStopLivePreview,
   workingProject,
   history,
 }: Readonly<{
@@ -1936,13 +1947,17 @@ function BuilderArtifactSidebar({
   history: BuilderProjectHistorySnapshot | null;
   inspectedRevisionReceiptDigest: string | null;
   liveOutput: BuilderLiveOutputSnapshot | null;
+  livePreviewOperation: 'starting' | 'reloading' | 'stopping' | null;
+  livePreviewStatus: BuilderLivePreviewStatusProjection | null;
   onExpandPreview: () => void;
   onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
   onRefreshHistory?: () => Promise<unknown> | void;
+  onReloadLivePreview?: () => Promise<unknown> | void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onRequestLivePreview?: () => Promise<unknown> | void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   resizing: boolean;
   onSelectFile?: (file: BuilderFileName) => void;
@@ -1959,6 +1974,7 @@ function BuilderArtifactSidebar({
   sourceFile: BuilderProjectSourceFile | null;
   width: number;
   widthMaximum: number;
+  onStopLivePreview?: () => Promise<unknown> | void;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
   return (
@@ -1987,7 +2003,12 @@ function BuilderArtifactSidebar({
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
         {activeTab === 'preview' ? (
           <BuilderResultPanel
+            livePreviewOperation={livePreviewOperation}
+            livePreviewStatus={livePreviewStatus}
             onExpandPreview={onExpandPreview}
+            onReloadLivePreview={onReloadLivePreview}
+            onRequestLivePreview={onRequestLivePreview}
+            onStopLivePreview={onStopLivePreview}
             panelRef={previewPanelRef}
             placement="artifact"
             projection={preview}
@@ -2081,9 +2102,12 @@ export function BuilderPage({
   onRefreshConversation,
   onRefreshHistory,
   onRejectDraft,
+  onReloadLivePreview,
   onReviewPlan,
+  onRequestLivePreview,
   onRestoreRevisionAsDraft,
   onSave,
+  onStopLivePreview,
   onInspectRevision,
   onShowCurrentRevision,
   onOpenSettings,
@@ -2095,6 +2119,8 @@ export function BuilderPage({
   approvedPlanContinuationFailure = null,
   answerFailureRecordedSuccess = false,
   liveOutput = null,
+  livePreviewOperation = null,
+  livePreviewStatus = null,
   planReviewFailure = null,
   planReviewInFlight = null,
   planReviewRecorded = null,
@@ -3171,14 +3197,18 @@ export function BuilderPage({
       history={history}
       inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
       liveOutput={visibleLiveOutput}
+      livePreviewOperation={livePreviewOperation}
+      livePreviewStatus={livePreviewStatus}
       onExpandPreview={openExpandedPreview}
       onApproveProviderContextDisclosure={onApproveProviderContextDisclosure}
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
       onRefreshHistory={onRefreshHistory}
+      onReloadLivePreview={onReloadLivePreview}
       onResizeKeyDown={resizeArtifactWithKeyboard}
       onResizeStart={startArtifactResize}
       onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
+      onRequestLivePreview={onRequestLivePreview}
       resizing={artifactResizing}
       onSelectFile={onSelectFile}
       onSourceOpenChange={setSourceDisclosureOpen}
@@ -3194,6 +3224,7 @@ export function BuilderPage({
       sourceFile={sourceFile}
       width={artifactWidth}
       widthMaximum={artifactWidthMaximum}
+      onStopLivePreview={onStopLivePreview}
       workingProject={workingProject}
     />
   ) : null;
