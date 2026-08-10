@@ -4587,6 +4587,11 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
         .toContain('Ready to execute current direction');
     });
+    await waitFor(() => {
+      const submitButton = container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]');
+      expect(submitButton?.getAttribute('aria-label')).toBe('Send');
+      expect(submitButton?.disabled).toBe(false);
+    });
 
     setComposerInstruction(container, '帮我做成计划');
     await waitForComposerSubmitReady(container);

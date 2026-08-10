@@ -1330,25 +1330,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [publishQueuedActiveRunFollowup, queuedActiveRunFollowup]);
 
   useEffect(() => {
-    if (lockedComposerSubmit === null) return undefined;
-    const dispatchLockedSubmit = () => {
-      const pending = lockedComposerSubmitRef.current;
-      if (pending === null) return;
-      if (workspaceEpochRef.current !== pending.epoch) {
-        publishLockedComposerSubmit(null);
-        return;
-      }
-      if (submitInFlightRef.current) return;
+    if (lockedComposerSubmit === null || submitInFlight) return;
+    const pending = lockedComposerSubmitRef.current;
+    if (pending === null) return;
+    if (workspaceEpochRef.current !== pending.epoch) {
       publishLockedComposerSubmit(null);
-      void submitInstructionTextRef.current?.(pending.instruction, pending.options);
-    };
-    const initialHandle = window.setTimeout(dispatchLockedSubmit, 0);
-    const intervalHandle = window.setInterval(dispatchLockedSubmit, 50);
-    return () => {
-      window.clearTimeout(initialHandle);
-      window.clearInterval(intervalHandle);
-    };
-  }, [lockedComposerSubmit, publishLockedComposerSubmit]);
+      return;
+    }
+    publishLockedComposerSubmit(null);
+    void submitInstructionTextRef.current?.(pending.instruction, pending.options);
+  }, [lockedComposerSubmit, publishLockedComposerSubmit, submitInFlight]);
 
   useEffect(() => {
     if (!catalogNewProjectPending) return;
@@ -2163,7 +2154,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           answerStartHeadSequence,
         );
       setAnswerFailureRecordedSuccess(recordedAnswerSuccess);
-      if (!recordedAnswerSuccess && !shouldClearSubmittedIdea(result)) setIdea(submittedIdea);
+      if (!recordedAnswerSuccess && !shouldClearSubmittedIdea(result)) {
+        setIdea((current) => (current.trim().length === 0 ? submittedIdea : current));
+      }
       setLiveOutput(null);
     } finally {
       if (workspaceEpochRef.current === commandEpoch) {
