@@ -3121,11 +3121,20 @@ async function askInitialChatQuestionViaUi(
       evidence.catalog.projects.length !== 0
       || evidence.current !== null
       || evidence.task_stream !== null
-    ) fail('canary_question_evidence_failed');
+    ) {
+      failWithDiagnostic('canary_question_evidence_failed', {
+        catalog_project_count: evidence.catalog.projects.length,
+        current_present: evidence.current !== null,
+        task_stream_present: evidence.task_stream !== null,
+      });
+    }
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) {
       if (error.code === 'canary_question_evidence_failed') throw error;
-      fail('canary_question_evidence_failed');
+      failWithDiagnostic('canary_question_evidence_failed', {
+        underlying_code: error.code,
+        underlying_stage: error.stage,
+      });
     }
     fail('canary_question_evidence_failed');
   }
@@ -3828,6 +3837,7 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
       const checkRunMethodNames = [
         'readCurrentDraftAvailableChecks',
         'approveAndRunCurrentDraftCheck',
+        'skipCurrentDraftCheck',
       ];
       const checkRunMethodsAreExact = checkRunKeys.length === checkRunMethodNames.length
         && checkRunMethodNames.every((name, index) => {

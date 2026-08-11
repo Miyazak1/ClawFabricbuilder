@@ -2059,6 +2059,7 @@ function installBridge(page) {
     checkRun: {
       async readCurrentDraftAvailableChecks() { throw new Error('must not read checks through bridge'); },
       async approveAndRunCurrentDraftCheck() { throw new Error('must not run checks through bridge'); },
+      async skipCurrentDraftCheck() { throw new Error('must not skip checks through bridge'); },
     },
     livePreview: {
       async requestCurrentDraftPreview() { throw new Error('must not start live preview through bridge'); },
