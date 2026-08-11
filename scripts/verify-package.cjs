@@ -399,6 +399,7 @@ const generationChannels = [
   'clawfabric-builder:code-generator:answer',
   'clawfabric-builder:code-generator:answer-draft',
   'clawfabric-builder:code-generator:restore-draft',
+  'clawfabric-builder:code-generator:restore-revision-as-draft',
   'clawfabric-builder:code-generator:reject-draft',
   'clawfabric-builder:code-generator:cancel',
   'clawfabric-builder:code-generator:steer',
@@ -426,6 +427,7 @@ const providerContextDisclosureApprovalChannels = [
 const checkRunChannels = [
   'clawfabric-builder:check-run:read-current-draft-available',
   'clawfabric-builder:check-run:approve-current-draft-check',
+  'clawfabric-builder:check-run:skip-current-draft-check',
 ];
 const livePreviewChannels = [
   'clawfabric-builder:live-preview:request-current-draft',
@@ -620,15 +622,15 @@ exactObjectKeys(livePreviewBridge, [
 ]);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
-  ...Array.from({ length: 28 }, () => 'invoke'),
+  ...Array.from({ length: 29 }, () => 'invoke'),
   'on',
   'removeListener',
   'on',
   'removeListener',
-  ...Array.from({ length: 5 }, () => 'invoke'),
+  ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 13 }, () => 'invoke'),
+  ...Array.from({ length: 14 }, () => 'invoke'),
 ]);
 assert.deepEqual(forbiddenRendererReferences, []);
 assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
@@ -682,17 +684,19 @@ assert.equal(preloadConstants.get('APPROVE_PLAN_SOURCE_READ_CHANNEL'), generatio
 assert.equal(preloadConstants.get('PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL'), generationChannels[6]);
 assert.equal(preloadConstants.get('APPROVE_CURRENT_PROJECT_WRITE_CHANNEL'), generationChannels[7]);
 assert.equal(preloadConstants.get('SUBMIT_CHANNEL'), generationChannels[8]);
-assert.equal(preloadConstants.get('GENERATION_STARTED_CHANNEL'), generationChannels[9]);
-assert.equal(preloadConstants.get('GENERATION_OUTPUT_CHANNEL'), generationChannels[10]);
-assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[11]);
-assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[12]);
-assert.equal(preloadConstants.get('ANSWER_DRAFT_CHANNEL'), generationChannels[13]);
-assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[14]);
-assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[15]);
-assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[16]);
-assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[17]);
-assert.equal(preloadConstants.get('QUEUE_FOLLOWUP_CHANNEL'), generationChannels[18]);
-assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[19]);
+assert.equal(preloadConstants.get('CLASSIFY_INTENT_CHANNEL'), generationChannels[9]);
+assert.equal(preloadConstants.get('GENERATION_STARTED_CHANNEL'), generationChannels[10]);
+assert.equal(preloadConstants.get('GENERATION_OUTPUT_CHANNEL'), generationChannels[11]);
+assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[12]);
+assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[13]);
+assert.equal(preloadConstants.get('ANSWER_DRAFT_CHANNEL'), generationChannels[14]);
+assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[15]);
+assert.equal(preloadConstants.get('RESTORE_REVISION_AS_DRAFT_CHANNEL'), generationChannels[16]);
+assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[17]);
+assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[18]);
+assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[19]);
+assert.equal(preloadConstants.get('QUEUE_FOLLOWUP_CHANNEL'), generationChannels[20]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[21]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
@@ -1315,7 +1319,7 @@ assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-d
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 46);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 47);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
