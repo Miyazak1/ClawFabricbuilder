@@ -111,7 +111,7 @@ enables work but never implies work intent.
 
 ## Routing Pipeline
 
-Every submitted composer message follows this deterministic pipeline:
+Every submitted composer message follows this controlled pipeline:
 
 ```text
 1. Normalize message.
@@ -123,6 +123,61 @@ Every submitted composer message follows this deterministic pipeline:
 7. Dispatch answer, clarify, update_brief, plan, or build.
 8. Record route decision evidence.
 ```
+
+### Whole-Sentence Semantic Classification
+
+Keyword and regular-expression rules are only fail-safe fast paths. They are
+not the final natural-language classifier. A phrase such as `做一个实施计划`
+and a phrase such as `做一个计划管理页面` share words but request different
+outcomes. Builder must classify the complete sentence together with bounded
+product state.
+
+The first semantic classifier request is main-owned and read-only. It may send
+only:
+
+- the current complete composer instruction;
+- whether a workspace is bound;
+- whether prior build context or a pending build confirmation exists;
+- whether an unsaved draft exists;
+- the current Working Context status vocabulary, without WorkingBrief text.
+
+Each composer submit may issue at most one semantic classifier provider
+request. A malformed response is not repaired through a second provider call;
+it fails closed to clarification.
+
+The main process binds a successful classification to the exact generation
+request and semantic context digest. It is held as a bounded, one-use receipt
+until the matching answer, plan proposal, or build admission consumes it. The
+renderer may display the safe classification but cannot turn it into durable
+route truth; the consumed main-owned receipt supplies the recorded
+`route_decision_hint`.
+
+It must not send source files, paths, conversation history, WorkingBrief text,
+provider credentials, ids, receipts, or raw permission facts. The classifier
+returns only `answer | clarify | update_brief | plan | build`, confidence, and a
+fixed reason code. It has no source-read, source-write, tool, command,
+permission, Git, SQLite, or Save Version authority.
+
+The user-visible Plan mode is a hard override and does not require semantic
+classification. For ordinary natural language, low-confidence, malformed, or
+ambiguous classification fails closed to clarification before any permission
+or mutation gate. A semantic `build` result still has to pass the existing
+workspace and main-owned write-permission gates.
+
+Deterministic controls run before semantic classification. Active-run
+cancel/queue behavior, an explicit composer mode, and continuation of a plan
+already awaiting review do not spend a classifier request and cannot be
+overridden by its result.
+
+The complete current instruction is intentionally disclosed by this consent.
+If the user pastes source, history, or secret material into that instruction,
+that pasted text is part of the disclosed instruction; Builder must not add a
+second copy or infer adjacent private context.
+
+This bounded provider egress was explicitly approved for the current complete
+instruction and fixed product state only. Expanding it to conversation history,
+WorkingBrief content, source context, or paths requires a separate disclosure
+and consent checkpoint.
 
 Route context includes:
 

@@ -87,6 +87,20 @@ export type BuilderComposerRouteDecisionEvidenceInput = Readonly<{
   createdAt: string;
 }>;
 
+export type BuilderComposerSemanticRouteClassification = Readonly<{
+  route: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
+  confidence: BuilderComposerIntentConfidence;
+  needs_confirmation: boolean;
+  reason_code:
+    | 'asks_for_information'
+    | 'asks_to_discuss_or_refine'
+    | 'updates_working_direction'
+    | 'requests_plan_or_proposal'
+    | 'requests_source_change'
+    | 'ambiguous_between_plan_and_build';
+  matched_signal: 'semantic_route';
+}>;
+
 const READ_ONLY_PATTERNS = Object.freeze([
   /^(?:hi|hello|hey|你好|您好|在吗|你在吗|在不在)[.!?。！？]*$/u,
   /^(?:你现在在做什么|现在在做什么|你在做什么)[?？。!！]*$/u,
@@ -227,6 +241,23 @@ export function routeBuilderComposerIntent(
   context: BuilderComposerIntentContext = {},
 ): BuilderComposerIntentRoute {
   return decideBuilderComposerIntent(instruction, context).route;
+}
+
+export function decideBuilderComposerSemanticIntent(
+  classification: BuilderComposerSemanticRouteClassification,
+  context: BuilderComposerIntentContext = {},
+): BuilderComposerRouteDecision {
+  const route = classification.needs_confirmation || classification.confidence === 'low'
+    ? 'clarify'
+    : classification.route;
+  return createDecision(route, context, {
+    confidence: classification.confidence,
+    matchedSignals: ['semantic_route'],
+    downgradedFrom: route === 'clarify' && classification.route === 'build' ? 'build' : null,
+    downgradeReason: route === 'clarify' && classification.route === 'build'
+      ? 'ambiguous_build_intent'
+      : null,
+  });
 }
 
 export function createBuilderComposerRouteDecisionEvidence(

@@ -34,6 +34,7 @@ test('defines the fixed public route-decision signal vocabulary', () => {
     'local_file_artifact',
     'pending_build_confirmation',
     'read_only',
+    'semantic_route',
     'vague_change',
     'working_context_state',
     'work_discussion',
@@ -42,6 +43,7 @@ test('defines the fixed public route-decision signal vocabulary', () => {
   assert.equal(isPublicBuilderRouteDecisionSignal('clear_build'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('read_only'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('working_context_state'), true);
+  assert.equal(isPublicBuilderRouteDecisionSignal('semantic_route'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('provider:deepseek'), false);
   assert.equal(isPublicBuilderRouteDecisionSignal('credential:secret'), false);
   assert.equal(isPublicBuilderRouteDecisionSignal('builder-route-decision:123'), false);

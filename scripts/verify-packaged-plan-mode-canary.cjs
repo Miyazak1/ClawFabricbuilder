@@ -20,6 +20,7 @@ const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-de
 
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v1';
+const SEMANTIC_PLAN_INSTRUCTION = '帮我做一个静态技术博客实施计划';
 const PLAN_MODE_INSTRUCTION = '我打算做一个技术博客，静态的，帮我做成计划';
 
 function fail(code, diagnostic = undefined) {
@@ -153,6 +154,49 @@ async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
   return approvedCurrentProjectWrite;
 }
 
+async function verifyNaturalLanguagePlanAndReject(page, providerServer, userDataPath) {
+  await page.locator(SELECTORS.idea).fill(SEMANTIC_PLAN_INSTRUCTION);
+  await waitForSubmitEnabled(page);
+  await page.locator(SELECTORS.submitTurn).click();
+  const approvedSourceRead = await approvePlanSourceReadIfRequested(page);
+  const planReady = page.locator(SELECTORS.planReviewActions).
+    waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'plan_ready', () => 'plan_timeout');
+  const alertReady = page.getByRole('alert').waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'alert_ready', () => 'alert_timeout');
+  if (await Promise.race([planReady, alertReady]) !== 'plan_ready') {
+    fail('semantic_plan_not_ready', await capturePlanModeDiagnostic(
+      page,
+      providerServer,
+      userDataPath,
+    ));
+  }
+  const composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
+  const composerDispatch = await page.locator(SELECTORS.composer).
+    getAttribute('data-builder-route-dispatch');
+  const providerRequests = providerServer.snapshot();
+  if (!providerRequests.some((request) => (
+    request.response_kind === 'builder_semantic_route_classification'
+  ))) {
+    fail('semantic_plan_classifier_request_missing', { provider_requests: providerRequests });
+  }
+  if (!providerRequests.some((request) => request.response_kind === 'builder_project_plan_proposal')) {
+    fail('semantic_plan_provider_request_missing', { provider_requests: providerRequests });
+  }
+  if (composerRoute !== 'plan' || composerDispatch !== 'plan') {
+    fail('semantic_plan_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute });
+  }
+  await clickByRole(page, 'button', 'Reject');
+  await page.locator(SELECTORS.planRejected).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.planReviewActions).waitFor({ state: 'hidden', timeout: 30_000 });
+  await waitForSubmitEnabled(page);
+  return Object.freeze({
+    plan_source_read_approved: approvedSourceRead,
+    semantic_classifier_observed: true,
+    semantic_plan_rejected: true,
+  });
+}
+
 function makeUserDataRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), PACKAGED_CANARY_USER_DATA_PREFIX));
 }
@@ -194,6 +238,11 @@ async function run() {
     }), gate);
     await clickByRole(page, 'button', 'New project');
     await bindNewProjectWorkspace(page);
+    const semanticPlan = await verifyNaturalLanguagePlanAndReject(
+      page,
+      providerServer,
+      userDataPath,
+    );
     await page.locator(SELECTORS.idea).fill(PLAN_MODE_INSTRUCTION);
     await waitForSubmitEnabled(page);
     await page.locator(SELECTORS.composerAddMenuButton).click();
@@ -241,6 +290,9 @@ async function run() {
         createHash('sha256').update(PLAN_MODE_INSTRUCTION).digest('hex')}`,
       plan_mode_enabled: true,
       plan_mode_chip_visible: true,
+      semantic_classifier_observed: semanticPlan.semantic_classifier_observed,
+      semantic_plan_rejected: semanticPlan.semantic_plan_rejected,
+      semantic_plan_source_read_approved: semanticPlan.plan_source_read_approved,
       plan_source_read_approved: approvedSourceRead,
       plan_review_actions_visible: true,
       plan_approved: true,
@@ -279,5 +331,6 @@ if (require.main === module) {
 module.exports = Object.freeze({
   PLAN_MODE_INSTRUCTION,
   RESULT_VERSION,
+  SEMANTIC_PLAN_INSTRUCTION,
   run,
 });

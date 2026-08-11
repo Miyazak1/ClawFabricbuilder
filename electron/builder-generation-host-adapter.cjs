@@ -18,6 +18,11 @@ const {
 const {
   sanitizeBuilderProviderConfig,
 } = require('./builder-provider-config.cjs');
+const {
+  createBuilderSemanticRoutePromptDescriptor,
+  projectBuilderSemanticRouteClassification,
+  sanitizeBuilderSemanticRouteRequest,
+} = require('./builder-semantic-route-classifier.cjs');
 
 const BUILDER_GENERATION_AVAILABILITY_VERSION = 'builder-generation-availability.v1';
 const BUILDER_PROVIDER_SECRET_RESOLUTION_VERSION = 'builder-provider-secret-resolution.v1';
@@ -291,6 +296,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
   const draftContinuationInFlight = new Map();
   const explanationInFlight = new Map();
   const planInFlight = new Map();
+  const semanticRouteInFlight = new Map();
 
   function providerAuthority() {
     try {
@@ -737,6 +743,44 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  async function runSemanticRoute(request, controller) {
+    let descriptor;
+    try {
+      descriptor = createBuilderSemanticRoutePromptDescriptor(request);
+    } catch {
+      fail('builder_generation_request_invalid');
+    }
+    if (controller.signal.aborted) fail('builder_generation_cancelled');
+    const { config, credential } = providerAuthority();
+    async function requestClassificationTransport() {
+      let transportResult;
+      try {
+        transportResult = await Reflect.apply(transport, undefined, [{
+          base_url: config.base_url,
+          model: config.model,
+          credential,
+          messages: [
+            { role: 'system', content: descriptor.system_instruction },
+            { role: 'user', content: descriptor.user_instruction },
+          ],
+          timeout_ms: Math.min(config.timeout_ms, 30_000),
+          temperature: 0,
+          max_tokens: Math.min(config.max_tokens ?? 256, 256),
+        }, { signal: controller.signal }]);
+      } catch (error) {
+        mapTransportError(error, controller.signal);
+      }
+      if (controller.signal.aborted) fail('builder_generation_cancelled');
+      return sanitizeTransportResult(transportResult);
+    }
+    const generatedText = await requestClassificationTransport();
+    try {
+      return projectBuilderSemanticRouteClassification({ request, generated_text: generatedText });
+    } catch {
+      fail('builder_generation_structured_response_invalid');
+    }
+  }
+
   function generate(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -807,19 +851,39 @@ function createBuilderGenerationHostAdapter(options = {}) {
     return entry.promise;
   }
 
+  function classifyIntent(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderSemanticRouteRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationHostAdapterError('builder_generation_request_invalid'));
+    }
+    const existing = semanticRouteInFlight.get(request.request_digest);
+    if (existing) return existing.promise;
+    const controller = new AbortController();
+    const entry = { controller, promise: null };
+    entry.promise = runSemanticRoute(request, controller).finally(() => {
+      if (semanticRouteInFlight.get(request.request_digest) === entry) {
+        semanticRouteInFlight.delete(request.request_digest);
+      }
+    });
+    semanticRouteInFlight.set(request.request_digest, entry);
+    return entry.promise;
+  }
+
   function cancel(rawRequest) {
     const requestId = sanitizeCancelRequest(rawRequest);
     const entry = inFlight.get(requestId);
     const draftContinuationEntry = draftContinuationInFlight.get(requestId);
     const explanationEntry = explanationInFlight.get(requestId);
     const planEntry = planInFlight.get(requestId);
-    if (!entry && !draftContinuationEntry && !explanationEntry && !planEntry) {
+    const semanticRouteEntry = semanticRouteInFlight.get(requestId);
+    if (!entry && !draftContinuationEntry && !explanationEntry && !planEntry && !semanticRouteEntry) {
       return Object.freeze({ request_id: requestId, cancelled: false });
     }
     if (entry) entry.controller.abort();
     if (draftContinuationEntry) draftContinuationEntry.controller.abort();
     if (explanationEntry) explanationEntry.controller.abort();
     if (planEntry) planEntry.controller.abort();
+    if (semanticRouteEntry) semanticRouteEntry.controller.abort();
     return Object.freeze({ request_id: requestId, cancelled: true });
   }
 
@@ -842,7 +906,15 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  return Object.freeze({ generate, generateDraftContinuation, explain, plan, cancel, availability });
+  return Object.freeze({
+    generate,
+    generateDraftContinuation,
+    explain,
+    plan,
+    classifyIntent,
+    cancel,
+    availability,
+  });
 }
 
 module.exports = Object.freeze({

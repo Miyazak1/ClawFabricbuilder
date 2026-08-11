@@ -1629,6 +1629,8 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
     plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
     plan_project_understanding: 'main_only_refresh_before_plan_provider_no_prompt_egress',
+    semantic_route_classification:
+      'main_only_current_instruction_bounded_state_provider_request_no_source_or_mutation',
     draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
     draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
     draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
@@ -1640,6 +1642,85 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
+  });
+});
+
+test('classifies whole-sentence intent with bounded product state and no source context', async () => {
+  const transportInputs = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories(),
+    transport: async (input) => {
+      transportInputs.push(input);
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify({
+          kind: 'builder_semantic_route_classification',
+          route: 'plan',
+          confidence: 'high',
+          reason_code: 'requests_plan_or_proposal',
+        }),
+      };
+    },
+  });
+
+  const result = await service.classify_intent({
+    instruction: '帮我做一个静态技术博客实施计划',
+    existing_project_id: PROJECT_ID,
+  });
+
+  assert.equal(result.route, 'plan');
+  assert.equal(result.matched_signal, 'semantic_route');
+  assert.equal(result.authority.source_read, 'not_performed');
+  assert.equal(result.authority.source_write, 'not_performed');
+  assert.equal(result.authority.permission_grant, false);
+  assert.equal(transportInputs.length, 1);
+  assert.equal(transportInputs[0].temperature, 0);
+  assert.equal(transportInputs[0].max_tokens, 256);
+  const providerRequest = JSON.stringify(transportInputs[0].messages);
+  assert.match(providerRequest, /帮我做一个静态技术博客实施计划/u);
+  assert.doesNotMatch(providerRequest, /source_tree|conversation_events|working_brief|credential/u);
+});
+
+test('consumes the main-owned semantic classification as the durable answer route decision', async () => {
+  const lifecycle = conversationService();
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async (input) => {
+      const messages = JSON.stringify(input.messages);
+      if (messages.includes('builder_semantic_route_classification')) {
+        return {
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify({
+            kind: 'builder_semantic_route_classification',
+            route: 'answer',
+            confidence: 'high',
+            reason_code: 'asks_for_information',
+          }),
+        };
+      }
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation({
+          explanation: 'The semantic route remains main-owned and read-only.',
+        })),
+      };
+    },
+  });
+  const instruction = '解释一下语义路由如何工作';
+  await service.classify_intent({ instruction, existing_project_id: null });
+
+  const result = await service.answer(request({ instruction }));
+
+  assert.equal(result.result_kind, 'explanation');
+  assert.deepEqual(lifecycle.calls.question[0].route_decision_hint, {
+    route: 'answer',
+    confidence: 'high',
+    matched_signals: ['semantic_route'],
+    downgraded_from: null,
+    downgrade_reason: null,
+    required_permissions: [],
+    permission_result: 'not_required',
+    dispatch: 'reply',
   });
 });
 

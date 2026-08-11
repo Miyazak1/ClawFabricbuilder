@@ -410,6 +410,7 @@ async function setup(options: Readonly<{
   checkRunAvailable?: boolean;
   checkRunStatus?: 'passed' | 'failed' | 'incomplete';
   uncheckedUntilSkip?: boolean;
+  semanticIntentRoute?: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
     ? await createReadWire(await createSourceTree([
@@ -1150,9 +1151,41 @@ async function setup(options: Readonly<{
       current: readWire.current,
     };
   });
+  const classifyIntent = vi.fn(async () => ({
+    version: 'builder-generation-ipc-result.v1',
+    ok: true,
+    result: {
+      result_version: 'builder-semantic-route-classification.v1',
+      request_digest: `sha256:${'a'.repeat(64)}`,
+      route: options.semanticIntentRoute,
+      confidence: 'high',
+      needs_confirmation: false,
+      reason_code: options.semanticIntentRoute === 'plan'
+        ? 'requests_plan_or_proposal'
+        : options.semanticIntentRoute === 'build'
+          ? 'requests_source_change'
+          : 'asks_to_discuss_or_refine',
+      matched_signal: 'semantic_route',
+      authority: {
+        classifier: 'main_owned_provider_semantic_route_v1',
+        context_scope: 'current_instruction_and_bounded_product_state',
+        conversation_text: 'not_disclosed',
+        working_brief_text: 'not_disclosed',
+        source_read: 'not_performed',
+        source_write: 'not_performed',
+        tool_dispatch: false,
+        command_execution: false,
+        permission_grant: false,
+        git_mutation: false,
+        sqlite_write: false,
+        save_admission: false,
+      },
+    },
+  }));
   const bridge: BuilderDesktopBridgeRoot = {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
     codeGenerator: {
+      ...(options.semanticIntentRoute === undefined ? {} : { classifyIntent }),
       submit,
       generate,
       continueDraft,
@@ -1371,6 +1404,7 @@ async function setup(options: Readonly<{
   });
   return {
     approveAndRunCurrentDraftCheck,
+    classifyIntent,
     skipCurrentDraftCheck,
     container,
     answer,
@@ -3650,6 +3684,7 @@ describe('BuilderApp v2', () => {
   it('approves a pending plan from a contextual execution phrase through review authority', async () => {
     const {
       answer,
+      classifyIntent,
       container,
       createLocalProject,
       generate,
@@ -3694,6 +3729,7 @@ describe('BuilderApp v2', () => {
       });
     });
     expect(answer).not.toHaveBeenCalled();
+    expect(classifyIntent).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -4512,6 +4548,67 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('uses whole-sentence semantic routing for an implementation plan deliverable', async () => {
+    const {
+      classifyIntent,
+      container,
+      generate,
+      preparePlanSourceReadApproval,
+      proposePlan,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      planAfterPropose: true,
+      semanticIntentRoute: 'plan',
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '帮我做一个静态技术博客实施计划');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
+        instruction: '帮我做一个静态技术博客实施计划',
+      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
+        instruction: '帮我做一个静态技术博客实施计划',
+      });
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
+  });
+
+  it('keeps a plan management page as a build artifact after semantic routing', async () => {
+    const { classifyIntent, container, proposePlan, submit } = await setup({
+      initiallySaved: true,
+      semanticIntentRoute: 'build',
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '做一个计划管理页面');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
+        instruction: '做一个计划管理页面',
+      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith({
+        instruction: '做一个计划管理页面',
+      });
+    });
+    expect(proposePlan).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
   });
 
   it('routes natural-language plan requests for an unsaved bound workspace without submitting a draft', async () => {

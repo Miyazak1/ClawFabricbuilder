@@ -15,6 +15,7 @@ const PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL =
 const APPROVE_CURRENT_PROJECT_WRITE_CHANNEL =
   'clawfabric-builder:code-generator:approve-current-project-write';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
+const CLASSIFY_INTENT_CHANNEL = 'clawfabric-builder:code-generator:classify-intent';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
@@ -43,6 +44,7 @@ const OPTION_KEYS = Object.freeze([
   'prepareCurrentProjectWriteApproval',
   'approveCurrentProjectWrite',
   'submit',
+  'classifyIntent',
   'retry',
   'answer',
   'answerDraft',
@@ -384,6 +386,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.submit);
         },
       }),
+      classifyIntent: Object.freeze({
+        channel: CLASSIFY_INTENT_CHANNEL,
+        method: 'classifyIntent',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.classifyIntent);
+        },
+      }),
       retry: Object.freeze({
         channel: RETRY_GENERATE_CHANNEL,
         method: 'retry',
@@ -465,6 +474,7 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'prepareCurrentProjectWriteApproval',
       'approveCurrentProjectWrite',
       'submit',
+      'classifyIntent',
       'retry',
       'answer',
       'answerDraft',
@@ -498,6 +508,7 @@ module.exports = Object.freeze({
   PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   SUBMIT_CHANNEL,
+  CLASSIFY_INTENT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   RETRY_GENERATE_CHANNEL,

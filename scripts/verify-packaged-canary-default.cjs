@@ -54,6 +54,25 @@ function explanationOutput() {
   });
 }
 
+function semanticRouteOutput(instruction) {
+  const planArtifact = /(?:计划管理|计划表|方案展示)(?:页面|页|应用|系统)?/u.test(instruction);
+  const asksForPlan = !planArtifact
+    && /(?:实施计划|实现计划|改版方案|优化方案|重构方案|制定.{0,12}计划|做成计划)/u.test(instruction);
+  const asksQuestion = /^(?:what|why|how|can you explain|什么|为什么|怎么|如何)/iu.test(instruction)
+    || /[?？]$/u.test(instruction);
+  const route = asksForPlan ? 'plan' : asksQuestion ? 'answer' : 'build';
+  return JSON.stringify({
+    kind: 'builder_semantic_route_classification',
+    route,
+    confidence: 'high',
+    reason_code: route === 'plan'
+      ? 'requests_plan_or_proposal'
+      : route === 'answer'
+        ? 'asks_for_information'
+        : 'requests_source_change',
+  });
+}
+
 function planOutput() {
   return JSON.stringify({
     kind: 'builder_project_plan_proposal',
@@ -140,6 +159,21 @@ function outputForRequest(body, state) {
   const messageContents = messages
     .map((message) => (typeof message?.content === 'string' ? message.content : ''))
     .filter((content) => content.length > 0);
+  const semanticRouteRequested = messageContents.some((content) => (
+    content.includes('builder_semantic_route_classification')
+  ));
+  if (semanticRouteRequested) {
+    let instruction = '';
+    for (const content of messageContents) {
+      try {
+        const parsed = JSON.parse(content);
+        if (typeof parsed?.instruction === 'string') instruction = parsed.instruction;
+      } catch {
+        // The system message is plain text.
+      }
+    }
+    return semanticRouteOutput(instruction);
+  }
   for (const content of messageContents) {
     try {
       const parsed = JSON.parse(content);

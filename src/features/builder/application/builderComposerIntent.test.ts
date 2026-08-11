@@ -4,12 +4,57 @@ import routeDecisionCases from '../../../test/builderRouteDecisionCases.json';
 import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
+  decideBuilderComposerSemanticIntent,
   isBuilderComposerContextualBuildIntent,
   isBuilderComposerExplicitBriefIntent,
   routeBuilderComposerIntent,
 } from './builderComposerIntent';
 
 describe('routeBuilderComposerIntent', () => {
+  it('uses whole-sentence semantic meaning instead of isolated plan words', () => {
+    const plan = decideBuilderComposerSemanticIntent({
+      route: 'plan',
+      confidence: 'high',
+      needs_confirmation: false,
+      reason_code: 'requests_plan_or_proposal',
+      matched_signal: 'semantic_route',
+    }, { hasWorkspace: true, hasWritePermission: true });
+    const build = decideBuilderComposerSemanticIntent({
+      route: 'build',
+      confidence: 'high',
+      needs_confirmation: false,
+      reason_code: 'requests_source_change',
+      matched_signal: 'semantic_route',
+    }, { hasWorkspace: true, hasWritePermission: true });
+
+    expect(plan).toMatchObject({
+      route: 'plan',
+      dispatch: 'plan',
+      matchedSignals: ['semantic_route'],
+    });
+    expect(build).toMatchObject({
+      route: 'build',
+      dispatch: 'build',
+      matchedSignals: ['semantic_route'],
+    });
+  });
+
+  it('fails low-confidence semantic execution closed to clarification', () => {
+    expect(decideBuilderComposerSemanticIntent({
+      route: 'build',
+      confidence: 'low',
+      needs_confirmation: true,
+      reason_code: 'ambiguous_between_plan_and_build',
+      matched_signal: 'semantic_route',
+    }, { hasWorkspace: true, hasWritePermission: true })).toMatchObject({
+      route: 'clarify',
+      dispatch: 'reply',
+      downgradedFrom: 'build',
+      downgradeReason: 'ambiguous_build_intent',
+      matchedSignals: ['semantic_route'],
+    });
+  });
+
   it.each([
     'hi',
     '你好',

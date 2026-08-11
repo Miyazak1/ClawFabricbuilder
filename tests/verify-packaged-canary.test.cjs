@@ -1590,7 +1590,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v25',
+      bridge_version: 'builder-preload.v26',
       legacy_namespaces_absent: true,
       check_run_namespace: 'current_draft_identity_methods_only',
       live_preview_namespace: 'current_preview_control_methods_only',
@@ -1901,8 +1901,9 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v25',
+    bridgeVersion: 'builder-preload.v26',
     codeGenerator: {
+      classifyIntent() { throw new Error('must not route through bridge'); },
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
       continueDraft() { throw new Error('must not write through bridge'); },
@@ -2647,7 +2648,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v25');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v26');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -6325,6 +6326,25 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
     assert.equal(response.status, 200);
     return JSON.parse(JSON.parse(await response.text()).choices[0].message.content);
   }
+  async function semanticRouteRequest(instruction) {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Return builder_semantic_route_classification.' },
+          {
+            role: 'user',
+            content: JSON.stringify({ instruction, product_state: { has_workspace: true } }),
+          },
+        ],
+        model: 'local-canary-model',
+        stream: false,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    return JSON.parse(JSON.parse(await response.text()).choices[0].message.content);
+  }
   const explanation = JSON.parse(JSON.parse(await request('builder_conversation_explanation')).choices[0].message.content);
   assert.equal(explanation.kind, 'builder_conversation_explanation');
   const plan = JSON.parse(JSON.parse(await request('builder_project_plan_proposal')).choices[0].message.content);
@@ -6344,6 +6364,14 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
   assert.equal(
     (await repairRequest('builder_conversation_explanation')).kind,
     'builder_conversation_explanation',
+  );
+  assert.equal(
+    (await semanticRouteRequest('帮我做一个静态技术博客实施计划')).route,
+    'plan',
+  );
+  assert.equal(
+    (await semanticRouteRequest('做一个计划管理页面')).route,
+    'build',
   );
   const firstCode = JSON.parse(JSON.parse(await request('builder_code_change_operations')).choices[0].message.content);
   const secondCodeStream = await request('builder_code_change_operations', true);
@@ -6388,6 +6416,9 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(defaultSource, /127\.0\.0\.1/u);
   assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
   assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
+  assert.match(planModeSource, /verifyNaturalLanguagePlanAndReject/u);
+  assert.match(planModeSource, /builder_semantic_route_classification/u);
+  assert.match(planModeSource, /semantic_plan_rejected:\s*true/u);
   assert.match(planModeSource, /clickByRole\(page,\s*['"]button['"],\s*['"]Approve plan['"]\)/u);
   assert.match(planModeSource, /approveCurrentProjectWriteIfRequested/u);
   assert.match(planModeSource, /SELECTORS\.unsavedDraft/u);
@@ -6395,7 +6426,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v25['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v26['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);

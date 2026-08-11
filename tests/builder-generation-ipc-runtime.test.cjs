@@ -15,6 +15,7 @@ const {
   APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
+  CLASSIFY_INTENT_CHANNEL,
   CONTINUE_DRAFT_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
@@ -181,6 +182,7 @@ function runtimeWithService(service, probes = {}) {
           ANSWER_CHANNEL,
           ANSWER_DRAFT_CHANNEL,
           CONTINUE_DRAFT_CHANNEL,
+          CLASSIFY_INTENT_CHANNEL,
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
           PROPOSE_PLAN_CHANNEL,
@@ -216,6 +218,7 @@ function runtimeWithService(service, probes = {}) {
                 invoke: (_event, body) => options.approveCurrentProjectWrite(body),
               },
               submit: { invoke: (_event, body) => options.submit(body) },
+              classifyIntent: { invoke: (_event, body) => options.classifyIntent(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
               answerDraft: { invoke: (_event, body) => options.answerDraft(body) },
@@ -1127,6 +1130,7 @@ test('registers exactly the controlled generation channels and keeps provider st
     PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
     APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
     SUBMIT_CHANNEL,
+    CLASSIFY_INTENT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
     ANSWER_DRAFT_CHANNEL,
@@ -2466,6 +2470,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     ANSWER_DRAFT_CHANNEL,
     ANSWER_CHANNEL,
     RETRY_GENERATE_CHANNEL,
+    CLASSIFY_INTENT_CHANNEL,
     SUBMIT_CHANNEL,
     APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
     PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
@@ -3095,6 +3100,7 @@ test('keeps selected project identity in main and accepts only instruction over 
   const draftContinuationAdmissions = [];
   const approvedPlanGenerated = [];
   const submitted = [];
+  const classified = [];
   const retried = [];
   const answered = [];
   const draftAnswers = [];
@@ -3133,6 +3139,10 @@ test('keeps selected project identity in main and accepts only instruction over 
     submit(body) {
       submitted.push(body);
       return Promise.resolve({ request_id: body.request_digest });
+    },
+    classify_intent(body) {
+      classified.push(body);
+      return Promise.resolve({ route: 'plan' });
     },
     prepare_draft_continuation(body) {
       draftContinuationAdmissions.push(body);
@@ -3218,6 +3228,21 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(submitted[0].existing_project_id, PROJECT_ID);
   assert.equal(submitted[0].instruction, 'Continue selected project.');
   assert.equal(submitted[0].request_digest, hostRequestDigest('Continue selected project.', PROJECT_ID));
+  await ipcMain.handlers.get(CLASSIFY_INTENT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext('({ instruction: "帮我做一个静态技术博客实施计划" })', runtimeModule.context),
+  );
+  assert.equal(classified.length, 1);
+  assert.equal(classified[0].instruction, '帮我做一个静态技术博客实施计划');
+  assert.equal(classified[0].existing_project_id, PROJECT_ID);
+  assert.deepEqual(Object.keys(classified[0]).sort(), ['existing_project_id', 'instruction']);
+  await assert.rejects(
+    async () => ipcMain.handlers.get(CLASSIFY_INTENT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext('({ instruction: "Plan this", source_tree: {} })', runtimeModule.context),
+    ),
+    { code: 'builder_generation_request_invalid' },
+  );
   await ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext(`({

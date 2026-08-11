@@ -24,6 +24,7 @@ const PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL =
 const APPROVE_CURRENT_PROJECT_WRITE_CHANNEL =
   'clawfabric-builder:code-generator:approve-current-project-write';
 const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
+const CLASSIFY_INTENT_CHANNEL = 'clawfabric-builder:code-generator:classify-intent';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
@@ -66,7 +67,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v25',
+  bridgeVersion: 'builder-preload.v26',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -99,6 +100,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
   codeGenerator: Object.freeze({
     submit(request) {
       return ipcRenderer.invoke(SUBMIT_CHANNEL, request);
+    },
+    classifyIntent(request) {
+      return ipcRenderer.invoke(CLASSIFY_INTENT_CHANNEL, request);
     },
     generate(request) {
       return ipcRenderer.invoke(GENERATE_CHANNEL, request);

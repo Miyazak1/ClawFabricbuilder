@@ -76,9 +76,13 @@ const {
 const {
   sanitizeBuilderProviderContextDisclosureDecision,
 } = require('./builder-provider-context-disclosure-decision.cjs');
+const {
+  createBuilderSemanticRouteRequest,
+} = require('./builder-semantic-route-classifier.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
+const MAX_PENDING_SEMANTIC_ROUTE_CLASSIFICATIONS = 64;
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
 const PACKAGED_CANARY_GENERATION_DEBUG_FILE = 'builder-canary-generation-debug.jsonl';
@@ -430,6 +434,30 @@ function buildRouteDecisionHint(matchedSignals = ['clear_build']) {
     requiredPermissions: ['write_project'],
     permissionResult: 'allowed',
     dispatch: 'build',
+  });
+}
+
+function semanticRouteDecisionHint(classification, allowedRoutes) {
+  const route = valueAt(classification, 'route');
+  const confidence = valueAt(classification, 'confidence');
+  if (!allowedRoutes.includes(route) || !['low', 'medium', 'high'].includes(confidence)) fail();
+  return routeDecisionHint({
+    route,
+    confidence,
+    matchedSignals: ['semantic_route'],
+    requiredPermissions: route === 'build'
+      ? ['write_project']
+      : route === 'plan'
+        ? ['project_read']
+        : [],
+    permissionResult: route === 'build' || route === 'plan' ? 'allowed' : 'not_required',
+    dispatch: route === 'build'
+      ? 'build'
+      : route === 'plan'
+        ? 'plan'
+        : route === 'update_brief'
+          ? 'brief_update'
+          : 'reply',
   });
 }
 
@@ -1938,6 +1966,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const executionAdmissionContexts = new WeakMap();
   const pendingPlanRequests = new Map();
   const planContexts = new WeakMap();
+  const pendingSemanticRouteClassifications = new Map();
   let pendingAuthority = null;
   let bindingAuthority = false;
 
@@ -2017,6 +2046,93 @@ function createBuilderGenerationMainService(rawOptions) {
         hasWorkingContextStateEvidence: false,
       });
     }
+  }
+
+  function semanticRouteRequestFor(instruction, projectId) {
+    let routeContext = Object.freeze({
+      hasContextualBuildContext: false,
+      hasPendingBuildConfirmation: false,
+      workingContextStatus: projectId === null ? 'unknown' : 'discussing',
+    });
+    if (projectId !== null) {
+      try {
+        const stream = Reflect.apply(readConversationStream, options.conversationService, [{
+          project_id: projectId,
+        }]);
+        const streamContextState = contextualBuildContextStateInTaskStream(stream, projectId);
+        const conversationId = conversationIdInTaskStream(stream, projectId);
+        const hasWorkingContextStateEvidence = streamContextState === 'unknown'
+          && hasContextualBuildContextInWorkingContextStateService(
+            projectId,
+            conversationId,
+            instruction,
+          );
+        const hasContextualBuildContext = streamContextState === 'ready'
+          || (
+            streamContextState === 'unknown'
+            && (
+              hasWorkingContextStateEvidence
+              || hasContextualBuildContextInTaskCapsuleStore(projectId)
+            )
+          );
+        routeContext = Object.freeze({
+          hasContextualBuildContext,
+          hasPendingBuildConfirmation: hasPendingBuildConfirmationInTaskStream(stream, projectId),
+          workingContextStatus: hasContextualBuildContext
+            ? 'ready'
+            : streamContextState === 'blocked'
+              ? 'needs_clarification'
+              : 'discussing',
+        });
+      } catch {
+        routeContext = Object.freeze({
+          hasContextualBuildContext: false,
+          hasPendingBuildConfirmation: false,
+          workingContextStatus: 'stale',
+        });
+      }
+    }
+    const hasUnsavedDraft = projectId !== null && [...pendingDrafts.values()].some((draft) => (
+      valueAt(draft, 'project_id') === projectId
+    ));
+    return createBuilderSemanticRouteRequest({
+      instruction,
+      context: {
+        has_workspace: projectId !== null,
+        has_prior_build_context: routeContext.hasContextualBuildContext,
+        has_pending_build_confirmation: routeContext.hasPendingBuildConfirmation,
+        has_unsaved_draft: hasUnsavedDraft,
+        working_context_status: routeContext.workingContextStatus,
+      },
+    });
+  }
+
+  function semanticRouteCacheKey(request) {
+    return request.request_digest;
+  }
+
+  function rememberSemanticRouteClassification(request, classification) {
+    const key = semanticRouteCacheKey(request);
+    pendingSemanticRouteClassifications.delete(key);
+    pendingSemanticRouteClassifications.set(key, freezeDeep({
+      semantic_request_digest: classification.request_digest,
+      classification,
+    }));
+    while (pendingSemanticRouteClassifications.size > MAX_PENDING_SEMANTIC_ROUTE_CLASSIFICATIONS) {
+      const oldest = pendingSemanticRouteClassifications.keys().next().value;
+      if (oldest === undefined) break;
+      pendingSemanticRouteClassifications.delete(oldest);
+    }
+  }
+
+  function consumeSemanticRouteClassification(request) {
+    const key = semanticRouteCacheKey(request);
+    const pending = pendingSemanticRouteClassifications.get(key);
+    if (pending === undefined) return null;
+    pendingSemanticRouteClassifications.delete(key);
+    const semanticRequest = semanticRouteRequestFor(request.instruction, request.existing_project_id);
+    if (semanticRequest.request_digest !== pending.semantic_request_digest) fail();
+    return pending.classification;
   }
 
   function hasContextualBuildContextInWorkingContextStateService(projectId, conversationId, instruction) {
@@ -3003,7 +3119,7 @@ function createBuilderGenerationMainService(rawOptions) {
           instruction: request.instruction,
           request_digest: request.request_digest,
           base_revision: base.base_revision,
-          route_decision_hint: planRouteDecisionHint(),
+          route_decision_hint: pendingPlan.route_decision_hint,
         }],
       );
       setupPhase = 'plan_record_session_task_address';
@@ -3890,8 +4006,12 @@ function createBuilderGenerationMainService(rawOptions) {
       if (inFlight.has(key) || pendingPlanRequests.has(key) || collectProjectSourceContext === null) fail();
       const routeConflict = rejectIfOtherRouteInFlight(PLAN_OPERATION_PREFIX, request.request_digest);
       if (routeConflict) return routeConflict;
+      const semanticClassification = consumeSemanticRouteClassification(request);
       pendingPlanRequests.set(key, freezeDeep({
         resource_ids: safeResourceIds(valueAt(rawRequest, 'resource_ids')),
+        route_decision_hint: semanticClassification === null
+          ? planRouteDecisionHint()
+          : semanticRouteDecisionHint(semanticClassification, ['plan']),
       }));
     } catch (error) {
       if (error instanceof BuilderGenerationMainServiceError) throw error;
@@ -3930,10 +4050,13 @@ function createBuilderGenerationMainService(rawOptions) {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
     const routeContext = submitRouteContextForRequest(request);
-    const routeDecision = classifySubmitRouteDecision(
-      request.instruction,
-      routeContext,
-    );
+    const semanticClassification = consumeSemanticRouteClassification(request);
+    const routeDecision = semanticClassification === null
+      ? classifySubmitRouteDecision(request.instruction, routeContext)
+      : semanticRouteDecisionHint(
+        semanticClassification,
+        ['answer', 'clarify', 'update_brief', 'build'],
+      );
     const shouldAnswer = routeDecision.route !== 'build';
     if (!shouldAnswer && request.existing_project_id === null) {
       return Promise.reject(new BuilderGenerationMainServiceError(
@@ -3943,6 +4066,27 @@ function createBuilderGenerationMainService(rawOptions) {
     return shouldAnswer
       ? startAnswer(request, routeDecision)
       : startGenerate(request, null, routeDecision);
+  }
+
+  async function classifyIntent(rawRequest) {
+    let instruction;
+    let projectId;
+    try {
+      exactObject(rawRequest, ['instruction', 'existing_project_id']);
+      instruction = safeText(valueAt(rawRequest, 'instruction'), 12_000, 48_000);
+      const rawProjectId = valueAt(rawRequest, 'existing_project_id');
+      projectId = rawProjectId === null ? null : safeProjectId(rawProjectId);
+    } catch {
+      throw new BuilderGenerationMainServiceError('builder_generation_request_invalid');
+    }
+    const semanticRequest = semanticRouteRequestFor(instruction, projectId);
+    const classification = await host.classifyIntent(semanticRequest);
+    const generationRequest = createBuilderGenerationRequest({
+      instruction,
+      existing_project_id: projectId,
+    });
+    rememberSemanticRouteClassification(generationRequest, classification);
+    return classification;
   }
 
   async function submitQueuedFollowup(rawRequest) {
@@ -4033,13 +4177,16 @@ function createBuilderGenerationMainService(rawOptions) {
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    return startAnswer(
-      request,
-      classifyReadOnlyAnswerRouteDecision(
+    const semanticClassification = consumeSemanticRouteClassification(request);
+    return startAnswer(request, semanticClassification === null
+      ? classifyReadOnlyAnswerRouteDecision(
         request.instruction,
         submitRouteContextForRequest(request),
-      ),
-    );
+      )
+      : semanticRouteDecisionHint(
+        semanticClassification,
+        ['answer', 'clarify', 'update_brief'],
+      ));
   }
 
   async function answerQueuedFollowup(rawRequest) {
@@ -4429,6 +4576,7 @@ function createBuilderGenerationMainService(rawOptions) {
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     submit,
+    classify_intent: classifyIntent,
     submit_queued_followup: submitQueuedFollowup,
     answer,
     answer_queued_followup: answerQueuedFollowup,
@@ -4460,6 +4608,8 @@ function createBuilderGenerationMainService(rawOptions) {
       approved_plan_generation: 'main_only_approved_plan_starts_work_run_before_provider',
       plan_proposal_generation: 'main_only_source_context_plan_no_source_mutation',
       plan_project_understanding: 'main_only_refresh_before_plan_provider_no_prompt_egress',
+      semantic_route_classification:
+        'main_only_current_instruction_bounded_state_provider_request_no_source_or_mutation',
       draft_continuation_admission: 'main_only_pending_draft_identity_no_dispatch',
       draft_continuation_base: 'main_only_pending_candidate_git_base_no_dispatch',
       draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',

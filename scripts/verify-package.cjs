@@ -100,6 +100,7 @@ for (const expected of [
   '/electron/builder-openai-compatible-transport.cjs',
   '/electron/builder-generation-kernel.cjs',
   '/electron/builder-generation-host-adapter.cjs',
+  '/electron/builder-semantic-route-classifier.cjs',
   '/electron/builder-generation-ipc-adapter.cjs',
   '/electron/builder-generation-ipc-runtime.cjs',
   '/electron/builder-generation-main-service.cjs',
@@ -391,6 +392,7 @@ const generationChannels = [
   'clawfabric-builder:code-generator:prepare-current-project-write-approval',
   'clawfabric-builder:code-generator:approve-current-project-write',
   'clawfabric-builder:code-generator:submit',
+  'clawfabric-builder:code-generator:classify-intent',
   'clawfabric-builder:code-generator:started',
   'clawfabric-builder:code-generator:output',
   'clawfabric-builder:code-generator:retry',
@@ -552,7 +554,7 @@ assert.equal(ts.isPropertyAssignment(checkRunProperty), true);
 assert.equal(ts.isPropertyAssignment(livePreviewProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v25');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v26');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -578,6 +580,7 @@ exactObjectKeys(workspaceBridge, [
 ]);
 exactObjectKeys(generationBridge, [
   'submit',
+  'classifyIntent',
   'generate',
   'continueDraft',
   'generateApprovedPlan',
@@ -737,6 +740,7 @@ exactInvokeMethod(workspaceBridge, 'listCurrent', 'LIST_CURRENT_CHANNEL', []);
 exactInvokeMethod(workspaceBridge, 'listWorkspaces', 'LIST_WORKSPACES_CHANNEL', []);
 exactInvokeMethod(workspaceBridge, 'listHistory', 'LIST_HISTORY_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'submit', 'SUBMIT_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'classifyIntent', 'CLASSIFY_INTENT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generate', 'GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'continueDraft', 'CONTINUE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'generateApprovedPlan', 'GENERATE_APPROVED_PLAN_CHANNEL', ['request']);
@@ -1268,6 +1272,8 @@ assert.match(packagedPreload, /clawfabric-builder:project-workspace:create-local
 assert.match(packagedPreload, /loadRevision/u);
 assert.doesNotMatch(packagedPreload, /projectRevisions|projectCatalog/u);
 assert.match(packagedPreload, /codeGenerator/u);
+assert.match(packagedPreload, /classifyIntent/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:classify-intent/u);
 assert.match(packagedPreload, /continueDraft/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:continue-draft/u);
 assert.match(packagedPreload, /generateApprovedPlan/u);

@@ -3964,7 +3964,7 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v25'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v26'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.check_run_namespace.value
       !== 'current_draft_identity_methods_only'
@@ -3975,7 +3975,7 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
       !== 'approve_current_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v25',
+    bridge_version: 'builder-preload.v26',
     legacy_namespaces_absent: true,
     check_run_namespace: 'current_draft_identity_methods_only',
     live_preview_namespace: 'current_preview_control_methods_only',

@@ -15,6 +15,7 @@ const {
   PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   SUBMIT_CHANNEL,
+  CLASSIFY_INTENT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
@@ -74,6 +75,10 @@ function adapter(overrides = {}) {
     submit: async (request) => {
       calls.push(['submit', request]);
       return { result: 'submitted' };
+    },
+    classifyIntent: async (request) => {
+      calls.push(['classifyIntent', request]);
+      return { result: 'classified' };
     },
     retry: async (request) => {
       calls.push(['retry', request]);
@@ -141,6 +146,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'prepareCurrentProjectWriteApproval',
     'approveCurrentProjectWrite',
     'submit',
+    'classifyIntent',
     'retry',
     'answer',
     'answerDraft',
@@ -164,6 +170,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
       APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
       SUBMIT_CHANNEL,
+      CLASSIFY_INTENT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
       ANSWER_DRAFT_CHANNEL,
@@ -175,6 +182,14 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       QUEUE_FOLLOWUP_CHANNEL,
       AVAILABILITY_CHANNEL,
     ],
+  );
+  assert.deepEqual(
+    await value.channels.classifyIntent.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'classified' },
+    },
   );
   assert.deepEqual(
     await value.channels.generate.invoke({ sender: windowRef.webContents }, request),
@@ -326,6 +341,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     { available: true },
   );
   assert.deepEqual(calls, [
+    ['classifyIntent', request],
     ['generate', request],
     ['continueDraft', {
       draft_id: `builder-generation-draft:${'e'.repeat(64)}`,
@@ -507,6 +523,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       prepareCurrentProjectWriteApproval: () => { throw modified; },
       approveCurrentProjectWrite: () => { throw modified; },
       submit: () => { throw modified; },
+      classifyIntent: () => { throw modified; },
       retry: () => { throw modified; },
       answer: () => { throw modified; },
       answerDraft: () => { throw modified; },
@@ -619,6 +636,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       error.code = 'builder_generation_timeout';
       throw error;
     },
+    classifyIntent: () => ({}),
     retry: () => {
       const error = new Error('retry-private-marker');
       error.code = 'builder_generation_timeout';
@@ -765,6 +783,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     prepareCurrentProjectWriteApproval: async () => ({}),
     approveCurrentProjectWrite: async () => ({}),
     submit: async () => ({}),
+    classifyIntent: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
     answerDraft: async () => ({}),
@@ -815,6 +834,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
     prepareCurrentProjectWriteApproval: async () => ({}),
     approveCurrentProjectWrite: async () => ({}),
     submit: async () => ({}),
+    classifyIntent: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
     answerDraft: async () => ({}),
@@ -861,6 +881,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
       prepareCurrentProjectWriteApproval: async () => ({}),
       approveCurrentProjectWrite: async () => ({}),
       submit: async () => ({}),
+      classifyIntent: async () => ({}),
       retry: async () => ({}),
       answer: async () => ({}),
       answerDraft: async () => ({}),
@@ -904,6 +925,7 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       prepareCurrentProjectWriteApproval: async () => result,
       approveCurrentProjectWrite: async () => result,
       submit: async () => result,
+      classifyIntent: async () => result,
       retry: async () => result,
       answer: async () => result,
       answerDraft: async () => result,
@@ -962,6 +984,7 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       prepareCurrentProjectWriteApproval: async () => result,
       approveCurrentProjectWrite: async () => result,
       submit: async () => result,
+      classifyIntent: async () => result,
       retry: async () => result,
       answer: async () => result,
       answerDraft: async () => result,
@@ -997,6 +1020,7 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     prepareCurrentProjectWriteApproval: async () => ({}),
     approveCurrentProjectWrite: async () => ({}),
     submit: async () => ({}),
+    classifyIntent: async () => ({}),
     retry: async () => ({}),
     answer: async () => ({}),
     answerDraft: async () => ({}),

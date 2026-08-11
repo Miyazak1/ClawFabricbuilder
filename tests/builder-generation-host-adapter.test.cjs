@@ -18,6 +18,9 @@ const {
 const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
+const {
+  createBuilderSemanticRouteRequest,
+} = require('../electron/builder-semantic-route-classifier.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -528,6 +531,78 @@ test('generates an unsaved code-change candidate from verified base context', as
   assert.match(transportInput[0].messages[0].content, /builder_code_change_operations/u);
   assert.doesNotMatch(transportInput[0].messages[0].content, /builder_conversation_explanation/u);
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model/iu);
+});
+
+test('classifies the complete instruction through a bounded provider request without source context', async () => {
+  let transportInput;
+  let transportCallCount = 0;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    transport: async (...args) => {
+      transportCallCount += 1;
+      transportInput = args;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify({
+          kind: 'builder_semantic_route_classification',
+          route: 'plan',
+          confidence: 'high',
+          reason_code: 'requests_plan_or_proposal',
+        }),
+      };
+    },
+  }));
+  const routeRequest = createBuilderSemanticRouteRequest({
+    instruction: '帮我做一个静态技术博客实施计划',
+    context: {
+      has_workspace: true,
+      has_prior_build_context: false,
+      has_pending_build_confirmation: false,
+      has_unsaved_draft: false,
+      working_context_status: 'discussing',
+    },
+  });
+
+  const result = await adapter.classifyIntent(routeRequest);
+
+  assert.equal(result.route, 'plan');
+  assert.equal(transportCallCount, 1);
+  assert.equal(result.confidence, 'high');
+  assert.equal(result.authority.source_read, 'not_performed');
+  assert.equal(transportInput[0].temperature, 0);
+  assert.equal(transportInput[0].max_tokens, 256);
+  assert.deepEqual(JSON.parse(transportInput[0].messages[1].content), {
+    instruction: '帮我做一个静态技术博客实施计划',
+    product_state: routeRequest.context,
+  });
+  assert.doesNotMatch(JSON.stringify(transportInput[0].messages), /source_tree|conversation_events|api[_-]?key/u);
+});
+
+test('does not issue a second classifier request when provider JSON is invalid', async () => {
+  let transportCallCount = 0;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    transport: async () => {
+      transportCallCount += 1;
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: 'not-json',
+      };
+    },
+  }));
+  const routeRequest = createBuilderSemanticRouteRequest({
+    instruction: '帮我做一个静态技术博客实施计划',
+    context: {
+      has_workspace: true,
+      has_prior_build_context: false,
+      has_pending_build_confirmation: false,
+      has_unsaved_draft: false,
+      working_context_status: 'discussing',
+    },
+  });
+
+  await assert.rejects(() => adapter.classifyIntent(routeRequest), {
+    code: 'builder_generation_structured_response_invalid',
+  });
+  assert.equal(transportCallCount, 1);
 });
 
 test('generates an unsaved Markdown file candidate through the normal review path', async () => {

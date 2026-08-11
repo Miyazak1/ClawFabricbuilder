@@ -13,6 +13,7 @@ const {
   APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
   APPROVE_PLAN_SOURCE_READ_CHANNEL,
   CANCEL_CHANNEL,
+  CLASSIFY_INTENT_CHANNEL,
   CONTINUE_DRAFT_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
@@ -1856,6 +1857,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       });
     }
 
+    function trackedClassifyIntent(rawRequest) {
+      if (selectionPending) fail();
+      const instruction = publicInstruction(rawRequest);
+      return service.classify_intent({
+        instruction,
+        existing_project_id: selectedProjectId ?? selectedConversationProjectId,
+      });
+    }
+
     async function trackedAnswerDraft(rawRequest) {
       const answerRequest = draftAnswerRequest(rawRequest);
       if (selectionPending) fail();
@@ -1885,6 +1895,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       prepareCurrentProjectWriteApproval: currentProjectWriteApprovalStatus,
       approveCurrentProjectWrite,
       submit: trackedSubmit,
+      classifyIntent: trackedClassifyIntent,
       retry: trackedRetryGenerate,
       answer: trackedAnswer,
       answerDraft: trackedAnswerDraft,
@@ -2120,6 +2131,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       invoke: adapter.channels.approveCurrentProjectWrite.invoke,
     }),
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
+    Object.freeze({ channel: CLASSIFY_INTENT_CHANNEL, invoke: adapter.channels.classifyIntent.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
     Object.freeze({ channel: ANSWER_DRAFT_CHANNEL, invoke: adapter.channels.answerDraft.invoke }),

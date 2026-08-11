@@ -41,6 +41,7 @@ import type {
   BuilderTaskStreamChangedEvent,
   BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
+  BuilderSemanticRouteClassification,
 } from '../features/builder/application/builderPorts';
 import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
@@ -70,6 +71,7 @@ import {
 import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
+  decideBuilderComposerSemanticIntent,
   isBuilderComposerContextualBuildIntent,
   type BuilderComposerApprovalMode,
   type BuilderComposerRouteDecision,
@@ -1986,20 +1988,75 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     publishQueuedActiveRunFollowup(null);
     setAnswerFailureRecordedSuccess(false);
-    let decision = decideBuilderComposerIntent(
-      submittedIdea,
-      composerIntentContext(
-        conversationSnapshotRef.current,
+    const initialIntentContext = composerIntentContext(
+      conversationSnapshotRef.current,
+      projectSnapshotRef.current,
+      composerModeRef.current,
+      currentProjectWriteApprovalStatusRef.current,
+      effectiveApprovalMode(
+        approvalModeRef.current,
         projectSnapshotRef.current,
-        composerModeRef.current,
         currentProjectWriteApprovalStatusRef.current,
-        effectiveApprovalMode(
-          approvalModeRef.current,
-          projectSnapshotRef.current,
-          currentProjectWriteApprovalStatusRef.current,
-        ),
       ),
     );
+    let decision = decideBuilderComposerIntent(
+      submittedIdea,
+      initialIntentContext,
+    );
+    const pendingPlan = pendingPlanReviewRequest(
+      conversationSnapshotRef.current,
+      projectSnapshotRef.current,
+    );
+    if (pendingPlan !== null && isBuilderComposerContextualBuildIntent(submittedIdea)) {
+      const pendingPlanWorkingBrief = composerWorkingBrief(
+        conversationSnapshotRef.current,
+        projectSnapshotRef.current,
+      );
+      setComposerRouteDecision(createComposerRouteEvidence(
+        decision,
+        projectSnapshotRef.current,
+        options.existingMessageId ?? null,
+        pendingPlanWorkingBrief?.taskId ?? null,
+      ));
+      setApprovedPlanContinuationFailure(null);
+      pendingBuildAfterWorkspaceRef.current = null;
+      submitInFlightInstructionRef.current = submittedIdea;
+      publishSubmitInFlight(true);
+      setIdea('');
+      setLiveOutput(null);
+      try {
+        await reviewPlan(pendingPlan);
+      } finally {
+        submitInFlightInstructionRef.current = null;
+        publishSubmitInFlight(false);
+      }
+      return;
+    }
+    let semanticClassification: BuilderSemanticRouteClassification | null = null;
+    if (composerModeRef.current !== 'plan' && ports.generator.classifyIntent !== undefined) {
+      const classificationEpoch = workspaceEpochRef.current;
+      submitInFlightInstructionRef.current = submittedIdea;
+      publishSubmitInFlight(true);
+      try {
+        const classification = await ports.generator.classifyIntent({
+          instruction: submittedIdea,
+        });
+        if (workspaceEpochRef.current !== classificationEpoch) return;
+        semanticClassification = classification;
+        decision = decideBuilderComposerSemanticIntent(classification, initialIntentContext);
+      } catch {
+        decision = decideBuilderComposerSemanticIntent({
+          route: 'clarify',
+          confidence: 'low',
+          needs_confirmation: true,
+          reason_code: 'ambiguous_between_plan_and_build',
+          matched_signal: 'semantic_route',
+        }, initialIntentContext);
+      } finally {
+        submitInFlightInstructionRef.current = null;
+        publishSubmitInFlight(false);
+      }
+    }
     const routeWorkingBrief = composerWorkingBrief(
       conversationSnapshotRef.current,
       projectSnapshotRef.current,
@@ -2027,24 +2084,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     };
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
-    const pendingPlan = pendingPlanReviewRequest(
-      conversationSnapshotRef.current,
-      projectSnapshotRef.current,
-    );
-    if (pendingPlan !== null && isBuilderComposerContextualBuildIntent(submittedIdea)) {
-      publishRouteDecision(decision);
-      submitInFlightInstructionRef.current = submittedIdea;
-      publishSubmitInFlight(true);
-      setIdea('');
-      setLiveOutput(null);
-      try {
-        await reviewPlan(pendingPlan);
-      } finally {
-        submitInFlightInstructionRef.current = null;
-        publishSubmitInFlight(false);
-      }
-      return;
-    }
     if (decision.dispatch === 'ask_workspace') {
       const routeEvidence = publishRouteDecision(decision);
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
@@ -2112,16 +2151,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         currentProjectWriteApprovalStatusRef.current = nextPermissionStatus;
         setCurrentProjectWriteApprovalStatus(nextPermissionStatus);
         if (approval.state === 'approval_required') {
-          decision = decideBuilderComposerIntent(
-            submittedIdea,
-            composerIntentContext(
-              conversationSnapshotRef.current,
-              projectSnapshotRef.current,
-              composerModeRef.current,
-              nextPermissionStatus,
-              effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
-            ),
+          const nextIntentContext = composerIntentContext(
+            conversationSnapshotRef.current,
+            projectSnapshotRef.current,
+            composerModeRef.current,
+            nextPermissionStatus,
+            effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
           );
+          decision = semanticClassification === null
+            ? decideBuilderComposerIntent(submittedIdea, nextIntentContext)
+            : decideBuilderComposerSemanticIntent(semanticClassification, nextIntentContext);
           const routeEvidence = publishRouteDecision(
             decision,
             null,
@@ -2142,16 +2181,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         }
         currentProjectWriteApprovalRef.current = null;
         setCurrentProjectWriteApproval(null);
-        decision = decideBuilderComposerIntent(
-          submittedIdea,
-          composerIntentContext(
-            conversationSnapshotRef.current,
-            projectSnapshotRef.current,
-            composerModeRef.current,
-            nextPermissionStatus,
-            effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
-          ),
+        const nextIntentContext = composerIntentContext(
+          conversationSnapshotRef.current,
+          projectSnapshotRef.current,
+          composerModeRef.current,
+          nextPermissionStatus,
+          effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
         );
+        decision = semanticClassification === null
+          ? decideBuilderComposerIntent(submittedIdea, nextIntentContext)
+          : decideBuilderComposerSemanticIntent(semanticClassification, nextIntentContext);
         publishRouteDecision(
           decision,
           null,

@@ -23,6 +23,7 @@ const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
   'local_file_artifact',
   'pending_build_confirmation',
   'read_only',
+  'semantic_route',
   'vague_change',
   'working_context_state',
   'work_discussion',

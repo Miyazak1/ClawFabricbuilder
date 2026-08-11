@@ -5,6 +5,7 @@ import {
   type BuilderGenerationOutputEvent,
   type BuilderGenerationStartedEvent,
   type BuilderGenerationDiagnosticCode as ApplicationBuilderGenerationDiagnosticCode,
+  type BuilderSemanticRouteClassification,
 } from '../application/builderPorts';
 import {
   sanitizeBuilderQueuedFollowupReference,
@@ -15,6 +16,7 @@ export const BuilderDesktopCodeGeneratorPortError = BuilderGenerationDiagnosticE
 export type BuilderGenerationDiagnosticCode = ApplicationBuilderGenerationDiagnosticCode;
 
 type BuilderCodeGeneratorBridge = Readonly<{
+  classifyIntent?(request: unknown): Promise<unknown>;
   submit(request: unknown): Promise<unknown>;
   generate(request: unknown): Promise<unknown>;
   continueDraft(request: unknown): Promise<unknown>;
@@ -38,7 +40,7 @@ type BuilderCodeGeneratorBridge = Readonly<{
   subscribeOutput(listener: (event: unknown) => void): () => void;
 }>;
 
-const BRIDGE_KEYS = new Set([
+const REQUIRED_BRIDGE_KEYS = new Set([
   'submit',
   'generate',
   'continueDraft',
@@ -60,6 +62,10 @@ const BRIDGE_KEYS = new Set([
   'availability',
   'subscribeStarted',
   'subscribeOutput',
+]);
+const BRIDGE_KEYS = new Set([
+  ...REQUIRED_BRIDGE_KEYS,
+  'classifyIntent',
 ]);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
@@ -191,12 +197,15 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) throw portError();
     const keys = Reflect.ownKeys(value);
-    if (keys.length !== BRIDGE_KEYS.size || keys.some((key) => typeof key !== 'string' || !BRIDGE_KEYS.has(key))) {
+    if (
+      (keys.length !== REQUIRED_BRIDGE_KEYS.size && keys.length !== BRIDGE_KEYS.size)
+      || keys.some((key) => typeof key !== 'string' || !BRIDGE_KEYS.has(key))
+    ) {
       throw portError();
     }
     const descriptors = Object.getOwnPropertyDescriptors(value);
     const methods = {} as Record<string, (...args: unknown[]) => unknown>;
-    for (const key of BRIDGE_KEYS) {
+    for (const key of REQUIRED_BRIDGE_KEYS) {
       const descriptor = descriptors[key];
       if (
         !descriptor
@@ -207,7 +216,20 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       ) throw portError();
       methods[key] = descriptor.value as (...args: unknown[]) => unknown;
     }
+    const classifyIntentDescriptor = descriptors.classifyIntent;
+    if (classifyIntentDescriptor !== undefined) {
+      if (
+        !classifyIntentDescriptor.enumerable
+        || 'get' in classifyIntentDescriptor
+        || 'set' in classifyIntentDescriptor
+        || typeof classifyIntentDescriptor.value !== 'function'
+      ) throw portError();
+      methods.classifyIntent = classifyIntentDescriptor.value as (...args: unknown[]) => unknown;
+    }
     return Object.freeze({
+      ...(methods.classifyIntent === undefined ? {} : {
+        classifyIntent: methods.classifyIntent as NonNullable<BuilderCodeGeneratorBridge['classifyIntent']>,
+      }),
       submit: methods.submit as BuilderCodeGeneratorBridge['submit'],
       generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
       continueDraft: methods.continueDraft as BuilderCodeGeneratorBridge['continueDraft'],
@@ -431,6 +453,84 @@ function unwrapCurrentProjectWriteApprovalResult(
   });
 }
 
+function unwrapSemanticRouteClassification(
+  value: unknown,
+): BuilderSemanticRouteClassification {
+  const result = exactDataRecord(value, [
+    'result_version',
+    'request_digest',
+    'route',
+    'confidence',
+    'needs_confirmation',
+    'reason_code',
+    'matched_signal',
+    'authority',
+  ]);
+  const authority = exactDataRecord(result.authority, [
+    'classifier',
+    'context_scope',
+    'conversation_text',
+    'working_brief_text',
+    'source_read',
+    'source_write',
+    'tool_dispatch',
+    'command_execution',
+    'permission_grant',
+    'git_mutation',
+    'sqlite_write',
+    'save_admission',
+  ]);
+  const routes = ['answer', 'clarify', 'update_brief', 'plan', 'build'] as const;
+  const confidences = ['low', 'medium', 'high'] as const;
+  const reasonCodes = [
+    'asks_for_information',
+    'asks_to_discuss_or_refine',
+    'updates_working_direction',
+    'requests_plan_or_proposal',
+    'requests_source_change',
+    'ambiguous_between_plan_and_build',
+  ] as const;
+  const routesByReason: Readonly<Record<typeof reasonCodes[number], readonly typeof routes[number][]>> = {
+    asks_for_information: ['answer'],
+    asks_to_discuss_or_refine: ['answer', 'clarify'],
+    updates_working_direction: ['update_brief'],
+    requests_plan_or_proposal: ['plan'],
+    requests_source_change: ['build'],
+    ambiguous_between_plan_and_build: ['clarify'],
+  };
+  const route = result.route as typeof routes[number];
+  const confidence = result.confidence as typeof confidences[number];
+  const reasonCode = result.reason_code as typeof reasonCodes[number];
+  const needsConfirmation = route === 'clarify'
+    || confidence === 'low'
+    || reasonCode === 'ambiguous_between_plan_and_build';
+  if (
+    result.result_version !== 'builder-semantic-route-classification.v1'
+    || typeof result.request_digest !== 'string'
+    || !DIGEST_PATTERN.test(result.request_digest)
+    || !routes.includes(route)
+    || !confidences.includes(confidence)
+    || typeof result.needs_confirmation !== 'boolean'
+    || !reasonCodes.includes(reasonCode)
+    || !routesByReason[reasonCode].includes(route)
+    || result.needs_confirmation !== needsConfirmation
+    || result.matched_signal !== 'semantic_route'
+    || authority.classifier !== 'main_owned_provider_semantic_route_v1'
+    || authority.context_scope !== 'current_instruction_and_bounded_product_state'
+    || authority.conversation_text !== 'not_disclosed'
+    || authority.working_brief_text !== 'not_disclosed'
+    || authority.source_read !== 'not_performed'
+    || authority.source_write !== 'not_performed'
+    || authority.tool_dispatch !== false
+    || authority.command_execution !== false
+    || authority.permission_grant !== false
+    || authority.git_mutation !== false
+    || authority.sqlite_write !== false
+    || authority.save_admission !== false
+  ) throw portError();
+  return deepFreeze(result) as BuilderSemanticRouteClassification;
+}
+
 function unwrapCancelResult(value: unknown, expectedRequestId: string): Readonly<{
   request_id: string;
   cancelled: boolean;
@@ -587,6 +687,13 @@ export function createBuilderDesktopCodeGeneratorPort(
 ): BuilderCodeGeneratorPort {
   const bridge = sanitizeBridge(value);
   return Object.freeze({
+    ...(bridge.classifyIntent === undefined ? {} : {
+      classifyIntent(request: Readonly<{ instruction: string }>) {
+        return callBridge(bridge, bridge.classifyIntent as NonNullable<BuilderCodeGeneratorBridge['classifyIntent']>, [{
+          instruction: request.instruction,
+        }]).then((result) => unwrapSemanticRouteClassification(unwrapGenerationEnvelope(result)));
+      },
+    }),
     generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
       return callBridge(bridge, bridge.generate, [{
         instruction: request.instruction,

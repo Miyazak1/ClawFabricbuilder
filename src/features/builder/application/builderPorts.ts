@@ -62,6 +62,36 @@ export type BuilderCurrentProjectWriteApprovalResult = Readonly<{
   authority: 'main_selected_project_project_edit_v1';
 }>;
 
+export type BuilderSemanticRouteClassification = Readonly<{
+  result_version: 'builder-semantic-route-classification.v1';
+  request_digest: string;
+  route: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
+  confidence: 'low' | 'medium' | 'high';
+  needs_confirmation: boolean;
+  reason_code:
+    | 'asks_for_information'
+    | 'asks_to_discuss_or_refine'
+    | 'updates_working_direction'
+    | 'requests_plan_or_proposal'
+    | 'requests_source_change'
+    | 'ambiguous_between_plan_and_build';
+  matched_signal: 'semantic_route';
+  authority: Readonly<{
+    classifier: 'main_owned_provider_semantic_route_v1';
+    context_scope: 'current_instruction_and_bounded_product_state';
+    conversation_text: 'not_disclosed';
+    working_brief_text: 'not_disclosed';
+    source_read: 'not_performed';
+    source_write: 'not_performed';
+    tool_dispatch: false;
+    command_execution: false;
+    permission_grant: false;
+    git_mutation: false;
+    sqlite_write: false;
+    save_admission: false;
+  }>;
+}>;
+
 export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_base_unavailable'
   | 'builder_generation_parent_unavailable'
@@ -75,6 +105,7 @@ export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_provider_http_error'
   | 'builder_generation_provider_transport_error'
   | 'builder_generation_structured_response_invalid'
+  | 'builder_generation_static_preview_contract_rejected'
   | 'builder_generation_failed';
 
 export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
@@ -92,6 +123,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   builder_generation_provider_http_error: true,
   builder_generation_provider_transport_error: true,
   builder_generation_structured_response_invalid: true,
+  builder_generation_static_preview_contract_rejected: true,
   builder_generation_failed: true,
 });
 
@@ -108,6 +140,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, stri
   builder_generation_provider_http_error: 'The AI service could not make this project.',
   builder_generation_provider_transport_error: 'The AI service could not be reached.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
+  builder_generation_static_preview_contract_rejected: 'The generated project needs browser preview support.',
   builder_generation_failed: 'The project draft could not be generated.',
 });
 
@@ -144,6 +177,9 @@ export function trustedBuilderGenerationDiagnosticCode(
 }
 
 export interface BuilderCodeGeneratorPort {
+  classifyIntent?(
+    request: Readonly<{ instruction: string }>,
+  ): Promise<BuilderSemanticRouteClassification>;
   submit(request: BuilderGenerationTurnRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
   continueDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;

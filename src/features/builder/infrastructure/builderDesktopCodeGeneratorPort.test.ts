@@ -62,6 +62,88 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('forwards only the current instruction for semantic routing', async () => {
+    const classifyIntent = vi.fn(async (request: { instruction: string }) => {
+      void request;
+      return {
+        version: 'builder-generation-ipc-result.v1',
+        ok: true,
+        result: {
+        result_version: 'builder-semantic-route-classification.v1',
+        request_digest: `sha256:${'a'.repeat(64)}`,
+        route: 'plan',
+        confidence: 'high',
+        needs_confirmation: false,
+        reason_code: 'requests_plan_or_proposal',
+        matched_signal: 'semantic_route',
+        authority: {
+          classifier: 'main_owned_provider_semantic_route_v1',
+          context_scope: 'current_instruction_and_bounded_product_state',
+          conversation_text: 'not_disclosed',
+          working_brief_text: 'not_disclosed',
+          source_read: 'not_performed',
+          source_write: 'not_performed',
+          tool_dispatch: false,
+          command_execution: false,
+          permission_grant: false,
+          git_mutation: false,
+          sqlite_write: false,
+          save_admission: false,
+        },
+        },
+      };
+    });
+    const port = createBuilderDesktopCodeGeneratorPort({
+      classifyIntent,
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      continueDraft: async () => null,
+      proposePlan: async () => null,
+      preparePlanSourceReadApproval: async () => null,
+      approvePlanSourceRead: async () => null,
+      prepareCurrentProjectWriteApproval: async () => null,
+      approveCurrentProjectWrite: async () => null,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      answerDraft: async () => null,
+      restoreDraft: async () => null,
+      restoreRevisionAsDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      queueFollowup: async () => null,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    const result = await port.classifyIntent?.({
+      instruction: '帮我做一个静态技术博客实施计划',
+    });
+
+    expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
+      instruction: '帮我做一个静态技术博客实施计划',
+    });
+    expect(classifyIntent.mock.calls[0][0]).not.toHaveProperty('source_tree');
+    expect(classifyIntent.mock.calls[0][0]).not.toHaveProperty('conversation');
+    expect(classifyIntent.mock.calls[0][0]).not.toHaveProperty('working_brief');
+    expect(result?.route).toBe('plan');
+    expect(Object.isFrozen(result)).toBe(true);
+
+    const inconsistent = await classifyIntent({ instruction: 'test' });
+    classifyIntent.mockResolvedValueOnce({
+      ...inconsistent,
+      result: {
+        ...inconsistent.result,
+        route: 'build',
+      },
+    } as never);
+    await expect(port.classifyIntent?.({ instruction: 'test' })).rejects.toMatchObject({
+      code: 'builder_generation_failed',
+    });
+  });
+
   it('forwards approved-plan generation without renderer-owned text or source authority', async () => {
     const hostRequest = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
     const draft = await createGenerationDraft(hostRequest);
@@ -170,6 +252,48 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       draft_id: 'builder-generation-draft:not-a-draft-id',
       instruction: request.instruction,
     })).toThrow(BuilderDesktopCodeGeneratorPortError);
+  });
+
+  it('preserves static preview rejection diagnostics for pending draft continuation', async () => {
+    const port = createBuilderDesktopCodeGeneratorPort({
+      submit: async () => null,
+      generateApprovedPlan: async () => null,
+      continueDraft: async () => ({
+        version: 'builder-generation-ipc-result.v1',
+        ok: false,
+        error: {
+          code: 'builder_generation_static_preview_contract_rejected',
+          retryable: true,
+        },
+      }),
+      proposePlan: async () => null,
+      preparePlanSourceReadApproval: async () => null,
+      approvePlanSourceRead: async () => null,
+      prepareCurrentProjectWriteApproval: async () => null,
+      approveCurrentProjectWrite: async () => null,
+      generate: async () => null,
+      retry: async () => null,
+      answer: async () => null,
+      answerDraft: async () => null,
+      restoreDraft: async () => null,
+      restoreRevisionAsDraft: async () => null,
+      rejectDraft: async () => null,
+      cancel: async () => null,
+      steer: async () => null,
+      queueFollowup: async () => null,
+      availability: async () => null,
+      subscribeStarted: () => () => undefined,
+      subscribeOutput: () => () => undefined,
+    });
+
+    await expect(port.continueDraft({
+      draft_id: DRAFT_ID,
+      instruction: '继续优化',
+    })).rejects.toMatchObject({
+      code: 'builder_generation_static_preview_contract_rejected',
+      retryable: true,
+      message: 'The generated project needs browser preview support.',
+    });
   });
 
   it('forwards pending draft questions with only draft-id and instruction authority', async () => {
