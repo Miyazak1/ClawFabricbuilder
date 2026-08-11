@@ -931,6 +931,16 @@ const DIRECT_CURRENT_DRAFT_BUILD_SIGNALS = new Set([
   'vague_change',
 ]);
 
+function shouldRequestSemanticClassifier(
+  decision: BuilderComposerRouteDecision,
+  instruction: string,
+): boolean {
+  if (isBuilderComposerPlanBuildConflictIntent(instruction)) return true;
+  return decision.downgradedFrom === 'build'
+    || decision.downgradeReason === 'ambiguous_build_intent'
+    || decision.downgradeReason === 'missing_prior_build_context';
+}
+
 function shouldSkipSemanticClassifierForCurrentDraftBuild(
   decision: BuilderComposerRouteDecision,
   projectSnapshot: BuilderVisibleProjectSnapshot,
@@ -2067,6 +2077,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (
       activeComposerMode === null
       && ports.generator.classifyIntent !== undefined
+      && shouldRequestSemanticClassifier(decision, submittedIdea)
       && !shouldSkipSemanticClassifierForCurrentDraftBuild(decision, projectSnapshotRef.current, submittedIdea)
     ) {
       const classificationEpoch = workspaceEpochRef.current;

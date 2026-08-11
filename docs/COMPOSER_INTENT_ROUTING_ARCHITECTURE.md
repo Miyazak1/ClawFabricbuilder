@@ -145,6 +145,13 @@ Each composer submit may issue at most one semantic classifier provider
 request. A malformed response is not repaired through a second provider call;
 it fails closed to clarification.
 
+The request is not automatic for every `Auto` message. Deterministic routing
+handles obvious read-only questions, explicit plan requests, clear artifact
+build requests, persistent `Ask`/`Build` mode, one-shot `Plan` mode, and current
+draft continuation first. The semantic classifier is reserved for whole-sentence
+plan/build conflicts and ambiguous write-intent boundaries where guessing would
+either waste a build or risk asking for write permission too early.
+
 The main process binds a successful classification to the exact generation
 request and semantic context digest. It is held as a bounded, one-use receipt
 until the matching answer, plan proposal, or build admission consumes it. The

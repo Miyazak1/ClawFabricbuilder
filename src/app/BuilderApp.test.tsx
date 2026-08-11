@@ -4712,7 +4712,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
   });
 
-  it('keeps a plan management page as a build artifact after semantic routing', async () => {
+  it('keeps a plan management page as a build artifact without spending semantic routing', async () => {
     const { classifyIntent, container, proposePlan, submit } = await setup({
       initiallySaved: true,
       semanticIntentRoute: 'build',
@@ -4723,17 +4723,37 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
-        instruction: '做一个计划管理页面',
-      });
       expect(submit).toHaveBeenCalledExactlyOnceWith({
         instruction: '做一个计划管理页面',
       });
     });
+    expect(classifyIntent).not.toHaveBeenCalled();
     expect(proposePlan).not.toHaveBeenCalled();
     const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('build');
-    expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_build');
+  });
+
+  it('keeps plain read-only questions off the semantic classifier path', async () => {
+    const { answer, classifyIntent, container, submit } = await setup({
+      initiallySaved: true,
+      semanticIntentRoute: 'build',
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '这个项目是什么');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({
+        instruction: '这个项目是什么',
+      });
+    });
+    expect(classifyIntent).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('answer');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('read_only');
   });
 
   it('routes natural-language plan requests for an unsaved bound workspace without submitting a draft', async () => {
