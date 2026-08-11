@@ -115,6 +115,16 @@ describe('routeBuilderComposerIntent', () => {
   });
 
   it.each([
+    '帮我优化一下',
+    '优化一下',
+    '继续优化标题和说明，不要保存版本',
+    'Make it better',
+  ])('routes %s to build when a current draft is already being reviewed', (instruction) => {
+    expect(routeBuilderComposerIntent(instruction, { hasPriorBuildContext: true, hasWorkspace: true }))
+      .toBe('build');
+  });
+
+  it.each([
     '我想做一个登录页',
     '我想创建一个带任务列表的项目看板',
     '我要做一个登录页',

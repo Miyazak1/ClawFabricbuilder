@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { setTimeout: delay } = require('node:timers/promises');
 const { _electron: electron } = require('playwright-core');
 
 const {
@@ -22,6 +23,7 @@ const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked',
 const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v1';
 const ASK_MODE_INSTRUCTION = 'Make a timer.';
 const BUILD_MODE_INSTRUCTION = '这个文件夹是什么结构？';
+const CONTINUE_DRAFT_INSTRUCTION = '继续优化标题和说明，不要保存版本';
 const SEMANTIC_PLAN_INSTRUCTION = '帮我做一个静态技术博客实施计划';
 const PLAN_MODE_INSTRUCTION = '我打算做一个技术博客，静态的，帮我做成计划';
 
@@ -169,6 +171,21 @@ function countProviderRequests(providerRequests, responseKind) {
   return providerRequests.filter((request) => request.response_kind === responseKind).length;
 }
 
+async function waitForProviderRequestCount(providerServer, responseKind, previousCount, code) {
+  const deadline = Date.now() + 120_000;
+  let snapshot = providerServer.snapshot();
+  while (Date.now() < deadline) {
+    snapshot = providerServer.snapshot();
+    if (countProviderRequests(snapshot, responseKind) > previousCount) return snapshot;
+    await delay(250);
+  }
+  fail(code, {
+    previous_count: previousCount,
+    provider_requests: snapshot,
+    response_kind: responseKind,
+  });
+}
+
 async function verifyAskModePersistentAndClear(page, providerServer) {
   const before = providerServer.snapshot();
   const answersBefore = await page.locator(SELECTORS.questionAnswer).count().catch(() => 0);
@@ -264,6 +281,41 @@ async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
   }
   await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
   return approvedCurrentProjectWrite;
+}
+
+async function verifyContinueUnsavedDraftWithoutSave(page, providerServer, userDataPath) {
+  const before = providerServer.snapshot();
+  const beforeCodeChangeCount = countProviderRequests(before, 'builder_code_change_operations');
+  await page.locator(SELECTORS.idea).fill(CONTINUE_DRAFT_INSTRUCTION);
+  await waitForSubmitEnabled(page, 'continue_unsaved_draft_before_submit');
+  await page.locator(SELECTORS.submitTurn).click();
+  await waitForProviderRequestCount(
+    providerServer,
+    'builder_code_change_operations',
+    beforeCodeChangeCount,
+    'continue_unsaved_draft_provider_request_missing',
+  );
+  const draftReady = page.locator(SELECTORS.unsavedDraft).
+    getByText('Unsaved draft', { exact: true }).
+    waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'draft_ready', () => 'draft_timeout');
+  const alertReady = page.getByRole('alert').
+    waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'alert_ready', () => 'alert_timeout');
+  const draftOutcome = await Promise.race([draftReady, alertReady]);
+  if (draftOutcome !== 'draft_ready') {
+    fail('continue_unsaved_draft_not_ready', await capturePlanModeDiagnostic(
+      page,
+      providerServer,
+      userDataPath,
+    ));
+  }
+  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
+  return Object.freeze({
+    continuation_provider_request_observed: true,
+    save_version_still_explicit: true,
+    unsaved_draft_continued_without_save: true,
+  });
 }
 
 async function verifyNaturalLanguagePlanAndReject(page, providerServer, userDataPath) {
@@ -390,6 +442,11 @@ async function run() {
     if (!providerRequestsAfterApproval.some((request) => request.response_kind === 'builder_code_change_operations')) {
       fail('approved_plan_provider_request_missing', { provider_requests: providerRequestsAfterApproval });
     }
+    const continuation = await verifyContinueUnsavedDraftWithoutSave(
+      page,
+      providerServer,
+      userDataPath,
+    );
     const result = Object.freeze({
       result_version: RESULT_VERSION,
       executable_path: executablePath,
@@ -411,6 +468,9 @@ async function run() {
       plan_approved: true,
       current_project_write_approved: approvedCurrentProjectWrite,
       approved_plan_executed: true,
+      continuation_provider_request_observed: continuation.continuation_provider_request_observed,
+      save_version_still_explicit: continuation.save_version_still_explicit,
+      unsaved_draft_continued_without_save: continuation.unsaved_draft_continued_without_save,
       unsaved_draft_visible: true,
       save_version_visible: true,
       composer_route: composerRoute,

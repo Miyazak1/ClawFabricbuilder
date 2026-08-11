@@ -424,10 +424,11 @@ export function decideBuilderComposerIntent(
     });
   }
   if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return createDecision('clarify', context, {
-      confidence: 'medium',
-      downgradedFrom: 'build',
-      downgradeReason: 'ambiguous_build_intent',
+    const hasPriorBuildContext = context.hasPriorBuildContext === true;
+    return createDecision(hasPriorBuildContext ? 'build' : 'clarify', context, {
+      confidence: hasPriorBuildContext ? 'high' : 'medium',
+      downgradedFrom: hasPriorBuildContext ? null : 'build',
+      downgradeReason: hasPriorBuildContext ? null : 'ambiguous_build_intent',
       matchedSignals: ['vague_change'],
     });
   }

@@ -6419,6 +6419,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
   assert.match(planModeSource, /verifyAskModePersistentAndClear/u);
   assert.match(planModeSource, /verifyBuildModePersistentAndClear/u);
+  assert.match(planModeSource, /verifyContinueUnsavedDraftWithoutSave/u);
   assert.match(planModeSource, /verifyNaturalLanguagePlanAndReject/u);
   assert.match(planModeSource, /SELECTORS\.composerAddAskMode/u);
   assert.match(planModeSource, /SELECTORS\.composerAddBuildMode/u);
@@ -6432,6 +6433,9 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /build_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /build_mode_requested_write_approval:\s*true/u);
   assert.match(planModeSource, /build_mode_skipped_classifier:\s*true/u);
+  assert.match(planModeSource, /continuation_provider_request_observed:\s*true/u);
+  assert.match(planModeSource, /save_version_still_explicit:\s*true/u);
+  assert.match(planModeSource, /unsaved_draft_continued_without_save:\s*true/u);
   assert.match(planModeSource, /clickByRole\(page,\s*['"]button['"],\s*['"]Approve plan['"]\)/u);
   assert.match(planModeSource, /approveCurrentProjectWriteIfRequested/u);
   assert.match(planModeSource, /SELECTORS\.unsavedDraft/u);

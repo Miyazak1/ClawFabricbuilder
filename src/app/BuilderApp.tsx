@@ -922,6 +922,23 @@ function composerIntentContext(
   });
 }
 
+const DIRECT_CURRENT_DRAFT_BUILD_SIGNALS = new Set([
+  'clear_build',
+  'contextual_build_phrase',
+  'current_artifact_defect',
+  'current_artifact_direct_change',
+  'vague_change',
+]);
+
+function shouldSkipSemanticClassifierForCurrentDraftBuild(
+  decision: BuilderComposerRouteDecision,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+): boolean {
+  return projectSnapshot.draft !== null
+    && decision.route === 'build'
+    && decision.matchedSignals.some((signal) => DIRECT_CURRENT_DRAFT_BUILD_SIGNALS.has(signal));
+}
+
 function safeProviderContextDisclosureApproval(
   value: unknown,
 ): BuilderProviderContextDisclosureApprovalBridge | null {
@@ -2044,7 +2061,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     let semanticClassification: BuilderSemanticRouteClassification | null = null;
-    if (activeComposerMode === null && ports.generator.classifyIntent !== undefined) {
+    if (
+      activeComposerMode === null
+      && ports.generator.classifyIntent !== undefined
+      && !shouldSkipSemanticClassifierForCurrentDraftBuild(decision, projectSnapshotRef.current)
+    ) {
       const classificationEpoch = workspaceEpochRef.current;
       submitInFlightInstructionRef.current = submittedIdea;
       publishSubmitInFlight(true);
