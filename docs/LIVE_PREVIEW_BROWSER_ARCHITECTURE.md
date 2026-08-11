@@ -552,6 +552,21 @@ Evidence:
 - blocked network and navigation evidence passes;
 - restart cleanup passes.
 
+Current checkpoint:
+
+- add an independent `verify:packaged-live-preview` script, but keep it out of
+  `verify:release`;
+- launch the packaged app with isolated user data and a local provider mock;
+- generate a saved baseline and a current unsaved draft before starting Live
+  Preview;
+- start Live Preview from the Review Workspace instead of through renderer
+  source upload;
+- use Electron main-process automation to verify a loopback preview
+  `WebContents`, local JavaScript execution, and nonblank canvas pixels;
+- verify reload returns to ready and stop disposes the preview `WebContents`;
+- defer release-gate integration, restart cleanup evidence, blocked network
+  evidence, and WebGL-specific evidence to follow-up LP6 hardening.
+
 ## Relationship To MVP Programming Loop
 
 Live Preview is not required for the first MVP loop. The MVP may ship with
