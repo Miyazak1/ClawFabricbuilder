@@ -6497,16 +6497,22 @@ async function capturePreviewEvidence(page, gate, attempt = 0) {
       await failPreviewSurface(page);
     }
     const limitation = page.locator(SELECTORS.previewLimitation);
-    try {
-      await limitation.waitFor({ state: 'visible' });
-    } catch {
-      fail('canary_preview_limitation_failed');
+    const limitationCount = await limitation.count();
+    const limitationVisible = limitationCount > 0;
+    let limitationText = null;
+    if (limitationVisible) {
+      try {
+        await limitation.waitFor({ state: 'visible' });
+      } catch {
+        fail('canary_preview_limitation_failed');
+      }
+      limitationText = await limitation.textContent();
     }
-    const limitationText = await limitation.textContent();
     const runtimeBlocked = await page.locator(SELECTORS.previewRuntimeBlocked).count();
     if (runtimeBlocked > 0) {
       if (
-        typeof limitationText !== 'string'
+        !limitationVisible
+        || typeof limitationText !== 'string'
         || !limitationText.includes('Preview unavailable here')
         || !limitationText.includes('The files were generated')
         || !limitationText.includes('live preview support')
@@ -6526,15 +6532,24 @@ async function capturePreviewEvidence(page, gate, attempt = 0) {
         static_preview_limitation_visible: true,
       });
     }
-    if (
-      typeof limitationText !== 'string'
-      || !limitationText.includes('Static preview')
-      || !limitationText.includes('HTML and CSS are shown here')
-      || !limitationText.includes('JavaScript is disabled')
-      || !limitationText.includes('live preview support')
-      || limitationText.includes('Preview may look blank')
-      || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
-    ) fail('canary_preview_limitation_text_failed');
+    if (limitationVisible) {
+      if (
+        typeof limitationText !== 'string'
+        || !limitationText.includes('Static preview')
+        || !limitationText.includes('HTML and CSS are shown here')
+        || !limitationText.includes('JavaScript is disabled')
+        || !limitationText.includes('live preview support')
+        || limitationText.includes('Preview may look blank')
+        || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
+      ) fail('canary_preview_limitation_text_failed');
+    } else {
+      const previewText = await section.textContent();
+      if (
+        typeof previewText !== 'string'
+        || !previewText.includes('Static preview')
+        || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(previewText)
+      ) fail('canary_preview_limitation_text_failed');
+    }
     const frame = page.locator(SELECTORS.previewFrame);
     try {
       await frame.waitFor({ state: 'visible' });
@@ -6559,8 +6574,9 @@ async function capturePreviewEvidence(page, gate, attempt = 0) {
       preview_mode: 'static_frame',
       sandbox: 'empty',
       script_src: 'none',
-      static_preview_limitation_visible: true,
-      runtime_preview_limit_explained: true,
+      static_preview_limitation_visible: limitationVisible,
+      runtime_preview_limit_explained: limitationVisible,
+      static_preview_mode_visible: true,
       srcdoc_digest: digestText(srcdoc),
     });
   } catch (error) {

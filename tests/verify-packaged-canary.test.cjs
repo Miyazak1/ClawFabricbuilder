@@ -465,6 +465,10 @@ class FakeLocator {
       if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
       return 'Static preview HTML and CSS are shown here. JavaScript is disabled, so controls or animations may need live preview support before saving.';
     }
+    if (this.selector === SELECTORS.preview) {
+      if (this.page.previewTextOverride !== null) return this.page.previewTextOverride;
+      return 'Focus timer Static preview';
+    }
     if (this.selector === SELECTORS.previewUnavailable) {
       if (this.page.previewUnavailableTextOverride !== null) return this.page.previewUnavailableTextOverride;
       return 'Preview unavailable The files were generated, but this preview cannot run this kind of project yet. Review the source files and changes before saving. 3D/WebGL, JavaScript modules, canvas animation, network assets, local servers, and backend code need live preview support.';
@@ -497,6 +501,9 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.previewRuntimeBlocked) {
       return this.page.previewRuntimeBlocked ? 1 : 0;
+    }
+    if (this.selector === SELECTORS.previewLimitation) {
+      return this.page.previewLimitationVisible ? 1 : 0;
     }
     if (this.selector === SELECTORS.questionAnswer) {
       return this.page.questionTurns;
@@ -779,6 +786,7 @@ class FakePage {
     this.planModeActive = false;
     this.previewVisible = true;
     this.previewRuntimeBlocked = false;
+    this.previewLimitationVisible = true;
     this.previewUnavailable = false;
     this.previewUnavailableTextOverride = null;
     this.versionHistoryVisible = true;
@@ -794,6 +802,7 @@ class FakePage {
     this.reviewTextOverride = null;
     this.screenshotBufferOverride = null;
     this.previewLimitationTextOverride = null;
+    this.previewTextOverride = null;
     this.reviewLayoutBoxes = new Map([
       [SELECTORS.chatScroll, { x: 300, y: 44, width: 620, height: 620 }],
       [SELECTORS.artifactSidebar, { x: 936, y: 44, width: 360, height: 620 }],
@@ -4934,6 +4943,36 @@ test('captures chat-flow preview evidence without relying on the retired preview
   assert.equal(page.events.some((event) => event[0] === 'click'), false);
 
   page.previewLimitationTextOverride = 'Static preview only';
+  await assert.rejects(
+    capturePreviewEvidence(page, gate),
+    (error) => error.code === 'canary_preview_limitation_text_failed'
+      && error.stage === 'preview_limitation_text',
+  );
+});
+
+test('captures artifact static preview evidence when the repeated limitation notice is omitted', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+  page.previewLimitationVisible = false;
+
+  const evidence = await capturePreviewEvidence(page, gate);
+
+  assert.equal(evidence.preview_mode, 'static_frame');
+  assert.equal(evidence.static_preview_mode_visible, true);
+  assert.equal(evidence.static_preview_limitation_visible, false);
+  assert.equal(evidence.runtime_preview_limit_explained, false);
+  assert.equal(
+    page.events.some((event) => event[0] === 'textContent' && event[1] === SELECTORS.preview),
+    true,
+  );
+  assert.equal(
+    page.events.some((event) => event[0] === 'waitFor' && event[1] === SELECTORS.previewLimitation),
+    false,
+  );
+
+  page.previewTextOverride = 'Focus timer';
   await assert.rejects(
     capturePreviewEvidence(page, gate),
     (error) => error.code === 'canary_preview_limitation_text_failed'
