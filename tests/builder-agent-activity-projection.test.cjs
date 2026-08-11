@@ -154,6 +154,58 @@ test('projects terminal plan and review facts into waiting, ready, and blocked s
   assert.equal(ready.current.phase, 'ready_for_review');
   assert.equal(ready.current.summary, reviewState().summary);
 
+  const notChecked = projectBuilderAgentActivity(input({
+    active_turn_id: null,
+    latest_run: latestRun({
+      status: 'completed',
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      latest_progress_stage: 'result_preparing',
+    }),
+    review_state_projection: reviewState({
+      status: 'blocked',
+      label: 'Review not ready',
+      summary: 'Run a project check or choose Skip check before saving.',
+      check_status: 'not_run',
+      can_save: false,
+      blocking_reasons: ['check_not_run'],
+      authority: {
+        ...reviewState().authority,
+        check_evidence: 'verified_absence',
+      },
+    }),
+  }));
+  assert.equal(notChecked.current.phase, 'waiting_for_check');
+  assert.equal(notChecked.current.status, 'waiting');
+  assert.equal(notChecked.current.label, 'Ready for review');
+  assert.equal(notChecked.current.summary, 'Run a project check or choose Skip check before saving.');
+
+  const checkRunning = projectBuilderAgentActivity(input({
+    active_turn_id: null,
+    latest_run: latestRun({
+      status: 'completed',
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      latest_progress_stage: 'result_preparing',
+    }),
+    review_state_projection: reviewState({
+      status: 'blocked',
+      label: 'Review not ready',
+      summary: 'The project check is still running.',
+      check_status: 'running',
+      can_save: false,
+      blocking_reasons: ['check_running'],
+      authority: {
+        ...reviewState().authority,
+        check_evidence: 'main_owned_candidate_activity_registry',
+      },
+    }),
+  }));
+  assert.equal(checkRunning.current.phase, 'running_checks');
+  assert.equal(checkRunning.current.status, 'active');
+  assert.equal(checkRunning.current.label, 'Running checks');
+  assert.equal(checkRunning.current.summary, 'The project check is still running.');
+
   const blocked = projectBuilderAgentActivity(input({
     active_turn_id: null,
     latest_run: latestRun({

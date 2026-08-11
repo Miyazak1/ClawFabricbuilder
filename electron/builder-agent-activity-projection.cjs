@@ -107,6 +107,11 @@ const COPY = Object.freeze({
     label: 'Running checks',
     summary: 'Checking the current draft before it is saved.',
   }),
+  waiting_for_check: Object.freeze({
+    status: 'waiting',
+    label: 'Ready for review',
+    summary: 'Run a check or skip it before saving.',
+  }),
   preparing_review: Object.freeze({
     status: 'active',
     label: 'Preparing review',
@@ -300,6 +305,12 @@ function phaseFor(run, reviewStateProjection, activeTurnId, candidateActivity) {
     if (reviewStateProjection.status === 'ready') return 'ready_for_review';
     if (reviewStateProjection.blocking_reasons.includes('checkpoint_missing')) {
       return 'preparing_review';
+    }
+    if (reviewStateProjection.blocking_reasons.includes('check_running')) {
+      return 'running_checks';
+    }
+    if (reviewStateProjection.blocking_reasons.includes('check_not_run')) {
+      return 'waiting_for_check';
     }
     return 'blocked';
   }
