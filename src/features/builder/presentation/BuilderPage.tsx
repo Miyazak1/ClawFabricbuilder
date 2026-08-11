@@ -1459,6 +1459,29 @@ function ActivityProjectedStatusItem({
   );
 }
 
+function ActivitySavingVersionItem() {
+  return (
+    <li
+      className="cf-builder-activity-item"
+      data-builder-activity-card="Saving version"
+      data-builder-activity-role="status"
+      data-builder-agent-current-activity="saving_version"
+      data-builder-work-phase="saving_version"
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <RefreshCw className="size-3.5" />
+      </div>
+      <div
+        className="cf-builder-activity-content min-w-0"
+        data-builder-message-surface="status"
+      >
+        <div className="cf-builder-activity-title">Saving version</div>
+        <p className="cf-builder-activity-body">Recording this draft as a saved project version.</p>
+      </div>
+    </li>
+  );
+}
+
 function standaloneAgentActivity(
   projection: BuilderAgentActivityProjectionWire | null,
   entries: readonly ActivityEntry[],
@@ -1528,6 +1551,7 @@ function ActivityPanel({
   planReviewRecorded,
   pendingPlanReview,
   canReviewPlan,
+  savingVersion,
 }: Readonly<{
   canReviewPlan: boolean;
   hasUnsavedDraft: boolean;
@@ -1539,6 +1563,7 @@ function ActivityPanel({
   planReviewFailed: boolean;
   planReviewRecorded: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
+  savingVersion: boolean;
 }>) {
   const entries = activityEntries(snapshot);
   const visibleEntries = entries;
@@ -1576,10 +1601,10 @@ function ActivityPanel({
         </header>
       ) : null}
       <div className="cf-builder-activity-body-wrap">
-        {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && !showLiveOutput ? (
+        {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && !showLiveOutput && !savingVersion ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {visibleEntries.length === 0 && !showLiveOutput && message !== null ? (
+        {visibleEntries.length === 0 && !showLiveOutput && !savingVersion && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
             {message}
           </div>
@@ -1610,6 +1635,7 @@ function ActivityPanel({
             {currentAgentActivityStatus !== null ? (
               <ActivityProjectedStatusItem projection={currentAgentActivityStatus} />
             ) : null}
+            {savingVersion ? <ActivitySavingVersionItem /> : null}
             {showLiveOutput ? (
               <ActivityLiveOutputItem liveOutput={liveOutput} />
             ) : null}
@@ -2309,7 +2335,7 @@ export function BuilderPage({
     && reviewState?.can_discard === true;
   const history = visibleHistorySnapshot(historySnapshot);
   const visibleLiveOutput = liveOutput;
-  const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null;
+  const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null || status === 'saving';
   const showLogsPanel = artifactLogEntries(activity).length > 0 || visibleLiveOutput !== null;
   const showPermissionsPanel = saved !== null
     || workingProject !== null
@@ -2921,17 +2947,6 @@ export function BuilderPage({
         </p>
       );
     }
-    if (status === 'saving') {
-      return (
-        <p
-          className="cf-builder-alert cf-builder-alert-info cf-builder-chat-notice text-sm"
-          data-builder-conversation-notice="saving"
-          role="status"
-        >
-          Saving this version...
-        </p>
-      );
-    }
     if (status === 'restoring') {
       return (
         <p
@@ -3486,6 +3501,7 @@ export function BuilderPage({
                   planReviewFailed={planReviewFailed}
                   planReviewRecorded={planReviewRecordedForTarget}
                   pendingPlanReview={planReviewTarget}
+                  savingVersion={status === 'saving'}
                   snapshot={activity}
                 />
               ) : null}

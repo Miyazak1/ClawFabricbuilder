@@ -287,7 +287,7 @@ async function snapshots() {
   const fresh = controller.getSnapshot();
   const saved = await controller.open(PROJECT_ID);
   const draftReady = await controller.generate('Add a timer.');
-  return { draftReady, fresh, saved };
+  return { controller, draftReady, fresh, saved };
 }
 
 async function workingProjectSnapshot() {
@@ -2846,6 +2846,32 @@ describe('BuilderPage v2', () => {
     expect(onSave).not.toHaveBeenCalled();
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('projects an explicit Save version command as activity while saving', async () => {
+    const { controller } = await snapshots();
+    const activity = await candidateProgressActivity();
+    const save = controller.save();
+    const saving = controller.getSnapshot();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onSave={vi.fn()}
+        snapshot={saving}
+      />,
+    );
+
+    expect(saving.status).toBe('saving');
+    const savingActivity = container.querySelector('[data-builder-agent-current-activity="saving_version"]');
+    expect(savingActivity?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(savingActivity?.textContent).toContain('Saving version');
+    expect(savingActivity?.textContent).toContain('Recording this draft as a saved project version.');
+    expect(container.querySelector('[data-builder-conversation-notice="saving"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+      .toBe(true);
+    await save;
   });
 
   it('shows the main-owned automatic checkpoint beside the current unsaved draft', async () => {
