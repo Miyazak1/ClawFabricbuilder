@@ -1,9 +1,9 @@
 export type BuilderCheckRunOutcomeProjectionWire = Readonly<{
   projection_version: 'builder-check-run-outcome-projection.v1';
-  state: 'not_run' | 'running' | 'completed' | 'unavailable';
+  state: 'not_run' | 'skipped' | 'running' | 'completed' | 'unavailable';
   command_kind: 'lint' | 'typecheck' | 'test' | 'build' | null;
   command_label: 'Lint' | 'Type check' | 'Tests' | 'Build' | null;
-  status: 'not_run' | 'running' | 'passed' | 'failed' | 'incomplete' | 'unavailable';
+  status: 'not_run' | 'skipped' | 'running' | 'passed' | 'failed' | 'incomplete' | 'unavailable';
   label: string;
   summary: string;
   completed_at_ms: number | null;
@@ -12,6 +12,7 @@ export type BuilderCheckRunOutcomeProjectionWire = Readonly<{
     fact_source:
       | 'verified_current_candidate_check_run'
       | 'verified_absence'
+      | 'verified_explicit_skip_decision'
       | 'activity_registry'
       | 'status_unavailable';
     raw_output: 'not_present';
@@ -39,6 +40,7 @@ const COMMAND_LABELS = Object.freeze({
 });
 const SPECIAL = Object.freeze({
   not_run: ['not_run', 'Not checked', 'No project check has been recorded for this draft.', 'verified_absence'],
+  skipped: ['skipped', 'Check skipped', 'You chose to save this draft without running a project check.', 'verified_explicit_skip_decision'],
   running: ['running', 'Running checks', 'Checking the current draft before it is saved.', 'activity_registry'],
   unavailable: ['unavailable', 'Check status unavailable', 'Builder could not verify the check status for this draft.', 'status_unavailable'],
 } as const);

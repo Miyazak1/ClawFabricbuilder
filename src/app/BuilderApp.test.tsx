@@ -194,6 +194,24 @@ function providerContextDisclosureStatusProjection() {
 function reviewReadyTaskStreamWire() {
   return {
     ...createTaskStreamWire(),
+    check_run_outcome_projection: {
+      projection_version: 'builder-check-run-outcome-projection.v1',
+      state: 'skipped',
+      command_kind: null,
+      command_label: null,
+      status: 'skipped',
+      label: 'Check skipped',
+      summary: 'You chose to save this draft without running a project check.',
+      completed_at_ms: null,
+      authority: {
+        projection_authority: 'main_owned_check_run_outcome_projection_v1',
+        fact_source: 'verified_explicit_skip_decision',
+        raw_output: 'not_present',
+        runtime_paths: 'not_present',
+        renderer_authority: 'read_only_projection',
+        save_authority: false,
+      },
+    },
     draft_checkpoint_status_projection: {
       projection_version: 'builder-draft-checkpoint-status-projection.v1',
       status: 'ready',
@@ -229,10 +247,10 @@ function reviewReadyTaskStreamWire() {
       draft_id: DRAFT_ID,
       status: 'ready',
       label: 'Ready to review',
-      summary: 'A recoverable draft is ready to inspect and save.',
+      summary: 'You chose to save this recoverable draft without running a project check.',
       checkpoint_status: 'ready',
       preview_status: 'not_recorded',
-      check_status: 'not_run',
+      check_status: 'skipped',
       changed_file_count: 2,
       can_save: true,
       can_discard: true,
@@ -241,7 +259,7 @@ function reviewReadyTaskStreamWire() {
         projection_authority: 'main_owned_review_state_projection_v1',
         candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
         checkpoint_evidence: 'verified_latest_candidate_checkpoint',
-        check_evidence: 'verified_absence',
+        check_evidence: 'verified_explicit_skip_decision',
         renderer_authority: 'not_present',
         ipc_authority: 'projection_only',
         provider_dispatch: false,
@@ -254,6 +272,37 @@ function reviewReadyTaskStreamWire() {
         revision_admission: 'not_created',
         save_authority: false,
         publication: false,
+      },
+    },
+  } as const;
+}
+
+function uncheckedReviewTaskStreamWire() {
+  const wire = reviewReadyTaskStreamWire();
+  return {
+    ...wire,
+    check_run_outcome_projection: {
+      ...wire.check_run_outcome_projection,
+      state: 'not_run',
+      status: 'not_run',
+      label: 'Not checked',
+      summary: 'No project check has been recorded for this draft.',
+      authority: {
+        ...wire.check_run_outcome_projection.authority,
+        fact_source: 'verified_absence',
+      },
+    },
+    review_state_projection: {
+      ...wire.review_state_projection,
+      status: 'blocked',
+      label: 'Review not ready',
+      summary: 'Run a project check or choose Skip check before saving.',
+      check_status: 'not_run',
+      can_save: false,
+      blocking_reasons: ['check_not_run'],
+      authority: {
+        ...wire.review_state_projection.authority,
+        check_evidence: 'verified_absence',
       },
     },
   } as const;
@@ -360,6 +409,7 @@ async function setup(options: Readonly<{
   workspaceOnlyCatalog?: boolean;
   checkRunAvailable?: boolean;
   checkRunStatus?: 'passed' | 'failed' | 'incomplete';
+  uncheckedUntilSkip?: boolean;
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
     ? await createReadWire(await createSourceTree([
@@ -451,6 +501,14 @@ async function setup(options: Readonly<{
       },
     };
   });
+  const skipCurrentDraftCheck = vi.fn(async (request: unknown) => ({
+    result_version: 'builder-check-skip-current-draft-public-result.v1',
+    operation: 'current_draft_check_skipped',
+    draft_id: (request as { draft_id: string }).draft_id,
+    project_id: PROJECT_ID,
+    candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+    status: 'skipped',
+  }));
   async function createDraftForCurrentProject(
     hostRequest: Awaited<ReturnType<typeof createBuilderGenerationRequest>>,
     sourceTree = readWire.source_tree,
@@ -909,6 +967,14 @@ async function setup(options: Readonly<{
     if (options.failTaskStreamAfterPlanReview === true && planReviewRecorded) {
       throw new Error('activity unavailable');
     }
+    if (
+      options.uncheckedUntilSkip === true
+      && (submit.mock.calls.length > 0 || generate.mock.calls.length > 0)
+    ) {
+      return skipCurrentDraftCheck.mock.calls.length > 0
+        ? reviewReadyTaskStreamWire()
+        : uncheckedReviewTaskStreamWire();
+    }
     return options.planAfterPropose === true && proposePlan.mock.calls.length > 0
       ? createPlanTaskStreamWire()
       : options.rejectedPlanActivity === true
@@ -1141,6 +1207,7 @@ async function setup(options: Readonly<{
     checkRun: {
       readCurrentDraftAvailableChecks,
       approveAndRunCurrentDraftCheck,
+      skipCurrentDraftCheck,
     },
     livePreview: {
       requestCurrentDraftPreview: async (request: unknown) => ({
@@ -1304,6 +1371,7 @@ async function setup(options: Readonly<{
   });
   return {
     approveAndRunCurrentDraftCheck,
+    skipCurrentDraftCheck,
     container,
     answer,
     answerDraft,
@@ -5728,6 +5796,44 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
       .toBe(false);
+  });
+
+  it('requires an explicit skip decision before saving an unchecked draft', async () => {
+    const {
+      container,
+      saveDraft,
+      skipCurrentDraftCheck,
+    } = await setup({
+      initiallySaved: true,
+      uncheckedUntilSkip: true,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-skip-check="true"]')).not.toBeNull();
+      expect(container.textContent).toContain('Run a project check or choose Skip check before saving.');
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+        .toBe(true);
+    });
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    click(container, 'Skip check');
+    await waitFor(() => {
+      expect(skipCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+        .toBe(false);
+      expect(container.textContent).toContain('Check skipped');
+    });
+    expect(saveDraft).not.toHaveBeenCalled();
   });
 
   it('keeps project instruction state when visiting Settings and returning', async () => {

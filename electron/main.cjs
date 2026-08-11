@@ -273,6 +273,8 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
       mainWindowRef: () => mainWindow,
       currentDraftCheckRunService:
         generationRuntime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
+      currentDraftCheckSkipService:
+        generationRuntime.readCheckRunSkipCurrentDraftServiceForMainOnlyApprovalRuntime(),
     }),
     createBuilderLivePreviewIpcRuntime({
       ipcMain,

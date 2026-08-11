@@ -7,16 +7,19 @@ import type {
   BuilderCheckRunProfile,
   BuilderCheckRunReadRequest,
   BuilderCheckRunStatusProjection,
+  BuilderCheckRunSkippedResult,
 } from '../application/builderPorts';
 
 type BuilderCheckRunBridge = Readonly<{
   readCurrentDraftAvailableChecks(request: unknown): Promise<unknown>;
   approveAndRunCurrentDraftCheck(request: unknown): Promise<unknown>;
+  skipCurrentDraftCheck(request: unknown): Promise<unknown>;
 }>;
 
 const BRIDGE_KEYS = Object.freeze([
   'readCurrentDraftAvailableChecks',
   'approveAndRunCurrentDraftCheck',
+  'skipCurrentDraftCheck',
 ]);
 const READ_REQUEST_KEYS = Object.freeze(['draft_id']);
 const RUN_REQUEST_KEYS = Object.freeze(['draft_id', 'command_profile_id']);
@@ -27,6 +30,9 @@ const READ_RESULT_KEYS = Object.freeze([
 const RUN_RESULT_KEYS = Object.freeze([
   'result_version', 'service_version', 'operation', 'draft_id', 'project_id',
   'candidate_id', 'check_run_status_projection',
+]);
+const SKIP_RESULT_KEYS = Object.freeze([
+  'result_version', 'operation', 'draft_id', 'project_id', 'candidate_id', 'status',
 ]);
 const PROFILE_KEYS = Object.freeze([
   'command_profile_id', 'command_kind', 'command_display', 'requires_user_approval',
@@ -108,10 +114,12 @@ function sanitizeBridge(value: unknown): BuilderCheckRunBridge {
   if (
     typeof source.readCurrentDraftAvailableChecks !== 'function'
     || typeof source.approveAndRunCurrentDraftCheck !== 'function'
+    || typeof source.skipCurrentDraftCheck !== 'function'
   ) throw unavailable();
   return Object.freeze({
     readCurrentDraftAvailableChecks: source.readCurrentDraftAvailableChecks as (request: unknown) => Promise<unknown>,
     approveAndRunCurrentDraftCheck: source.approveAndRunCurrentDraftCheck as (request: unknown) => Promise<unknown>,
+    skipCurrentDraftCheck: source.skipCurrentDraftCheck as (request: unknown) => Promise<unknown>,
   });
 }
 
@@ -273,6 +281,28 @@ function completedResult(value: unknown, draftId: string): BuilderCheckRunComple
   });
 }
 
+function skippedResult(value: unknown, draftId: string): BuilderCheckRunSkippedResult {
+  const source = exactRecord(value, SKIP_RESULT_KEYS);
+  if (
+    source.result_version !== 'builder-check-skip-current-draft-public-result.v1'
+    || source.operation !== 'current_draft_check_skipped'
+    || source.draft_id !== draftId
+    || typeof source.project_id !== 'string'
+    || !PROJECT_ID_PATTERN.test(source.project_id)
+    || typeof source.candidate_id !== 'string'
+    || !CANDIDATE_ID_PATTERN.test(source.candidate_id)
+    || source.status !== 'skipped'
+  ) throw unavailable();
+  return Object.freeze({
+    result_version: 'builder-check-skip-current-draft-public-result.v1',
+    operation: 'current_draft_check_skipped',
+    draft_id: draftId,
+    project_id: source.project_id,
+    candidate_id: source.candidate_id,
+    status: 'skipped',
+  });
+}
+
 export function createBuilderDesktopCheckRunPort(value: unknown): BuilderCheckRunPort {
   const bridge = sanitizeBridge(value);
   return Object.freeze({
@@ -293,6 +323,18 @@ export function createBuilderDesktopCheckRunPort(value: unknown): BuilderCheckRu
         const safe = runRequest(request);
         return completedResult(await Reflect.apply(
           bridge.approveAndRunCurrentDraftCheck,
+          bridge,
+          [safe],
+        ), safe.draft_id);
+      } catch {
+        throw unavailable();
+      }
+    },
+    async skipCurrentDraftCheck(request: BuilderCheckRunReadRequest) {
+      try {
+        const safe = readRequest(request);
+        return skippedResult(await Reflect.apply(
+          bridge.skipCurrentDraftCheck,
           bridge,
           [safe],
         ), safe.draft_id);

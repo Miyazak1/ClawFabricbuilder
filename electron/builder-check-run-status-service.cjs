@@ -8,9 +8,15 @@ const {
 const {
   projectBuilderCheckRunStatus,
 } = require('./builder-check-run-status-projection.cjs');
+const {
+  sanitizeBuilderCheckSkipDecision,
+} = require('./builder-check-skip-decision.cjs');
+const {
+  BUILDER_CHECK_SKIP_DECISION_STORE_READ_RESULT_VERSION,
+} = require('./builder-check-skip-decision-store.cjs');
 
 const BUILDER_CHECK_RUN_STATUS_SERVICE_VERSION = 'builder-check-run-status-service.v1';
-const CREATE_KEYS = Object.freeze(['check_run_store']);
+const CREATE_KEYS = Object.freeze(['check_run_store', 'check_skip_decision_store']);
 const READ_KEYS = Object.freeze(['project_id', 'candidate_id']);
 const STORE_RESULT_KEYS = Object.freeze([
   'result_version',
@@ -84,6 +90,8 @@ function createBuilderCheckRunStatusService(rawOptions) {
     const options = exactObject(rawOptions, CREATE_KEYS);
     const store = options.check_run_store.value;
     const readLatestCheckRun = functionAt(store, 'read_latest_check_run');
+    const skipStore = options.check_skip_decision_store.value;
+    const readCurrentSkipDecision = functionAt(skipStore, 'read_current_check_skip_decision');
     return freezeDeep({
       service_version: BUILDER_CHECK_RUN_STATUS_SERVICE_VERSION,
       read_current_check_run_status(rawRequest) {
@@ -110,14 +118,49 @@ function createBuilderCheckRunStatusService(rawOptions) {
           ) fail();
           if (stored.status.value === 'absent') {
             if (stored.check_run.value !== null) fail();
-            return freezeDeep({ check_run_status_projection: null });
+            const skipResult = readCurrentSkipDecision({
+              project_id: projectId,
+              candidate_id: candidateId,
+            });
+            const storedSkip = exactObject(skipResult, [
+              'result_version',
+              'operation',
+              'status',
+              'check_skip_decision',
+              'store_evidence',
+            ]);
+            if (
+              storedSkip.result_version.value !== BUILDER_CHECK_SKIP_DECISION_STORE_READ_RESULT_VERSION
+              || storedSkip.operation.value !== 'current_check_skip_decision_read'
+              || !['absent', 'ready'].includes(storedSkip.status.value)
+              || !isPlainObject(storedSkip.store_evidence.value)
+            ) fail();
+            if (storedSkip.status.value === 'absent') {
+              if (storedSkip.check_skip_decision.value !== null) fail();
+              return freezeDeep({
+                check_run_state: 'not_run',
+                check_run_status_projection: null,
+              });
+            }
+            if (storedSkip.check_skip_decision.value === null) fail();
+            const decision = sanitizeBuilderCheckSkipDecision(
+              storedSkip.check_skip_decision.value,
+            );
+            if (decision.project_id !== projectId || decision.candidate_id !== candidateId) fail();
+            return freezeDeep({
+              check_run_state: 'skipped',
+              check_run_status_projection: null,
+            });
           }
           if (stored.check_run.value === null) fail();
           const projection = projectBuilderCheckRunStatus({
             check_run: stored.check_run.value,
           });
           if (projection.project_id !== projectId || projection.candidate_id !== candidateId) fail();
-          return freezeDeep({ check_run_status_projection: projection });
+          return freezeDeep({
+            check_run_state: 'completed',
+            check_run_status_projection: projection,
+          });
         } catch (error) {
           if (error instanceof BuilderCheckRunStatusServiceError) throw error;
           fail();

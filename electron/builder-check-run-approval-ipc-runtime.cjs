@@ -5,20 +5,31 @@ const { types: utilTypes } = require('node:util');
 const {
   APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
+  SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   createBuilderCheckRunApprovalIpcAdapter,
 } = require('./builder-check-run-approval-ipc-adapter.cjs');
 const {
   BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
 } = require('./builder-check-run-current-draft-service.cjs');
+const {
+  BUILDER_CHECK_SKIP_CURRENT_DRAFT_SERVICE_VERSION,
+} = require('./builder-check-skip-current-draft-service.cjs');
 
 const BUILDER_CHECK_RUN_APPROVAL_IPC_RUNTIME_VERSION =
   'builder-check-run-approval-ipc-runtime.v1';
-const OPTION_KEYS = Object.freeze(['ipcMain', 'mainWindowRef', 'currentDraftCheckRunService']);
+const OPTION_KEYS = Object.freeze([
+  'ipcMain',
+  'mainWindowRef',
+  'currentDraftCheckRunService',
+  'currentDraftCheckSkipService',
+]);
 const SERVICE_KEYS = Object.freeze([
   'service_version',
   'read_available_checks',
+  'read_current_candidate_for_main_only',
   'run_approved_check',
 ]);
+const SKIP_SERVICE_KEYS = Object.freeze(['service_version', 'skip_current_draft_check']);
 
 class BuilderCheckRunApprovalIpcRuntimeError extends Error {
   constructor(code = 'builder_check_run_approval_ipc_runtime_unavailable') {
@@ -89,6 +100,16 @@ function safeService(value) {
   return value;
 }
 
+function safeSkipService(value) {
+  const descriptors = exactObject(value, SKIP_SERVICE_KEYS);
+  if (descriptors.service_version.value !== BUILDER_CHECK_SKIP_CURRENT_DRAFT_SERVICE_VERSION) fail();
+  if (
+    typeof descriptors.skip_current_draft_check.value !== 'function'
+    || utilTypes.isProxy(descriptors.skip_current_draft_check.value)
+  ) fail();
+  return value;
+}
+
 function safeOptions(value) {
   const descriptors = exactObject(value, OPTION_KEYS);
   const ipcMain = descriptors.ipcMain.value;
@@ -106,6 +127,7 @@ function safeOptions(value) {
     removeHandler: stableMethod(ipcMain, 'removeHandler'),
     mainWindowRef,
     currentDraftCheckRunService: safeService(descriptors.currentDraftCheckRunService.value),
+    currentDraftCheckSkipService: safeSkipService(descriptors.currentDraftCheckSkipService.value),
   });
 }
 
@@ -113,6 +135,7 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
   const options = safeOptions(rawOptions);
   const activeReads = new Map();
   const activeRuns = new Set();
+  const activeSkips = new Set();
   const activeOperations = new Set();
   let shutdownOperation = null;
 
@@ -154,11 +177,29 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     return trackOperation(operation);
   }
 
+  function skipCurrentDraftCheck(request) {
+    if (activeRuns.has(request.draft_id) || activeSkips.has(request.draft_id)) {
+      const error = new Error('A project check activity is already in progress.');
+      error.code = 'builder_check_run_approval_busy';
+      return Promise.reject(error);
+    }
+    activeSkips.add(request.draft_id);
+    const operation = Promise.resolve().then(() => Reflect.apply(
+      options.currentDraftCheckSkipService.skip_current_draft_check,
+      options.currentDraftCheckSkipService,
+      [request],
+    )).finally(() => {
+      activeSkips.delete(request.draft_id);
+    });
+    return trackOperation(operation);
+  }
+
   let adapter;
   try {
     adapter = createBuilderCheckRunApprovalIpcAdapter({
       readCurrentDraftAvailableChecks: readAvailableChecks,
       approveAndRunCurrentDraftCheck: approveAndRunCheck,
+      skipCurrentDraftCheck,
       mainWindowRef: options.mainWindowRef,
     });
   } catch {
@@ -172,6 +213,10 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     Object.freeze({
       channel: APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
       invoke: adapter.channels.approveAndRunCurrentDraftCheck.invoke,
+    }),
+    Object.freeze({
+      channel: SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
+      invoke: adapter.channels.skipCurrentDraftCheck.invoke,
     }),
   ]);
   const installed = [];

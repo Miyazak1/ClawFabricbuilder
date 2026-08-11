@@ -10,14 +10,24 @@ const {
 const {
   sanitizeBuilderCheckRunStatusProjection,
 } = require('./builder-check-run-status-projection.cjs');
+const {
+  BUILDER_CHECK_SKIP_CURRENT_DRAFT_RESULT_VERSION,
+  BUILDER_CHECK_SKIP_CURRENT_DRAFT_SERVICE_VERSION,
+} = require('./builder-check-skip-current-draft-service.cjs');
+const {
+  sanitizeBuilderCheckSkipDecision,
+} = require('./builder-check-skip-decision.cjs');
 
 const READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL =
   'clawfabric-builder:check-run:read-current-draft-available';
 const APPROVE_CURRENT_DRAFT_CHECK_CHANNEL =
   'clawfabric-builder:check-run:approve-current-draft-check';
+const SKIP_CURRENT_DRAFT_CHECK_CHANNEL =
+  'clawfabric-builder:check-run:skip-current-draft-check';
 const OPTION_KEYS = Object.freeze([
   'readCurrentDraftAvailableChecks',
   'approveAndRunCurrentDraftCheck',
+  'skipCurrentDraftCheck',
   'mainWindowRef',
 ]);
 const READ_REQUEST_KEYS = Object.freeze(['draft_id']);
@@ -40,6 +50,16 @@ const RUN_RESULT_KEYS = Object.freeze([
   'project_id',
   'candidate_id',
   'check_run_status_projection',
+]);
+const SKIP_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'service_version',
+  'operation',
+  'draft_id',
+  'project_id',
+  'candidate_id',
+  'check_skip_decision',
+  'authority',
 ]);
 const PROFILE_KEYS = Object.freeze([
   'command_profile_id',
@@ -131,6 +151,7 @@ function safeOptions(value) {
   return Object.freeze({
     readCurrentDraftAvailableChecks: stableMethod(value, 'readCurrentDraftAvailableChecks'),
     approveAndRunCurrentDraftCheck: stableMethod(value, 'approveAndRunCurrentDraftCheck'),
+    skipCurrentDraftCheck: stableMethod(value, 'skipCurrentDraftCheck'),
     mainWindowRef: stableMethod(value, 'mainWindowRef'),
   });
 }
@@ -245,6 +266,49 @@ function safeRunResult(value, request) {
   });
 }
 
+function safeSkipResult(value, request) {
+  const descriptors = exactObject(value, SKIP_RESULT_KEYS, 'builder_check_run_approval_unavailable');
+  if (
+    descriptors.result_version.value !== BUILDER_CHECK_SKIP_CURRENT_DRAFT_RESULT_VERSION
+    || descriptors.service_version.value !== BUILDER_CHECK_SKIP_CURRENT_DRAFT_SERVICE_VERSION
+    || !['check_skip_decision_recorded', 'check_skip_decision_replayed'].includes(
+      descriptors.operation.value,
+    )
+    || descriptors.draft_id.value !== request.draft_id
+    || !PROJECT_ID_PATTERN.test(descriptors.project_id.value)
+    || !CANDIDATE_ID_PATTERN.test(descriptors.candidate_id.value)
+  ) throw ipcError();
+  let decision;
+  try { decision = sanitizeBuilderCheckSkipDecision(descriptors.check_skip_decision.value); } catch {
+    throw ipcError();
+  }
+  if (
+    decision.draft_id !== request.draft_id
+    || decision.project_id !== descriptors.project_id.value
+    || decision.candidate_id !== descriptors.candidate_id.value
+  ) throw ipcError();
+  const authority = exactObject(descriptors.authority.value, [
+    'user_action',
+    'save_version',
+    'check_execution',
+    'renderer_candidate_identity',
+  ], 'builder_check_run_approval_unavailable');
+  if (
+    authority.user_action.value !== 'explicit_skip_check_request_admitted_by_main'
+    || authority.save_version.value !== 'not_performed'
+    || authority.check_execution.value !== 'not_performed'
+    || authority.renderer_candidate_identity.value !== 'not_accepted'
+  ) throw ipcError();
+  return Object.freeze({
+    result_version: 'builder-check-skip-current-draft-public-result.v1',
+    operation: 'current_draft_check_skipped',
+    draft_id: request.draft_id,
+    project_id: descriptors.project_id.value,
+    candidate_id: descriptors.candidate_id.value,
+    status: 'skipped',
+  });
+}
+
 function activeWebContents(mainWindowRef) {
   try {
     const windowRef = Reflect.apply(mainWindowRef, undefined, []);
@@ -293,7 +357,10 @@ function safeErrorCode(error) {
 
 function normalizeError(error) {
   if (error instanceof BuilderCheckRunApprovalIpcError) return error;
-  if (safeErrorCode(error) === 'builder_check_run_approval_busy') {
+  if (
+    safeErrorCode(error) === 'builder_check_run_approval_busy'
+    || safeErrorCode(error) === 'builder_check_skip_current_draft_busy'
+  ) {
     return ipcError('builder_check_run_approval_busy');
   }
   return ipcError();
@@ -332,6 +399,21 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
     }
   }
 
+  async function invokeSkip(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_check_run_approval_invalid');
+      const request = safeReadRequest(rawArguments[0]);
+      return safeSkipResult(await Reflect.apply(
+        options.skipCurrentDraftCheck,
+        undefined,
+        [request],
+      ), request);
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   return Object.freeze({
     adapter_id: 'builder-check-run-approval.controlled-ipc-adapter.v1',
     channels: Object.freeze({
@@ -345,10 +427,16 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
         method: 'approveAndRunCurrentDraftCheck',
         invoke(event, ...rawArguments) { return invokeApproveAndRun(event, rawArguments); },
       }),
+      skipCurrentDraftCheck: Object.freeze({
+        channel: SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
+        method: 'skipCurrentDraftCheck',
+        invoke(event, ...rawArguments) { return invokeSkip(event, rawArguments); },
+      }),
     }),
     exposed_methods: Object.freeze([
       'readCurrentDraftAvailableChecks',
       'approveAndRunCurrentDraftCheck',
+      'skipCurrentDraftCheck',
     ]),
     authority: Object.freeze({
       renderer_authority: 'current_draft_and_displayed_profile_identity_only',
@@ -371,6 +459,7 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
 module.exports = Object.freeze({
   APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
+  SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   BuilderCheckRunApprovalIpcError,
   createBuilderCheckRunApprovalIpcAdapter,
 });

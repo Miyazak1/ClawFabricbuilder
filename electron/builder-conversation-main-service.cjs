@@ -1074,13 +1074,18 @@ function createBuilderConversationMainService(rawOptions) {
         return Object.freeze({ read_state: 'unavailable', projection: null });
       }
       const descriptor = Object.getOwnPropertyDescriptor(result, 'check_run_status_projection');
+      const stateDescriptor = Object.getOwnPropertyDescriptor(result, 'check_run_state');
       if (
         !descriptor
         || descriptor.enumerable !== true
         || !Object.hasOwn(descriptor, 'value')
+        || !stateDescriptor
+        || stateDescriptor.enumerable !== true
+        || !Object.hasOwn(stateDescriptor, 'value')
+        || !['not_run', 'skipped', 'completed'].includes(stateDescriptor.value)
       ) return Object.freeze({ read_state: 'unavailable', projection: null });
       return descriptor.value === null
-        ? Object.freeze({ read_state: 'not_run', projection: null })
+        ? Object.freeze({ read_state: stateDescriptor.value, projection: null })
         : Object.freeze({
           read_state: 'completed',
           projection: sanitizeBuilderCheckRunStatusProjection(descriptor.value),

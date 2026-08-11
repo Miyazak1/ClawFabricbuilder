@@ -6,6 +6,8 @@ export type BuilderReviewStateProjectionWire = Readonly<{
   summary:
     | 'A recoverable draft is ready to inspect and save.'
     | 'A recoverable draft is checked and ready to inspect and save.'
+    | 'You chose to save this recoverable draft without running a project check.'
+    | 'Run a project check or choose Skip check before saving.'
     | 'Waiting for a verified draft checkpoint before saving.'
     | 'The latest project check failed. Review it before saving.'
     | 'The latest project check did not finish. Run it again before saving.'
@@ -13,12 +15,13 @@ export type BuilderReviewStateProjectionWire = Readonly<{
     | 'Builder could not verify the project check status.';
   checkpoint_status: 'ready' | 'missing';
   preview_status: 'not_recorded';
-  check_status: 'not_run' | 'passed' | 'failed' | 'incomplete' | 'running' | 'unavailable';
+  check_status: 'not_run' | 'skipped' | 'passed' | 'failed' | 'incomplete' | 'running' | 'unavailable';
   changed_file_count: number | null;
   can_save: boolean;
   can_discard: true;
   blocking_reasons: readonly (
     | 'checkpoint_missing'
+    | 'check_not_run'
     | 'check_failed'
     | 'check_incomplete'
     | 'check_running'
@@ -31,6 +34,7 @@ export type BuilderReviewStateProjectionWire = Readonly<{
     check_evidence:
       | 'verified_current_candidate_check_projection'
       | 'verified_absence'
+      | 'verified_explicit_skip_decision'
       | 'main_owned_candidate_activity_registry'
       | 'status_unavailable';
     renderer_authority: 'not_present';
@@ -99,8 +103,8 @@ export function sanitizeBuilderReviewStateProjectionWire(
     const checkpointReady = value.checkpoint_status === 'ready';
     if (!checkpointReady && value.checkpoint_status !== 'missing') return null;
     const checkStatus = value.check_status;
-    if (!['not_run', 'passed', 'failed', 'incomplete', 'running', 'unavailable'].includes(String(checkStatus))) return null;
-    const checkBlocksSave = ['failed', 'incomplete', 'running', 'unavailable'].includes(String(checkStatus));
+    if (!['not_run', 'skipped', 'passed', 'failed', 'incomplete', 'running', 'unavailable'].includes(String(checkStatus))) return null;
+    const checkBlocksSave = ['not_run', 'failed', 'incomplete', 'running', 'unavailable'].includes(String(checkStatus));
     if (ready !== (checkpointReady && !checkBlocksSave)) return null;
     const expectedSummary = !checkpointReady
       ? 'Waiting for a verified draft checkpoint before saving.'
@@ -112,11 +116,14 @@ export function sanitizeBuilderReviewStateProjectionWire(
             ? 'The project check is still running.'
             : checkStatus === 'unavailable'
               ? 'Builder could not verify the project check status.'
-          : checkStatus === 'passed'
-            ? 'A recoverable draft is checked and ready to inspect and save.'
-            : 'A recoverable draft is ready to inspect and save.';
+              : checkStatus === 'not_run'
+                ? 'Run a project check or choose Skip check before saving.'
+                : checkStatus === 'passed'
+                  ? 'A recoverable draft is checked and ready to inspect and save.'
+                  : 'You chose to save this recoverable draft without running a project check.';
     const expectedReasons: string[] = [];
     if (!checkpointReady) expectedReasons.push('checkpoint_missing');
+    if (checkStatus === 'not_run') expectedReasons.push('check_not_run');
     if (checkStatus === 'failed') expectedReasons.push('check_failed');
     if (checkStatus === 'incomplete') expectedReasons.push('check_incomplete');
     if (checkStatus === 'running') expectedReasons.push('check_running');
@@ -147,7 +154,8 @@ export function sanitizeBuilderReviewStateProjectionWire(
       )
       || authority.check_evidence !== (
         checkStatus === 'not_run' ? 'verified_absence'
-          : checkStatus === 'running' ? 'main_owned_candidate_activity_registry'
+          : checkStatus === 'skipped' ? 'verified_explicit_skip_decision'
+            : checkStatus === 'running' ? 'main_owned_candidate_activity_registry'
             : checkStatus === 'unavailable' ? 'status_unavailable'
               : 'verified_current_candidate_check_projection'
       )

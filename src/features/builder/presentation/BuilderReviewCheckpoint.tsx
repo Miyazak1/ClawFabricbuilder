@@ -1,5 +1,5 @@
 import type { Ref } from 'react';
-import { CircleCheck, CircleX, Eye, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
+import { CircleCheck, CircleOff, CircleX, Eye, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
@@ -12,7 +12,7 @@ export type BuilderReviewCheckpointProps = Readonly<{
   changes: BuilderSourceTreeChanges;
   canReject: boolean;
   canSave: boolean;
-  checkRunOperation?: 'loading' | 'running' | 'failed' | null;
+  checkRunOperation?: 'loading' | 'running' | 'skipping' | 'failed' | null;
   checkRunOutcome?: BuilderCheckRunOutcomeProjectionWire | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
@@ -22,6 +22,7 @@ export type BuilderReviewCheckpointProps = Readonly<{
   onOpenPreview: () => void;
   onRejectDraft?: () => void;
   onRunCheck?: (profile: BuilderCheckRunProfile) => void;
+  onSkipCheck?: () => void;
   onSave?: () => void;
   preview: BuilderSourceTreePreviewProjection | null;
   reviewState: BuilderReviewStateProjectionWire | null;
@@ -43,6 +44,7 @@ export function BuilderReviewCheckpoint({
   onOpenPreview,
   onRejectDraft,
   onRunCheck,
+  onSkipCheck,
   onSave,
   preview,
   reviewState,
@@ -52,9 +54,12 @@ export function BuilderReviewCheckpoint({
   const restoredRunning = checkRunOperation === null && checkRunOutcome?.state === 'running';
   const checksBusy = checkRunOperation === 'loading'
     || checkRunOperation === 'running'
+    || checkRunOperation === 'skipping'
     || restoredRunning;
   const recordedStatus = checkRunStatus ?? (
-    checkRunOutcome?.state === 'completed' || checkRunOutcome?.state === 'unavailable'
+    checkRunOutcome?.state === 'completed'
+      || checkRunOutcome?.state === 'skipped'
+      || checkRunOutcome?.state === 'unavailable'
       ? checkRunOutcome
       : null
   );
@@ -62,6 +67,8 @@ export function BuilderReviewCheckpoint({
     ? 'Finding project checks...'
     : checkRunOperation === 'running' || restoredRunning
       ? 'Running project check...'
+      : checkRunOperation === 'skipping'
+        ? 'Recording your choice to skip checks...'
       : checkRunOperation === 'failed'
         ? 'Project checks are unavailable. Try again.'
         : recordedStatus !== null
@@ -69,9 +76,12 @@ export function BuilderReviewCheckpoint({
           : checkRunProfiles.length === 0
             ? 'No project checks found.'
             : 'Not checked.';
-  const CheckStatusIcon = checkRunOperation === 'loading' || checkRunOperation === 'running' || restoredRunning
+  const CheckStatusIcon = checkRunOperation === 'loading'
+    || checkRunOperation === 'running'
+    || checkRunOperation === 'skipping'
+    || restoredRunning
     ? LoaderCircle
-    : recordedStatus?.status === 'passed'
+    : recordedStatus?.status === 'passed' || recordedStatus?.status === 'skipped'
       ? CircleCheck
       : recordedStatus !== null
         ? CircleX
@@ -119,7 +129,10 @@ export function BuilderReviewCheckpoint({
             {CheckStatusIcon === null ? null : (
               <CheckStatusIcon
                 aria-hidden="true"
-                className={checkRunOperation === 'loading' || checkRunOperation === 'running' || restoredRunning
+                className={checkRunOperation === 'loading'
+                  || checkRunOperation === 'running'
+                  || checkRunOperation === 'skipping'
+                  || restoredRunning
                   ? 'size-3.5 animate-spin'
                   : 'size-3.5'}
               />
@@ -142,6 +155,20 @@ export function BuilderReviewCheckpoint({
                 Run {profile.command_display}
               </button>
             ))}
+          </div>
+        ) : null}
+        {typeof onSkipCheck === 'function' ? (
+          <div className="cf-builder-review-check-actions" data-builder-check-skip-actions="true">
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-skip-check="true"
+              disabled={checksBusy}
+              onClick={onSkipCheck}
+              type="button"
+            >
+              <CircleOff aria-hidden="true" className="size-3.5" />
+              Skip check
+            </button>
           </div>
         ) : null}
       </div>

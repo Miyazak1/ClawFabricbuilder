@@ -8,6 +8,9 @@ const {
   createBuilderCheckRunCurrentDraftService,
 } = require('./builder-check-run-current-draft-service.cjs');
 const {
+  createBuilderCheckSkipCurrentDraftService,
+} = require('./builder-check-skip-current-draft-service.cjs');
+const {
   createBuilderCheckRunMainService,
 } = require('./builder-check-run-main-service.cjs');
 const {
@@ -40,6 +43,7 @@ const CREATE_KEYS = Object.freeze([
   'automatic_draft_checkpoint_service',
   'check_run_store',
   'check_run_status_service',
+  'check_skip_decision_store',
   'activity_registry',
 ]);
 
@@ -163,9 +167,17 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
       check_run_main_service: checkRunMainService,
       clock,
     });
+    const currentDraftSkipService = createBuilderCheckSkipCurrentDraftService({
+      current_draft_check_run_service: currentDraftService,
+      check_run_store: options.check_run_store.value,
+      check_skip_decision_store: options.check_skip_decision_store.value,
+      activity_registry: options.activity_registry.value,
+      clock,
+    });
     return Object.freeze({
       composition_version: BUILDER_CHECK_RUN_RUNTIME_COMPOSITION_VERSION,
       current_draft_service: currentDraftService,
+      current_draft_skip_service: currentDraftSkipService,
     });
   } catch (error) {
     if (error instanceof BuilderCheckRunRuntimeCompositionError) throw error;

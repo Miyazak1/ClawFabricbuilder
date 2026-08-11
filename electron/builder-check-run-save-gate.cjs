@@ -12,9 +12,20 @@ const {
   BUILDER_CHECK_RUN_STORE_READ_RESULT_VERSION,
   BUILDER_CHECK_RUN_STORE_VERSION,
 } = require('./builder-check-run-store.cjs');
+const {
+  sanitizeBuilderCheckSkipDecision,
+} = require('./builder-check-skip-decision.cjs');
+const {
+  BUILDER_CHECK_SKIP_DECISION_STORE_READ_RESULT_VERSION,
+  BUILDER_CHECK_SKIP_DECISION_STORE_VERSION,
+} = require('./builder-check-skip-decision-store.cjs');
 
 const BUILDER_CHECK_RUN_SAVE_GATE_VERSION = 'builder-check-run-save-gate.v1';
-const CREATE_KEYS = Object.freeze(['check_run_store', 'activity_registry']);
+const CREATE_KEYS = Object.freeze([
+  'check_run_store',
+  'check_skip_decision_store',
+  'activity_registry',
+]);
 const CURRENT_CANDIDATE_KEYS = Object.freeze([
   'project_id',
   'conversation_id',
@@ -37,6 +48,7 @@ class BuilderCheckRunSaveGateError extends Error {
       'builder_check_run_save_gate_stale',
       'builder_check_run_save_gate_failed',
       'builder_check_run_save_gate_unavailable',
+      'builder_check_run_save_gate_not_checked',
     ];
     const selected = allowed.includes(code) ? code : 'builder_check_run_save_gate_invalid';
     super(selected === 'builder_check_run_save_gate_stale'
@@ -45,6 +57,8 @@ class BuilderCheckRunSaveGateError extends Error {
         ? 'The project check is still running.'
         : selected === 'builder_check_run_save_gate_failed'
           ? 'The project check must pass before this version can be saved.'
+          : selected === 'builder_check_run_save_gate_not_checked'
+            ? 'Run a project check or explicitly choose to save without checking.'
           : 'The project check could not be verified for saving.');
     this.name = 'BuilderCheckRunSaveGateError';
     this.code = selected;
@@ -130,7 +144,7 @@ function assertLatestResult(rawResult, expected) {
   const rawCheckRun = valueAt(rawResult, 'check_run');
   if (status === 'absent') {
     if (rawCheckRun !== null) fail();
-    return Object.freeze({ save_admission: 'allow_not_run', check_run: null });
+    return null;
   }
   if (status !== 'ready' || rawCheckRun === null) fail();
   let checkRun;
@@ -140,6 +154,33 @@ function assertLatestResult(rawResult, expected) {
   }
   if (checkRun.status !== 'passed') fail('builder_check_run_save_gate_failed');
   return Object.freeze({ save_admission: 'allow_passed', check_run: checkRun });
+}
+
+function assertSkipResult(rawResult, expected) {
+  exactObject(rawResult, [
+    'result_version',
+    'operation',
+    'status',
+    'check_skip_decision',
+    'store_evidence',
+  ]);
+  if (
+    valueAt(rawResult, 'result_version') !== BUILDER_CHECK_SKIP_DECISION_STORE_READ_RESULT_VERSION
+    || valueAt(rawResult, 'operation') !== 'current_check_skip_decision_read'
+  ) fail();
+  const status = valueAt(rawResult, 'status');
+  const rawDecision = valueAt(rawResult, 'check_skip_decision');
+  if (status === 'absent') {
+    if (rawDecision !== null) fail();
+    fail('builder_check_run_save_gate_not_checked');
+  }
+  if (status !== 'ready' || rawDecision === null) fail();
+  let decision;
+  try { decision = sanitizeBuilderCheckSkipDecision(rawDecision); } catch { fail(); }
+  for (const key of CURRENT_CANDIDATE_KEYS) {
+    if (decision[key] !== expected[key]) fail('builder_check_run_save_gate_stale');
+  }
+  return Object.freeze({ save_admission: 'allow_skipped', check_run: null, check_skip_decision: decision });
 }
 
 function createBuilderCheckRunSaveGate(rawOptions) {
@@ -152,6 +193,13 @@ function createBuilderCheckRunSaveGate(rawOptions) {
     'read_latest_check_run',
   );
   const registry = valueAt(options, 'activity_registry');
+  const skipStore = valueAt(options, 'check_skip_decision_store');
+  const readSkip = ownMethod(
+    skipStore,
+    'store_version',
+    BUILDER_CHECK_SKIP_DECISION_STORE_VERSION,
+    'read_current_check_skip_decision',
+  );
   const acquire = ownMethod(
     registry,
     'registry_version',
@@ -193,10 +241,22 @@ function createBuilderCheckRunSaveGate(rawOptions) {
         } catch {
           fail('builder_check_run_save_gate_unavailable');
         }
-        const result = assertLatestResult(
+        let result = assertLatestResult(
           latest,
           expected,
         );
+        if (result === null) {
+          let skip;
+          try {
+            skip = Reflect.apply(readSkip, skipStore, [{
+              project_id: expected.project_id,
+              candidate_id: expected.candidate_id,
+            }]);
+          } catch {
+            fail('builder_check_run_save_gate_unavailable');
+          }
+          result = assertSkipResult(skip, expected);
+        }
         operationResult = await Reflect.apply(operation, undefined, [result]);
       } catch (error) {
         operationFailed = true;

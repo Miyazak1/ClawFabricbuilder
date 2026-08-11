@@ -8,13 +8,18 @@ const test = require('node:test');
 const {
   APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
+  SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   createBuilderCheckRunApprovalIpcAdapter,
 } = require('../electron/builder-check-run-approval-ipc-adapter.cjs');
+const {
+  createBuilderCheckSkipDecision,
+} = require('../electron/builder-check-skip-decision.cjs');
 
 const DRAFT_ID = `builder-generation-draft:${'a'.repeat(64)}`;
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
 const CANDIDATE_ID = `builder-code-change-candidate:${'b'.repeat(64)}`;
 const PROFILE_ID = `builder-command-profile:${'c'.repeat(32)}`;
+const UUID = '123e4567-e89b-42d3-a456-426614174000';
 
 function projection(overrides = {}) {
   return {
@@ -79,6 +84,40 @@ function runResult(overrides = {}) {
   };
 }
 
+function skipResult(overrides = {}) {
+  const decision = createBuilderCheckSkipDecision({
+    project_id: PROJECT_ID,
+    conversation_id: `builder-conversation:${UUID}`,
+    turn_id: `builder-turn:${UUID}`,
+    task_id: `builder-task:${UUID}`,
+    run_id: `builder-run:${UUID}`,
+    draft_id: DRAFT_ID,
+    draft_checkpoint_id: `builder-draft-checkpoint:${'1'.repeat(64)}`,
+    draft_checkpoint_sequence: 1,
+    candidate_id: CANDIDATE_ID,
+    candidate_digest: `sha256:${'2'.repeat(64)}`,
+    resulting_tree_digest: `sha256:${'3'.repeat(64)}`,
+    reason_code: 'user_chose_save_without_check',
+    decided_at_ms: 20,
+  });
+  return {
+    result_version: 'builder-check-skip-current-draft-result.v1',
+    service_version: 'builder-check-skip-current-draft-service.v1',
+    operation: 'check_skip_decision_recorded',
+    draft_id: DRAFT_ID,
+    project_id: PROJECT_ID,
+    candidate_id: CANDIDATE_ID,
+    check_skip_decision: decision,
+    authority: {
+      user_action: 'explicit_skip_check_request_admitted_by_main',
+      save_version: 'not_performed',
+      check_execution: 'not_performed',
+      renderer_candidate_identity: 'not_accepted',
+    },
+    ...overrides,
+  };
+}
+
 function harness(overrides = {}) {
   const calls = [];
   const mainFrame = {};
@@ -93,6 +132,10 @@ function harness(overrides = {}) {
       if (overrides.runError) throw overrides.runError;
       return overrides.runResult ?? runResult();
     },
+    async skipCurrentDraftCheck(request) {
+      calls.push(['skip', request]);
+      return overrides.skipResult ?? skipResult();
+    },
     mainWindowRef: () => ({ webContents, isDestroyed: () => false }),
   });
   return { adapter, calls, event: { sender: webContents, senderFrame: mainFrame }, webContents };
@@ -103,6 +146,10 @@ test('projects only fixed available checks and approved CheckRun status', async 
   assert.equal(
     value.adapter.channels.readCurrentDraftAvailableChecks.channel,
     READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
+  );
+  assert.equal(
+    value.adapter.channels.skipCurrentDraftCheck.channel,
+    SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   );
   assert.equal(
     value.adapter.channels.approveAndRunCurrentDraftCheck.channel,
@@ -116,9 +163,14 @@ test('projects only fixed available checks and approved CheckRun status', async 
     value.event,
     { draft_id: DRAFT_ID, command_profile_id: PROFILE_ID },
   );
+  const skipped = await value.adapter.channels.skipCurrentDraftCheck.invoke(
+    value.event,
+    { draft_id: DRAFT_ID },
+  );
   assert.deepEqual(value.calls, [
     ['read', { draft_id: DRAFT_ID }],
     ['run', { draft_id: DRAFT_ID, command_profile_id: PROFILE_ID }],
+    ['skip', { draft_id: DRAFT_ID }],
   ]);
   assert.deepEqual(available.available_checks, [{
     command_profile_id: PROFILE_ID,
@@ -127,8 +179,13 @@ test('projects only fixed available checks and approved CheckRun status', async 
     requires_user_approval: true,
   }]);
   assert.equal(completed.check_run_status_projection.status, 'passed');
+  assert.equal(skipped.status, 'skipped');
+  assert.deepEqual(Object.keys(skipped), [
+    'result_version', 'operation', 'draft_id', 'project_id', 'candidate_id', 'status',
+  ]);
   assert.equal(Object.isFrozen(available), true);
   assert.equal(Object.isFrozen(completed), true);
+  assert.equal(Object.isFrozen(skipped), true);
 });
 
 test('requires the active main frame and exact identity-only payloads', async () => {

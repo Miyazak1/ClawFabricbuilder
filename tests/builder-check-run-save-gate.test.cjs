@@ -17,6 +17,12 @@ const {
 const {
   createBuilderCheckRunStore,
 } = require('../electron/builder-check-run-store.cjs');
+const {
+  createBuilderCheckSkipDecision,
+} = require('../electron/builder-check-skip-decision.cjs');
+const {
+  createBuilderCheckSkipDecisionStore,
+} = require('../electron/builder-check-skip-decision-store.cjs');
 const { admittedCheck, checkRun } = require('./helpers/builder-check-run-fixture.cjs');
 
 function currentCandidate(admission, overrides = {}) {
@@ -39,26 +45,46 @@ function currentCandidate(admission, overrides = {}) {
 function harness(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-check-save-gate-'));
   const store = createBuilderCheckRunStore(path.join(root, 'checks.sqlite'));
+  const skipStore = createBuilderCheckSkipDecisionStore(path.join(root, 'skips.sqlite'));
   const activity = createBuilderCheckRunActivityRegistry();
   const gate = createBuilderCheckRunSaveGate({
     check_run_store: store,
+    check_skip_decision_store: skipStore,
     activity_registry: activity,
   });
   t.after(() => {
     store.close();
+    skipStore.close();
     fs.rmSync(root, { recursive: true, force: true });
   });
-  return { store, activity, gate };
+  return { store, skipStore, activity, gate };
 }
 
-test('allows an inactive current candidate with no check or a matching passed check', async (t) => {
+function skipDecision(candidate, decidedAtMs = 300) {
+  return createBuilderCheckSkipDecision({
+    ...candidate,
+    reason_code: 'user_chose_save_without_check',
+    decided_at_ms: decidedAtMs,
+  });
+}
+
+test('requires explicit skip evidence when no check exists and allows a matching passed check', async (t) => {
   const h = harness(t);
   const selected = admittedCheck();
-  const absent = await h.gate.with_current_candidate_save_gate(
-    currentCandidate(selected.admission),
+  const candidate = currentCandidate(selected.admission);
+  await assert.rejects(
+    h.gate.with_current_candidate_save_gate(candidate, (admission) => admission),
+    (error) => error instanceof BuilderCheckRunSaveGateError
+      && error.code === 'builder_check_run_save_gate_not_checked',
+  );
+  h.skipStore.record_check_skip_decision({ check_skip_decision: skipDecision(candidate) });
+  const skipped = await h.gate.with_current_candidate_save_gate(
+    candidate,
     (admission) => admission,
   );
-  assert.deepEqual(absent, { save_admission: 'allow_not_run', check_run: null });
+  assert.equal(skipped.save_admission, 'allow_skipped');
+  assert.equal(skipped.check_run, null);
+  assert.equal(skipped.check_skip_decision.candidate_id, candidate.candidate_id);
 
   const passed = checkRun('passed');
   h.store.record_check_run({ check_run: passed });
@@ -83,6 +109,9 @@ test('blocks save while a check is active and releases the candidate afterward',
       && error.code === 'builder_check_run_save_gate_active',
   );
   assert.equal(h.activity.end_check_run({ check_run_admission: selected.admission }), true);
+  h.skipStore.record_check_skip_decision({
+    check_skip_decision: skipDecision(currentCandidate(selected.admission)),
+  });
   assert.equal(await h.gate.with_current_candidate_save_gate(
     currentCandidate(selected.admission),
     () => true,
@@ -121,6 +150,9 @@ test('projects current check activity as a read-only refresh hint', () => {
 test('holds a save guard across the operation so a check cannot start concurrently', async (t) => {
   const h = harness(t);
   const selected = admittedCheck();
+  h.skipStore.record_check_skip_decision({
+    check_skip_decision: skipDecision(currentCandidate(selected.admission)),
+  });
   await h.gate.with_current_candidate_save_gate(
     currentCandidate(selected.admission),
     async () => {
@@ -194,10 +226,14 @@ test('fails closed for failed, incomplete, stale, malformed, and unavailable res
     candidate_id: `builder-code-change-candidate:${'f'.repeat(64)}`,
     candidate_digest: `sha256:${'f'.repeat(64)}`,
   });
-  assert.equal(await staleHarness.gate.with_current_candidate_save_gate(
-    newCandidate,
-    (admission) => admission.save_admission,
-  ), 'allow_not_run');
+  await assert.rejects(
+    staleHarness.gate.with_current_candidate_save_gate(
+      newCandidate,
+      (admission) => admission.save_admission,
+    ),
+    (error) => error instanceof BuilderCheckRunSaveGateError
+      && error.code === 'builder_check_run_save_gate_not_checked',
+  );
 
   const activity = createBuilderCheckRunActivityRegistry();
   for (const read_latest_check_run of [
@@ -210,6 +246,12 @@ test('fails closed for failed, incomplete, stale, malformed, and unavailable res
     };
     const gate = createBuilderCheckRunSaveGate({
       check_run_store: store,
+      check_skip_decision_store: {
+        store_version: 'builder-check-skip-decision-store.v1',
+        read_current_check_skip_decision() {
+          throw new Error('private skip database path');
+        },
+      },
       activity_registry: activity,
     });
     await assert.rejects(

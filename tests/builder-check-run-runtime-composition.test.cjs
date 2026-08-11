@@ -56,6 +56,12 @@ function dependencies(root) {
     check_run_store: {
       store_version: 'builder-check-run-store.v1',
       record_check_run() { throw new Error('not written by composition test'); },
+      read_latest_check_run() { throw new Error('not read by composition test'); },
+    },
+    check_skip_decision_store: {
+      store_version: 'builder-check-skip-decision-store.v1',
+      record_check_skip_decision() { throw new Error('not written by composition test'); },
+      read_current_check_skip_decision() { throw new Error('not read by composition test'); },
     },
     check_run_status_service: {
       service_version: 'builder-check-run-status-service.v1',
@@ -72,6 +78,10 @@ test('composes a current-draft service from one shared main-owned CheckRun runti
   assert.equal(
     composition.current_draft_service.service_version,
     'builder-check-run-current-draft-service.v1',
+  );
+  assert.equal(
+    composition.current_draft_skip_service.service_version,
+    'builder-check-skip-current-draft-service.v1',
   );
   const workspaceRoot = path.join(root, CHECK_WORKSPACE_DIRECTORY);
   assert.equal(fs.lstatSync(workspaceRoot).isDirectory(), true);

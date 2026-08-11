@@ -47,6 +47,7 @@ async function executeMain({
   let permissionGrantForExplicitApproval = null;
   let providerContextDisclosureStatusService = null;
   let currentDraftCheckRunService = null;
+  let currentDraftCheckSkipService = null;
   let currentDraftLivePreviewSourceService = null;
   let livePreviewMainService = null;
   const events = new Map();
@@ -201,6 +202,11 @@ async function executeMain({
             });
             value.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime =
               () => currentDraftCheckRunService;
+            currentDraftCheckSkipService = Object.freeze({
+              service_version: 'builder-check-skip-current-draft-service.v1',
+            });
+            value.readCheckRunSkipCurrentDraftServiceForMainOnlyApprovalRuntime =
+              () => currentDraftCheckSkipService;
             currentDraftLivePreviewSourceService = Object.freeze({
               service_version: 'builder-live-preview-current-draft-source-service.v1',
             });
@@ -229,6 +235,7 @@ async function executeMain({
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
             assert.equal(options.currentDraftCheckRunService, currentDraftCheckRunService);
+            assert.equal(options.currentDraftCheckSkipService, currentDraftCheckSkipService);
             const value = runtime(4);
             value.shutdown = async () => {
               calls.shutdown += 1;

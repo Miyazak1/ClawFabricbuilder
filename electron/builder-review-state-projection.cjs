@@ -123,6 +123,8 @@ function authority(checkpointReady, checkState) {
       : 'missing_or_unverified',
     check_evidence: checkState === 'completed'
       ? 'verified_current_candidate_check_projection'
+      : checkState === 'skipped'
+        ? 'verified_explicit_skip_decision'
       : checkState === 'running'
         ? 'main_owned_candidate_activity_registry'
         : checkState === 'unavailable'
@@ -188,11 +190,17 @@ function reviewCopy(checkpointReady, checkStatus) {
       summary: 'Builder could not verify the project check status.',
     });
   }
+  if (checkStatus === 'not_run') {
+    return Object.freeze({
+      label: 'Review not ready',
+      summary: 'Run a project check or choose Skip check before saving.',
+    });
+  }
   return Object.freeze({
     label: 'Ready to review',
     summary: checkStatus === 'passed'
       ? 'A recoverable draft is checked and ready to inspect and save.'
-      : 'A recoverable draft is ready to inspect and save.',
+      : 'You chose to save this recoverable draft without running a project check.',
   });
 }
 
@@ -205,12 +213,13 @@ function assertProjection(value) {
   const checkpointReady = checkpointStatus === 'ready';
   if (!checkpointReady && checkpointStatus !== 'missing') fail();
   const checkStatus = valueAt(value, 'check_status');
-  if (!['not_run', 'passed', 'failed', 'incomplete', 'running', 'unavailable'].includes(checkStatus)) fail();
-  const checkBlocksSave = ['failed', 'incomplete', 'running', 'unavailable'].includes(checkStatus);
+  if (!['not_run', 'skipped', 'passed', 'failed', 'incomplete', 'running', 'unavailable'].includes(checkStatus)) fail();
+  const checkBlocksSave = ['not_run', 'failed', 'incomplete', 'running', 'unavailable'].includes(checkStatus);
   if (ready !== (checkpointReady && !checkBlocksSave)) fail();
   const copy = reviewCopy(checkpointReady, checkStatus);
   const blockingReasons = [];
   if (!checkpointReady) blockingReasons.push('checkpoint_missing');
+  if (checkStatus === 'not_run') blockingReasons.push('check_not_run');
   if (checkStatus === 'failed') blockingReasons.push('check_failed');
   if (checkStatus === 'incomplete') blockingReasons.push('check_incomplete');
   if (checkStatus === 'running') blockingReasons.push('check_running');
@@ -235,7 +244,8 @@ function assertProjection(value) {
   const expectedAuthority = authority(
     checkpointReady,
     checkStatus === 'not_run' ? 'not_run'
-      : checkStatus === 'running' ? 'running'
+      : checkStatus === 'skipped' ? 'skipped'
+        : checkStatus === 'running' ? 'running'
         : checkStatus === 'unavailable' ? 'unavailable' : 'completed',
   );
   exactObject(projectedAuthority, AUTHORITY_KEYS);
@@ -264,7 +274,7 @@ function projectBuilderReviewState(rawInput) {
       : sanitizeBuilderDraftCheckpointStatusProjection(rawCheckpoint);
     const rawCheckRun = valueAt(rawInput, 'check_run_status_projection');
     const checkRunState = valueAt(rawInput, 'check_run_state');
-    if (!['not_run', 'running', 'completed', 'unavailable'].includes(checkRunState)) fail();
+    if (!['not_run', 'skipped', 'running', 'completed', 'unavailable'].includes(checkRunState)) fail();
     const checkRun = rawCheckRun === null
       ? null
       : sanitizeBuilderCheckRunStatusProjection(rawCheckRun);
@@ -275,10 +285,11 @@ function projectBuilderReviewState(rawInput) {
     ) fail();
     const checkpointReady = checkpoint?.status === 'ready';
     const checkStatus = checkRunState === 'completed' ? checkRun.status : checkRunState;
-    const ready = checkpointReady && (checkStatus === 'not_run' || checkStatus === 'passed');
+    const ready = checkpointReady && (checkStatus === 'skipped' || checkStatus === 'passed');
     const copy = reviewCopy(checkpointReady, checkStatus);
     const blockingReasons = [];
     if (!checkpointReady) blockingReasons.push('checkpoint_missing');
+    if (checkStatus === 'not_run') blockingReasons.push('check_not_run');
     if (checkStatus === 'failed') blockingReasons.push('check_failed');
     if (checkStatus === 'incomplete') blockingReasons.push('check_incomplete');
     if (checkStatus === 'running') blockingReasons.push('check_running');

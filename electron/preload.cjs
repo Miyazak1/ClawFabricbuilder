@@ -50,6 +50,8 @@ const READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL =
   'clawfabric-builder:check-run:read-current-draft-available';
 const APPROVE_CURRENT_DRAFT_CHECK_CHANNEL =
   'clawfabric-builder:check-run:approve-current-draft-check';
+const SKIP_CURRENT_DRAFT_CHECK_CHANNEL =
+  'clawfabric-builder:check-run:skip-current-draft-check';
 const REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL =
   'clawfabric-builder:live-preview:request-current-draft';
 const RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL =
@@ -64,7 +66,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v24',
+  bridgeVersion: 'builder-preload.v25',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -216,6 +218,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     approveAndRunCurrentDraftCheck(request) {
       return ipcRenderer.invoke(APPROVE_CURRENT_DRAFT_CHECK_CHANNEL, request);
+    },
+    skipCurrentDraftCheck(request) {
+      return ipcRenderer.invoke(SKIP_CURRENT_DRAFT_CHECK_CHANNEL, request);
     },
   }),
   livePreview: Object.freeze({

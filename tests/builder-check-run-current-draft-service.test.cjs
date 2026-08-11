@@ -233,6 +233,27 @@ test('lists only renderer-safe checks discovered from the fresh verified candida
   assert.equal(Object.isFrozen(result.available_checks), true);
 });
 
+test('resolves only verified current candidate identity for main-side consumers', async () => {
+  const selected = fixture();
+  const result = await selected.service.read_current_candidate_for_main_only({
+    draft_id: DRAFT_ID,
+  });
+
+  assert.equal(
+    result.result_version,
+    'builder-check-run-current-draft-main-candidate-result.v1',
+  );
+  assert.equal(result.current_candidate.project_id, PROJECT_ID);
+  assert.equal(result.current_candidate.draft_id, DRAFT_ID);
+  assert.equal(result.current_candidate.candidate_id, selected.receipt.candidate_id);
+  assert.equal(result.current_candidate.draft_checkpoint_sequence, 2);
+  assert.equal(result.authority.caller, 'main_only');
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /source_tree|package\.json|commit_oid|tree_oid|verification_receipt/iu,
+  );
+});
+
 test('runs the explicitly selected profile after re-reading all current draft authorities', async () => {
   const selected = fixture();
   const available = await selected.service.read_available_checks({ draft_id: DRAFT_ID });

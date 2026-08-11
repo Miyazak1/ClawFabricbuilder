@@ -60,6 +60,12 @@ const SPECIAL = Object.freeze({
     summary: 'No project check has been recorded for this draft.',
     fact_source: 'verified_absence',
   }),
+  skipped: Object.freeze({
+    status: 'skipped',
+    label: 'Check skipped',
+    summary: 'You chose to save this draft without running a project check.',
+    fact_source: 'verified_explicit_skip_decision',
+  }),
   running: Object.freeze({
     status: 'running',
     label: 'Running checks',
@@ -145,7 +151,7 @@ function projectBuilderCheckRunOutcome(rawInput) {
       || !PROJECT_ID_PATTERN.test(projectId)
       || typeof candidateId !== 'string'
       || !CANDIDATE_ID_PATTERN.test(candidateId)
-      || !['not_run', 'running', 'completed', 'unavailable'].includes(state)
+      || !['not_run', 'skipped', 'running', 'completed', 'unavailable'].includes(state)
     ) fail();
     if (state === 'completed') {
       const status = sanitizeBuilderCheckRunStatusProjection(rawStatus);

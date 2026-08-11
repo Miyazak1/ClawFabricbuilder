@@ -38,6 +38,7 @@ function assertOutcomeError(fn) {
 test('projects verified absence, running activity, and unavailable reads distinctly', () => {
   for (const [state, status, label, factSource] of [
     ['not_run', 'not_run', 'Not checked', 'verified_absence'],
+    ['skipped', 'skipped', 'Check skipped', 'verified_explicit_skip_decision'],
     ['running', 'running', 'Running checks', 'activity_registry'],
     ['unavailable', 'unavailable', 'Check status unavailable', 'status_unavailable'],
   ]) {

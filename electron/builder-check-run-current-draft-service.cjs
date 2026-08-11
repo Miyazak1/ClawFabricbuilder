@@ -36,6 +36,8 @@ const BUILDER_CHECK_RUN_CURRENT_DRAFT_READ_RESULT_VERSION =
   'builder-check-run-current-draft-read-result.v1';
 const BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION =
   'builder-check-run-current-draft-run-result.v1';
+const BUILDER_CHECK_RUN_CURRENT_DRAFT_MAIN_CANDIDATE_RESULT_VERSION =
+  'builder-check-run-current-draft-main-candidate-result.v1';
 const CREATE_KEYS = Object.freeze([
   'conversation_service',
   'git_authority',
@@ -346,6 +348,41 @@ function createBuilderCheckRunCurrentDraftService(rawOptions) {
       }
     },
 
+    async read_current_candidate_for_main_only(rawRequest) {
+      try {
+        const request = exactObject(rawRequest, READ_KEYS);
+        const draftId = safePattern(request.draft_id.value, DRAFT_ID_PATTERN);
+        const current = await resolveCurrentDraft(draftId);
+        return freezeDeep({
+          result_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_MAIN_CANDIDATE_RESULT_VERSION,
+          service_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
+          operation: 'current_draft_candidate_resolved_for_main_only',
+          current_candidate: {
+            project_id: current.receipt.project_id,
+            conversation_id: current.receipt.conversation_id,
+            turn_id: current.receipt.turn_id,
+            task_id: current.receipt.task_id,
+            run_id: current.receipt.run_id,
+            draft_id: draftId,
+            draft_checkpoint_id: current.checkpoint.checkpoint_id,
+            draft_checkpoint_sequence: current.checkpoint.checkpoint_sequence,
+            candidate_id: current.receipt.candidate_id,
+            candidate_digest: current.receipt.candidate_digest,
+            resulting_tree_digest: current.receipt.resulting_tree_digest,
+          },
+          authority: {
+            caller: 'main_only',
+            candidate_identity: 'verified_git_candidate_and_latest_checkpoint',
+            renderer_projection: 'not_present',
+            source_content: 'not_present',
+          },
+        });
+      } catch (error) {
+        if (error instanceof BuilderCheckRunCurrentDraftServiceError) throw error;
+        fail();
+      }
+    },
+
     async run_approved_check(rawRequest) {
       try {
         const request = exactObject(rawRequest, RUN_KEYS);
@@ -402,6 +439,7 @@ function createBuilderCheckRunCurrentDraftService(rawOptions) {
 module.exports = freezeDeep({
   BUILDER_CHECK_RUN_CURRENT_DRAFT_READ_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION,
+  BUILDER_CHECK_RUN_CURRENT_DRAFT_MAIN_CANDIDATE_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
   BuilderCheckRunCurrentDraftServiceError,
   createBuilderCheckRunCurrentDraftService,

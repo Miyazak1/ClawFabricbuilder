@@ -273,9 +273,19 @@ export type BuilderCheckRunApproveRequest = Readonly<{
   command_profile_id: string;
 }>;
 
+export type BuilderCheckRunSkippedResult = Readonly<{
+  result_version: 'builder-check-skip-current-draft-public-result.v1';
+  operation: 'current_draft_check_skipped';
+  draft_id: string;
+  project_id: string;
+  candidate_id: string;
+  status: 'skipped';
+}>;
+
 export interface BuilderCheckRunPort {
   readCurrentDraftAvailableChecks(request: BuilderCheckRunReadRequest): Promise<BuilderCheckRunAvailableResult>;
   approveAndRunCurrentDraftCheck(request: BuilderCheckRunApproveRequest): Promise<BuilderCheckRunCompletedResult>;
+  skipCurrentDraftCheck(request: BuilderCheckRunReadRequest): Promise<BuilderCheckRunSkippedResult>;
 }
 
 export type BuilderLivePreviewStatusProjection = Readonly<{

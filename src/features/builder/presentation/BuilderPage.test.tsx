@@ -434,10 +434,10 @@ function readyReviewStateProjection(changedFileCount = 2) {
     draft_id: DRAFT_ID,
     status: 'ready',
     label: 'Ready to review',
-    summary: 'A recoverable draft is ready to inspect and save.',
+    summary: 'You chose to save this recoverable draft without running a project check.',
     checkpoint_status: 'ready',
     preview_status: 'not_recorded',
-    check_status: 'not_run',
+    check_status: 'skipped',
     changed_file_count: changedFileCount,
     can_save: true,
     can_discard: true,
@@ -446,7 +446,7 @@ function readyReviewStateProjection(changedFileCount = 2) {
       projection_authority: 'main_owned_review_state_projection_v1',
       candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
       checkpoint_evidence: 'verified_latest_candidate_checkpoint',
-      check_evidence: 'verified_absence',
+      check_evidence: 'verified_explicit_skip_decision',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -476,7 +476,7 @@ function blockedReviewStateProjection() {
     authority: {
       ...readyReviewStateProjection().authority,
       checkpoint_evidence: 'missing_or_unverified',
-      check_evidence: 'verified_absence',
+      check_evidence: 'verified_explicit_skip_decision',
     },
   } as const;
 }

@@ -74,6 +74,14 @@ function bridge(overrides = {}) {
   return {
     readCurrentDraftAvailableChecks: vi.fn(async () => available()),
     approveAndRunCurrentDraftCheck: vi.fn(async () => completed()),
+    skipCurrentDraftCheck: vi.fn(async () => ({
+      result_version: 'builder-check-skip-current-draft-public-result.v1',
+      operation: 'current_draft_check_skipped',
+      draft_id: DRAFT_ID,
+      project_id: PROJECT_ID,
+      candidate_id: CANDIDATE_ID,
+      status: 'skipped',
+    })),
     ...overrides,
   };
 }
@@ -87,16 +95,20 @@ describe('createBuilderDesktopCheckRunPort', () => {
       draft_id: DRAFT_ID,
       command_profile_id: PROFILE_ID,
     });
+    const skipped = await port.skipCurrentDraftCheck({ draft_id: DRAFT_ID });
     expect(source.readCurrentDraftAvailableChecks).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
     expect(source.approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
       draft_id: DRAFT_ID,
       command_profile_id: PROFILE_ID,
     });
+    expect(source.skipCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
     expect(read.available_checks[0]?.command_display).toBe('npm test');
     expect(run.check_run_status_projection.status).toBe('passed');
     expect(run.check_run_status_projection).not.toHaveProperty('authority');
+    expect(skipped.status).toBe('skipped');
     expect(Object.isFrozen(read)).toBe(true);
     expect(Object.isFrozen(run)).toBe(true);
+    expect(Object.isFrozen(skipped)).toBe(true);
   });
 
   it('rejects malformed requests before bridge invocation', async () => {

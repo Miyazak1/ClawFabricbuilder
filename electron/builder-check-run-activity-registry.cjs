@@ -24,6 +24,7 @@ const CURRENT_CANDIDATE_KEYS = Object.freeze([
 ]);
 const BEGIN_KEYS = Object.freeze(['check_run_admission']);
 const SAVE_KEYS = Object.freeze(['current_candidate']);
+const SKIP_KEYS = Object.freeze(['current_candidate']);
 const READ_KEYS = Object.freeze(['project_id', 'candidate_id']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PATTERNS = Object.freeze({
@@ -132,6 +133,17 @@ function guardFor(candidate) {
   });
 }
 
+function skipGuardFor(candidate) {
+  const digest = nodeCrypto.createHash('sha256')
+    .update(canonicalJson(candidate), 'utf8')
+    .digest('hex');
+  return freezeDeep({
+    guard_version: 'builder-check-skip-guard.v1',
+    guard_id: `builder-check-skip-guard:${digest}`,
+    current_candidate: candidate,
+  });
+}
+
 function sameValue(left, right) {
   return canonicalJson(left) === canonicalJson(right);
 }
@@ -233,6 +245,38 @@ function createBuilderCheckRunActivityRegistry(rawOptions) {
         current_candidate: candidate,
       }));
       return guard;
+    },
+
+    acquire_candidate_skip(rawRequest) {
+      const request = exactObject(rawRequest, SKIP_KEYS);
+      const candidate = safeCurrentCandidate(valueAt(request, 'current_candidate'));
+      if (active.has(candidate.candidate_id)) fail('builder_check_run_activity_busy');
+      const guard = skipGuardFor(candidate);
+      active.set(candidate.candidate_id, freezeDeep({
+        kind: 'check_skip',
+        guard_id: guard.guard_id,
+        current_candidate: candidate,
+      }));
+      return guard;
+    },
+
+    release_candidate_skip(rawRequest) {
+      const request = exactObject(rawRequest, ['skip_guard']);
+      const guard = valueAt(request, 'skip_guard');
+      exactObject(guard, ['guard_version', 'guard_id', 'current_candidate']);
+      const candidate = safeCurrentCandidate(valueAt(guard, 'current_candidate'));
+      const expected = skipGuardFor(candidate);
+      const existing = active.get(candidate.candidate_id);
+      if (
+        valueAt(guard, 'guard_version') !== expected.guard_version
+        || valueAt(guard, 'guard_id') !== expected.guard_id
+        || !existing
+        || existing.kind !== 'check_skip'
+        || existing.guard_id !== expected.guard_id
+        || !sameValue(existing.current_candidate, candidate)
+      ) fail();
+      active.delete(candidate.candidate_id);
+      return true;
     },
 
     release_candidate_save(rawRequest) {

@@ -13,7 +13,14 @@ const {
   BUILDER_CHECK_RUN_STORE_READ_RESULT_VERSION,
 } = require('../electron/builder-check-run-store.cjs');
 const {
+  createBuilderCheckSkipDecision,
+} = require('../electron/builder-check-skip-decision.cjs');
+const {
+  BUILDER_CHECK_SKIP_DECISION_STORE_READ_RESULT_VERSION,
+} = require('../electron/builder-check-skip-decision-store.cjs');
+const {
   checkRun,
+  admittedCheck,
   PROJECT_ID,
 } = require('./helpers/builder-check-run-fixture.cjs');
 
@@ -27,13 +34,26 @@ function storeResult(status, run) {
   };
 }
 
-function serviceFor(result, requests = []) {
+function skipStoreResult(status = 'absent', decision = null) {
+  return {
+    result_version: BUILDER_CHECK_SKIP_DECISION_STORE_READ_RESULT_VERSION,
+    operation: 'current_check_skip_decision_read',
+    status,
+    check_skip_decision: decision,
+    store_evidence: {},
+  };
+}
+
+function serviceFor(result, requests = [], skipResult = skipStoreResult()) {
   return createBuilderCheckRunStatusService({
     check_run_store: {
       read_latest_check_run(request) {
         requests.push(request);
         return result;
       },
+    },
+    check_skip_decision_store: {
+      read_current_check_skip_decision() { return skipResult; },
     },
   });
 }
@@ -61,6 +81,7 @@ test('reads and projects the latest current-candidate CheckRun', () => {
     candidate_id: run.candidate_id,
   }]);
   assert.equal(result.check_run_status_projection.status, 'passed');
+  assert.equal(result.check_run_state, 'completed');
   assert.equal(result.check_run_status_projection.result_digest, run.check_run_digest);
   assert.ok(Object.isFrozen(result));
 });
@@ -70,7 +91,42 @@ test('returns an explicit null projection when no check was recorded', () => {
     project_id: PROJECT_ID,
     candidate_id: `builder-code-change-candidate:${'a'.repeat(64)}`,
   });
-  assert.deepEqual(result, { check_run_status_projection: null });
+  assert.deepEqual(result, {
+    check_run_state: 'not_run',
+    check_run_status_projection: null,
+  });
+});
+
+test('projects a matching explicit skip when no CheckRun exists', () => {
+  const selected = admittedCheck();
+  const candidate = selected.admission;
+  const decision = createBuilderCheckSkipDecision({
+    project_id: candidate.project_id,
+    conversation_id: candidate.conversation_id,
+    turn_id: candidate.turn_id,
+    task_id: candidate.task_id,
+    run_id: candidate.run_id,
+    draft_id: candidate.draft_id,
+    draft_checkpoint_id: candidate.draft_checkpoint_id,
+    draft_checkpoint_sequence: candidate.draft_checkpoint_sequence,
+    candidate_id: candidate.candidate_id,
+    candidate_digest: candidate.candidate_digest,
+    resulting_tree_digest: candidate.resulting_tree_digest,
+    reason_code: 'user_chose_save_without_check',
+    decided_at_ms: 300,
+  });
+  const result = serviceFor(
+    storeResult('absent', null),
+    [],
+    skipStoreResult('ready', decision),
+  ).read_current_check_run_status({
+    project_id: candidate.project_id,
+    candidate_id: candidate.candidate_id,
+  });
+  assert.deepEqual(result, {
+    check_run_state: 'skipped',
+    check_run_status_projection: null,
+  });
 });
 
 test('fails closed on store drift, cross-candidate results, proxies, and extras', () => {

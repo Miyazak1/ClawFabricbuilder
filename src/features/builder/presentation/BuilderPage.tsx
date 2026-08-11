@@ -122,7 +122,7 @@ export type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
 export type BuilderPageProps = {
   activeRunFollowupQueued?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
-  checkRunOperation?: 'loading' | 'running' | 'failed' | null;
+  checkRunOperation?: 'loading' | 'running' | 'skipping' | 'failed' | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
   instruction: string;
@@ -163,6 +163,7 @@ export type BuilderPageProps = {
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
   onRunCheck?: (profile: BuilderCheckRunProfile) => Promise<unknown> | void;
+  onSkipCheck?: () => Promise<unknown> | void;
   onReloadLivePreview?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onRequestLivePreview?: () => Promise<unknown> | void;
@@ -2203,6 +2204,7 @@ export function BuilderPage({
   onRefreshHistory,
   onRejectDraft,
   onRunCheck,
+  onSkipCheck,
   onReloadLivePreview,
   onReviewPlan,
   onRequestLivePreview,
@@ -3045,6 +3047,7 @@ export function BuilderPage({
       onOpenPreview={openPreviewPanel}
       onRejectDraft={onRejectDraft}
       onRunCheck={onRunCheck}
+      onSkipCheck={reviewState?.check_status === 'not_run' ? onSkipCheck : undefined}
       onSave={onSave}
       preview={preview}
       reviewState={reviewState}

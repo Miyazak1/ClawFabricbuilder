@@ -72,19 +72,19 @@ function projectionError(error) {
   return true;
 }
 
-test('projects a verified checkpoint into a renderer-safe ready Review State', () => {
+test('blocks an unchecked checkpoint until the user runs or explicitly skips a check', () => {
   const result = projectBuilderReviewState(reviewInput());
 
   assert.equal(result.projection_version, BUILDER_REVIEW_STATE_PROJECTION_VERSION);
   assert.equal(result.draft_id, DRAFT_ID);
-  assert.equal(result.status, 'ready');
+  assert.equal(result.status, 'blocked');
   assert.equal(result.changed_file_count, 4);
-  assert.equal(result.can_save, true);
+  assert.equal(result.can_save, false);
   assert.equal(result.can_discard, true);
-  assert.deepEqual(result.blocking_reasons, []);
+  assert.deepEqual(result.blocking_reasons, ['check_not_run']);
   assert.equal(result.authority.save_authority, false);
   assert.equal(result.authority.check_evidence, 'verified_absence');
-  assert.equal(sanitizeBuilderReviewStateProjection(structuredClone(result)).status, 'ready');
+  assert.equal(sanitizeBuilderReviewStateProjection(structuredClone(result)).status, 'blocked');
   assert.doesNotMatch(
     JSON.stringify(result),
     /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|builder-conversation:|sha256:|candidate_digest|commit_oid|tree_oid|source_tree/iu,
@@ -101,7 +101,20 @@ test('blocks saving while preserving discard when the checkpoint is missing', ()
   assert.equal(result.changed_file_count, null);
   assert.equal(result.can_save, false);
   assert.equal(result.can_discard, true);
-  assert.deepEqual(result.blocking_reasons, ['checkpoint_missing']);
+  assert.deepEqual(result.blocking_reasons, ['checkpoint_missing', 'check_not_run']);
+});
+
+test('projects an explicit skip into a renderer-safe ready Review State', () => {
+  const result = projectBuilderReviewState(reviewInput({ check_run_state: 'skipped' }));
+  assert.equal(result.status, 'ready');
+  assert.equal(result.check_status, 'skipped');
+  assert.equal(result.can_save, true);
+  assert.deepEqual(result.blocking_reasons, []);
+  assert.equal(result.authority.check_evidence, 'verified_explicit_skip_decision');
+  assert.equal(
+    result.summary,
+    'You chose to save this recoverable draft without running a project check.',
+  );
 });
 
 test('shows current-candidate check evidence and blocks save after failed or incomplete checks', () => {

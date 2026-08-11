@@ -404,6 +404,10 @@ const UNAVAILABLE_CHECK_RUN: BuilderCheckRunPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCheckRunPortError());
   },
+  skipCurrentDraftCheck(request: BuilderCheckRunReadRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
 });
 
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
@@ -1065,7 +1069,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [checkRunCompleted, setCheckRunCompleted] =
     useState<BuilderCheckRunCompletedResult | null>(null);
   const [checkRunOperation, setCheckRunOperation] =
-    useState<'loading' | 'running' | 'failed' | null>(null);
+    useState<'loading' | 'running' | 'skipping' | 'failed' | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const workspaceEpochRef = useRef(0);
   const initialWorkspaceAutoOpenRef = useRef(false);
@@ -1304,6 +1308,29 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setCheckRunOperation('failed');
     }
   }, [checkRunAvailable, checkRunOperation, conversation, ports.checkRun]);
+
+  const skipCheck = useCallback(async () => {
+    const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
+    if (draftId === null || checkRunOperation === 'running' || checkRunOperation === 'skipping') return;
+    const requestSequence = checkRunRequestSequenceRef.current + 1;
+    checkRunRequestSequenceRef.current = requestSequence;
+    setCheckRunOperation('skipping');
+    try {
+      await ports.checkRun.skipCurrentDraftCheck({ draft_id: draftId });
+      if (
+        checkRunRequestSequenceRef.current !== requestSequence
+        || projectSnapshotRef.current.draft?.draft_id !== draftId
+      ) return;
+      setCheckRunOperation(null);
+      await conversation.refresh();
+    } catch {
+      if (
+        checkRunRequestSequenceRef.current !== requestSequence
+        || projectSnapshotRef.current.draft?.draft_id !== draftId
+      ) return;
+      setCheckRunOperation('failed');
+    }
+  }, [checkRunOperation, conversation, ports.checkRun]);
 
   useEffect(() => {
     if (queuedActiveRunFollowup === null) return undefined;
@@ -2839,6 +2866,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onCancel={cancel}
               onRejectDraft={rejectDraft}
               onRunCheck={runCheck}
+              onSkipCheck={skipCheck}
               onSave={save}
               onStopLivePreview={stopLivePreview}
               onSelectFile={setActiveFile}

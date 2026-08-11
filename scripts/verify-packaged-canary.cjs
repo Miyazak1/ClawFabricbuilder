@@ -147,6 +147,7 @@ const SELECTORS = Object.freeze({
   reviewSummary: '[data-builder-review-summary="true"]',
   reviewTitle: '[data-builder-review-title="true"]',
   runCheck: '[data-builder-run-check]',
+  skipCheck: '[data-builder-skip-check="true"]',
   checkRunStatus: '[data-builder-check-run-status]',
   saveVersion: '[data-builder-save-version="true"]',
   temperature: '#builder-provider-temperature',
@@ -1859,6 +1860,12 @@ async function clickByRole(page, role, name) {
 async function clickSaveVersionViaUi(page) {
   const save = page.locator(SELECTORS.saveVersion);
   await save.waitFor({ state: 'visible' });
+  if (await optionalLocatorVisible(page, SELECTORS.skipCheck) === true) {
+    await page.locator(SELECTORS.skipCheck).click();
+    await page.locator(
+      `${SELECTORS.checkRunStatus}[data-builder-check-run-status="skipped"]`,
+    ).waitFor({ state: 'visible' });
+  }
   try {
     const changesOpen = await page.locator(SELECTORS.changesDisclosure).evaluate((node) => node.open === true);
     if (changesOpen) {
@@ -3957,7 +3964,7 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v24'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v25'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.check_run_namespace.value
       !== 'current_draft_identity_methods_only'
@@ -3968,7 +3975,7 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
       !== 'approve_current_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v24',
+    bridge_version: 'builder-preload.v25',
     legacy_namespaces_absent: true,
     check_run_namespace: 'current_draft_identity_methods_only',
     live_preview_namespace: 'current_preview_control_methods_only',

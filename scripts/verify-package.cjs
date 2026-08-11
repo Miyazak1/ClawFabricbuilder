@@ -552,7 +552,7 @@ assert.equal(ts.isPropertyAssignment(checkRunProperty), true);
 assert.equal(ts.isPropertyAssignment(livePreviewProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v24');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v25');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -607,6 +607,7 @@ exactObjectKeys(providerContextDisclosureApprovalBridge, ['approveCurrent']);
 exactObjectKeys(checkRunBridge, [
   'readCurrentDraftAvailableChecks',
   'approveAndRunCurrentDraftCheck',
+  'skipCurrentDraftCheck',
 ]);
 exactObjectKeys(livePreviewBridge, [
   'requestCurrentDraftPreview',
@@ -621,7 +622,7 @@ assert.deepEqual(rendererPropertyAccesses, [
   'removeListener',
   'on',
   'removeListener',
-  ...Array.from({ length: 4 }, () => 'invoke'),
+  ...Array.from({ length: 5 }, () => 'invoke'),
   'on',
   'removeListener',
   ...Array.from({ length: 13 }, () => 'invoke'),
@@ -709,6 +710,10 @@ assert.equal(
   checkRunChannels[1],
 );
 assert.equal(
+  preloadConstants.get('SKIP_CURRENT_DRAFT_CHECK_CHANNEL'),
+  checkRunChannels[2],
+);
+assert.equal(
   preloadConstants.get('REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL'),
   livePreviewChannels[0],
 );
@@ -789,6 +794,12 @@ exactInvokeMethod(
   checkRunBridge,
   'approveAndRunCurrentDraftCheck',
   'APPROVE_CURRENT_DRAFT_CHECK_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
+  'skipCurrentDraftCheck',
+  'SKIP_CURRENT_DRAFT_CHECK_CHANNEL',
   ['request'],
 );
 exactInvokeMethod(
@@ -1292,12 +1303,13 @@ assert.match(packagedPreload, /clawfabric-builder:provider-context-disclosure:ap
 assert.match(packagedPreload, /checkRun/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:read-current-draft-available/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:approve-current-draft-check/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:skip-current-draft-check/u);
 assert.match(packagedPreload, /livePreview/u);
 assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-draft/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 45);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 46);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);

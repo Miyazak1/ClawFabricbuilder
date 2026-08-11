@@ -235,6 +235,12 @@ class FakeLocator {
       if (this.page.checkRunAvailable !== true) throw new Error('project check unavailable');
       this.page.checkRunStatus = 'passed';
     }
+    if (this.selector === SELECTORS.skipCheck) {
+      if (!this.page.unsavedDraftVisible || this.page.checkRunStatus !== 'not_run') {
+        throw new Error('skip check unavailable');
+      }
+      this.page.checkRunStatus = 'skipped';
+    }
     if (this.selector === SELECTORS.workspaceChip) {
       this.page.workspacePickerVisible = true;
       this.page.newProjectPanelVisible = false;
@@ -429,6 +435,9 @@ class FakeLocator {
     if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
     if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
     if (this.selector === SELECTORS.runCheck) return this.page.checkRunAvailable;
+    if (this.selector === SELECTORS.skipCheck) {
+      return this.page.unsavedDraftVisible && this.page.checkRunStatus === 'not_run';
+    }
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
       return this.page.unsavedDraftVisible;
     }
@@ -535,6 +544,10 @@ class FakeLocator {
     }
     if (this.selector === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`) {
       this.page.assertSelectorVisibility(this.selector, this.page.checkRunStatus === 'passed', state);
+      return;
+    }
+    if (this.selector === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="skipped"]`) {
+      this.page.assertSelectorVisibility(this.selector, this.page.checkRunStatus === 'skipped', state);
       return;
     }
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
@@ -877,6 +890,7 @@ class FakePage {
     };
     this.recordCandidateDraft = (candidateTurns) => {
       this.candidateTurns = Math.max(this.candidateTurns, candidateTurns);
+      this.checkRunStatus = 'not_run';
       this.changesPanelVisible = false;
       this.retryDraftVisible = false;
       this.unsavedDraftVisible = true;
@@ -1576,7 +1590,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v24',
+      bridge_version: 'builder-preload.v25',
       legacy_namespaces_absent: true,
       check_run_namespace: 'current_draft_identity_methods_only',
       live_preview_namespace: 'current_preview_control_methods_only',
@@ -1887,7 +1901,7 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v24',
+    bridgeVersion: 'builder-preload.v25',
     codeGenerator: {
       submit() { throw new Error('must not write through bridge'); },
       generate() { throw new Error('must not write through bridge'); },
@@ -2633,7 +2647,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v24');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v25');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -6381,7 +6395,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v24['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v25['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);
@@ -6392,8 +6406,10 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /checkRun:\s*Object\.freeze/u);
   assert.match(preloadSource, /readCurrentDraftAvailableChecks\(request\)/u);
   assert.match(preloadSource, /approveAndRunCurrentDraftCheck\(request\)/u);
+  assert.match(preloadSource, /skipCurrentDraftCheck\(request\)/u);
   assert.match(preloadSource, /check-run:read-current-draft-available/u);
   assert.match(preloadSource, /check-run:approve-current-draft-check/u);
+  assert.match(preloadSource, /check-run:skip-current-draft-check/u);
   assert.match(preloadSource, /livePreview:\s*Object\.freeze/u);
   assert.match(preloadSource, /requestCurrentDraftPreview\(request\)/u);
   assert.match(preloadSource, /live-preview:request-current-draft/u);
