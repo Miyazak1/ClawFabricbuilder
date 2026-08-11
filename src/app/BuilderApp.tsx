@@ -509,6 +509,8 @@ type QueuedActiveRunFollowup = Readonly<{
   queuedFollowup: BuilderQueuedFollowupReference;
 }>;
 
+type RestorableDraftTarget = Readonly<{ draftId: string; restoreKey: string }>;
+
 type SubmitInstructionTextOptions = Readonly<{
   composerModeOverride?: BuilderComposerMode | null;
   existingMessageId?: string | null;
@@ -546,15 +548,21 @@ type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
 function latestRestorableDraft(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
-): Readonly<{ draftId: string; restoreKey: string }> | null {
-  const visibleProjectId = projectSnapshot.savedProject?.target.project_id
-    ?? projectSnapshot.workingProjectId
-    ?? null;
+): RestorableDraftTarget | null {
+  const visibleProjectId = visibleConversationProjectId(projectSnapshot);
+  if (visibleProjectId === null) return null;
+  return latestRestorableDraftForProjectId(conversationSnapshot, projectSnapshot, visibleProjectId);
+}
+
+function latestRestorableDraftForProjectId(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+  visibleProjectId: string,
+): RestorableDraftTarget | null {
   if (
     projectSnapshot.busy
     || projectSnapshot.draft !== null
     || projectSnapshot.inspectedRevision !== null
-    || visibleProjectId === null
     || !['ready', 'generation_failed', 'preview_unavailable'].includes(projectSnapshot.status)
     || conversationSnapshot.status !== 'ready'
     || conversationSnapshot.conversation?.state !== 'ready'
@@ -572,7 +580,7 @@ function latestRestorableDraft(
     if (item.item_kind === 'run_completed' && item.candidate !== null) {
       if (reviewedDraftIds.has(item.candidate.draft_id)) continue;
       if (savedTarget !== null && item.turn_id === savedTarget.turn_id && item.run_id === savedTarget.run_id) {
-        return null;
+        continue;
       }
       return Object.freeze({
         draftId: item.candidate.draft_id,
@@ -674,6 +682,9 @@ function hasPriorBuildContext(
 
 const PENDING_BUILD_CONFIRMATION_PATTERN =
   /(?:需要我|要我|要不要我|是否(?:需要|要)我|我可以|可以帮你|如果你想).{0,64}(?:直接|现在|马上)?(?:修改|调整|更改|改|应用|生成|创建|实现|写|做|开始)|(?:would you like|do you want me to|should i|i can).{0,96}(?:change|modify|apply|build|create|implement|update|make|write)/iu;
+const MAX_PENDING_DRAFT_RESTORE_ATTEMPTS = 20;
+const MAX_PENDING_DRAFT_ACTIVITY_LOAD_ATTEMPTS = 20;
+const PENDING_DRAFT_RESTORE_RETRY_DELAY_MS = 250;
 
 function hasPendingBuildConfirmationContext(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
@@ -1122,7 +1133,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
   const queuedActiveRunFollowupRef = useRef<QueuedActiveRunFollowup | null>(null);
   const submitInstructionTextRef = useRef<SubmitInstructionText | null>(null);
-  const restoreAttemptKeysRef = useRef(new Set<string>());
+  const restoreAttemptCountsRef = useRef(new Map<string, number>());
+  const restoreAttemptsInFlightRef = useRef(new Set<string>());
+  const activityRestoreLoadAttemptsRef = useRef(new Map<string, number>());
+  const activityRestoreLoadsInFlightRef = useRef(new Set<string>());
+  const activityRestoreProbeKeysRef = useRef(new Set<string>());
+  const pendingProjectActivityRestoreRef = useRef<Readonly<{ epoch: number; projectId: string }> | null>(null);
+  const restorePendingDraftFromActivityRef =
+    useRef<((visibleProjectId: string, commandEpoch: number) => void) | null>(null);
   const submitInFlightRef = useRef(false);
   const submitInFlightInstructionRef = useRef<string | null>(null);
   const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
@@ -1504,6 +1522,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     currentProjectWriteApprovalRef.current = null;
     currentProjectWriteApprovalStatusRef.current = null;
     submitInFlightInstructionRef.current = null;
+    pendingProjectActivityRestoreRef.current = nextProjectId === undefined
+      ? null
+      : Object.freeze({ epoch: nextEpoch, projectId: nextProjectId });
     publishLockedComposerSubmit(null);
     publishQueuedActiveRunFollowup(null);
     setPlanReviewFailure(null);
@@ -1514,10 +1535,20 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setCurrentProjectWriteApproval(null);
     setCurrentProjectWriteApprovalStatus(null);
     publishPlanReviewInFlight(null);
-    restoreAttemptKeysRef.current.clear();
+    restoreAttemptCountsRef.current.clear();
+    restoreAttemptsInFlightRef.current.clear();
+    activityRestoreLoadAttemptsRef.current.clear();
+    activityRestoreLoadsInFlightRef.current.clear();
+    activityRestoreProbeKeysRef.current.clear();
     publishSubmitInFlight(false);
     setWorkspaceEpoch(workspaceEpochRef.current);
     setProjectId(nextProjectId);
+    if (nextProjectId !== undefined) {
+      globalThis.setTimeout(() => {
+        if (workspaceEpochRef.current !== nextEpoch) return;
+        restorePendingDraftFromActivityRef.current?.(nextProjectId, nextEpoch);
+      }, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+    }
     if (options.preserveIdea !== true) setIdea('');
     setActiveFile(null);
     setLiveOutput(null);
@@ -1537,10 +1568,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(nextProjectId, { preserveIdea: true });
   }, [resetWorkspace]);
 
+  const clearPendingProjectActivityRestore = useCallback(() => {
+    pendingProjectActivityRestoreRef.current = null;
+    activityRestoreLoadAttemptsRef.current.clear();
+    activityRestoreLoadsInFlightRef.current.clear();
+    activityRestoreProbeKeysRef.current.clear();
+  }, []);
+
   const clearComposerWorkspaceSelection = useCallback(() => {
+    clearPendingProjectActivityRestore();
     project.clearWorkspaceSelection();
     resetWorkspace(undefined, { preserveIdea: true });
-  }, [project, resetWorkspace]);
+  }, [clearPendingProjectActivityRestore, project, resetWorkspace]);
 
   const startNewProjectFromCatalog = useCallback(() => {
     resetWorkspace(undefined);
@@ -1740,28 +1779,202 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [conversation]);
 
+  const restorePendingDraftTarget = useCallback((
+    target: RestorableDraftTarget,
+    commandEpoch: number,
+  ) => {
+    const attemptKey = `${commandEpoch}:${target.restoreKey}`;
+    if (restoreAttemptsInFlightRef.current.has(attemptKey)) return;
+    const attemptRestore = () => {
+      if (workspaceEpochRef.current !== commandEpoch) {
+        restoreAttemptsInFlightRef.current.delete(attemptKey);
+        return;
+      }
+      if (restoreAttemptsInFlightRef.current.has(attemptKey)) return;
+      const attemptCount = restoreAttemptCountsRef.current.get(attemptKey) ?? 0;
+      if (attemptCount >= MAX_PENDING_DRAFT_RESTORE_ATTEMPTS) return;
+      restoreAttemptCountsRef.current.set(attemptKey, attemptCount + 1);
+      restoreAttemptsInFlightRef.current.add(attemptKey);
+      void project.restoreDraft(target.draftId).then(async (result) => {
+        if (result.inspectedRevision !== null) {
+          restoreAttemptCountsRef.current.delete(attemptKey);
+          return;
+        }
+        if (workspaceEpochRef.current !== commandEpoch) return;
+        if (result.draft?.draft_id !== target.draftId) {
+          if ((restoreAttemptCountsRef.current.get(attemptKey) ?? 0) < MAX_PENDING_DRAFT_RESTORE_ATTEMPTS) {
+            globalThis.setTimeout(attemptRestore, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+          }
+          return;
+        }
+        restoreAttemptCountsRef.current.delete(attemptKey);
+        await readActivityAfterTerminal(result, commandEpoch);
+      }).catch(() => {
+        if (
+          workspaceEpochRef.current === commandEpoch
+          && (restoreAttemptCountsRef.current.get(attemptKey) ?? 0) < MAX_PENDING_DRAFT_RESTORE_ATTEMPTS
+        ) {
+          globalThis.setTimeout(attemptRestore, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+        }
+      }).finally(() => {
+        restoreAttemptsInFlightRef.current.delete(attemptKey);
+      });
+    };
+    globalThis.setTimeout(attemptRestore);
+  }, [project, readActivityAfterTerminal]);
+
+  const restorePendingDraftFromActivity = useCallback((
+    visibleProjectId: string,
+    commandEpoch: number,
+  ) => {
+    const loadKey = `${commandEpoch}:${visibleProjectId}`;
+    if (activityRestoreLoadsInFlightRef.current.has(loadKey)) return;
+    const retryLoad = () => {
+      if (workspaceEpochRef.current !== commandEpoch) {
+        activityRestoreLoadAttemptsRef.current.delete(loadKey);
+        activityRestoreLoadsInFlightRef.current.delete(loadKey);
+        return;
+      }
+      const attemptCount = activityRestoreLoadAttemptsRef.current.get(loadKey) ?? 0;
+      if (attemptCount >= MAX_PENDING_DRAFT_ACTIVITY_LOAD_ATTEMPTS) {
+        activityRestoreLoadsInFlightRef.current.delete(loadKey);
+        if (
+          pendingProjectActivityRestoreRef.current?.epoch === commandEpoch
+          && pendingProjectActivityRestoreRef.current.projectId === visibleProjectId
+        ) {
+          pendingProjectActivityRestoreRef.current = null;
+        }
+        return;
+      }
+      const currentConversation = conversationSnapshotRef.current;
+      if (
+        currentConversation.status === 'ready'
+        && currentConversation.conversation?.state === 'ready'
+        && currentConversation.project_id === visibleProjectId
+        && attemptCount === 0
+      ) {
+        const target = latestRestorableDraftForProjectId(
+          currentConversation,
+          projectSnapshotRef.current,
+          visibleProjectId,
+        );
+        if (target === null) {
+          activityRestoreLoadAttemptsRef.current.set(loadKey, 1);
+          globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+        } else {
+          activityRestoreLoadAttemptsRef.current.delete(loadKey);
+          activityRestoreLoadsInFlightRef.current.delete(loadKey);
+          if (
+            pendingProjectActivityRestoreRef.current?.epoch === commandEpoch
+            && pendingProjectActivityRestoreRef.current.projectId === visibleProjectId
+          ) {
+            pendingProjectActivityRestoreRef.current = null;
+          }
+          restorePendingDraftTarget(target, commandEpoch);
+        }
+        return;
+      }
+      activityRestoreLoadAttemptsRef.current.set(loadKey, attemptCount + 1);
+      void conversation.load(visibleProjectId).then((loaded) => {
+        if (workspaceEpochRef.current !== commandEpoch) return;
+        if (
+          loaded.status !== 'ready'
+          || loaded.conversation?.state !== 'ready'
+          || loaded.project_id !== visibleProjectId
+        ) {
+          globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+          return;
+        }
+        const target = latestRestorableDraftForProjectId(loaded, projectSnapshotRef.current, visibleProjectId);
+        if (target === null) {
+          if (attemptCount + 1 < MAX_PENDING_DRAFT_ACTIVITY_LOAD_ATTEMPTS) {
+            globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+            return;
+          }
+          activityRestoreLoadAttemptsRef.current.delete(loadKey);
+          activityRestoreLoadsInFlightRef.current.delete(loadKey);
+          if (
+            pendingProjectActivityRestoreRef.current?.epoch === commandEpoch
+            && pendingProjectActivityRestoreRef.current.projectId === visibleProjectId
+          ) {
+            pendingProjectActivityRestoreRef.current = null;
+          }
+          return;
+        }
+        activityRestoreLoadAttemptsRef.current.delete(loadKey);
+        activityRestoreLoadsInFlightRef.current.delete(loadKey);
+        if (
+          pendingProjectActivityRestoreRef.current?.epoch === commandEpoch
+          && pendingProjectActivityRestoreRef.current.projectId === visibleProjectId
+        ) {
+          pendingProjectActivityRestoreRef.current = null;
+        }
+        restorePendingDraftTarget(target, commandEpoch);
+      }).catch(() => {
+        if (workspaceEpochRef.current !== commandEpoch) return;
+        globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+      });
+    };
+    activityRestoreLoadsInFlightRef.current.add(loadKey);
+    globalThis.setTimeout(retryLoad, 50);
+  }, [conversation, restorePendingDraftTarget]);
+
+  useLayoutEffect(() => {
+    restorePendingDraftFromActivityRef.current = restorePendingDraftFromActivity;
+  }, [restorePendingDraftFromActivity]);
+
+  useEffect(() => {
+    if (projectId === undefined) return;
+    const commandEpoch = workspaceEpochRef.current;
+    const pendingRestore = pendingProjectActivityRestoreRef.current;
+    if (
+      pendingRestore === null
+      || pendingRestore.epoch !== commandEpoch
+      || pendingRestore.projectId !== projectId
+    ) return;
+    restorePendingDraftFromActivity(projectId, commandEpoch);
+  }, [projectId, restorePendingDraftFromActivity, workspaceEpoch]);
+
   useEffect(() => {
     const target = latestRestorableDraft(conversation.snapshot, project.snapshot);
     if (target === null) return;
+    restorePendingDraftTarget(target, workspaceEpochRef.current);
+  }, [conversation.snapshot, project.snapshot, restorePendingDraftTarget]);
+
+  useEffect(() => {
+    const visibleProjectId = visibleConversationProjectId(project.snapshot);
+    if (
+      project.snapshot.busy
+      || project.snapshot.draft !== null
+      || project.snapshot.inspectedRevision !== null
+      || visibleProjectId === null
+      || !['ready', 'generation_failed', 'preview_unavailable'].includes(project.snapshot.status)
+    ) return;
+    let pendingProjectActivityRestore = pendingProjectActivityRestoreRef.current;
+    if (pendingProjectActivityRestore === null) {
+      const restoreProbeKey = [
+        workspaceEpochRef.current,
+        visibleProjectId,
+        project.snapshot.savedProject?.target.revision_receipt_digest
+          ?? project.snapshot.workingProjectId
+          ?? project.snapshot.conversationProjectId
+          ?? 'current',
+      ].join(':');
+      if (activityRestoreProbeKeysRef.current.has(restoreProbeKey)) return;
+      activityRestoreProbeKeysRef.current.add(restoreProbeKey);
+      pendingProjectActivityRestore = Object.freeze({
+        epoch: workspaceEpochRef.current,
+        projectId: visibleProjectId,
+      });
+      pendingProjectActivityRestoreRef.current = pendingProjectActivityRestore;
+    }
+    if (
+      pendingProjectActivityRestore.epoch !== workspaceEpochRef.current
+      || pendingProjectActivityRestore.projectId !== visibleProjectId
+    ) return;
     const commandEpoch = workspaceEpochRef.current;
-    const attemptKey = `${commandEpoch}:${target.restoreKey}`;
-    if (restoreAttemptKeysRef.current.has(attemptKey)) return;
-    restoreAttemptKeysRef.current.add(attemptKey);
-    window.setTimeout(() => {
-      if (workspaceEpochRef.current !== commandEpoch) return;
-      void project.restoreDraft(target.draftId).then(async (result) => {
-        if (result.inspectedRevision !== null) {
-          restoreAttemptKeysRef.current.delete(attemptKey);
-          return;
-        }
-        if (
-          workspaceEpochRef.current !== commandEpoch
-          || result.draft?.draft_id !== target.draftId
-        ) return;
-        await readActivityAfterTerminal(result, commandEpoch);
-      }).catch(() => undefined);
-    });
-  }, [conversation.snapshot, project, project.snapshot, readActivityAfterTerminal]);
+    restorePendingDraftFromActivity(visibleProjectId, commandEpoch);
+  }, [conversation.snapshot, project.snapshot, restorePendingDraftFromActivity]);
 
   const steerInstruction = useCallback(async () => {
     if (idea.trim().length === 0) return;
@@ -2021,6 +2234,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       return;
     }
+    clearPendingProjectActivityRestore();
     publishQueuedActiveRunFollowup(null);
     setAnswerFailureRecordedSuccess(false);
     const activeComposerMode = options.composerModeOverride ?? composerModeRef.current;
@@ -2280,6 +2494,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [
+    clearPendingProjectActivityRestore,
     project,
     ports.generator,
     createComposerRouteEvidence,

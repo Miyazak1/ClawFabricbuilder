@@ -2407,6 +2407,7 @@ async function runFirstAvailableProjectCheckViaUi(page) {
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
+    const profileId = await optionalLocatorAttribute(page, SELECTORS.runCheck, 'data-builder-run-check');
     failWithDiagnostic('canary_check_run_failed', Object.freeze({
       check_operation: await optionalLocatorAttribute(
         page,
@@ -2419,7 +2420,112 @@ async function runFirstAvailableProjectCheckViaUi(page) {
         'data-builder-check-run-status',
       ),
       check_status_text: await optionalLocatorText(page, SELECTORS.checkRunStatus),
+      bridge_check_run: await readCheckRunFailureDiagnostic(page, profileId),
     }));
+  }
+}
+
+async function readCheckRunFailureDiagnostic(page, profileId) {
+  try {
+    return await page.evaluate(async (request) => {
+      const bridge = globalThis.clawfabricBuilder;
+      const workspaces = await bridge?.projectWorkspace?.listWorkspaces?.();
+      const candidates = Array.isArray(workspaces?.projects) ? workspaces.projects : [];
+      const projectId = candidates.find((project) => typeof project?.project_id === 'string')?.project_id ?? null;
+      if (projectId === null) {
+        return {
+          workspace_found: false,
+          task_stream_ready: false,
+          pending_draft_found: false,
+          read_ok: null,
+          run_ok: null,
+        };
+      }
+      const stream = await bridge?.taskStream?.read?.({ project_id: projectId });
+      const items = Array.isArray(stream?.conversation?.items) ? stream.conversation.items : [];
+      const reviewedDraftIds = new Set();
+      let draftId = null;
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const item = items[index];
+        if (item?.item_kind === 'candidate_reviewed' && typeof item.draft_id === 'string') {
+          reviewedDraftIds.add(item.draft_id);
+          continue;
+        }
+        if (
+          item?.item_kind === 'run_completed'
+          && item?.candidate !== null
+          && typeof item?.candidate?.draft_id === 'string'
+          && !reviewedDraftIds.has(item.candidate.draft_id)
+        ) {
+          draftId = item.candidate.draft_id;
+          break;
+        }
+      }
+      if (draftId === null) {
+        return {
+          workspace_found: true,
+          task_stream_ready: stream?.conversation?.state === 'ready',
+          pending_draft_found: false,
+          item_count: items.length,
+          read_ok: null,
+          run_ok: null,
+        };
+      }
+      let readResponse = null;
+      try {
+        readResponse = await bridge?.checkRun?.readCurrentDraftAvailableChecks?.({ draft_id: draftId });
+      } catch (readError) {
+        return {
+          workspace_found: true,
+          task_stream_ready: stream?.conversation?.state === 'ready',
+          pending_draft_found: true,
+          read_ok: false,
+          read_error_code: readError?.code ?? null,
+          run_ok: null,
+        };
+      }
+      const safeProfileId = typeof request.profileId === 'string'
+        ? request.profileId
+        : readResponse?.result?.available_checks?.[0]?.command_profile_id;
+      let runResponse = null;
+      try {
+        runResponse = await bridge?.checkRun?.approveAndRunCurrentDraftCheck?.({
+          draft_id: draftId,
+          command_profile_id: safeProfileId,
+        });
+      } catch (runError) {
+        return {
+          workspace_found: true,
+          task_stream_ready: stream?.conversation?.state === 'ready',
+          pending_draft_found: true,
+          read_ok: readResponse?.ok ?? null,
+          read_result_version: readResponse?.result?.result_version ?? null,
+          read_status: readResponse?.result?.status ?? null,
+          read_check_count: Array.isArray(readResponse?.result?.available_checks)
+            ? readResponse.result.available_checks.length
+            : null,
+          run_ok: false,
+          run_error_code: runError?.code ?? null,
+        };
+      }
+      return {
+        workspace_found: true,
+        task_stream_ready: stream?.conversation?.state === 'ready',
+        pending_draft_found: true,
+        read_ok: readResponse?.ok ?? null,
+        read_result_version: readResponse?.result?.result_version ?? null,
+        read_status: readResponse?.result?.status ?? null,
+        read_check_count: Array.isArray(readResponse?.result?.available_checks)
+          ? readResponse.result.available_checks.length
+          : null,
+        run_ok: runResponse?.ok ?? null,
+        run_result_version: runResponse?.result?.result_version ?? null,
+        run_status: runResponse?.result?.check_run_status_projection?.status ?? null,
+        run_error_code: runResponse?.error?.code ?? null,
+      };
+    }, { profileId });
+  } catch {
+    return Object.freeze({ diagnostic_unavailable: true });
   }
 }
 
@@ -3795,7 +3901,101 @@ async function readPendingUpdateDraftRestoreEvidence(
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_pending_draft_restart_failed');
+    let evidence = null;
+    try {
+      evidence = await readSanitizedBridgeEvidence(
+        page,
+        currentProject.project_id,
+        'canary_read_evidence_pending_restart_diagnostic_failed',
+      );
+    } catch {
+      evidence = null;
+    }
+    let diagnosticRestore = null;
+    try {
+      diagnosticRestore = await page.evaluate(async (request) => {
+        const root = globalThis.clawfabricBuilder;
+        const stream = await root?.taskStream?.read?.({ project_id: request.projectId });
+        const items = Array.isArray(stream?.conversation?.items) ? stream.conversation.items : [];
+        const reviewedDraftIds = new Set();
+        let draftId = null;
+        for (let index = items.length - 1; index >= 0; index -= 1) {
+          const item = items[index];
+          if (item?.item_kind === 'candidate_reviewed' && typeof item.draft_id === 'string') {
+            reviewedDraftIds.add(item.draft_id);
+            continue;
+          }
+          if (
+            item?.item_kind === 'run_completed'
+            && item?.candidate !== null
+            && typeof item?.candidate?.draft_id === 'string'
+            && !reviewedDraftIds.has(item.candidate.draft_id)
+          ) {
+            draftId = item.candidate.draft_id;
+            break;
+          }
+        }
+        if (draftId === null) {
+          return {
+            pending_draft_found: false,
+            item_count: items.length,
+            latest_item_kinds: items.slice(-6).map((item) => item?.item_kind ?? null),
+          };
+        }
+        const response = await root?.codeGenerator?.restoreDraft?.({ draft_id: draftId });
+        const base = response?.result?.base_revision_evidence ?? null;
+        return {
+          pending_draft_found: true,
+          response_ok: response?.ok ?? null,
+          result_version: response?.result?.result_version ?? null,
+          restart_restore: response?.result?.restart_restore ?? null,
+          error_code: response?.error?.code ?? null,
+          base_revision_evidence_present: base !== null,
+          base_project_matches: base?.project_id === request.projectId,
+          base_revision_digest_matches: base?.revision_receipt_digest === request.revisionReceiptDigest,
+          base_commit_matches: base?.commit_oid === request.commitOid,
+          base_source_tree_matches_current: base?.source_tree_digest === request.sourceTreeDigest,
+          source_tree_present: response?.result?.source_tree !== undefined,
+        };
+      }, {
+        commitOid: currentProject.commit_oid,
+        projectId: currentProject.project_id,
+        revisionReceiptDigest: currentProject.revision_receipt_digest,
+        sourceTreeDigest: evidence?.current?.source_tree?.source_tree_digest ?? null,
+      });
+    } catch {
+      diagnosticRestore = Object.freeze({ response_ok: null, error_code: 'diagnostic_restore_threw' });
+    }
+    failWithDiagnostic('canary_pending_draft_restart_failed', Object.freeze({
+      diagnostic_version: 'builder-canary-pending-restart-restore-diagnostic.v1',
+      project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+      react_conversation_status: await optionalLocatorAttribute(
+        page,
+        SELECTORS.projectPage,
+        'data-builder-conversation-status',
+      ),
+      react_conversation_project_id: await optionalLocatorAttribute(
+        page,
+        SELECTORS.projectPage,
+        'data-builder-conversation-project-id',
+      ),
+      react_conversation_item_count: await optionalLocatorAttribute(
+        page,
+        SELECTORS.projectPage,
+        'data-builder-conversation-item-count',
+      ),
+      unsaved_draft_visible: await optionalLocatorVisible(page, SELECTORS.unsavedDraft),
+      save_version_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+      active_version_text: await optionalLocatorText(page, SELECTORS.currentVersion),
+      review_diff_visible: await optionalLocatorVisible(page, SELECTORS.reviewDiff),
+      conversation_notice: await optionalLocatorText(page, '[data-builder-conversation-notice]'),
+      restore_observer: await readPendingRestartRestoreObserver(page),
+      ui: await readPendingRestartUiDiagnostic(page),
+      app_scan: await readPendingRestartAppScanDiagnostic(page, currentProject),
+      task_stream: taskStreamCheckpointDiagnostic(evidence, 'pending_restart_restore'),
+      diagnostic_restore: diagnosticRestore,
+      thrown_name: error instanceof Error ? error.name : null,
+    }));
   }
 }
 
@@ -6645,6 +6845,26 @@ function previewComparisonDiagnostic(comparison, before, after) {
   });
 }
 
+function pendingRestartComparisonDiagnostic({
+  comparison,
+  beforeTaskStream = null,
+  afterEvidence = null,
+  afterTaskStream = null,
+  beforePreview = null,
+  afterPreview = null,
+} = {}) {
+  return Object.freeze({
+    diagnostic_version: 'builder-canary-pending-restart-comparison-diagnostic.v1',
+    comparison,
+    before_task_stream_digest: beforeTaskStream === null ? null : digestCanonical(beforeTaskStream),
+    after_task_stream_digest: afterTaskStream === null ? null : digestCanonical(afterTaskStream),
+    after_task_stream: taskStreamCheckpointDiagnostic(afterEvidence, 'pending_restart_after'),
+    preview: beforePreview === null || afterPreview === null
+      ? null
+      : previewComparisonDiagnostic('pending_restart_preview', beforePreview, afterPreview),
+  });
+}
+
 async function openProjectFromCatalogById(page, project, failureCode = 'canary_restart_failed') {
   try {
     const projectId = safeProjectId(project.project_id);
@@ -6659,6 +6879,244 @@ async function openProjectFromCatalogById(page, project, failureCode = 'canary_r
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail(failureCode);
+  }
+}
+
+async function installPendingRestartRestoreObserver(page) {
+  try {
+    await page.evaluate(() => {
+      const root = globalThis.clawfabricBuilder;
+      const observed = {
+        restore_draft_calls: 0,
+        restore_draft_error_codes: [],
+        restore_draft_ok_count: 0,
+        restore_draft_result_versions: [],
+        task_stream_read_calls: 0,
+        task_stream_read_project_ids: [],
+      };
+      Object.defineProperty(globalThis, '__clawfabricPendingRestartRestoreObserver', {
+        configurable: true,
+        enumerable: false,
+        value: observed,
+        writable: true,
+      });
+      if (root?.codeGenerator?.restoreDraft && root.codeGenerator.restoreDraft.__canaryObserved !== true) {
+        const originalRestoreDraft = root.codeGenerator.restoreDraft.bind(root.codeGenerator);
+        const observedRestoreDraft = async (request) => {
+          observed.restore_draft_calls += 1;
+          const response = await originalRestoreDraft(request);
+          if (response?.ok === true) {
+            observed.restore_draft_ok_count += 1;
+            if (typeof response?.result?.result_version === 'string') {
+              observed.restore_draft_result_versions.push(response.result.result_version);
+            }
+          } else if (typeof response?.error?.code === 'string') {
+            observed.restore_draft_error_codes.push(response.error.code);
+          }
+          return response;
+        };
+        Object.defineProperty(observedRestoreDraft, '__canaryObserved', { value: true });
+        root.codeGenerator.restoreDraft = observedRestoreDraft;
+      }
+      if (root?.taskStream?.read && root.taskStream.read.__canaryObserved !== true) {
+        const originalRead = root.taskStream.read.bind(root.taskStream);
+        const observedRead = async (request) => {
+          observed.task_stream_read_calls += 1;
+          observed.task_stream_read_project_ids.push(
+            typeof request?.project_id === 'string' ? request.project_id : null,
+          );
+          return await originalRead(request);
+        };
+        Object.defineProperty(observedRead, '__canaryObserved', { value: true });
+        root.taskStream.read = observedRead;
+      }
+    });
+  } catch {
+    /* diagnostic observer cannot affect canary behavior */
+  }
+}
+
+async function readPendingRestartRestoreObserver(page) {
+  try {
+    return await page.evaluate(() => {
+      const observed = globalThis.__clawfabricPendingRestartRestoreObserver;
+      if (observed === null || typeof observed !== 'object') return null;
+      return {
+        restore_draft_calls: Number.isSafeInteger(observed.restore_draft_calls)
+          ? observed.restore_draft_calls
+          : null,
+        restore_draft_error_codes: Array.isArray(observed.restore_draft_error_codes)
+          ? observed.restore_draft_error_codes.filter((code) => typeof code === 'string').slice(-5)
+          : [],
+        restore_draft_ok_count: Number.isSafeInteger(observed.restore_draft_ok_count)
+          ? observed.restore_draft_ok_count
+          : null,
+        restore_draft_result_versions: Array.isArray(observed.restore_draft_result_versions)
+          ? observed.restore_draft_result_versions.filter((version) => typeof version === 'string').slice(-5)
+          : [],
+        task_stream_read_calls: Number.isSafeInteger(observed.task_stream_read_calls)
+          ? observed.task_stream_read_calls
+          : null,
+        task_stream_read_project_id_count: Array.isArray(observed.task_stream_read_project_ids)
+          ? observed.task_stream_read_project_ids.length
+          : null,
+        task_stream_read_project_ids: Array.isArray(observed.task_stream_read_project_ids)
+          ? observed.task_stream_read_project_ids
+            .filter((projectId) => projectId === null || typeof projectId === 'string')
+            .slice(-5)
+          : [],
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function readPendingRestartUiDiagnostic(page) {
+  try {
+    return await page.evaluate((selectors) => {
+      const text = (element) => (element?.textContent ?? '').replace(/\s+/gu, ' ').trim() || null;
+      const visible = (element) => {
+        if (!(element instanceof globalThis.HTMLElement)) return false;
+        const style = globalThis.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== 'hidden'
+          && style.display !== 'none'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const pageDocument = globalThis.document;
+      const projectPage = pageDocument.querySelector(selectors.projectPage);
+      const historyPreview = pageDocument.querySelector(selectors.historyPreview);
+      const unsavedDraft = pageDocument.querySelector(selectors.unsavedDraft);
+      const saveVersion = pageDocument.querySelector(selectors.saveVersion);
+      const currentVersion = pageDocument.querySelector(selectors.currentVersion);
+      const showCurrentButton = Array.from(pageDocument.querySelectorAll('button'))
+        .find((button) => text(button) === 'Back to current') ?? null;
+      const visibleButtons = Array.from(pageDocument.querySelectorAll('button'))
+        .filter((button) => visible(button))
+        .map((button) => text(button))
+        .filter((buttonText) => buttonText !== null)
+        .slice(0, 20);
+      return {
+        project_page_status: projectPage?.getAttribute('data-builder-project-status') ?? null,
+        project_page_error: projectPage?.getAttribute('data-builder-project-error') ?? null,
+        history_preview_visible: visible(historyPreview),
+        history_preview_text: text(historyPreview),
+        show_current_visible: visible(showCurrentButton),
+        unsaved_draft_visible: visible(unsavedDraft),
+        unsaved_draft_text: text(unsavedDraft),
+        save_version_visible: visible(saveVersion),
+        save_version_text: text(saveVersion),
+        current_version_visible: visible(currentVersion),
+        current_version_text: text(currentVersion),
+        visible_buttons: visibleButtons,
+      };
+    }, SELECTORS);
+  } catch {
+    return Object.freeze({ diagnostic_unavailable: true });
+  }
+}
+
+async function readPendingRestartAppScanDiagnostic(page, currentProject) {
+  try {
+    return await page.evaluate(async (request) => {
+      const root = globalThis.clawfabricBuilder;
+      const stream = await root?.taskStream?.read?.({ project_id: request.projectId });
+      const items = Array.isArray(stream?.conversation?.items) ? stream.conversation.items : [];
+      const summarizeItem = (item, index) => {
+        const candidate = item?.candidate && typeof item.candidate === 'object'
+          ? item.candidate
+          : null;
+        return {
+          candidate_draft_tail: typeof candidate?.draft_id === 'string'
+            ? candidate.draft_id.slice(-8)
+            : null,
+          candidate_state: item?.candidate_state ?? null,
+          decision: item?.decision ?? null,
+          failure_phase: item?.failure_phase ?? null,
+          index,
+          item_kind: item?.item_kind ?? null,
+          keys: item && typeof item === 'object'
+            ? Object.keys(item).sort()
+            : [],
+          outcome: item?.outcome ?? null,
+          result_kind: item?.result_kind ?? null,
+          run_id_tail: typeof item?.run_id === 'string' ? item.run_id.slice(-8) : null,
+          sequence: item?.sequence ?? null,
+          terminal_status: item?.terminal_status ?? null,
+          turn_id_tail: typeof item?.turn_id === 'string' ? item.turn_id.slice(-8) : null,
+        };
+      };
+      const reviewedDraftIds = new Set();
+      const inspected = [];
+      let selected = null;
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const item = items[index];
+        if (item?.item_kind === 'candidate_reviewed' && typeof item.draft_id === 'string') {
+          reviewedDraftIds.add(item.draft_id);
+          inspected.push({
+            candidate_state: item.candidate_state ?? null,
+            decision: item.decision ?? null,
+            draft_id_tail: item.draft_id.slice(-8),
+            index,
+            item_kind: 'candidate_reviewed',
+            run_id_tail: typeof item.run_id === 'string' ? item.run_id.slice(-8) : null,
+            sequence: item.sequence ?? null,
+            turn_id_tail: typeof item.turn_id === 'string' ? item.turn_id.slice(-8) : null,
+          });
+          continue;
+        }
+        if (item?.item_kind === 'run_completed' && item.candidate !== null) {
+          const draftId = typeof item.candidate?.draft_id === 'string' ? item.candidate.draft_id : null;
+          const savedTargetMatch = item.turn_id === request.turnId && item.run_id === request.runId;
+          const reviewed = draftId !== null && reviewedDraftIds.has(draftId);
+          inspected.push({
+            draft_id_tail: draftId === null ? null : draftId.slice(-8),
+            index,
+            item_kind: 'run_completed',
+            result_kind: item.result_kind ?? null,
+            reviewed,
+            run_id_tail: typeof item.run_id === 'string' ? item.run_id.slice(-8) : null,
+            saved_target_match: savedTargetMatch,
+            sequence: item.sequence ?? null,
+            terminal_status: item.terminal_status ?? null,
+            turn_id_tail: typeof item.turn_id === 'string' ? item.turn_id.slice(-8) : null,
+          });
+          if (reviewed) continue;
+          if (savedTargetMatch) continue;
+          selected = {
+            draft_id_tail: draftId === null ? null : draftId.slice(-8),
+            index,
+            run_id_tail: typeof item.run_id === 'string' ? item.run_id.slice(-8) : null,
+            sequence: item.sequence ?? null,
+            turn_id_tail: typeof item.turn_id === 'string' ? item.turn_id.slice(-8) : null,
+          };
+          break;
+        }
+      }
+      return {
+        conversation_state: stream?.conversation?.state ?? null,
+        conversation_keys: stream?.conversation && typeof stream.conversation === 'object'
+          ? Object.keys(stream.conversation).sort()
+          : [],
+        head_sequence: stream?.conversation?.conversation?.head_sequence ?? stream?.conversation?.head_sequence ?? null,
+        item_count: items.length,
+        inspected: inspected.slice(0, 10),
+        raw_items: items.map((item, index) => summarizeItem(item, index)).slice(-30),
+        selected,
+        top_level_keys: stream && typeof stream === 'object'
+          ? Object.keys(stream).sort()
+          : [],
+        window: stream?.conversation?.window ?? stream?.conversation?.conversation?.window ?? null,
+      };
+    }, {
+      projectId: currentProject.project_id,
+      runId: currentProject.run_id,
+      turnId: currentProject.turn_id,
+    });
+  } catch {
+    return Object.freeze({ diagnostic_unavailable: true });
   }
 }
 
@@ -6907,19 +7365,39 @@ async function runPackagedCanary(rawInput, options = {}) {
     const pendingRestartPage = await app.firstWindow();
     if (pendingRestartApplicationObserver !== true) recorder.attachPage(pendingRestartPage);
     await assertCustomChromeControls(pendingRestartPage);
+    await installPendingRestartRestoreObserver(pendingRestartPage);
     await openProjectFromCatalogById(pendingRestartPage, initialRevision, 'canary_restart_open_failed');
     const pendingRestart = await readPendingUpdateDraftRestoreEvidence(pendingRestartPage, initialRevision, 2, 0);
     const pendingRestartProject = projectFromReadEvidence(pendingRestart.evidence, 1);
     if (!sameCatalogProjectRevision(pendingRestartProject, initialProject)) {
-      fail('canary_pending_draft_restart_failed');
+      failWithDiagnostic('canary_pending_draft_restart_failed', pendingRestartComparisonDiagnostic({
+        afterEvidence: pendingRestart.evidence,
+        afterTaskStream: pendingRestart.task_stream,
+        beforeTaskStream: pendingUpdateTaskStream,
+        comparison: 'project_revision',
+      }));
     }
     const pendingRestartTaskStreamUnchanged = (
       digestCanonical(pendingRestart.task_stream) === digestCanonical(pendingUpdateTaskStream)
     );
-    if (!pendingRestartTaskStreamUnchanged) fail('canary_pending_draft_restart_failed');
+    if (!pendingRestartTaskStreamUnchanged) {
+      failWithDiagnostic('canary_pending_draft_restart_failed', pendingRestartComparisonDiagnostic({
+        afterEvidence: pendingRestart.evidence,
+        afterTaskStream: pendingRestart.task_stream,
+        beforeTaskStream: pendingUpdateTaskStream,
+        comparison: 'task_stream',
+      }));
+    }
     const pendingRestartPreviewEvidence = await capturePreviewEvidence(pendingRestartPage, gate);
     if (!samePreviewEvidence(pendingRestartPreviewEvidence, pendingUpdatePreviewEvidence)) {
-      fail('canary_pending_draft_restart_failed');
+      failWithDiagnostic('canary_pending_draft_restart_failed', pendingRestartComparisonDiagnostic({
+        afterEvidence: pendingRestart.evidence,
+        afterPreview: pendingRestartPreviewEvidence,
+        afterTaskStream: pendingRestart.task_stream,
+        beforePreview: pendingUpdatePreviewEvidence,
+        beforeTaskStream: pendingUpdateTaskStream,
+        comparison: 'preview',
+      }));
     }
     const updateDraft = Object.freeze({
       ...pendingUpdateDraft,
@@ -7306,6 +7784,9 @@ if (require.main === module) {
         ? ERROR_MESSAGES[code]
         : ERROR_MESSAGES.canary_evidence_failed,
       stage,
+      diagnostic: error instanceof BuilderPackagedCanaryError
+        ? error.diagnostic
+        : undefined,
     })}\n`);
     process.exitCode = 1;
   });

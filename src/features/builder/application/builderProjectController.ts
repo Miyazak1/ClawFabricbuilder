@@ -1556,10 +1556,23 @@ export function createBuilderProjectController(
           await dependencies.generator.restoreDraft({ draft_id: draftId }),
           draftId,
         );
-        if (!draftMatchesSavedBase(draft, retained)) throw new Error();
+        let restoredBase = retained;
+        if (restoredBase === null && draft.base_revision_evidence !== null) {
+          try {
+            const loadedBase = await sanitizeBuilderProjectReadSnapshot(
+              await dependencies.workspace.loadCurrent({ project_id: draft.project_id }),
+            );
+            if (loadedBase.operation === 'current_loaded' && loadedBase.target.project_id === draft.project_id) {
+              restoredBase = loadedBase;
+            }
+          } catch {
+            restoredBase = null;
+          }
+        }
+        if (!draftMatchesSavedBase(draft, restoredBase)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
         retryableGeneration = null;
-        return withPreview('draft_ready', retained, draft, operationEpoch);
+        return withPreview('draft_ready', restoredBase, draft, operationEpoch);
       } catch {
         if (disposed || operationEpoch !== epoch) return current;
         return publish(beforeRestore);

@@ -2265,6 +2265,11 @@ export function BuilderPage({
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
   const current = trusted ? snapshot : null;
   const status = current?.status ?? 'unavailable';
+  const conversationStatus = conversationSnapshot?.status ?? 'unavailable';
+  const conversationProjectId = conversationSnapshot?.project_id ?? null;
+  const conversationItemCount = conversationSnapshot?.conversation?.state === 'ready'
+    ? conversationSnapshot.conversation.conversation.items.length
+    : 0;
   const saved = current?.savedProject ?? null;
   const draft = current?.draft ?? null;
   const inspected = current?.inspectedRevision ?? null;
@@ -3415,6 +3420,9 @@ export function BuilderPage({
       data-builder-page="true"
       data-builder-project-status={status}
       data-builder-project-error={snapshot.error ?? 'none'}
+      data-builder-conversation-status={conversationStatus}
+      data-builder-conversation-project-id={conversationProjectId ?? 'none'}
+      data-builder-conversation-item-count={conversationItemCount}
     >
       <header className="cf-builder-surface-toolbar">
         <div className="min-w-0">

@@ -6,6 +6,7 @@ export type BuilderAgentActivityPhase =
   | 'editing'
   | 'running_local_step'
   | 'running_checks'
+  | 'waiting_for_check'
   | 'preparing_review'
   | 'responding'
   | 'stopping'
@@ -59,6 +60,7 @@ const COPY = Object.freeze({
   editing: ['active', 'Changing files'],
   running_local_step: ['active', 'Running local step'],
   running_checks: ['active', 'Running checks'],
+  waiting_for_check: ['waiting', 'Ready for review'],
   preparing_review: ['active', 'Preparing review'],
   responding: ['active', 'Writing response'],
   stopping: ['active', 'Stopping work'],

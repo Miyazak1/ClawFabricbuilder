@@ -1592,6 +1592,38 @@ describe('Builder project controller v2', () => {
     expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
   });
 
+  it('reopens the saved base while restoring a pending draft from a bound workspace state', async () => {
+    const readWire = await createReadWire();
+    const restored = await createRestoredGenerationDraft(readWire.source_tree);
+    const { controller, loadCurrent, restoreDraft, saveDraft } = setup({
+      open: async () => createLocalProjectSelection({
+        projectId: PROJECT_ID,
+        title: 'Focus timer',
+        sourceFolderName: 'site-source',
+      }),
+      loadCurrent: async (request) => {
+        expect(request).toEqual({ project_id: PROJECT_ID });
+        return readWire;
+      },
+      restoreDraft: async (request) => {
+        expect(request).toEqual({ draft_id: DRAFT_ID });
+        return restored;
+      },
+    });
+    await controller.open(PROJECT_ID);
+
+    const result = await controller.restoreDraft(DRAFT_ID);
+
+    expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(loadCurrent).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+    expect(result.workingProjectId).toBeNull();
+    expect(result.draft?.draft_id).toBe(DRAFT_ID);
+    expect(result.draft?.restart_restore).toBe('git_sqlite_verified');
+  });
+
   it('shows a distinct restoring state while recovering a pending draft without saving it', async () => {
     const readWire = await createReadWire();
     const restored = await createRestoredGenerationDraft(readWire.source_tree);

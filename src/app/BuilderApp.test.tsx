@@ -391,9 +391,12 @@ async function setup(options: Readonly<{
   failPlanSourceReadApproval?: boolean;
   currentProjectWriteApprovalRequired?: boolean;
   failCurrentProjectWriteApproval?: boolean;
+  failTaskStreamReadAttempts?: number;
   planAfterPropose?: boolean;
   pendingBuildConfirmationActivity?: boolean;
   pendingActivity?: boolean;
+  staleActivityReadAttemptsBeforePendingRestore?: number;
+  staleActivityBeforePendingRestore?: boolean;
   pendingPlanActivity?: boolean;
   rejectedPlanActivity?: boolean;
   pendingAfterRevisionView?: boolean;
@@ -401,6 +404,8 @@ async function setup(options: Readonly<{
   rejectActivityAfterDiscard?: boolean;
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
+  failFirstRestoreDraft?: boolean;
+  failRestoreDraftAttempts?: number;
   runningActivity?: boolean;
   readOnlyPageQuestionActivity?: boolean;
   taskStreamWireOverride?: unknown;
@@ -701,8 +706,11 @@ async function setup(options: Readonly<{
     saved = true;
     return createSaveResult(latestDraft, readWire);
   });
+  let restoreDraftAttempts = 0;
   const restoreDraft = vi.fn(async (request: unknown) => {
-    if (options.restoreAvailable !== true) {
+    restoreDraftAttempts += 1;
+    const failedRestoreAttempts = options.failRestoreDraftAttempts ?? (options.failFirstRestoreDraft === true ? 1 : 0);
+    if (options.restoreAvailable !== true || restoreDraftAttempts <= failedRestoreAttempts) {
       return {
         version: 'builder-generation-ipc-result.v1',
         ok: false,
@@ -961,10 +969,15 @@ async function setup(options: Readonly<{
   }));
   const loadCurrent = vi.fn(async () => readWire);
   let loadRevisionCalls = 0;
+  let taskStreamReadAttempts = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
   const generationOutputListeners = new Set<(event: unknown) => void>();
   const taskStreamChangedListeners = new Set<(event: unknown) => void>();
   const readTaskStream = vi.fn(async () => {
+    taskStreamReadAttempts += 1;
+    if (taskStreamReadAttempts <= (options.failTaskStreamReadAttempts ?? 0)) {
+      throw new Error('activity temporarily unavailable');
+    }
     if (options.failTaskStreamAfterPlanReview === true && planReviewRecorded) {
       throw new Error('activity unavailable');
     }
@@ -1034,6 +1047,10 @@ async function setup(options: Readonly<{
                 ? createReadOnlyPageQuestionTaskStreamWire()
               : options.contextualBuildActivity === true
                 ? createContextualBuildTaskStreamWire()
+                : options.staleActivityBeforePendingRestore === true
+                  ? taskStreamReadAttempts <= (options.staleActivityReadAttemptsBeforePendingRestore ?? 1)
+                    ? reviewReadyTaskStreamWire()
+                    : pendingCandidateTaskStreamWire('proposed')
                 : options.acceptedPendingActivity === true
                 ? pendingCandidateTaskStreamWire('accepted')
                 : options.rejectedPendingActivity === true
@@ -5844,6 +5861,81 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
   });
 
+  it('retries pending draft restore when the first automatic restore is transiently unavailable', async () => {
+    const { container, restoreDraft, saveDraft } = await setup({
+      initiallySaved: true,
+      pendingActivity: true,
+      restoreAvailable: true,
+      failRestoreDraftAttempts: 3,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+
+    expect(restoreDraft).toHaveBeenCalledTimes(4);
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+  });
+
+  it('retries project activity loading before restoring a pending draft after restart', async () => {
+    const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
+      initiallySaved: true,
+      pendingActivity: true,
+      restoreAvailable: true,
+      failTaskStreamReadAttempts: 3,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+
+    await waitFor(() => {
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream.mock.calls.filter((call) => (
+        ((call as readonly unknown[])[0] as { project_id?: string } | undefined)?.project_id === PROJECT_ID
+      )).length).toBeGreaterThanOrEqual(4);
+      expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+  });
+
+  it('reloads stale project activity before restoring a pending draft after restart', async () => {
+    const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
+      initiallySaved: true,
+      staleActivityBeforePendingRestore: true,
+      staleActivityReadAttemptsBeforePendingRestore: 3,
+      restoreAvailable: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+
+    await waitFor(() => {
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream.mock.calls.filter((call) => (
+        ((call as readonly unknown[])[0] as { project_id?: string } | undefined)?.project_id === PROJECT_ID
+      )).length).toBeGreaterThanOrEqual(4);
+      expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+  });
+
   it('does not restore a pending draft after project activity records rejection', async () => {
     const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
       initiallySaved: true,
@@ -5925,7 +6017,7 @@ describe('BuilderApp v2', () => {
 
     click(container, 'Back to current');
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     });
     await waitFor(() => {
       expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
