@@ -143,7 +143,14 @@ function runtimeHarness() {
         admission_id: input.admission.admission_id,
         project_id: input.admission.project_id,
         readStatus() {
-          return { status };
+          return {
+            status,
+            navigation_block_count: 1,
+            network_block_count: 2,
+            permission_block_count: 0,
+            download_block_count: 0,
+            window_open_block_count: 1,
+          };
         },
         readMainOnlyWebContentsViewForAttachment() {
           return view;
@@ -219,6 +226,10 @@ test('starts a live preview browser from main-owned source and attaches it to re
   assert.equal(result.status, 'ready');
   assert.equal(result.can_reload, true);
   assert.equal(result.can_stop, true);
+  assert.equal(result.blocked_request_count, 4);
+  assert.equal(result.navigation_block_count, 1);
+  assert.equal(result.network_block_count, 2);
+  assert.equal(result.window_open_block_count, 1);
   assert.deepEqual(selected.source.calls, [{
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -242,6 +253,8 @@ test('reload updates bounds and stop detaches then cleans up runtime', async () 
 
   assert.equal(reloaded.status, 'ready');
   assert.equal(stopped.status, 'stopped');
+  assert.equal(reloaded.blocked_request_count, 4);
+  assert.equal(stopped.blocked_request_count, 4);
   assert.deepEqual(selected.runtime.calls.filter((item) => item[0] === 'bounds').map((item) => item[1]), [
     { x: 825, y: 114, width: 435, height: 682 },
   ]);
@@ -253,6 +266,7 @@ test('reload updates bounds and stop detaches then cleans up runtime', async () 
 test('read status is idle until started and failed source resolution is redacted', async () => {
   const idle = fixture();
   assert.equal(idle.service.read_current_live_preview_status(request()).status, 'idle');
+  assert.equal(idle.service.read_current_live_preview_status(request()).blocked_request_count, 0);
 
   const selected = fixture({ source: { fail: true } });
   const failed = await selected.service.request_current_draft_live_preview(request());

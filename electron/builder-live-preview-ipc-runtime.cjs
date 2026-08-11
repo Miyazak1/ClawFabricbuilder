@@ -157,6 +157,12 @@ function unavailableStatus(request, status = 'unavailable') {
     can_start: false,
     can_reload: false,
     can_stop: false,
+    blocked_request_count: 0,
+    navigation_block_count: 0,
+    network_block_count: 0,
+    permission_block_count: 0,
+    download_block_count: 0,
+    window_open_block_count: 0,
     message: status === 'stopped'
       ? 'Live preview is stopped.'
       : 'Live preview is unavailable until a main-owned preview source resolver is connected.',

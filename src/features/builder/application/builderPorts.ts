@@ -341,6 +341,12 @@ export type BuilderLivePreviewStatusProjection = Readonly<{
   can_start: boolean;
   can_reload: boolean;
   can_stop: boolean;
+  blocked_request_count: number;
+  navigation_block_count: number;
+  network_block_count: number;
+  permission_block_count: number;
+  download_block_count: number;
+  window_open_block_count: number;
   message: string;
   unavailable_reason:
     | 'preview_source_resolver_not_connected'

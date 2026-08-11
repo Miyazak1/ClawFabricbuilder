@@ -116,6 +116,12 @@ test('registered unavailable service returns safe status without source or view 
   assert.equal(projected.can_start, false);
   assert.equal(projected.can_reload, false);
   assert.equal(projected.can_stop, false);
+  assert.equal(projected.blocked_request_count, 0);
+  assert.equal(projected.navigation_block_count, 0);
+  assert.equal(projected.network_block_count, 0);
+  assert.equal(projected.permission_block_count, 0);
+  assert.equal(projected.download_block_count, 0);
+  assert.equal(projected.window_open_block_count, 0);
   assert.equal(projected.unavailable_reason, 'preview_source_resolver_not_connected');
   assert.equal(projected.authority.source_tree_from_renderer, 'not_accepted');
   assert.equal(projected.authority.preview_content_ipc, false);

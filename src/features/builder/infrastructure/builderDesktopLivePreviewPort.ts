@@ -27,6 +27,12 @@ const STATUS_KEYS = Object.freeze([
   'can_start',
   'can_reload',
   'can_stop',
+  'blocked_request_count',
+  'navigation_block_count',
+  'network_block_count',
+  'permission_block_count',
+  'download_block_count',
+  'window_open_block_count',
   'message',
   'unavailable_reason',
   'updated_at_ms',
@@ -187,6 +193,13 @@ function sanitizeAuthority(value: unknown) {
   });
 }
 
+function sanitizeCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 1_000_000) {
+    throw unavailable();
+  }
+  return value;
+}
+
 function sanitizeStatus(
   value: unknown,
   request: BuilderLivePreviewRequest,
@@ -217,6 +230,19 @@ function sanitizeStatus(
       )
     )
   ) throw unavailable();
+  const navigationBlockCount = sanitizeCount(source.navigation_block_count);
+  const networkBlockCount = sanitizeCount(source.network_block_count);
+  const permissionBlockCount = sanitizeCount(source.permission_block_count);
+  const downloadBlockCount = sanitizeCount(source.download_block_count);
+  const windowOpenBlockCount = sanitizeCount(source.window_open_block_count);
+  const blockedRequestCount = sanitizeCount(source.blocked_request_count);
+  if (
+    blockedRequestCount !== navigationBlockCount
+      + networkBlockCount
+      + permissionBlockCount
+      + downloadBlockCount
+      + windowOpenBlockCount
+  ) throw unavailable();
   return Object.freeze({
     status_version: 'builder-live-preview-status-projection.v1',
     project_id: request.project_id,
@@ -226,6 +252,12 @@ function sanitizeStatus(
     can_start: source.can_start,
     can_reload: source.can_reload,
     can_stop: source.can_stop,
+    blocked_request_count: blockedRequestCount,
+    navigation_block_count: navigationBlockCount,
+    network_block_count: networkBlockCount,
+    permission_block_count: permissionBlockCount,
+    download_block_count: downloadBlockCount,
+    window_open_block_count: windowOpenBlockCount,
     message: source.message,
     unavailable_reason: source.unavailable_reason as BuilderLivePreviewStatusProjection['unavailable_reason'],
     updated_at_ms: updatedAtMs,

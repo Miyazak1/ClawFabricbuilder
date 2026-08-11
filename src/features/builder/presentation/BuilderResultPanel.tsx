@@ -17,6 +17,20 @@ export type BuilderResultPanelProps = Readonly<{
   projection: BuilderSourceTreePreviewProjection | null;
 }>;
 
+function livePreviewBlockedSummary(status: BuilderLivePreviewStatusProjection | null): string | null {
+  if (status === null || status.blocked_request_count <= 0) return null;
+  const blockedParts = [
+    status.navigation_block_count > 0 ? `${status.navigation_block_count} navigation` : null,
+    status.network_block_count > 0 ? `${status.network_block_count} network` : null,
+    status.permission_block_count > 0 ? `${status.permission_block_count} permission` : null,
+    status.download_block_count > 0 ? `${status.download_block_count} download` : null,
+    status.window_open_block_count > 0 ? `${status.window_open_block_count} popup` : null,
+  ].filter((part): part is string => part !== null);
+  return `Blocked ${status.blocked_request_count} unsafe preview request${
+    status.blocked_request_count === 1 ? '' : 's'
+  }${blockedParts.length > 0 ? `: ${blockedParts.join(', ')}.` : '.'}`;
+}
+
 export function BuilderResultPanel({
   livePreviewOperation = null,
   livePreviewStatus = null,
@@ -29,6 +43,7 @@ export function BuilderResultPanel({
   projection,
 }: BuilderResultPanelProps) {
   const [previewMode, setPreviewMode] = useState<'static' | 'live'>('static');
+  const blockedSummary = livePreviewBlockedSummary(livePreviewStatus);
   const canEnterLivePreview = livePreviewStatus !== null
     && (
       livePreviewStatus.can_start
@@ -176,6 +191,11 @@ export function BuilderResultPanel({
               {livePreviewStatus?.message
                 ?? 'Live preview is unavailable until a main-owned preview source resolver is connected.'}
             </p>
+            {blockedSummary !== null ? (
+              <p className="cf-builder-preview-note" data-builder-live-preview-blocked-count="true">
+                {blockedSummary}
+              </p>
+            ) : null}
           </section>
         ) : (
           <BuilderStaticPreview

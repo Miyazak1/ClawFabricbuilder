@@ -109,6 +109,12 @@ describe('BuilderResultPanel', () => {
           can_start: false,
           can_reload: false,
           can_stop: false,
+          blocked_request_count: 0,
+          navigation_block_count: 0,
+          network_block_count: 0,
+          permission_block_count: 0,
+          download_block_count: 0,
+          window_open_block_count: 0,
           message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
           unavailable_reason: 'preview_source_resolver_not_connected',
           updated_at_ms: 10,
@@ -165,6 +171,12 @@ describe('BuilderResultPanel', () => {
           can_start: true,
           can_reload: false,
           can_stop: false,
+          blocked_request_count: 0,
+          navigation_block_count: 0,
+          network_block_count: 0,
+          permission_block_count: 0,
+          download_block_count: 0,
+          window_open_block_count: 0,
           message: 'Browser preview is ready to start.',
           unavailable_reason: null,
           updated_at_ms: 20,
@@ -203,5 +215,59 @@ describe('BuilderResultPanel', () => {
     expect(start?.disabled).toBe(false);
     act(() => start?.click());
     expect(onRequestLivePreview).toHaveBeenCalledOnce();
+  });
+
+  it('shows a compact live preview safety summary after unsafe requests are blocked', () => {
+    const container = render(
+      <BuilderResultPanel
+        livePreviewStatus={{
+          status_version: 'builder-live-preview-status-projection.v1',
+          project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+          preview_kind: 'live_static_web',
+          status: 'ready',
+          can_start: false,
+          can_reload: true,
+          can_stop: true,
+          blocked_request_count: 3,
+          navigation_block_count: 1,
+          network_block_count: 1,
+          permission_block_count: 0,
+          download_block_count: 0,
+          window_open_block_count: 1,
+          message: 'Live preview is ready.',
+          unavailable_reason: null,
+          updated_at_ms: 30,
+          authority: {
+            live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+            renderer_authority: 'current_project_conversation_only',
+            active_renderer_required: true,
+            source_tree_from_renderer: 'not_accepted',
+            source_read: 'main_owned_preview_source_resolver_or_not_performed',
+            source_write: 'not_performed',
+            provider_dispatch: false,
+            tool_dispatch: false,
+            command_execution: false,
+            git_mutation: false,
+            sqlite_write: false,
+            permission_grant: false,
+            revision_admission: false,
+            save_admission: false,
+            electron_view_attachment: 'main_only_not_exposed_to_renderer',
+            preview_content_ipc: false,
+            node_integration: false,
+            preload: false,
+          },
+        }}
+        projection={null}
+      />,
+    );
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-builder-preview-mode="live"]')?.click());
+    const summary = container.querySelector('[data-builder-live-preview-blocked-count="true"]');
+    expect(summary?.textContent).toContain('Blocked 3 unsafe preview requests');
+    expect(summary?.textContent).toContain('1 navigation');
+    expect(summary?.textContent).toContain('1 network');
+    expect(summary?.textContent).toContain('1 popup');
   });
 });

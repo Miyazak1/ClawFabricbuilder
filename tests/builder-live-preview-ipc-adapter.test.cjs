@@ -71,6 +71,12 @@ function status(overrides = {}) {
     can_start: false,
     can_reload: false,
     can_stop: false,
+    blocked_request_count: 0,
+    navigation_block_count: 0,
+    network_block_count: 0,
+    permission_block_count: 0,
+    download_block_count: 0,
+    window_open_block_count: 0,
     message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
     unavailable_reason: 'preview_source_resolver_not_connected',
     updated_at_ms: 50,
@@ -142,6 +148,32 @@ test('live preview adapter exposes fixed current-preview channels only', async (
     JSON.stringify(projected),
     /"source_tree":|content_digest|entry_url|preview_origin|credential|permission_id|revision_receipt|commit_oid|tree_oid/iu,
   );
+});
+
+test('live preview adapter preserves bounded runtime block counts', async () => {
+  const { active, value } = adapter({
+    result: {
+      status: 'ready',
+      can_reload: true,
+      message: 'Live preview is ready.',
+      unavailable_reason: null,
+      blocked_request_count: 4,
+      navigation_block_count: 1,
+      network_block_count: 1,
+      permission_block_count: 1,
+      download_block_count: 0,
+      window_open_block_count: 1,
+    },
+  });
+
+  const projected = await value.channels.requestCurrentDraftPreview.invoke(active.event, request());
+
+  assert.equal(projected.status, 'ready');
+  assert.equal(projected.blocked_request_count, 4);
+  assert.equal(projected.navigation_block_count, 1);
+  assert.equal(projected.network_block_count, 1);
+  assert.equal(projected.permission_block_count, 1);
+  assert.equal(projected.window_open_block_count, 1);
 });
 
 test('live preview adapter supports read, reload, and stop through the same exact request shape', async () => {

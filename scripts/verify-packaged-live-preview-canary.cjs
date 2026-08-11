@@ -469,6 +469,17 @@ async function verifyLivePreviewControls(page, app) {
   await waitForButtonEnabled(page, '[data-builder-live-preview-reload="true"]', 'live_preview_reload_disabled');
   await page.locator('[data-builder-live-preview-reload="true"]').first().click();
   await waitForLiveStatus(page, 'ready', 'live_preview_reload_not_ready');
+  const blockedSummary = page.locator('[data-builder-live-preview-blocked-count="true"]').first();
+  await blockedSummary.waitFor({ state: 'visible', timeout: 20_000 }).catch(async () => {
+    fail('live_preview_blocked_count_not_visible', {
+      live_panel_text: await page.locator('[data-builder-live-preview-panel="true"]').
+        first().textContent().catch(() => null),
+    });
+  });
+  const blockedSummaryText = await blockedSummary.textContent();
+  if (!/Blocked\s+[1-9]\d*\s+unsafe preview request/u.test(blockedSummaryText ?? '')) {
+    fail('live_preview_blocked_count_invalid', { blockedSummaryText });
+  }
   await waitForButtonEnabled(page, '[data-builder-live-preview-stop="true"]', 'live_preview_stop_disabled');
   await page.locator('[data-builder-live-preview-stop="true"]').first().click();
   await waitForLiveStatus(page, 'stopped', 'live_preview_stop_not_observed');
@@ -486,6 +497,7 @@ async function verifyLivePreviewControls(page, app) {
     preview_url_loopback_digest: `sha256:${nodeCrypto.createHash('sha256').
       update(mainEvidence.preview_url_loopback).digest('hex')}`,
     reload_ready_observed: true,
+    renderer_block_count_visible: true,
     static_fallback_visible_before_live: staticPreviewVisible,
     stop_disposed_webcontents: true,
   });

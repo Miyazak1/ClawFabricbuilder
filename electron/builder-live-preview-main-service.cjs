@@ -66,6 +66,13 @@ const MESSAGES = Object.freeze({
   stopped: 'Live preview is stopped.',
   failed: 'Live preview could not start for the current draft.',
 });
+const RUNTIME_BLOCK_COUNT_KEYS = Object.freeze([
+  'navigation_block_count',
+  'network_block_count',
+  'permission_block_count',
+  'download_block_count',
+  'window_open_block_count',
+]);
 
 class BuilderLivePreviewMainServiceError extends Error {
   constructor() {
@@ -87,6 +94,29 @@ function freezeDeep(value) {
     Object.freeze(value);
   }
   return value;
+}
+
+function safeCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000 ? value : 0;
+}
+
+function runtimeBlockCounts(rawStatus = null) {
+  const counts = {
+    navigation_block_count: 0,
+    network_block_count: 0,
+    permission_block_count: 0,
+    download_block_count: 0,
+    window_open_block_count: 0,
+  };
+  if (rawStatus !== null && typeof rawStatus === 'object' && !utilTypes.isProxy(rawStatus)) {
+    for (const key of RUNTIME_BLOCK_COUNT_KEYS) {
+      const descriptor = Object.getOwnPropertyDescriptor(rawStatus, key);
+      counts[key] = descriptor && Object.hasOwn(descriptor, 'value')
+        ? safeCount(descriptor.value)
+        : 0;
+    }
+  }
+  return counts;
 }
 
 function isPlainObject(value) {
@@ -180,7 +210,16 @@ function fallbackBounds(windowRef) {
   });
 }
 
-function statusProjection(request, status, updatedAtMs, unavailableReason = null) {
+function statusProjection(
+  request,
+  status,
+  updatedAtMs,
+  unavailableReason = null,
+  rawRuntimeStatus = null,
+) {
+  const counts = runtimeBlockCounts(rawRuntimeStatus);
+  const blockedRequestCount = RUNTIME_BLOCK_COUNT_KEYS
+    .reduce((total, key) => total + counts[key], 0);
   return freezeDeep({
     status_version: 'builder-live-preview-status-projection.v1',
     project_id: request.project_id,
@@ -190,6 +229,12 @@ function statusProjection(request, status, updatedAtMs, unavailableReason = null
     can_start: status === 'idle' || status === 'stopped' || status === 'failed',
     can_reload: status === 'ready',
     can_stop: status === 'starting' || status === 'ready' || status === 'reloading',
+    blocked_request_count: blockedRequestCount,
+    navigation_block_count: counts.navigation_block_count,
+    network_block_count: counts.network_block_count,
+    permission_block_count: counts.permission_block_count,
+    download_block_count: counts.download_block_count,
+    window_open_block_count: counts.window_open_block_count,
     message: MESSAGES[status],
     unavailable_reason: unavailableReason,
     updated_at_ms: updatedAtMs,
@@ -312,7 +357,7 @@ function createBuilderLivePreviewMainService(rawOptions) {
       const view = handle.readMainOnlyWebContentsViewForAttachment();
       const attachment = attachView(mainWindowRef(), view);
       active = freezeDeep({ request, sourceAdmission, runtimeAdmission, handle, attachment });
-      return statusProjection(request, 'ready', safeTimestamp(nowMs()));
+      return statusProjection(request, 'ready', safeTimestamp(nowMs()), null, handle.readStatus());
     } catch {
       try {
         if (handle !== null) await handle.stop();
@@ -327,10 +372,16 @@ function createBuilderLivePreviewMainService(rawOptions) {
 
   async function reload(rawRequest) {
     const request = safeRequest(rawRequest);
-    if (active === null || !sameRequest(active.request, request)) return start(request);
+      if (active === null || !sameRequest(active.request, request)) return start(request);
     try {
       await active.handle.reload();
-      return statusProjection(request, 'ready', safeTimestamp(nowMs()));
+      return statusProjection(
+        request,
+        'ready',
+        safeTimestamp(nowMs()),
+        null,
+        active.handle.readStatus(),
+      );
     } catch {
       try { await stopActive(); } catch { /* fixed failed projection below. */ }
       return statusProjection(request, 'failed', safeTimestamp(nowMs()));
@@ -339,8 +390,11 @@ function createBuilderLivePreviewMainService(rawOptions) {
 
   async function stop(rawRequest) {
     const request = safeRequest(rawRequest);
+    const runtimeStatus = active !== null && sameRequest(active.request, request)
+      ? active.handle.readStatus()
+      : null;
     if (active !== null && sameRequest(active.request, request)) await stopActive();
-    return statusProjection(request, 'stopped', safeTimestamp(nowMs()));
+    return statusProjection(request, 'stopped', safeTimestamp(nowMs()), null, runtimeStatus);
   }
 
   function readStatus(rawRequest) {
@@ -348,11 +402,14 @@ function createBuilderLivePreviewMainService(rawOptions) {
     if (active === null || !sameRequest(active.request, request)) {
       return statusProjection(request, 'idle', safeTimestamp(nowMs()));
     }
-    const status = active.handle.readStatus().status;
+    const runtimeStatus = active.handle.readStatus();
+    const status = runtimeStatus.status;
     return statusProjection(
       request,
       status === 'ready' ? 'ready' : status === 'stopped' ? 'stopped' : 'starting',
       safeTimestamp(nowMs()),
+      null,
+      runtimeStatus,
     );
   }
 

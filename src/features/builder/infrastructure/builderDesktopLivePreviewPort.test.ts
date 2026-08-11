@@ -49,6 +49,12 @@ function status() {
     can_start: false,
     can_reload: false,
     can_stop: false,
+    blocked_request_count: 0,
+    navigation_block_count: 0,
+    network_block_count: 0,
+    permission_block_count: 0,
+    download_block_count: 0,
+    window_open_block_count: 0,
     message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
     unavailable_reason: 'preview_source_resolver_not_connected',
     updated_at_ms: 10,
@@ -114,6 +120,33 @@ describe('createBuilderDesktopLivePreviewPort', () => {
     expect(source.readCurrentPreviewStatus).toHaveBeenCalledOnce();
     expect(source.reloadCurrentPreview).toHaveBeenCalledOnce();
     expect(source.stopCurrentPreview).toHaveBeenCalledOnce();
+  });
+
+  it('keeps renderer-safe blocked request counts from the live preview runtime', async () => {
+    const source = bridge({
+      requestCurrentDraftPreview: vi.fn(async () => ({
+        ...status(),
+        status: 'ready',
+        can_reload: true,
+        blocked_request_count: 3,
+        navigation_block_count: 1,
+        network_block_count: 1,
+        permission_block_count: 0,
+        download_block_count: 0,
+        window_open_block_count: 1,
+        message: 'Live preview is ready.',
+        unavailable_reason: null,
+      })),
+    });
+    const port = createBuilderDesktopLivePreviewPort(source);
+
+    await expect(port.requestCurrentDraftPreview(request())).resolves.toMatchObject({
+      status: 'ready',
+      blocked_request_count: 3,
+      navigation_block_count: 1,
+      network_block_count: 1,
+      window_open_block_count: 1,
+    });
   });
 
   it.each([

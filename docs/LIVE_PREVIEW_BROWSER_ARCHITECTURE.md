@@ -214,6 +214,11 @@ PreviewRun
   error_summary?
 ```
 
+The renderer-safe live preview status projection may show bounded safety counters
+such as blocked navigation, network, permission, download, and popup requests.
+It must not expose the raw preview URL, console text, source content, screenshot
+bytes, or renderer-supplied source.
+
 Allowed `PreviewRun.status`:
 
 - `admitted`;

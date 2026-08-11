@@ -32,6 +32,12 @@ const STATUS_KEYS = Object.freeze([
   'can_start',
   'can_reload',
   'can_stop',
+  'blocked_request_count',
+  'navigation_block_count',
+  'network_block_count',
+  'permission_block_count',
+  'download_block_count',
+  'window_open_block_count',
   'message',
   'unavailable_reason',
   'updated_at_ms',
@@ -180,6 +186,11 @@ function safeTimestamp(value) {
   return value;
 }
 
+function safeCount(value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 1_000_000) throw ipcError();
+  return value;
+}
+
 function safeNullableReason(value) {
   if (value === null) return null;
   if (!UNAVAILABLE_REASONS.includes(value)) throw ipcError();
@@ -242,6 +253,19 @@ function safeStatus(value, request) {
     || typeof descriptors.can_reload.value !== 'boolean'
     || typeof descriptors.can_stop.value !== 'boolean'
   ) throw ipcError();
+  const navigationBlockCount = safeCount(descriptors.navigation_block_count.value);
+  const networkBlockCount = safeCount(descriptors.network_block_count.value);
+  const permissionBlockCount = safeCount(descriptors.permission_block_count.value);
+  const downloadBlockCount = safeCount(descriptors.download_block_count.value);
+  const windowOpenBlockCount = safeCount(descriptors.window_open_block_count.value);
+  const blockedRequestCount = safeCount(descriptors.blocked_request_count.value);
+  if (
+    blockedRequestCount !== navigationBlockCount
+      + networkBlockCount
+      + permissionBlockCount
+      + downloadBlockCount
+      + windowOpenBlockCount
+  ) throw ipcError();
   return Object.freeze({
     status_version: 'builder-live-preview-status-projection.v1',
     project_id: request.project_id,
@@ -251,6 +275,12 @@ function safeStatus(value, request) {
     can_start: descriptors.can_start.value,
     can_reload: descriptors.can_reload.value,
     can_stop: descriptors.can_stop.value,
+    blocked_request_count: blockedRequestCount,
+    navigation_block_count: navigationBlockCount,
+    network_block_count: networkBlockCount,
+    permission_block_count: permissionBlockCount,
+    download_block_count: downloadBlockCount,
+    window_open_block_count: windowOpenBlockCount,
     message: safeMessage(descriptors.message.value),
     unavailable_reason: safeNullableReason(descriptors.unavailable_reason.value),
     updated_at_ms: safeTimestamp(descriptors.updated_at_ms.value),
