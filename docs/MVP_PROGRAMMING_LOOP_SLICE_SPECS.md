@@ -361,16 +361,21 @@ Final Save materialization now uses the main-only
 `builder-worktree-transaction.v1` boundary. It prevalidates the expected old
 files, stages replacement content below the private `.git` directory, applies
 bounded create/update/delete operations, and restores every applied operation
-when a later file operation or the Git main-ref CAS fails. Fault-injection tests
-cover partial multi-file application and Git update failure without leaving a
-mixed worktree.
+when a later file operation or the Git main-ref CAS fails. A strict
+`builder-worktree-transaction-journal.v1` stores only operation paths, content
+digests, and old/resulting Git OIDs. On Save retry or current-project reopen,
+main compares that journal with both the SQLite-selected Project Revision and
+the actual Git main ref. SQLite selection defines the intended version: an
+unselected interrupted candidate restores the base tree, while a selected
+revision completes the resulting tree and advances Git main through CAS when
+needed. Partial multi-file, Git update failure, restart rollback, and restart
+completion are covered by fault/recovery tests without exposing source content
+in the journal.
 
-This slice is not complete yet. Process-crash recovery still needs a durable
-transaction journal and startup reconciliation; the current transaction only
-guarantees rollback while the main process remains alive. Delete, move,
-lockfile, and large-edit decisions still need a visible approval-and-resume
-path instead of a terminal failure. Move/rename operations and the
-renderer-safe `Changing files` activity projection remain later checkpoints.
+This slice is not complete yet. Delete, move, lockfile, and large-edit
+decisions still need a visible approval-and-resume path instead of a terminal
+failure. Move/rename operations and the renderer-safe `Changing files`
+activity projection remain later checkpoints.
 
 ## Slice 4: Automatic Draft Checkpoint
 

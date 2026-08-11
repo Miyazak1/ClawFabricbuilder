@@ -10,10 +10,14 @@ const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
 const {
+  BUILDER_WORKTREE_TRANSACTION_JOURNAL_VERSION,
   BUILDER_WORKTREE_TRANSACTION_VERSION,
   BuilderWorktreeTransactionError,
   createBuilderWorktreeTransactionManager,
 } = require('../electron/builder-worktree-transaction.cjs');
+
+const OLD_MAIN_OID = 'a'.repeat(40);
+const NEW_MAIN_OID = 'b'.repeat(40);
 
 function fixture(t) {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-worktree-transaction-'));
@@ -30,6 +34,13 @@ function writeProjectFile(projectRoot, relativePath, content) {
 
 function transactionRoot(projectRoot) {
   return path.join(projectRoot, '.git', 'clawfabric', 'worktree-transactions');
+}
+
+function preparedTransactionRoot(projectRoot) {
+  const root = transactionRoot(projectRoot);
+  const entries = fs.readdirSync(root);
+  assert.equal(entries.length, 1);
+  return path.join(root, entries[0]);
 }
 
 test('applies changed files transactionally and commits without exposing private staging', (t) => {
@@ -54,6 +65,9 @@ test('applies changed files transactionally and commits without exposing private
     project_root: projectRoot,
     base_source_tree: base,
     resulting_source_tree: resulting,
+    expected_main_oid: OLD_MAIN_OID,
+    resulting_main_oid: NEW_MAIN_OID,
+    main_ref_mode: 'cas_update',
   });
   const applied = transaction.apply();
 
@@ -102,6 +116,9 @@ test('rolls back every applied file when a later replacement fails', (t) => {
     project_root: projectRoot,
     base_source_tree: base,
     resulting_source_tree: resulting,
+    expected_main_oid: OLD_MAIN_OID,
+    resulting_main_oid: NEW_MAIN_OID,
+    main_ref_mode: 'cas_update',
   });
 
   assert.throws(
@@ -135,6 +152,9 @@ test('supports explicit rollback after an applied transaction', (t) => {
     project_root: projectRoot,
     base_source_tree: base,
     resulting_source_tree: resulting,
+    expected_main_oid: OLD_MAIN_OID,
+    resulting_main_oid: NEW_MAIN_OID,
+    main_ref_mode: 'cas_update',
   });
 
   transaction.apply();
@@ -159,6 +179,9 @@ test('detects workspace drift before staging or replacing files', (t) => {
       project_root: projectRoot,
       base_source_tree: base,
       resulting_source_tree: resulting,
+      expected_main_oid: OLD_MAIN_OID,
+      resulting_main_oid: NEW_MAIN_OID,
+      main_ref_mode: 'cas_update',
     }),
     (error) => {
       assert.ok(error instanceof BuilderWorktreeTransactionError);
@@ -171,6 +194,100 @@ test('detects workspace drift before staging or replacing files', (t) => {
     '<main>User edit</main>\n',
   );
   assert.equal(fs.existsSync(transactionRoot(projectRoot)), false);
+});
+
+test('restores the base tree from a partial crash journal when Git main stayed old', (t) => {
+  const projectRoot = fixture(t);
+  writeProjectFile(projectRoot, 'index.html', '<main>Before crash</main>\n');
+  const base = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Before crash</main>\n' }],
+  });
+  const resulting = createBuilderProjectSourceTree({
+    files: [
+      { path: 'index.html', content: '<main>After crash</main>\n' },
+      { path: 'later.txt', content: 'new file\n' },
+    ],
+  });
+  createBuilderWorktreeTransactionManager().begin({
+    project_root: projectRoot,
+    base_source_tree: base,
+    resulting_source_tree: resulting,
+    expected_main_oid: OLD_MAIN_OID,
+    resulting_main_oid: NEW_MAIN_OID,
+    main_ref_mode: 'cas_update',
+  });
+  const preparedRoot = preparedTransactionRoot(projectRoot);
+  const journal = fs.readFileSync(path.join(preparedRoot, 'journal.json'), 'utf8');
+  assert.match(journal, new RegExp(BUILDER_WORKTREE_TRANSACTION_JOURNAL_VERSION, 'u'));
+  assert.doesNotMatch(journal, /Before crash|After crash|new file/u);
+
+  fs.mkdirSync(path.join(preparedRoot, 'backup'), { recursive: true });
+  fs.renameSync(
+    path.join(projectRoot, 'index.html'),
+    path.join(preparedRoot, 'backup', 'index.html'),
+  );
+  fs.renameSync(
+    path.join(preparedRoot, 'next', 'index.html'),
+    path.join(projectRoot, 'index.html'),
+  );
+
+  const recovered = createBuilderWorktreeTransactionManager().recover({
+    project_root: projectRoot,
+    current_main_oid: OLD_MAIN_OID,
+    selected_main_oid: OLD_MAIN_OID,
+  });
+
+  assert.equal(recovered.recovery, 'base_tree_restored');
+  assert.equal(recovered.recovered_transaction_count, 1);
+  assert.equal(
+    fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8'),
+    '<main>Before crash</main>\n',
+  );
+  assert.equal(fs.existsSync(path.join(projectRoot, 'later.txt')), false);
+  assert.deepEqual(fs.readdirSync(transactionRoot(projectRoot)), []);
+});
+
+test('completes the resulting tree from a partial crash journal when Git main advanced', (t) => {
+  const projectRoot = fixture(t);
+  writeProjectFile(projectRoot, 'index.html', '<main>Before crash</main>\n');
+  const base = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<main>Before crash</main>\n' }],
+  });
+  const resulting = createBuilderProjectSourceTree({
+    files: [
+      { path: 'index.html', content: '<main>After crash</main>\n' },
+      { path: 'later.txt', content: 'new file\n' },
+    ],
+  });
+  createBuilderWorktreeTransactionManager().begin({
+    project_root: projectRoot,
+    base_source_tree: base,
+    resulting_source_tree: resulting,
+    expected_main_oid: OLD_MAIN_OID,
+    resulting_main_oid: NEW_MAIN_OID,
+    main_ref_mode: 'cas_update',
+  });
+  const preparedRoot = preparedTransactionRoot(projectRoot);
+  fs.mkdirSync(path.join(preparedRoot, 'backup'), { recursive: true });
+  fs.renameSync(
+    path.join(projectRoot, 'index.html'),
+    path.join(preparedRoot, 'backup', 'index.html'),
+  );
+
+  const recovered = createBuilderWorktreeTransactionManager().recover({
+    project_root: projectRoot,
+    current_main_oid: NEW_MAIN_OID,
+    selected_main_oid: NEW_MAIN_OID,
+  });
+
+  assert.equal(recovered.recovery, 'resulting_tree_completed');
+  assert.equal(recovered.recovered_transaction_count, 1);
+  assert.equal(
+    fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8'),
+    '<main>After crash</main>\n',
+  );
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'later.txt'), 'utf8'), 'new file\n');
+  assert.deepEqual(fs.readdirSync(transactionRoot(projectRoot)), []);
 });
 
 test('source boundary stays main-only and does not gain renderer, provider, or command authority', () => {

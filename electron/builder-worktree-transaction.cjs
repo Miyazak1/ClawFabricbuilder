@@ -1,6 +1,6 @@
 'use strict';
 
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { types: utilTypes } = require('node:util');
@@ -11,10 +11,37 @@ const {
 } = require('./builder-project-source-tree.cjs');
 
 const BUILDER_WORKTREE_TRANSACTION_VERSION = 'builder-worktree-transaction.v1';
-const INPUT_KEYS = Object.freeze(['project_root', 'base_source_tree', 'resulting_source_tree']);
+const BUILDER_WORKTREE_TRANSACTION_JOURNAL_VERSION = 'builder-worktree-transaction-journal.v1';
+const INPUT_KEYS = Object.freeze([
+  'project_root',
+  'base_source_tree',
+  'resulting_source_tree',
+  'expected_main_oid',
+  'resulting_main_oid',
+  'main_ref_mode',
+]);
+const RECOVERY_INPUT_KEYS = Object.freeze([
+  'project_root',
+  'current_main_oid',
+  'selected_main_oid',
+]);
+const JOURNAL_KEYS = Object.freeze([
+  'journal_version',
+  'transaction_id',
+  'expected_main_oid',
+  'resulting_main_oid',
+  'main_ref_mode',
+  'operations',
+]);
+const JOURNAL_OPERATION_KEYS = Object.freeze(['kind', 'path', 'base_digest', 'next_digest']);
 const EMPTY_OPTION_KEYS = Object.freeze([]);
 const TEST_OPTION_KEYS = Object.freeze(['before_operation']);
 const PROTECTED_SOURCE_NAMES = new Set(['.git', '.gitmodules', '.gitattributes', '.clawfabric']);
+const OID_PATTERN = /^[0-9a-f]{40}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MAX_JOURNAL_BYTES = 262_144;
+const MAX_SOURCE_FILE_BYTES = 512 * 1_024;
 const ERROR_MESSAGES = Object.freeze({
   builder_worktree_transaction_invalid: 'The worktree transaction request is invalid.',
   builder_worktree_transaction_conflict: 'The project files changed before they could be updated.',
@@ -83,6 +110,26 @@ function safeAbsolutePath(value) {
     || !path.isAbsolute(value)
     || path.normalize(value) !== value
   ) fail('builder_worktree_transaction_invalid');
+  return value;
+}
+
+function safeOid(value, allowNull) {
+  if (value === null && allowNull) return null;
+  if (typeof value !== 'string' || !OID_PATTERN.test(value)) {
+    fail('builder_worktree_transaction_invalid');
+  }
+  return value;
+}
+
+function contentDigest(value) {
+  return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+}
+
+function safeDigest(value, allowNull) {
+  if (value === null && allowNull) return null;
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) {
+    fail('builder_worktree_transaction_invalid');
+  }
   return value;
 }
 
@@ -197,7 +244,31 @@ function sanitizeInput(rawInput) {
   for (const entry of [...baseSourceTree.files, ...resultingSourceTree.files]) {
     safeRelativePath(entry.path);
   }
-  return Object.freeze({ projectRoot, baseSourceTree, resultingSourceTree });
+  const expectedMainOid = safeOid(valueAt(rawInput, 'expected_main_oid'), true);
+  const resultingMainOid = safeOid(valueAt(rawInput, 'resulting_main_oid'), false);
+  const mainRefMode = valueAt(rawInput, 'main_ref_mode');
+  if (
+    !['cas_update', 'already_current'].includes(mainRefMode)
+    || (mainRefMode === 'already_current' && expectedMainOid !== resultingMainOid)
+    || (mainRefMode === 'cas_update' && expectedMainOid === resultingMainOid)
+  ) fail('builder_worktree_transaction_invalid');
+  return Object.freeze({
+    projectRoot,
+    baseSourceTree,
+    resultingSourceTree,
+    expectedMainOid,
+    resultingMainOid,
+    mainRefMode,
+  });
+}
+
+function sanitizeRecoveryInput(rawInput) {
+  assertExactObject(rawInput, RECOVERY_INPUT_KEYS);
+  return Object.freeze({
+    projectRoot: safeAbsolutePath(valueAt(rawInput, 'project_root')),
+    currentMainOid: safeOid(valueAt(rawInput, 'current_main_oid'), true),
+    selectedMainOid: safeOid(valueAt(rawInput, 'selected_main_oid'), true),
+  });
 }
 
 function changedOperations(baseSourceTree, resultingSourceTree) {
@@ -225,6 +296,92 @@ function changedOperations(baseSourceTree, resultingSourceTree) {
   return [...deletes, ...upserts];
 }
 
+function journalOperation(operation) {
+  return Object.freeze({
+    kind: operation.kind,
+    path: operation.path,
+    base_digest: operation.base_content === null ? null : contentDigest(operation.base_content),
+    next_digest: operation.next_content === null ? null : contentDigest(operation.next_content),
+  });
+}
+
+function writeJournal(transactionRoot, journal) {
+  const journalPath = path.join(transactionRoot, 'journal.json');
+  const serialized = `${JSON.stringify(journal)}\n`;
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_JOURNAL_BYTES) {
+    fail('builder_worktree_transaction_invalid');
+  }
+  fs.writeFileSync(journalPath, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+}
+
+function sanitizeJournalOperation(value) {
+  assertExactObject(value, JOURNAL_OPERATION_KEYS);
+  const kind = valueAt(value, 'kind');
+  const relativePath = safeRelativePath(valueAt(value, 'path'));
+  const baseDigest = safeDigest(valueAt(value, 'base_digest'), true);
+  const nextDigest = safeDigest(valueAt(value, 'next_digest'), true);
+  if (
+    !['delete', 'upsert'].includes(kind)
+    || (kind === 'delete' && (baseDigest === null || nextDigest !== null))
+    || (kind === 'upsert' && nextDigest === null)
+  ) fail('builder_worktree_transaction_invalid');
+  return Object.freeze({
+    kind,
+    path: relativePath,
+    base_digest: baseDigest,
+    next_digest: nextDigest,
+  });
+}
+
+function readJournal(transactionRoot, transactionId) {
+  const journalPath = path.join(transactionRoot, 'journal.json');
+  if (!fs.existsSync(journalPath)) return null;
+  const stat = fs.lstatSync(journalPath);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_JOURNAL_BYTES) {
+    fail('builder_worktree_transaction_unavailable');
+  }
+  let value;
+  try {
+    value = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+  } catch {
+    fail('builder_worktree_transaction_unavailable');
+  }
+  assertExactObject(value, JOURNAL_KEYS);
+  const mainRefMode = valueAt(value, 'main_ref_mode');
+  const expectedMainOid = safeOid(valueAt(value, 'expected_main_oid'), true);
+  const resultingMainOid = safeOid(valueAt(value, 'resulting_main_oid'), false);
+  const rawOperations = valueAt(value, 'operations');
+  if (
+    valueAt(value, 'journal_version') !== BUILDER_WORKTREE_TRANSACTION_JOURNAL_VERSION
+    || valueAt(value, 'transaction_id') !== transactionId
+    || !['cas_update', 'already_current'].includes(mainRefMode)
+    || (mainRefMode === 'already_current' && expectedMainOid !== resultingMainOid)
+    || (mainRefMode === 'cas_update' && expectedMainOid === resultingMainOid)
+    || !Array.isArray(rawOperations)
+    || utilTypes.isProxy(rawOperations)
+    || rawOperations.length > 512
+  ) fail('builder_worktree_transaction_unavailable');
+  const operations = rawOperations.map(sanitizeJournalOperation);
+  if (new Set(operations.map((operation) => operation.path)).size !== operations.length) {
+    fail('builder_worktree_transaction_unavailable');
+  }
+  return Object.freeze({
+    expectedMainOid,
+    resultingMainOid,
+    mainRefMode,
+    operations,
+  });
+}
+
+function fileDigest(target) {
+  if (!fs.existsSync(target)) return null;
+  const stat = fs.lstatSync(target);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_FILE_BYTES) {
+    fail('builder_worktree_transaction_unavailable');
+  }
+  return `sha256:${createHash('sha256').update(fs.readFileSync(target)).digest('hex')}`;
+}
+
 function createBuilderWorktreeTransactionManager(rawOptions) {
   const options = sanitizeOptions(rawOptions);
 
@@ -239,12 +396,13 @@ function createBuilderWorktreeTransactionManager(rawOptions) {
     }
 
     const operations = changedOperations(input.baseSourceTree, input.resultingSourceTree);
+    const transactionId = randomUUID();
     const transactionRoot = path.join(
       input.projectRoot,
       '.git',
       'clawfabric',
       'worktree-transactions',
-      randomUUID(),
+      transactionId,
     );
     const nextRoot = path.join(transactionRoot, 'next');
     const backupRoot = path.join(transactionRoot, 'backup');
@@ -310,6 +468,14 @@ function createBuilderWorktreeTransactionManager(rawOptions) {
         ensureParentDirectories(nextRoot, staged);
         fs.writeFileSync(staged, operation.next_content, { encoding: 'utf8', mode: 0o600 });
       }
+      writeJournal(transactionRoot, Object.freeze({
+        journal_version: BUILDER_WORKTREE_TRANSACTION_JOURNAL_VERSION,
+        transaction_id: transactionId,
+        expected_main_oid: input.expectedMainOid,
+        resulting_main_oid: input.resultingMainOid,
+        main_ref_mode: input.mainRefMode,
+        operations: operations.map(journalOperation),
+      }));
       state = 'prepared';
     } catch (error) {
       cleanupTransactionRoot();
@@ -391,14 +557,171 @@ function createBuilderWorktreeTransactionManager(rawOptions) {
     });
   }
 
+  function recover(rawInput) {
+    let input;
+    try {
+      input = sanitizeRecoveryInput(rawInput);
+      assertSafeDirectory(input.projectRoot);
+      assertSafeDirectory(path.join(input.projectRoot, '.git'));
+    } catch (error) {
+      throw normalizeError(error);
+    }
+    const transactionsRoot = path.join(
+      input.projectRoot,
+      '.git',
+      'clawfabric',
+      'worktree-transactions',
+    );
+    if (!fs.existsSync(transactionsRoot)) {
+      return Object.freeze({
+        transaction_version: BUILDER_WORKTREE_TRANSACTION_VERSION,
+        operation: 'recovery_checked',
+        recovery: 'not_required',
+        recovered_transaction_count: 0,
+        main_ref_action: 'not_required',
+        main_ref_target_oid: null,
+      });
+    }
+    try {
+      assertSafeDirectory(transactionsRoot);
+      const entries = fs.readdirSync(transactionsRoot, { withFileTypes: true });
+      if (entries.length > 16) fail('builder_worktree_transaction_unavailable');
+      let rolledBack = 0;
+      let completed = 0;
+      let mainRefAction = 'not_required';
+      let mainRefTargetOid = null;
+      for (const entry of entries) {
+        if (!UUID_PATTERN.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) {
+          fail('builder_worktree_transaction_unavailable');
+        }
+        const transactionRoot = path.join(transactionsRoot, entry.name);
+        assertInside(transactionsRoot, transactionRoot);
+        assertSafeDirectory(transactionRoot);
+        const journal = readJournal(transactionRoot, entry.name);
+        if (journal === null) {
+          fs.rmSync(transactionRoot, { recursive: true, force: false });
+          continue;
+        }
+        let targetState;
+        let retainForMainAdvance = false;
+        if (input.selectedMainOid === journal.resultingMainOid) {
+          if (input.currentMainOid === journal.resultingMainOid) {
+            targetState = 'resulting';
+          } else if (
+            journal.mainRefMode === 'cas_update'
+            && input.currentMainOid === journal.expectedMainOid
+          ) {
+            targetState = 'resulting';
+            retainForMainAdvance = true;
+          } else {
+            fail('builder_worktree_transaction_conflict');
+          }
+        } else if (
+          input.selectedMainOid === journal.expectedMainOid
+          && input.currentMainOid === journal.expectedMainOid
+        ) {
+          targetState = 'base';
+        } else {
+          fail('builder_worktree_transaction_conflict');
+        }
+        if (journal.mainRefMode === 'already_current' && targetState !== 'resulting') {
+          fail('builder_worktree_transaction_conflict');
+        }
+        if (journal.mainRefMode === 'already_current') {
+          targetState = 'resulting';
+        }
+
+        const backupRoot = path.join(transactionRoot, 'backup');
+        const nextRoot = path.join(transactionRoot, 'next');
+        assertSafeDirectory(backupRoot);
+        assertSafeDirectory(nextRoot);
+        if (targetState === 'base') {
+          for (const operation of [...journal.operations].reverse()) {
+            const target = targetPath(input.projectRoot, operation.path);
+            const backup = path.join(backupRoot, ...operation.path.split('/'));
+            const targetDigest = fileDigest(target);
+            const backupDigest = fileDigest(backup);
+            if (operation.base_digest === null) {
+              if (backupDigest !== null) fail('builder_worktree_transaction_unavailable');
+              if (targetDigest === operation.next_digest) fs.rmSync(target, { force: false });
+              else if (targetDigest !== null) fail('builder_worktree_transaction_conflict');
+              continue;
+            }
+            if (backupDigest !== null) {
+              if (backupDigest !== operation.base_digest) {
+                fail('builder_worktree_transaction_unavailable');
+              }
+              if (targetDigest === operation.next_digest) fs.rmSync(target, { force: false });
+              else if (targetDigest !== null) fail('builder_worktree_transaction_conflict');
+              ensureParentDirectories(input.projectRoot, target);
+              fs.renameSync(backup, target);
+            } else if (targetDigest !== operation.base_digest) {
+              fail('builder_worktree_transaction_conflict');
+            }
+          }
+          rolledBack += 1;
+        } else {
+          for (const operation of journal.operations) {
+            const target = targetPath(input.projectRoot, operation.path);
+            const backup = path.join(backupRoot, ...operation.path.split('/'));
+            const staged = path.join(nextRoot, ...operation.path.split('/'));
+            let targetDigest = fileDigest(target);
+            const backupDigest = fileDigest(backup);
+            if (operation.next_digest === null) {
+              if (targetDigest === operation.base_digest && backupDigest === null) {
+                ensureParentDirectories(backupRoot, backup);
+                fs.renameSync(target, backup);
+                targetDigest = null;
+              }
+              if (targetDigest !== null) fail('builder_worktree_transaction_conflict');
+              continue;
+            }
+            if (targetDigest === operation.next_digest) continue;
+            if (operation.base_digest !== null && targetDigest === operation.base_digest) {
+              if (backupDigest !== null) fail('builder_worktree_transaction_conflict');
+              ensureParentDirectories(backupRoot, backup);
+              fs.renameSync(target, backup);
+              targetDigest = null;
+            }
+            if (targetDigest !== null) fail('builder_worktree_transaction_conflict');
+            if (fileDigest(staged) !== operation.next_digest) {
+              fail('builder_worktree_transaction_unavailable');
+            }
+            ensureParentDirectories(input.projectRoot, target);
+            fs.renameSync(staged, target);
+          }
+          completed += 1;
+        }
+        if (retainForMainAdvance) {
+          mainRefAction = 'advance_to_selected';
+          mainRefTargetOid = journal.resultingMainOid;
+          break;
+        }
+        fs.rmSync(transactionRoot, { recursive: true, force: false });
+      }
+      return Object.freeze({
+        transaction_version: BUILDER_WORKTREE_TRANSACTION_VERSION,
+        operation: 'recovery_checked',
+        recovery: completed > 0 ? 'resulting_tree_completed' : rolledBack > 0 ? 'base_tree_restored' : 'not_required',
+        recovered_transaction_count: completed + rolledBack,
+        main_ref_action: mainRefAction,
+        main_ref_target_oid: mainRefTargetOid,
+      });
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   return Object.freeze({
     authority_version: BUILDER_WORKTREE_TRANSACTION_VERSION,
     begin,
+    recover,
   });
 }
 
 module.exports = Object.freeze({
   BUILDER_WORKTREE_TRANSACTION_VERSION,
+  BUILDER_WORKTREE_TRANSACTION_JOURNAL_VERSION,
   BuilderWorktreeTransactionError,
   createBuilderWorktreeTransactionManager,
 });

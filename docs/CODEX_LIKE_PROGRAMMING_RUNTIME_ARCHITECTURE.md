@@ -943,9 +943,13 @@ atomically to a bounded in-memory source tree, then admitted by
 Checkpoint stores the successful EditAttempt reference for restart-safe
 evidence. Final Save projection now uses `builder-worktree-transaction.v1` to
 stage file replacements privately and roll back applied create/update/delete
-operations when a later filesystem operation or Git main-ref CAS fails. A
-durable crash-recovery journal, visible approval continuation for risky edits,
-and move/rename support remain incomplete.
+operations when a later filesystem operation or Git main-ref CAS fails. Its
+durable, digest-only journal is reconciled against Git main on Save retry and
+current-project reopen, with the SQLite-selected Project Revision defining the
+intended commit. Unselected work restores the base tree; selected work
+completes the resulting tree and repairs Git main through CAS when needed.
+Visible approval continuation for risky edits and move/rename support remain
+incomplete.
 
 Evidence:
 

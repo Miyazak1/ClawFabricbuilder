@@ -162,6 +162,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
     ]);
     const gitCurrentProjectionAuthority = methodFacade(gitCurrentProjection, [
       'project_current',
+      'recover_project',
     ]);
     const metadataAuthority = methodFacade(metadataDatabase, [
       'append_conversation_events',
@@ -173,12 +174,25 @@ function createBuilderProjectMainAuthority(rawOptions) {
       'load_project_workspace',
       'record_project_revision_receipt',
     ]);
-    const readAuthority = methodFacade(projectReadAuthority, [
+    const projectReadAuthorityFacade = methodFacade(projectReadAuthority, [
       'load_current',
       'load_revision',
       'list_current',
       'list_history',
     ]);
+    const readAuthority = Object.freeze({
+      async load_current(request) {
+        const current = await projectReadAuthorityFacade.load_current(request);
+        await gitCurrentProjectionAuthority.recover_project({
+          project_id: request.project_id,
+          selected_commit_oid: current.product_revision_receipt.commit_oid,
+        });
+        return current;
+      },
+      load_revision: projectReadAuthorityFacade.load_revision,
+      list_current: projectReadAuthorityFacade.list_current,
+      list_history: projectReadAuthorityFacade.list_history,
+    });
     const workspaceAuthority = methodFacade(projectWorkspaceAuthority, [
       'admit_project_workspace',
     ]);

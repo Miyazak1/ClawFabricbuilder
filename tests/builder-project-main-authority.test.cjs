@@ -41,6 +41,7 @@ test('owns Builder project Git, SQLite metadata, and read authority facades', (t
   ]);
   assert.deepEqual(Object.keys(authority.git_current_projection).sort(), [
     'project_current',
+    'recover_project',
   ]);
   assert.deepEqual(Object.keys(authority.metadata_authority).sort(), [
     'append_conversation_events',
@@ -85,4 +86,23 @@ test('rejects malformed authority options without leaking paths or traps', (t) =
         && !`${error.message}:${error.stack}`.includes(userDataPath),
     );
   }
+});
+
+test('recovers private worktree journals before reopening the current project', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'electron', 'builder-project-main-authority.cjs'),
+    'utf8',
+  );
+  const currentRead = source.indexOf('const current = await projectReadAuthorityFacade.load_current(request)');
+  const recovery = source.indexOf('await gitCurrentProjectionAuthority.recover_project({');
+  const publicReturn = source.indexOf('return current');
+  assert.notEqual(recovery, -1);
+  assert.notEqual(currentRead, -1);
+  assert.notEqual(publicReturn, -1);
+  assert.ok(currentRead < recovery);
+  assert.ok(recovery < publicReturn);
+  assert.doesNotMatch(
+    source,
+    /ipcMain|ipcRenderer|contextBridge|BrowserWindow|fetch\s*\(|https?:|Authorization|Bearer/iu,
+  );
 });

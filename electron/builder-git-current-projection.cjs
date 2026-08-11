@@ -52,6 +52,7 @@ const PROJECT_REQUEST_KEYS = Object.freeze([
   'expected_workspace_source_tree_digest',
   'projection_mode',
 ]);
+const RECOVERY_REQUEST_KEYS = Object.freeze(['project_id', 'selected_commit_oid']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
@@ -437,6 +438,17 @@ function sanitizeProjectRequest(value) {
   });
 }
 
+function sanitizeRecoveryRequest(value) {
+  assertExactObject(value, RECOVERY_REQUEST_KEYS);
+  const projectId = valueAt(value, 'project_id');
+  const selectedCommitOid = valueAt(value, 'selected_commit_oid');
+  projectUuid(projectId);
+  if (typeof selectedCommitOid !== 'string' || !OID_PATTERN.test(selectedCommitOid)) {
+    fail('builder_git_current_projection_invalid');
+  }
+  return Object.freeze({ project_id: projectId, selected_commit_oid: selectedCommitOid });
+}
+
 function createProjectQueue() {
   const queues = new Map();
   return function runExclusive(projectId, task) {
@@ -456,11 +468,51 @@ function createBuilderGitCurrentProjection(rawOptions) {
   const runExclusive = createProjectQueue();
   const worktreeTransactions = createBuilderWorktreeTransactionManager();
 
-  async function projectTransaction(projectRoot, baseSourceTree, sourceTree, updateMain) {
+  async function recoverWorktree(projectRoot, currentMainOid, selectedMainOid) {
+    const first = worktreeTransactions.recover({
+      project_root: projectRoot,
+      current_main_oid: currentMainOid,
+      selected_main_oid: selectedMainOid,
+    });
+    if (first.main_ref_action !== 'advance_to_selected') {
+      return Object.freeze({ currentMainOid, recovery: first });
+    }
+    if (first.main_ref_target_oid !== selectedMainOid) {
+      fail('builder_git_current_projection_invalid');
+    }
+    await updateMainRef(
+      options.gitRunner,
+      projectRoot,
+      { commit_oid: selectedMainOid },
+      currentMainOid,
+    );
+    const finalized = worktreeTransactions.recover({
+      project_root: projectRoot,
+      current_main_oid: selectedMainOid,
+      selected_main_oid: selectedMainOid,
+    });
+    if (finalized.main_ref_action !== 'not_required') {
+      fail('builder_git_current_projection_unavailable');
+    }
+    return Object.freeze({ currentMainOid: selectedMainOid, recovery: first });
+  }
+
+  async function projectTransaction(
+    projectRoot,
+    baseSourceTree,
+    sourceTree,
+    previousMainOid,
+    resultingMainOid,
+    mainRefMode,
+    updateMain,
+  ) {
     const transaction = worktreeTransactions.begin({
       project_root: projectRoot,
       base_source_tree: baseSourceTree,
       resulting_source_tree: sourceTree,
+      expected_main_oid: previousMainOid,
+      resulting_main_oid: resultingMainOid,
+      main_ref_mode: mainRefMode,
     });
     try {
       transaction.apply();
@@ -474,6 +526,41 @@ function createBuilderGitCurrentProjection(rawOptions) {
       }
       throw error;
     }
+  }
+
+  async function recoverProject(rawRequest) {
+    let request;
+    try {
+      request = sanitizeRecoveryRequest(rawRequest);
+    } catch (error) {
+      return Promise.reject(normalizeError(error));
+    }
+    return runExclusive(request.project_id, async () => {
+      try {
+        const projectRoot = projectDirectory(
+          options.projectsRoot,
+          request.project_id,
+          options.resolveProjectRoot,
+        );
+        assertProjectRoot(options.projectsRoot, projectRoot, options.resolveProjectRoot !== null);
+        const currentMainOid = await readMainRef(options.gitRunner, projectRoot);
+        const recovered = await recoverWorktree(
+          projectRoot,
+          currentMainOid,
+          request.selected_commit_oid,
+        );
+        return freezeDeep({
+          result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
+          project_id: request.project_id,
+          operation: 'recovery_checked',
+          recovery: recovered.recovery.recovery,
+          recovered_transaction_count: recovered.recovery.recovered_transaction_count,
+          projection_authority: 'git_main_ref_and_private_worktree_journal',
+        });
+      } catch (error) {
+        return Promise.reject(normalizeError(error));
+      }
+    });
   }
 
   async function projectCurrent(rawRequest) {
@@ -500,7 +587,13 @@ function createBuilderGitCurrentProjection(rawOptions) {
           receipt,
         );
         assertProjectRoot(options.projectsRoot, projectRoot, options.resolveProjectRoot !== null);
-        const previousMainOid = await readMainRef(options.gitRunner, projectRoot);
+        const observedMainOid = await readMainRef(options.gitRunner, projectRoot);
+        const recovered = await recoverWorktree(
+          projectRoot,
+          observedMainOid,
+          receipt.commit_oid,
+        );
+        const previousMainOid = recovered.currentMainOid;
         const workspace = inspectBuilderLocalWorkspaceSourceTree(projectRoot);
         const expectedWorkspaceDigest = previousMainOid === receipt.commit_oid
           ? receipt.resulting_tree_digest
@@ -514,6 +607,9 @@ function createBuilderGitCurrentProjection(rawOptions) {
             projectRoot,
             workspace.source_tree,
             verified.source_tree,
+            previousMainOid,
+            receipt.commit_oid,
+            'already_current',
             async () => undefined,
           );
           return freezeDeep({
@@ -538,6 +634,9 @@ function createBuilderGitCurrentProjection(rawOptions) {
             projectRoot,
             workspace.source_tree,
             verified.source_tree,
+            previousMainOid,
+            receipt.commit_oid,
+            'cas_update',
             () => updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid),
           );
           return freezeDeep({
@@ -558,6 +657,9 @@ function createBuilderGitCurrentProjection(rawOptions) {
           projectRoot,
           workspace.source_tree,
           verified.source_tree,
+          previousMainOid,
+          receipt.commit_oid,
+          'cas_update',
           () => updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid),
         );
         return freezeDeep({
@@ -582,6 +684,7 @@ function createBuilderGitCurrentProjection(rawOptions) {
   return freezeDeep({
     authority_version: BUILDER_GIT_CURRENT_PROJECTION_VERSION,
     project_current: projectCurrent,
+    recover_project: recoverProject,
   });
 }
 

@@ -37,6 +37,9 @@ const {
   BuilderGitCommandRunnerError,
   createDefaultBuilderGitCommandRunner,
 } = require('../electron/builder-git-command-runner.cjs');
+const {
+  createBuilderWorktreeTransactionManager,
+} = require('../electron/builder-worktree-transaction.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -289,6 +292,16 @@ test('projects a verified candidate to Git main and refuses to overwrite later w
   );
   assert.equal(fs.readFileSync(path.join(value.projectRoot, '.clawfabric', 'identity.json'), 'utf8'), '{}\n');
 
+  const recovery = await value.projection.recover_project({
+    project_id: PROJECT_ID,
+    selected_commit_oid: receipt.commit_oid,
+  });
+  assert.equal(recovery.operation, 'recovery_checked');
+  assert.equal(recovery.recovery, 'not_required');
+  assert.equal(recovery.recovered_transaction_count, 0);
+  assert.equal(recovery.projection_authority, 'git_main_ref_and_private_worktree_journal');
+  assert.doesNotMatch(JSON.stringify(recovery), /projects|index\.html|credential/u);
+
   fs.writeFileSync(path.join(value.projectRoot, 'index.html'), '<main>drift</main>\n');
   await assert.rejects(
     value.projection.project_current({
@@ -364,6 +377,77 @@ test('projects a verified candidate into the selected source folder from project
   assert.equal(main.stdout.trim(), receipt.commit_oid);
   assert.equal(resolverCalls.every((projectId) => projectId === PROJECT_ID), true);
   assert.equal(JSON.stringify(projected).includes(selectedRoot), false);
+});
+
+test('repairs a selected SQLite revision after restart when its worktree journal predates Git main', async (t) => {
+  const value = fixture(t);
+  const first = candidate({
+    index: 1,
+    operations: [{ operation: 'upsert', path: 'index.html', content: '<main>Base</main>\n' }],
+  });
+  const firstReceipt = await value.repository.persist_candidate_commit(request(first, 1));
+  await value.projection.project_current({
+    candidate_receipt: firstReceipt,
+    expected_workspace_source_tree_digest: first.base_source_tree.source_tree_digest,
+    projection_mode: 'base_cas',
+  });
+  const base = (await value.repository.read_verified_candidate(firstReceipt)).source_tree;
+  const selected = candidate({
+    index: 2,
+    base,
+    revisionReceiptDigest: ONE_DIGEST,
+    baseCommitOid: firstReceipt.commit_oid,
+    inputDigest: ONE_DIGEST,
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main>Selected</main>\n' },
+      { operation: 'upsert', path: 'selected.txt', content: 'selected revision\n' },
+    ],
+  });
+  const selectedReceipt = await value.repository.persist_candidate_commit(
+    request(selected, 2, firstReceipt.commit_oid),
+  );
+  const resulting = (await value.repository.read_verified_candidate(selectedReceipt)).source_tree;
+  const interrupted = createBuilderWorktreeTransactionManager().begin({
+    project_root: value.projectRoot,
+    base_source_tree: base,
+    resulting_source_tree: resulting,
+    expected_main_oid: firstReceipt.commit_oid,
+    resulting_main_oid: selectedReceipt.commit_oid,
+    main_ref_mode: 'cas_update',
+  });
+  interrupted.apply();
+
+  const beforeRecovery = await value.runner.run(
+    'read_main_ref',
+    value.projectRoot,
+    { object_format: 'sha1' },
+  );
+  assert.equal(beforeRecovery.stdout.trim(), firstReceipt.commit_oid);
+  const recovery = await value.projection.recover_project({
+    project_id: PROJECT_ID,
+    selected_commit_oid: selectedReceipt.commit_oid,
+  });
+
+  assert.equal(recovery.recovery, 'resulting_tree_completed');
+  assert.equal(recovery.recovered_transaction_count, 1);
+  const repairedMain = await value.runner.run(
+    'read_main_ref',
+    value.projectRoot,
+    { object_format: 'sha1' },
+  );
+  assert.equal(repairedMain.stdout.trim(), selectedReceipt.commit_oid);
+  assert.equal(
+    fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'),
+    '<main>Selected</main>\n',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(value.projectRoot, 'selected.txt'), 'utf8'),
+    'selected revision\n',
+  );
+  assert.deepEqual(
+    fs.readdirSync(path.join(value.projectRoot, '.git', 'clawfabric', 'worktree-transactions')),
+    [],
+  );
 });
 
 test('fails closed on main CAS conflict without releasing a false projection', async (t) => {
