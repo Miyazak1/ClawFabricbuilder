@@ -512,8 +512,15 @@ test('maps update-ref failures to unavailable when main has not changed', async 
   const projectsRoot = path.join(root, 'projects');
   const projectRoot = path.join(projectsRoot, UUID);
   fs.mkdirSync(path.join(projectRoot, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, 'existing.txt'), 'must survive failed Git CAS\n');
   const sourceTree = createBuilderProjectSourceTree({
-    files: [{ path: 'index.html', content: '<main>Hello</main>\n' }],
+    files: [
+      { path: 'existing.txt', content: 'changed candidate content\n' },
+      { path: 'index.html', content: '<main>Hello</main>\n' },
+    ],
+  });
+  const workspaceSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'existing.txt', content: 'must survive failed Git CAS\n' }],
   });
   const receipt = receiptForSourceTree(sourceTree);
   const verification = createBuilderGitCandidateVerificationReceipt(receipt);
@@ -547,13 +554,17 @@ test('maps update-ref failures to unavailable when main has not changed', async 
   await assert.rejects(
     projection.project_current({
       candidate_receipt: receipt,
-      expected_workspace_source_tree_digest: EMPTY_SOURCE_TREE.source_tree_digest,
+      expected_workspace_source_tree_digest: workspaceSourceTree.source_tree_digest,
       projection_mode: 'base_cas',
     }),
     expectProjectionError('builder_git_current_projection_unavailable'),
   );
   assert.deepEqual(operations, ['read_main_ref', 'update_main_ref', 'read_main_ref']);
   assert.equal(fs.existsSync(path.join(projectRoot, 'index.html')), false);
+  assert.equal(
+    fs.readFileSync(path.join(projectRoot, 'existing.txt'), 'utf8'),
+    'must survive failed Git CAS\n',
+  );
 });
 
 test('source boundary remains main-only and free of renderer, provider, SQLite, or network authority', () => {

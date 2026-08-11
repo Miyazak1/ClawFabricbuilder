@@ -23,6 +23,10 @@ const {
   BuilderLocalWorkspaceSourceTreeError,
   inspectBuilderLocalWorkspaceSourceTree,
 } = require('./builder-local-workspace-source-tree.cjs');
+const {
+  BuilderWorktreeTransactionError,
+  createBuilderWorktreeTransactionManager,
+} = require('./builder-worktree-transaction.cjs');
 
 const BUILDER_GIT_CURRENT_PROJECTION_VERSION = 'builder-git-current-projection.v1';
 const BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION =
@@ -343,48 +347,6 @@ async function updateMainRef(runner, projectRoot, receipt, expectedOldOid) {
   }
 }
 
-function ensureSafeParentDirectories(projectRoot, relativePath) {
-  const segments = relativePath.split('/').slice(0, -1);
-  let current = projectRoot;
-  for (const segment of segments) {
-    current = path.join(current, segment);
-    assertInsideProject(projectRoot, current);
-    if (fs.existsSync(current)) {
-      const stat = fs.lstatSync(current);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) {
-        fail('builder_git_current_projection_conflict');
-      }
-      continue;
-    }
-    fs.mkdirSync(current, { mode: 0o700 });
-  }
-}
-
-function materializeSourceTree(projectRoot, baseSourceTree, sourceTree) {
-  const nextPaths = new Set(sourceTree.files.map((entry) => entry.path));
-  for (const entry of baseSourceTree.files) {
-    if (nextPaths.has(entry.path)) continue;
-    const relative = safeRelativeProjectPath(entry.path);
-    const target = path.join(projectRoot, ...relative.split('/'));
-    assertInsideProject(projectRoot, target);
-    if (!fs.existsSync(target)) continue;
-    const stat = fs.lstatSync(target);
-    if (!stat.isFile() || stat.isSymbolicLink()) fail('builder_git_current_projection_conflict');
-    fs.rmSync(target, { force: false });
-  }
-  for (const entry of sourceTree.files) {
-    const relative = safeRelativeProjectPath(entry.path);
-    const target = path.join(projectRoot, ...relative.split('/'));
-    assertInsideProject(projectRoot, target);
-    ensureSafeParentDirectories(projectRoot, relative);
-    if (fs.existsSync(target)) {
-      const stat = fs.lstatSync(target);
-      if (!stat.isFile() || stat.isSymbolicLink()) fail('builder_git_current_projection_conflict');
-    }
-    fs.writeFileSync(target, entry.content, { encoding: 'utf8', mode: 0o600 });
-  }
-}
-
 function ownCode(error, ErrorClass = null) {
   if (!error || typeof error !== 'object' || utilTypes.isProxy(error)) return null;
   try {
@@ -407,6 +369,13 @@ function normalizeError(error) {
     || ownCode(error, BuilderGitCommandRunnerError) === 'builder_git_command_invalid'
   ) return new BuilderGitCurrentProjectionError('builder_git_current_projection_invalid');
   if (ownCode(error, BuilderLocalWorkspaceSourceTreeError)) {
+    return new BuilderGitCurrentProjectionError('builder_git_current_projection_conflict');
+  }
+  const worktreeCode = ownCode(error, BuilderWorktreeTransactionError);
+  if (worktreeCode === 'builder_worktree_transaction_invalid') {
+    return new BuilderGitCurrentProjectionError('builder_git_current_projection_invalid');
+  }
+  if (worktreeCode === 'builder_worktree_transaction_conflict') {
     return new BuilderGitCurrentProjectionError('builder_git_current_projection_conflict');
   }
   return new BuilderGitCurrentProjectionError('builder_git_current_projection_unavailable');
@@ -485,6 +454,27 @@ function createProjectQueue() {
 function createBuilderGitCurrentProjection(rawOptions) {
   const options = sanitizeOptions(rawOptions);
   const runExclusive = createProjectQueue();
+  const worktreeTransactions = createBuilderWorktreeTransactionManager();
+
+  async function projectTransaction(projectRoot, baseSourceTree, sourceTree, updateMain) {
+    const transaction = worktreeTransactions.begin({
+      project_root: projectRoot,
+      base_source_tree: baseSourceTree,
+      resulting_source_tree: sourceTree,
+    });
+    try {
+      transaction.apply();
+      await updateMain();
+      transaction.commit();
+    } catch (error) {
+      try {
+        transaction.rollback();
+      } catch {
+        fail('builder_git_current_projection_unavailable');
+      }
+      throw error;
+    }
+  }
 
   async function projectCurrent(rawRequest) {
     let receipt;
@@ -520,7 +510,12 @@ function createBuilderGitCurrentProjection(rawOptions) {
           || workspace.source_tree.source_tree_digest !== expectedWorkspaceDigest
         ) fail('builder_git_current_projection_conflict');
         if (previousMainOid === receipt.commit_oid) {
-          materializeSourceTree(projectRoot, workspace.source_tree, verified.source_tree);
+          await projectTransaction(
+            projectRoot,
+            workspace.source_tree,
+            verified.source_tree,
+            async () => undefined,
+          );
           return freezeDeep({
             result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
             project_id: receipt.project_id,
@@ -539,8 +534,12 @@ function createBuilderGitCurrentProjection(rawOptions) {
           if (projectionMode !== 'sqlite_current_repair') {
             fail('builder_git_current_projection_conflict');
           }
-          await updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid);
-          materializeSourceTree(projectRoot, workspace.source_tree, verified.source_tree);
+          await projectTransaction(
+            projectRoot,
+            workspace.source_tree,
+            verified.source_tree,
+            () => updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid),
+          );
           return freezeDeep({
             result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
             project_id: receipt.project_id,
@@ -555,8 +554,12 @@ function createBuilderGitCurrentProjection(rawOptions) {
             source_admission: 'git_verified_candidate',
           });
         }
-        await updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid);
-        materializeSourceTree(projectRoot, workspace.source_tree, verified.source_tree);
+        await projectTransaction(
+          projectRoot,
+          workspace.source_tree,
+          verified.source_tree,
+          () => updateMainRef(options.gitRunner, projectRoot, receipt, previousMainOid),
+        );
         return freezeDeep({
           result_version: BUILDER_GIT_CURRENT_PROJECTION_RESULT_VERSION,
           project_id: receipt.project_id,

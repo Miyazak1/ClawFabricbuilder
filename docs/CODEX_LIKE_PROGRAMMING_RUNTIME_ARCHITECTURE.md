@@ -941,9 +941,11 @@ atomically to a bounded in-memory source tree, then admitted by
 `builder-edit-intent-plan.v1`, `builder-workspace-guard-report.v1`, and
 `builder-edit-attempt.v1` before Git candidate persistence. The automatic Draft
 Checkpoint stores the successful EditAttempt reference for restart-safe
-evidence. This does not yet complete transaction-style final worktree
-materialization, visible approval continuation for risky edits, or move/rename
-support.
+evidence. Final Save projection now uses `builder-worktree-transaction.v1` to
+stage file replacements privately and roll back applied create/update/delete
+operations when a later filesystem operation or Git main-ref CAS fails. A
+durable crash-recovery journal, visible approval continuation for risky edits,
+and move/rename support remain incomplete.
 
 Evidence:
 

@@ -357,12 +357,20 @@ Its bounded id/digest/candidate reference is persisted in the automatic Draft
 Checkpoint, so restart recovery can prove that the candidate passed the edit
 admission chain instead of relying on transient generation state.
 
-This slice is not complete yet. Delete, move, lockfile, and large-edit decisions
-still need a visible approval-and-resume path instead of a terminal failure.
-Final Save materialization also needs a transaction-style rollback journal and
-fault-injection evidence before partial filesystem writes can be considered
-fully covered. Move/rename operations and the renderer-safe `Changing files`
-activity projection remain later checkpoints.
+Final Save materialization now uses the main-only
+`builder-worktree-transaction.v1` boundary. It prevalidates the expected old
+files, stages replacement content below the private `.git` directory, applies
+bounded create/update/delete operations, and restores every applied operation
+when a later file operation or the Git main-ref CAS fails. Fault-injection tests
+cover partial multi-file application and Git update failure without leaving a
+mixed worktree.
+
+This slice is not complete yet. Process-crash recovery still needs a durable
+transaction journal and startup reconciliation; the current transaction only
+guarantees rollback while the main process remains alive. Delete, move,
+lockfile, and large-edit decisions still need a visible approval-and-resume
+path instead of a terminal failure. Move/rename operations and the
+renderer-safe `Changing files` activity projection remain later checkpoints.
 
 ## Slice 4: Automatic Draft Checkpoint
 
