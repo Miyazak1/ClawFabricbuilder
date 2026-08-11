@@ -26,7 +26,9 @@ async function executeMain({
     createApprovalRuntime: 0,
     createCheckRunApprovalRuntime: 0,
     createGenerationRuntime: 0,
+    createLivePreviewMainService: 0,
     createLivePreviewRuntime: 0,
+    createLivePreviewWebContentsViewRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
     createWindowControlsRuntime: 0,
@@ -45,6 +47,8 @@ async function executeMain({
   let permissionGrantForExplicitApproval = null;
   let providerContextDisclosureStatusService = null;
   let currentDraftCheckRunService = null;
+  let currentDraftLivePreviewSourceService = null;
+  let livePreviewMainService = null;
   const events = new Map();
   const generationRuntimeOptions = [];
   function runtime(index) {
@@ -80,9 +84,11 @@ async function executeMain({
       throw new Error('unexpected successful window construction');
     }
   }
+  class WebContentsView {}
   const electron = {
     app,
     BrowserWindow,
+    WebContentsView,
     dialog: {
       showOpenDialog(...args) {
         dialogCalls.push(args);
@@ -104,6 +110,11 @@ async function executeMain({
       defaultSession: {
         setPermissionCheckHandler() {},
         setPermissionRequestHandler() {},
+      },
+    },
+    shell: {
+      openPath() {
+        throw new Error('unexpected shell open');
       },
     },
   };
@@ -190,6 +201,11 @@ async function executeMain({
             });
             value.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime =
               () => currentDraftCheckRunService;
+            currentDraftLivePreviewSourceService = Object.freeze({
+              service_version: 'builder-live-preview-current-draft-source-service.v1',
+            });
+            value.readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime =
+              () => currentDraftLivePreviewSourceService;
             return value;
           },
         };
@@ -224,19 +240,41 @@ async function executeMain({
         };
       }
       if (specifier === './builder-live-preview-ipc-runtime.cjs') {
-        const unavailableService = Object.freeze({
-          service_version: 'builder-live-preview-unavailable-service.v1',
-        });
         return {
-          createUnavailableBuilderLivePreviewService() {
-            return unavailableService;
-          },
           createBuilderLivePreviewIpcRuntime(options) {
             calls.createLivePreviewRuntime += 1;
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
-            assert.equal(options.livePreviewService, unavailableService);
+            assert.equal(options.livePreviewService, livePreviewMainService);
             return runtime(5);
+          },
+        };
+      }
+      if (specifier === './builder-live-preview-main-service.cjs') {
+        return {
+          createBuilderLivePreviewMainService(options) {
+            calls.createLivePreviewMainService += 1;
+            assert.equal(options.current_draft_source_service, currentDraftLivePreviewSourceService);
+            assert.equal(options.webcontents_view_runtime.runtime_version, 'builder-live-preview-webcontents-view-runtime.v1');
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(typeof options.now_ms, 'function');
+            livePreviewMainService = Object.freeze({
+              service_version: 'builder-live-preview-main-service.v1',
+            });
+            return livePreviewMainService;
+          },
+        };
+      }
+      if (specifier === './builder-live-preview-webcontents-view-runtime.cjs') {
+        return {
+          createBuilderLivePreviewWebContentsViewRuntime(options) {
+            calls.createLivePreviewWebContentsViewRuntime += 1;
+            assert.equal(options.WebContentsView, WebContentsView);
+            assert.equal(options.session, electron.session);
+            assert.equal(typeof options.nowMs, 'function');
+            return Object.freeze({
+              runtime_version: 'builder-live-preview-webcontents-view-runtime.v1',
+            });
           },
         };
       }
@@ -282,7 +320,9 @@ test('a second application instance exits before registering Builder authorities
     createApprovalRuntime: 0,
     createCheckRunApprovalRuntime: 0,
     createGenerationRuntime: 0,
+    createLivePreviewMainService: 0,
     createLivePreviewRuntime: 0,
+    createLivePreviewWebContentsViewRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
     createWindowControlsRuntime: 0,
@@ -306,7 +346,9 @@ test('window startup failure disposes registered handlers and quits', async () =
     createApprovalRuntime: 1,
     createCheckRunApprovalRuntime: 1,
     createGenerationRuntime: 1,
+    createLivePreviewMainService: 1,
     createLivePreviewRuntime: 1,
+    createLivePreviewWebContentsViewRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,
@@ -384,7 +426,9 @@ test('runtime registration failure rolls back previously registered handlers and
     createApprovalRuntime: 1,
     createCheckRunApprovalRuntime: 1,
     createGenerationRuntime: 1,
+    createLivePreviewMainService: 1,
     createLivePreviewRuntime: 1,
+    createLivePreviewWebContentsViewRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,

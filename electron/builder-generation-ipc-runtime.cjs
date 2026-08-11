@@ -161,6 +161,9 @@ const {
 const {
   createBuilderCheckRunRuntimeComposition,
 } = require('./builder-check-run-runtime-composition.cjs');
+const {
+  createBuilderLivePreviewCurrentDraftSourceService,
+} = require('./builder-live-preview-current-draft-source-service.cjs');
 
 const BUILDER_GENERATION_IPC_RUNTIME_VERSION = 'builder-generation-ipc-runtime.v2';
 const TASK_CAPSULE_DIRECTORY = 'builder-task-capsules-v1';
@@ -1199,6 +1202,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let planReviewAdapter;
   let providerContextDisclosureStatusService = null;
   let checkRunCurrentDraftService = null;
+  let livePreviewCurrentDraftSourceService = null;
+  let livePreviewCurrentDraftSourceDependencies = null;
   let selectedProjectId = null;
   let selectedConversationProjectId = null;
   let selectionEpoch = 0;
@@ -1371,6 +1376,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       activity_registry: checkRunActivityRegistry,
     });
     checkRunCurrentDraftService = checkRunComposition.current_draft_service;
+    livePreviewCurrentDraftSourceDependencies = Object.freeze({
+      conversation_service: conversationService,
+      git_authority: projectMainAuthority.git_authority,
+      automatic_draft_checkpoint_service: automaticDraftCheckpointService,
+    });
     const sourceContextCollector = createBuilderToolSourceContextCollector({
       conversation_service: conversationService,
       permission_admission: permissionAdmission,
@@ -2054,6 +2064,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     activeRequestIds = () => Object.freeze([...activeRequests.keys()]);
   } catch {
+    livePreviewCurrentDraftSourceService = null;
+    livePreviewCurrentDraftSourceDependencies = null;
     try { handoffPacketStore?.close(); } catch { /* fixed failure below */ }
     try { contextCompactionSummaryStore?.close(); } catch { /* fixed failure below */ }
     try { checkRunStore?.close(); } catch { /* fixed failure below */ }
@@ -2145,6 +2157,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   function closeProjectMainAuthority() {
     if (projectMainAuthority === null) return true;
     try {
+      livePreviewCurrentDraftSourceService = null;
+      livePreviewCurrentDraftSourceDependencies = null;
       projectMainAuthority.close();
       projectMainAuthority = null;
       return true;
@@ -2251,6 +2265,20 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime() {
       if (checkRunCurrentDraftService === null || state === 'disposed') fail();
       return checkRunCurrentDraftService;
+    },
+    readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime() {
+      if (state === 'disposed') fail();
+      if (livePreviewCurrentDraftSourceService === null) {
+        if (livePreviewCurrentDraftSourceDependencies === null) fail();
+        livePreviewCurrentDraftSourceService = createBuilderLivePreviewCurrentDraftSourceService({
+          conversation_service: livePreviewCurrentDraftSourceDependencies.conversation_service,
+          git_authority: livePreviewCurrentDraftSourceDependencies.git_authority,
+          automatic_draft_checkpoint_service:
+            livePreviewCurrentDraftSourceDependencies.automatic_draft_checkpoint_service,
+          now_ms: () => Date.now(),
+        });
+      }
+      return livePreviewCurrentDraftSourceService;
     },
     register() {
       if (state === 'registered') return false;

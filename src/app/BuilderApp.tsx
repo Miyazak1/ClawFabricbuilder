@@ -2610,7 +2610,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const livePreviewRequest = useCallback((): BuilderLivePreviewRequest | null => {
     const conversationSnapshot = conversation.snapshot;
     if (
-      conversationSnapshot.project_id === null
+      currentDraftId === null
+      || conversationSnapshot.project_id === null
       || conversationSnapshot.conversation === null
       || conversationSnapshot.conversation.state !== 'ready'
     ) return null;
@@ -2618,7 +2619,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       project_id: conversationSnapshot.project_id,
       conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
     });
-  }, [conversation.snapshot]);
+  }, [conversation.snapshot, currentDraftId]);
 
   const runLivePreviewOperation = useCallback(async (
     operation: 'starting' | 'reloading' | 'stopping',
@@ -2666,8 +2667,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       active = false;
     };
   }, [livePreviewRequest, ports.livePreview]);
-  const currentLivePreviewRequest = livePreviewRequest();
-  const visibleLivePreviewStatus = currentLivePreviewRequest === null ? null : livePreviewStatus;
+  const hasVisibleLivePreviewRequest = currentDraftId !== null
+    && conversation.snapshot.project_id !== null
+    && conversation.snapshot.conversation !== null
+    && conversation.snapshot.conversation.state === 'ready';
+  const visibleLivePreviewStatus = hasVisibleLivePreviewRequest ? livePreviewStatus : null;
 
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">

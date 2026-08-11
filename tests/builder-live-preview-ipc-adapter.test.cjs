@@ -17,6 +17,7 @@ const {
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const DRAFT_ID = `builder-generation-draft:${'d'.repeat(64)}`;
 
 function windowAuthority() {
   const webContents = Object.freeze({
@@ -174,11 +175,16 @@ test('live preview adapter rejects inactive senders and malformed payloads befor
     undefined,
     request({ project_id: 'bad' }),
     request({ conversation_id: 'bad' }),
+    request({ draft_id: 'bad' }),
+    request({ view_bounds: { x: 1, y: 2, width: 40, height: 50 } }),
+    request({ view_bounds: { x: 1, y: 2, width: 320, height: 240, extra: true } }),
     {
       project_id: PROJECT_ID,
       conversation_id: 'builder-conversation:00000000-0000-4000-8000-000000000000',
     },
     request({ source_tree: { files: [] } }),
+    request({ path: 'index.html' }),
+    request({ url: 'http://127.0.0.1:1/index.html' }),
   ]) {
     await assert.rejects(
       value.channels.requestCurrentDraftPreview.invoke(active.event, payload),
@@ -190,6 +196,23 @@ test('live preview adapter rejects inactive senders and malformed payloads befor
     value.channels.requestCurrentDraftPreview.invoke(active.event, request(), { extra: true }),
     { code: 'builder_live_preview_invalid' },
   );
+  assert.deepEqual(calls, []);
+});
+
+test('live preview adapter rejects renderer draft, geometry, and source material', async () => {
+  const { active, calls, value } = adapter();
+  for (const payload of [
+    request({ draft_id: DRAFT_ID }),
+    request({ view_bounds: { x: 820, y: 180, width: 420, height: 520 } }),
+    request({ source_tree: { files: [] } }),
+    request({ path: 'index.html' }),
+    request({ url: 'http://127.0.0.1:1/index.html' }),
+  ]) {
+    await assert.rejects(
+      value.channels.requestCurrentDraftPreview.invoke(active.event, payload),
+      { code: 'builder_live_preview_invalid' },
+    );
+  }
   assert.deepEqual(calls, []);
 });
 

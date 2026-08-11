@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, net, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, net, session, shell } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
 const { createBuilderPermissionIpcRuntime } = require('./builder-permission-ipc-runtime.cjs');
@@ -15,8 +15,13 @@ const {
 } = require('./builder-check-run-approval-ipc-runtime.cjs');
 const {
   createBuilderLivePreviewIpcRuntime,
-  createUnavailableBuilderLivePreviewService,
 } = require('./builder-live-preview-ipc-runtime.cjs');
+const {
+  createBuilderLivePreviewMainService,
+} = require('./builder-live-preview-main-service.cjs');
+const {
+  createBuilderLivePreviewWebContentsViewRuntime,
+} = require('./builder-live-preview-webcontents-view-runtime.cjs');
 const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
 const { createBuilderWindowControlsIpcRuntime } = require('./builder-window-controls-ipc-runtime.cjs');
 
@@ -237,6 +242,17 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
     showOpenDialog: createProjectFolderDialog(packagedCanaryProjectRootPath),
     userDataPath,
   });
+  const livePreviewService = createBuilderLivePreviewMainService({
+    current_draft_source_service:
+      generationRuntime.readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime(),
+    webcontents_view_runtime: createBuilderLivePreviewWebContentsViewRuntime({
+      WebContentsView,
+      session,
+      nowMs: () => Date.now(),
+    }),
+    mainWindowRef: () => mainWindow,
+    now_ms: () => Date.now(),
+  });
   return Object.freeze([
     createBuilderProviderSettingsIpcRuntime({
       ipcMain,
@@ -261,7 +277,7 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
     createBuilderLivePreviewIpcRuntime({
       ipcMain,
       mainWindowRef: () => mainWindow,
-      livePreviewService: createUnavailableBuilderLivePreviewService(),
+      livePreviewService,
     }),
     createBuilderWindowControlsIpcRuntime({
       ipcMain,

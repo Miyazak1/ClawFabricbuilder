@@ -80,6 +80,7 @@ function digest(value) {
 }
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const CANDIDATE_ID = `builder-code-change-candidate:${'a'.repeat(64)}`;
 
 test('resolves the packaged check worker from the physical ASAR unpack directory', () => {
   const resources = path.resolve('release', 'win-unpacked', 'resources');

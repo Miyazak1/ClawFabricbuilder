@@ -20,6 +20,7 @@ const SERVICE_KEYS = Object.freeze([
   'reload_current_live_preview',
   'stop_current_live_preview',
   'read_current_live_preview_status',
+  'shutdown',
 ]);
 const ERROR_MESSAGES = Object.freeze({
   builder_live_preview_ipc_runtime_unavailable: 'Live preview is unavailable.',
@@ -180,6 +181,9 @@ function createUnavailableBuilderLivePreviewService() {
     read_current_live_preview_status(request) {
       return Promise.resolve(unavailableStatus(request));
     },
+    shutdown() {
+      return Promise.resolve(Object.freeze({ shutdown: true }));
+    },
   });
 }
 
@@ -265,6 +269,15 @@ function createBuilderLivePreviewIpcRuntime(rawOptions) {
       }
       state = 'disposed';
       return true;
+    },
+    async shutdown() {
+      let disposed = false;
+      try {
+        disposed = this.dispose();
+      } finally {
+        await options.livePreviewService.shutdown();
+      }
+      return disposed;
     },
   });
 }
