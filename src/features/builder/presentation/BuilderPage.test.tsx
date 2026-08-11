@@ -2267,6 +2267,31 @@ describe('BuilderPage v2', () => {
     expect(draftContainer.querySelector('[data-builder-propose-plan="true"]')).toBeNull();
   });
 
+  it('offers persistent Ask and Build modes and lets the chip return to Auto', async () => {
+    const { saved } = await snapshots();
+    const onSelectComposerMode = vi.fn();
+    const onClearComposerMode = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        composerMode="ask"
+        instruction=""
+        onClearComposerMode={onClearComposerMode}
+        onSelectComposerMode={onSelectComposerMode}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-composer-mode-chip="ask"]')?.textContent)
+      .toContain('Ask mode');
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-build-mode="true"]');
+    expect(onSelectComposerMode).toHaveBeenCalledExactlyOnceWith('build');
+
+    click(container, '[data-builder-clear-composer-mode="true"]');
+    expect(onClearComposerMode).toHaveBeenCalledOnce();
+  });
+
   it('offers one submit command for questions and project changes', async () => {
     const { fresh } = await snapshots();
     const onSubmitInstruction = vi.fn();

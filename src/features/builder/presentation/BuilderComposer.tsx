@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import {
   ArrowUp,
+  Bot,
   ChevronDown,
   FolderOpen,
   GitCompareArrows,
+  Hammer,
   ListChecks,
   Plus,
   ShieldCheck,
@@ -43,7 +45,7 @@ export type BuilderComposerWorkingBrief = Readonly<{
   taskId: string | null;
 }>;
 
-export type BuilderComposerMode = 'plan';
+export type BuilderComposerMode = 'ask' | 'plan' | 'build';
 
 export type BuilderComposerProps = Readonly<{
   activeRunFollowupQueued?: boolean;
@@ -73,6 +75,7 @@ export type BuilderComposerProps = Readonly<{
   onInstructionChange?: (value: string) => void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
+  onSelectComposerMode?: (mode: BuilderComposerMode) => void;
   onSelectPlanMode?: () => void;
   onSubmitInstruction?: () => void;
   savedProject: SavedComposerProject | null;
@@ -107,6 +110,12 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
   if (mode === 'read_only_chat') return 'Read-only chat';
   if (mode === 'allow_current_project') return 'Allow current project';
   return 'Ask before write';
+}
+
+function composerModeLabel(mode: BuilderComposerMode): string {
+  if (mode === 'ask') return 'Ask mode';
+  if (mode === 'build') return 'Build mode';
+  return 'Plan mode';
 }
 
 function composerContextStatusLabel(status: BuilderComposerContextStatus): string | null {
@@ -153,6 +162,7 @@ export function BuilderComposer({
   onInstructionChange,
   onOpenProject,
   onSelectApprovalMode,
+  onSelectComposerMode,
   onSelectPlanMode,
   onSubmitInstruction,
   savedProject,
@@ -428,7 +438,21 @@ export function BuilderComposer({
   function selectPlanMode(): void {
     if (!canProposePlan) return;
     setAddMenuOpen(false);
-    onSelectPlanMode?.();
+    if (typeof onSelectComposerMode === 'function') {
+      onSelectComposerMode('plan');
+    } else {
+      onSelectPlanMode?.();
+    }
+  }
+
+  function selectComposerMode(mode: BuilderComposerMode): void {
+    if (mode === 'plan') {
+      selectPlanMode();
+      return;
+    }
+    if (typeof onSelectComposerMode !== 'function') return;
+    setAddMenuOpen(false);
+    onSelectComposerMode(mode);
   }
 
   function selectApprovalMode(mode: BuilderComposerApprovalMode): void {
@@ -623,6 +647,15 @@ export function BuilderComposer({
                     Files and folders
                   </button>
                   <button
+                    data-builder-composer-add-ask-mode="true"
+                    onClick={() => selectComposerMode('ask')}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Bot aria-hidden="true" className="size-3.5" />
+                    Ask mode
+                  </button>
+                  <button
                     data-builder-composer-add-plan-mode="true"
                     disabled={!canProposePlan}
                     onClick={selectPlanMode}
@@ -631,6 +664,15 @@ export function BuilderComposer({
                   >
                     <ListChecks aria-hidden="true" className="size-3.5" />
                     Plan mode
+                  </button>
+                  <button
+                    data-builder-composer-add-build-mode="true"
+                    onClick={() => selectComposerMode('build')}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Hammer aria-hidden="true" className="size-3.5" />
+                    Build mode
                   </button>
                 </div>
               ) : null}
@@ -695,16 +737,18 @@ export function BuilderComposer({
                 </div>
               ) : null}
             </div>
-            {composerMode === 'plan' ? (
-              <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip="plan">
-                <ListChecks aria-hidden="true" className="size-3.5" />
-                Plan mode
+            {composerMode !== null ? (
+              <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip={composerMode}>
+                {composerMode === 'ask' ? <Bot aria-hidden="true" className="size-3.5" /> : null}
+                {composerMode === 'plan' ? <ListChecks aria-hidden="true" className="size-3.5" /> : null}
+                {composerMode === 'build' ? <Hammer aria-hidden="true" className="size-3.5" /> : null}
+                {composerModeLabel(composerMode)}
                 {typeof onClearComposerMode === 'function' ? (
                   <button
-                    aria-label="Remove Plan mode"
+                    aria-label={`Remove ${composerModeLabel(composerMode)}`}
                     data-builder-clear-composer-mode="true"
                     onClick={onClearComposerMode}
-                    title="Remove Plan mode"
+                    title={`Remove ${composerModeLabel(composerMode)}`}
                     type="button"
                   >
                     <X aria-hidden="true" className="size-3" />

@@ -494,6 +494,7 @@ function visibleHistoryProjectId(
 type BuilderVisibleProjectSnapshot = ReturnType<typeof useBuilderProjectController>['snapshot'];
 type BuilderVisibleConversationSnapshot = ReturnType<typeof useBuilderConversationController>['snapshot'];
 type PendingBuildAfterWorkspace = Readonly<{
+  composerMode: BuilderComposerMode | null;
   epoch: number;
   instruction: string;
   messageId: string;
@@ -508,6 +509,7 @@ type QueuedActiveRunFollowup = Readonly<{
 }>;
 
 type SubmitInstructionTextOptions = Readonly<{
+  composerModeOverride?: BuilderComposerMode | null;
   existingMessageId?: string | null;
   queuedFollowup?: BuilderQueuedFollowupReference | null;
 }>;
@@ -531,6 +533,7 @@ type BuilderApprovedPlanContinuation = Readonly<{
 }>;
 
 type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
+  composerMode: BuilderComposerMode | null;
   project_id: string;
   instruction: string;
   message_id: string;
@@ -1588,7 +1591,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         composerIntentContext(
           conversationSnapshotRef.current,
           result,
-          composerModeRef.current,
+          pendingBuild.composerMode,
           currentProjectWriteApprovalStatusRef.current,
           effectiveApprovalMode(
             approvalModeRef.current,
@@ -1640,7 +1643,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           composerIntentContext(
             conversationSnapshotRef.current,
             result,
-            composerModeRef.current,
+            pendingBuild.composerMode,
             nextPermissionStatus,
             effectiveApprovalMode(approvalModeRef.current, result, nextPermissionStatus),
           ),
@@ -1648,6 +1651,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
         setComposerRouteDecision(routeEvidence);
         const prompt = Object.freeze({
+          composerMode: pendingBuild.composerMode,
           project_id: visibleProjectId,
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
@@ -1667,7 +1671,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         composerIntentContext(
           conversationSnapshotRef.current,
           result,
-          composerModeRef.current,
+          pendingBuild.composerMode,
           nextPermissionStatus,
           effectiveApprovalMode(approvalModeRef.current, result, nextPermissionStatus),
         ),
@@ -1859,6 +1863,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     });
     if (approval.state === 'approval_required') {
       const prompt = Object.freeze({
+        composerMode: null,
         project_id: request.project_id,
         instruction: 'Apply the approved plan.',
         message_id: `approved-plan:${inFlightKey}`,
@@ -1988,10 +1993,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     publishQueuedActiveRunFollowup(null);
     setAnswerFailureRecordedSuccess(false);
+    const activeComposerMode = options.composerModeOverride ?? composerModeRef.current;
     const initialIntentContext = composerIntentContext(
       conversationSnapshotRef.current,
       projectSnapshotRef.current,
-      composerModeRef.current,
+      activeComposerMode,
       currentProjectWriteApprovalStatusRef.current,
       effectiveApprovalMode(
         approvalModeRef.current,
@@ -2007,7 +2013,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       conversationSnapshotRef.current,
       projectSnapshotRef.current,
     );
-    if (pendingPlan !== null && isBuilderComposerContextualBuildIntent(submittedIdea)) {
+    if (
+      pendingPlan !== null
+      && activeComposerMode !== 'ask'
+      && activeComposerMode !== 'plan'
+      && isBuilderComposerContextualBuildIntent(submittedIdea)
+    ) {
       const pendingPlanWorkingBrief = composerWorkingBrief(
         conversationSnapshotRef.current,
         projectSnapshotRef.current,
@@ -2033,7 +2044,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     let semanticClassification: BuilderSemanticRouteClassification | null = null;
-    if (composerModeRef.current !== 'plan' && ports.generator.classifyIntent !== undefined) {
+    if (activeComposerMode === null && ports.generator.classifyIntent !== undefined) {
       const classificationEpoch = workspaceEpochRef.current;
       submitInFlightInstructionRef.current = submittedIdea;
       publishSubmitInFlight(true);
@@ -2087,6 +2098,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (decision.dispatch === 'ask_workspace') {
       const routeEvidence = publishRouteDecision(decision);
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
+        composerMode: activeComposerMode,
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,
         messageId: routeEvidence.messageId,
@@ -2100,6 +2112,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       const projectId = visibleConversationProjectId(projectSnapshotRef.current);
       if (projectId !== null) {
         const prompt = Object.freeze({
+          composerMode: activeComposerMode,
           project_id: projectId,
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
@@ -2117,14 +2130,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     submitInFlightInstructionRef.current = submittedIdea;
     publishSubmitInFlight(true);
     try {
-      if (composerModeRef.current === 'plan' || decision.dispatch === 'plan') {
+      if (activeComposerMode === 'plan' || decision.dispatch === 'plan') {
         publishRouteDecision(decision);
         const planned = await submitPlanInstruction(
           submittedIdea,
           commandEpoch,
           projectSnapshotRef.current,
         );
-        if (planned || composerModeRef.current === 'plan') return;
+        if (planned || activeComposerMode === 'plan') return;
       }
       if (decision.dispatch === 'build') {
         const projectId = visibleConversationProjectId(projectSnapshotRef.current);
@@ -2154,7 +2167,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           const nextIntentContext = composerIntentContext(
             conversationSnapshotRef.current,
             projectSnapshotRef.current,
-            composerModeRef.current,
+            activeComposerMode,
             nextPermissionStatus,
             effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
           );
@@ -2167,6 +2180,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             routeTaskId,
           );
           const prompt = Object.freeze({
+            composerMode: activeComposerMode,
             project_id: projectId,
             instruction: submittedIdea,
             message_id: routeEvidence.messageId,
@@ -2184,7 +2198,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         const nextIntentContext = composerIntentContext(
           conversationSnapshotRef.current,
           projectSnapshotRef.current,
-          composerModeRef.current,
+          activeComposerMode,
           nextPermissionStatus,
           effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
         );
@@ -2315,10 +2329,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setIdea(value);
   }, []);
 
-  const selectPlanMode = useCallback(() => {
-    composerModeRef.current = 'plan';
-    setComposerMode('plan');
+  const selectComposerMode = useCallback((mode: BuilderComposerMode) => {
+    composerModeRef.current = mode;
+    setComposerMode(mode);
   }, []);
+
+  const selectPlanMode = useCallback(() => {
+    selectComposerMode('plan');
+  }, [selectComposerMode]);
 
   const selectApprovalMode = useCallback(async (mode: BuilderComposerApprovalMode) => {
     if (mode !== 'allow_current_project') {
@@ -2364,6 +2382,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         }
         setIdea('');
         void submitInstructionTextRef.current?.(prompt.instruction, {
+          composerModeOverride: prompt.composerMode,
           existingMessageId: prompt.message_id,
           queuedFollowup: prompt.queuedFollowup,
         });
@@ -2441,7 +2460,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         composerIntentContext(
           conversationSnapshotRef.current,
           projectSnapshotRef.current,
-          composerModeRef.current,
+          prompt.composerMode,
           allowed,
           effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, allowed),
         ),
@@ -2891,6 +2910,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onDismissCurrentProjectWriteApproval={dismissCurrentProjectWriteApproval}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onSelectApprovalMode={selectApprovalMode}
+              onSelectComposerMode={selectComposerMode}
               onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
               onInstructionChange={changeComposerInstruction}

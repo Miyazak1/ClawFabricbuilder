@@ -51,7 +51,7 @@ export type BuilderComposerIntentContext = Readonly<{
   activeRunCanSteer?: boolean;
   activeRunStatus?: 'not_active' | 'answering' | 'working';
   approvalMode?: BuilderComposerApprovalMode;
-  composerMode?: 'plan' | null;
+  composerMode?: 'ask' | 'plan' | 'build' | null;
   hasPendingBuildConfirmation?: boolean;
   hasPriorBuildContext?: boolean;
   hasWorkspace?: boolean;
@@ -365,10 +365,11 @@ export function decideBuilderComposerIntent(
       matchedSignals: ['active_run_followup'],
     });
   }
-  if (context.composerMode === 'plan') {
-    return createDecision('plan', context, {
+  if (context.composerMode !== undefined && context.composerMode !== null) {
+    const forcedRoute = context.composerMode === 'ask' ? 'answer' : context.composerMode;
+    return createDecision(forcedRoute, context, {
       confidence: 'high',
-      matchedSignals: ['composer_mode_plan'],
+      matchedSignals: [`composer_mode_${context.composerMode}`],
     });
   }
   if (GOAL_MODE_PATTERNS.some((pattern) => pattern.test(normalized))) {

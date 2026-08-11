@@ -74,8 +74,12 @@ Plan mode may not:
 
 ### UI Projection
 
-- Composer `+` menu exposes `Plan mode` when a project is selected.
-- Active plan mode appears as a removable chip.
+- Composer `+` menu exposes manual `Ask mode`, `Plan mode`, and `Build mode`.
+- `Ask mode` and `Build mode` are persistent until the user changes mode or
+  closes the chip; `Plan mode` is one-shot and clears after the plan request is
+  admitted.
+- Active composer mode appears as a removable chip; closing it returns the
+  composer to Auto routing.
 - Chat timeline shows the plan proposal and an execution affordance such as
   `Apply plan`.
 - If no project is selected, the plan is clearly chat-only and cannot be
@@ -84,6 +88,8 @@ Plan mode may not:
 ### Tests And Evidence
 
 - explicit `Plan mode` chip sends a request;
+- persistent `Ask mode` and `Build mode` override automatic intent detection
+  without bypassing read-only or write-approval gates;
 - natural language plan route sends a request;
 - plan route is read-only in renderer and main;
 - plan route cannot create draft/revision/source mutation facts;

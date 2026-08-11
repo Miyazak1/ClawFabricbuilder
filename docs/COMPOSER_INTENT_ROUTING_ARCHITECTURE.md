@@ -158,11 +158,16 @@ returns only `answer | clarify | update_brief | plan | build`, confidence, and a
 fixed reason code. It has no source-read, source-write, tool, command,
 permission, Git, SQLite, or Save Version authority.
 
-The user-visible Plan mode is a hard override and does not require semantic
-classification. For ordinary natural language, low-confidence, malformed, or
-ambiguous classification fails closed to clarification before any permission
-or mutation gate. A semantic `build` result still has to pass the existing
-workspace and main-owned write-permission gates.
+User-visible composer modes are hard overrides and do not require semantic
+classification. `Ask` is a persistent read-only answer mode, `Build` is a
+persistent source-change mode that still passes the existing workspace and
+main-owned write-permission gates, and `Plan` is a one-shot plan proposal mode
+that clears after the plan request is admitted. Closing the mode chip returns
+the composer to `Auto`, where ordinary natural language uses deterministic
+controls plus semantic classification. Low-confidence, malformed, or ambiguous
+classification fails closed to clarification before any permission or mutation
+gate. A semantic `build` result still has to pass the existing workspace and
+main-owned write-permission gates.
 
 Deterministic controls run before semantic classification. Active-run
 cancel/queue behavior, an explicit composer mode, and continuation of a plan

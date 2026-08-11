@@ -4827,6 +4827,76 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
+  it('keeps Ask mode persistent and skips semantic routing for build-like wording', async () => {
+    const {
+      answer,
+      classifyIntent,
+      container,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      semanticIntentRoute: 'build',
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-ask-mode="true"]');
+    expect(container.querySelector('[data-builder-composer-mode-chip="ask"]')?.textContent)
+      .toContain('Ask mode');
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledOnce();
+    });
+    expect(classifyIntent).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('answer');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('reply');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('composer_mode_ask');
+    expect(container.querySelector('[data-builder-composer-mode-chip="ask"]')).not.toBeNull();
+  });
+
+  it('keeps Build mode persistent and routes question-like wording through write approval', async () => {
+    const {
+      classifyIntent,
+      container,
+      prepareCurrentProjectWriteApproval,
+      submit,
+    } = await setup({
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+      semanticIntentRoute: 'answer',
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '这个文件夹是什么结构？');
+    await waitForComposerSubmitReady(container);
+
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-build-mode="true"]');
+    expect(container.querySelector('[data-builder-composer-mode-chip="build"]')?.textContent)
+      .toContain('Build mode');
+
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+      });
+      expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).not.toBeNull();
+    });
+    expect(classifyIntent).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('build');
+    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_permission');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('composer_mode_build');
+    expect(container.querySelector('[data-builder-composer-mode-chip="build"]')).not.toBeNull();
+  });
+
   it('routes add-menu Plan mode for a bound local workspace before the first saved version', async () => {
     const {
       container,

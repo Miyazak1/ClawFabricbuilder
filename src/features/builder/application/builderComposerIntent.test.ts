@@ -305,6 +305,35 @@ describe('routeBuilderComposerIntent', () => {
     });
   });
 
+  it('lets explicit Ask and Build modes override automatic routing', () => {
+    expect(decideBuilderComposerIntent('创建登录页', {
+      composerMode: 'ask',
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'answer',
+      confidence: 'high',
+      matchedSignals: ['composer_mode_ask'],
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+      dispatch: 'reply',
+    });
+
+    expect(decideBuilderComposerIntent('这个文件夹里是什么结构？', {
+      approvalMode: 'ask_before_write',
+      composerMode: 'build',
+      hasWorkspace: true,
+      hasWritePermission: false,
+    })).toMatchObject({
+      route: 'build',
+      confidence: 'high',
+      matchedSignals: ['composer_mode_build'],
+      requiredPermissions: ['write_project'],
+      permissionResult: 'ask',
+      dispatch: 'ask_permission',
+    });
+  });
+
   it('routes active-run cancel requests without write admission', () => {
     expect(decideBuilderComposerIntent('停止', {
       activeRunCanQueueFollowup: true,
