@@ -70,6 +70,9 @@ test('live preview canary script is independent from release and verifies browse
   assert.match(source, /executeJavaScript/u);
   assert.match(source, /preview_url_loopback_digest/u);
   assert.match(source, /canvas_nonblank:\s*true/u);
+  assert.match(source, /external_fetch_blocked:\s*true/u);
+  assert.match(source, /external_navigation_blocked:\s*true/u);
+  assert.match(source, /external_window_open_blocked:\s*true/u);
   assert.match(source, /javascript_executed:\s*true/u);
   assert.match(source, /release_gate_integration:\s*['"]not_in_verify_release['"]/u);
   assert.doesNotMatch(source, /providerSettings\.replaceCurrent|projectWorkspace\.saveDraft/u);

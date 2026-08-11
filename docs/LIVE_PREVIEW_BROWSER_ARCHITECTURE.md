@@ -563,9 +563,11 @@ Current checkpoint:
   source upload;
 - use Electron main-process automation to verify a loopback preview
   `WebContents`, local JavaScript execution, and nonblank canvas pixels;
+- verify preview content cannot fetch external HTTPS, open external windows, or
+  navigate away from the admitted loopback origin;
 - verify reload returns to ready and stop disposes the preview `WebContents`;
-- defer release-gate integration, restart cleanup evidence, blocked network
-  evidence, and WebGL-specific evidence to follow-up LP6 hardening.
+- defer release-gate integration, restart cleanup evidence, runtime counter
+  projection, and WebGL-specific evidence to follow-up LP6 hardening.
 
 ## Relationship To MVP Programming Loop
 

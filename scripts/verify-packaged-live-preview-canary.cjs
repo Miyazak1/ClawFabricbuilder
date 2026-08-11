@@ -371,7 +371,8 @@ async function readMainProcessLivePreviewEvidence(app) {
         .find((item) => item.id === selected.id);
       if (selectedContents) {
         canvasEvidence = await selectedContents.executeJavaScript(`
-          (() => {
+          (async () => {
+            const originalHref = location.href;
             const canvas = document.querySelector('#live-canary-canvas');
             if (!(canvas instanceof HTMLCanvasElement)) {
               return { canvas_present: false };
@@ -387,12 +388,40 @@ async function readMainProcessLivePreviewEvidence(app) {
                 || pixels[index + 3] !== 255
               ) nonblank += 1;
             }
+            let external_fetch_blocked = false;
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 1000);
+              await fetch('https://example.com/clawfabric-live-preview-canary', {
+                cache: 'no-store',
+                signal: controller.signal,
+              });
+              clearTimeout(timer);
+            } catch {
+              external_fetch_blocked = true;
+            }
+            const opened = window.open('https://example.com/clawfabric-live-preview-popup');
+            const external_window_open_blocked = opened === null;
+            try {
+              if (opened !== null) opened.close();
+            } catch {
+              // The preview policy should deny windows; ignore closed proxy quirks.
+            }
+            const link = document.createElement('a');
+            link.href = 'https://example.com/clawfabric-live-preview-navigation';
+            link.textContent = 'external navigation canary';
+            document.body.append(link);
+            link.click();
+            await new Promise((resolve) => setTimeout(resolve, 250));
             return {
               canvas_present: true,
               canvas_width: canvas.width,
               canvas_height: canvas.height,
               canary_marker: globalThis.__clawfabricLivePreviewCanary ?? null,
               document_title: document.title,
+              external_fetch_blocked,
+              external_navigation_blocked: location.href === originalHref,
+              external_window_open_blocked,
               nonblank_pixel_count: nonblank,
             };
           })()
@@ -418,6 +447,9 @@ async function waitForMainProcessLivePreviewEvidence(app) {
       && /^http:\/\/127\.0\.0\.1:\d+\//u.test(evidence.preview_url_loopback ?? '')
       && evidence.canvas?.canvas_present === true
       && evidence.canvas?.canary_marker === 'module-executed'
+      && evidence.canvas?.external_fetch_blocked === true
+      && evidence.canvas?.external_navigation_blocked === true
+      && evidence.canvas?.external_window_open_blocked === true
       && evidence.canvas?.nonblank_pixel_count > 0
     ) return evidence;
     await delay(250);
@@ -446,6 +478,9 @@ async function verifyLivePreviewControls(page, app) {
   }
   return Object.freeze({
     canvas_nonblank: true,
+    external_fetch_blocked: true,
+    external_navigation_blocked: true,
+    external_window_open_blocked: true,
     javascript_executed: true,
     loopback_webcontents_observed: true,
     preview_url_loopback_digest: `sha256:${nodeCrypto.createHash('sha256').
