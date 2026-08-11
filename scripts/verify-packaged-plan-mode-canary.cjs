@@ -21,6 +21,8 @@ const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-de
 
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v1';
+const AUTO_QUESTION_INSTRUCTION = '这个项目是什么';
+const AUTO_BUILD_ARTIFACT_INSTRUCTION = '做一个计划管理页面';
 const ASK_MODE_INSTRUCTION = 'Make a timer.';
 const BUILD_MODE_INSTRUCTION = '这个文件夹是什么结构？';
 const CONTINUE_DRAFT_INSTRUCTION = '继续优化标题和说明，不要保存版本';
@@ -183,6 +185,60 @@ async function waitForProviderRequestCount(providerServer, responseKind, previou
     previous_count: previousCount,
     provider_requests: snapshot,
     response_kind: responseKind,
+  });
+}
+
+async function verifyAutoDeterministicRoutesSkipClassifier(page, providerServer) {
+  const beforeQuestion = providerServer.snapshot();
+  const answersBefore = await page.locator(SELECTORS.questionAnswer).count().catch(() => 0);
+  await page.locator(SELECTORS.idea).fill(AUTO_QUESTION_INSTRUCTION);
+  await waitForSubmitEnabled(page, 'auto_question_before_submit');
+  await page.locator(SELECTORS.submitTurn).click();
+  await page.locator(SELECTORS.questionAnswer).nth(answersBefore).
+    waitFor({ state: 'visible', timeout: 120_000 });
+  let composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
+  let composerDispatch = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-dispatch');
+  let composerSignals = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-signals');
+  let after = providerServer.snapshot();
+  if (
+    composerRoute !== 'answer'
+    || composerDispatch !== 'reply'
+    || composerSignals !== 'read_only'
+  ) {
+    fail('auto_question_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute, composer_signals: composerSignals });
+  }
+  if (countProviderRequests(after, 'builder_semantic_route_classification')
+    !== countProviderRequests(beforeQuestion, 'builder_semantic_route_classification')) {
+    fail('auto_question_spent_semantic_classifier', { provider_requests: after });
+  }
+
+  const beforeBuild = providerServer.snapshot();
+  await page.locator(SELECTORS.idea).fill(AUTO_BUILD_ARTIFACT_INSTRUCTION);
+  await waitForSubmitEnabled(page, 'auto_build_artifact_before_submit');
+  await page.locator(SELECTORS.submitTurn).click();
+  await page.locator(SELECTORS.currentProjectWriteApproval).
+    waitFor({ state: 'visible', timeout: 30_000 });
+  composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
+  composerDispatch = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-dispatch');
+  composerSignals = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-signals');
+  after = providerServer.snapshot();
+  if (
+    composerRoute !== 'build'
+    || composerDispatch !== 'ask_permission'
+    || composerSignals !== 'clear_build'
+  ) {
+    fail('auto_build_artifact_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute, composer_signals: composerSignals });
+  }
+  if (countProviderRequests(after, 'builder_semantic_route_classification')
+    !== countProviderRequests(beforeBuild, 'builder_semantic_route_classification')) {
+    fail('auto_build_artifact_spent_semantic_classifier', { provider_requests: after });
+  }
+  await page.locator(SELECTORS.dismissCurrentProjectWriteApproval).click();
+  await page.locator(SELECTORS.currentProjectWriteApproval).
+    waitFor({ state: 'hidden', timeout: 30_000 });
+  return Object.freeze({
+    auto_build_artifact_skipped_classifier: true,
+    auto_question_skipped_classifier: true,
   });
 }
 
@@ -401,6 +457,7 @@ async function run() {
     }), gate);
     await clickByRole(page, 'button', 'New project');
     await bindNewProjectWorkspace(page);
+    const autoRoutes = await verifyAutoDeterministicRoutesSkipClassifier(page, providerServer);
     const askMode = await verifyAskModePersistentAndClear(page, providerServer);
     const semanticPlan = await verifyNaturalLanguagePlanAndReject(
       page,
@@ -452,6 +509,8 @@ async function run() {
       executable_path: executablePath,
       instruction_digest: `sha256:${require('node:crypto').
         createHash('sha256').update(PLAN_MODE_INSTRUCTION).digest('hex')}`,
+      auto_build_artifact_skipped_classifier: autoRoutes.auto_build_artifact_skipped_classifier,
+      auto_question_skipped_classifier: autoRoutes.auto_question_skipped_classifier,
       ask_mode_answer_observed: askMode.ask_answer_observed,
       ask_mode_persisted_until_cleared: askMode.ask_mode_persisted_until_cleared,
       ask_mode_skipped_classifier: askMode.ask_mode_skipped_classifier,

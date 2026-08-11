@@ -6441,6 +6441,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(defaultSource, /127\.0\.0\.1/u);
   assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
   assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
+  assert.match(planModeSource, /verifyAutoDeterministicRoutesSkipClassifier/u);
   assert.match(planModeSource, /verifyAskModePersistentAndClear/u);
   assert.match(planModeSource, /verifyBuildModePersistentAndClear/u);
   assert.match(planModeSource, /verifyContinueUnsavedDraftWithoutSave/u);
@@ -6451,6 +6452,8 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /SELECTORS\.composerClearMode/u);
   assert.match(planModeSource, /SELECTORS\.dismissCurrentProjectWriteApproval/u);
   assert.match(planModeSource, /builder_semantic_route_classification/u);
+  assert.match(planModeSource, /auto_question_skipped_classifier:\s*true/u);
+  assert.match(planModeSource, /auto_build_artifact_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /ask_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /ask_mode_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /semantic_plan_rejected:\s*true/u);
